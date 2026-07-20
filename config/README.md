@@ -77,9 +77,10 @@
 | `prompt.experience_max_entries` | int | `0` | 经验库最大加载条目数（0–10） |
 | `prompt.experience_max_chars_per_entry` | int | `400` | 每条经验最大字符数（100–4000） |
 | `prompt.stage1_inject_pattern_briefs` | bool | `true` | 阶段一是否注入模式判定表和速查 brief（减少 missed tags） |
-| `prompt.vpa_mode` | string/null | `null` | `off` / `shadow` / `soft`；`soft` 当前锁定并按 `shadow` 执行，正式订单始终使用原 PA A 臂 |
-| `prompt.vpa_shadow_design` | string | `"full_prompt_ab"` | `full_prompt_ab` 使用同一快照运行两个独立完整 Prompt；`marginal_sidecar` 仅测量冻结 Brooks 后的 VPA 边际信息增量 |
+| `prompt.vpa_mode` | string/null | `null` | `off` / `shadow` / `soft`；`shadow` 的正式结果为 PA-only，`soft` 采用通过边界校验的 PA+VPA 联合裁决，角色失败时降级为 PA-only |
 | `prompt.vpa_enabled` | bool | `false` | 旧配置兼容字段；仅在 `vpa_mode` 未设置时，`true` 迁移为 `shadow` |
+
+真正的 VPA 增量实验不由运行配置模拟。它使用已保存的冻结 Snapshot 离线执行独立 A1/A2/B1/B2，并将分配、失败和结果写入实验 manifest；入口见 `tools/run_pa_vpa_aabb.py`。
 
 ### validation — 校验与重试
 

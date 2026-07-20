@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001-analysis-authority.md`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0005`。
 
 ## 核心目标
 
@@ -63,7 +63,11 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 - `off`：PA Framework + PA-only Arbiter，VPA 数据、Prompt、Schema、历史完全不进入链路。
 - `shadow`：同一冻结输入上同时保留 PA-only 与 Joint 结果，PA-only 为正式结果。
 - `soft`：Joint 为正式结果；VPA 或 Joint 失败时退化为 PA-only。
-- A/A/B/B 是离线或抽样研究协议，不是每次生产分析的固定开销。
+- A/A/B/B 是离线或抽样研究协议，不是每次生产分析的固定开销。协议在调用前登记
+  A1/A2/B1/B2，使用同一冻结输入、四个独立客户端与 ABBA/BAAB 顺序，并区分 ITT 和
+  per-protocol；生产 Shadow/Soft 及模型自述 comparison 都不构成反事实。
+- A/A/B/B 的独立抽样单位是 `market_snapshot_hash`；`cohort_id` 隔离 Provider、settings、源码与
+  Prompt 版本。同一行情的重复臂、重跑或跨版本复核都不得增加独立样本数。
 - 未经样本外校准的数字胜率或置信度只用于研究，不得成为硬下单门槛。
 
 ## 不变量

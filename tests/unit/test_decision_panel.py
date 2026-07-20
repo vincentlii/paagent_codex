@@ -139,29 +139,27 @@ def test_vpa_summary_uses_stage1_context_and_stage2_effect(panel: DecisionPanel)
     assert "VPA 支持等待更优回测位置" in text
 
 
-def test_vpa_summary_exposes_failed_arm_reason() -> None:
+def test_vpa_summary_exposes_joint_degradation_reason() -> None:
     text = _format_vpa_summary(
         None,
         None,
         {
-            "status": "failed",
-            "pair_id": "vpa-test",
-            "vpa_arm": {
-                "exception": {
-                    "stage": "stage1",
-                    "category": "c",
-                    "message": "numeric market facts are not allowed",
-                }
+            "mode": "soft",
+            "status": "degraded_pa_only",
+            "degradation": {
+                "stage": "vpa_evidence",
+                "reason": "numeric market facts are not allowed",
             },
             "comparison": {
-                "observed_effect": {"classification": "vpa_arm_failed"}
+                "observed_effect": {"classification": "keep_baseline"}
             },
         },
     )
 
-    assert "VPA arm 失败：stage1/c" in text
+    assert "链路：soft · degraded_pa_only" in text
+    assert "已降级为 PA-only：vpa_evidence" in text
     assert "numeric market facts" in text
-    assert "vpa_arm_failed" in text
+    assert "PA/Joint差异：keep_baseline" in text
 
 
 def test_clear_resets_all_optional_sections(panel: DecisionPanel) -> None:

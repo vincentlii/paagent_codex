@@ -30,11 +30,12 @@ class AnalysisRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = 3
+    schema_version: int = 4
     meta: RecordMeta
     kline_data: list[dict]              # Same data as sent to AI
     htf_text: str
     htf_context: Optional[dict] = None  # Compact HTF provenance; full block stays in htf_text
+    htf_kline_data: list[dict] = Field(default_factory=list)
     stage1_messages: list[dict]
     stage1_response: Optional[dict]     # Raw response (includes reasoning_content)
     stage1_diagnosis: Optional[dict]
@@ -55,6 +56,7 @@ class AnalysisRecord(BaseModel):
     vpa_sidecar: Optional[dict] = None
     data_quality: dict = Field(default_factory=dict)
     snapshot_context: dict = Field(default_factory=dict)
+    experiment_context: Optional[dict] = None
 
 
 class FollowupTurn(BaseModel):

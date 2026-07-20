@@ -943,7 +943,7 @@ class PromptAssembler:
         *,
         vpa_evidence_catalog: dict[str, Any] | None = None,
     ) -> "PromptAssembler":
-        """Create an isolated assembler for a paired A/B arm."""
+        """Create an isolated assembler for one PA, VPA, or Joint role."""
         return PromptAssembler(
             self._prompt_dir,
             self._experience_reader,

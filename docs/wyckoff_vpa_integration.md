@@ -75,24 +75,30 @@ VPA 或 Joint 失败不会使 PA 分析伪装失败；记录明确标记 `degrad
 VPA 或 Joint 在一次定向修复后仍失败时，正式结果退化为 PA-only，并标记
 `degraded_pa_only`。用户置信度阈值只对最终正式结果应用一次。
 
-## 4. A/B 有效性
+## 4. A/A/B/B 实验有效性
 
-生产 Shadow/Soft 不是 A/B，模型也不能自述自己保持了 baseline。A/A/B/B 仅由离线或抽样实验器
-针对同一冻结 Snapshot 执行。只有同时满足下列条件的 `full_prompt_ab` 才进入统计：
+生产 Shadow/Soft 不是 A/B，模型自述的 baseline comparison 也不是反事实。真正实验仅由
+`pa_vpa_aabb_v1` 离线运行器针对同一冻结输入执行四次独立完整分析：A1/A2 为 `off`，B1/B2
+为 `soft`。顺序按冻结输入 hash 确定为 ABBA 或 BAAB，降低固定顺序和服务端时漂影响。
 
-- 当前 `pair_identity_version` 匹配。
-- A/B 使用相同冻结 Kline 与 HTF 输入。
-- 两个客户端实例隔离，且不允许 fallback。
-- A 的初始 Stage 1 不含 VPA catalog，B 含 VPA catalog。
-- 两臂都禁用增量历史，B 不复用 A 的 Stage 2 前缀。
-- 每次调用首轮通过，无 retry feedback、失败调用或非 `validated` 状态。
-- A/B 都有完整 latency、token usage 和调用臂标识。
-- VPA 没有改写 Brooks 所拥有的结构化语义。
+冻结身份分三层：`market_snapshot_hash` 只覆盖主周期/HTF 完整 Kline 与 compact context；
+`cohort_id` 覆盖 protocol、Provider/settings，以及实际 `pa_agent` 源码与 Prompt 资产摘要；
+`frozen_input_hash` 绑定行情、VPA catalog 与 cohort。代码或知识版本变化后不得混入同一质量队列，
+但同一行情也不能因版本变化被重复计为独立样本。四臂必须：
 
-`pair_input_hash` 由实验设计、counterfactual scope、原始 snapshot hash、catalog ID、Provider 指纹，以及 A/B 初始 Stage 1 请求哈希共同生成。`pair_id` 取该哈希前缀。这样 HTF、Prompt、Provider 或 VPA 注入变化不会被误合并为同一实验。旧 identity 记录保留用于审计，但不进入当前统计。
+- 使用相同 `frozen_input_hash`、catalog ID、Provider/settings 指纹和 PA Stage 1 初始请求 hash。
+- 使用四个新客户端实例；禁止 fallback、增量历史、A/B 前缀复用和跨臂上下文。
+- A 臂完全没有 VPA 对象和 VPA/Joint 调用；B 臂使用同一个预先冻结且重新验 hash 的 catalog。
+- 在模型调用前先写入四个 arm assignment；失败、取消和未持久化 arm 不能从样本中消失。
+- 允许审计 warning；retry、normalization、hard validation failure、fallback 或非 validated 调用均不算 first-pass clean。
 
-实验按 A/A/B/B 重复协议估计同 Prompt 随机波动，再比较 PA-only 与 PA+VPA 的组间差异。
-结果报告必须披露组内分歧、顺序和 Provider 指纹，不能把一次随机输出当成 VPA 信息增量。
+程序从四条正式 record 外部计算 PA/订单签名、A/A 与 B/B 分歧和跨组差异，不读取模型对自身
+影响的声明。报告同时给出 ITT 与 per-protocol：ITT 保留所有已分配 arm，用于暴露交付失败和
+降级的真实系统效应；per-protocol 只比较协议完整、成功持久化且确实收到指定处理的 arm。
+单次组间差异不能归因于 VPA，必须先用 A/A、B/B 估计模型随机波动，并跨独立 Snapshot 复核。
+统计抽样单位是独立 `market_snapshot_hash`；arm、重复运行和不同 cohort 下的同一行情都不增加样本数。
+反事实结果在每个 Snapshot 内先平均重复臂，再报告 matched A/B 的 R 差、胜率差和 exact sign test；
+它只覆盖双方都有明确 closed-OHLC 结果的 Snapshot，必须与交易频率报告及成本后样本外验证一起解释。
 
 ## 5. VPA 理论底座
 
@@ -224,13 +230,13 @@ Normalizer 只兼容白名单内无歧义语法别名，例如 `waiting` → `pe
 
 ## 10. Records、数据库与复盘
 
-JSON record 是完整审计源；SQLite `records/audit/analysis.sqlite3` 是可重建索引，当前 schema version 为 7。
+JSON record 是完整审计源；SQLite `records/audit/analysis.sqlite3` 是可重建索引，当前 schema version 为 8。
 
 索引保存：
 
 - PA/VPA 结构化摘要和 `review_context_json`。
 - `PaHypothesisSet`、`VpaEvidenceReport`、`JointDecisionProposal` 与明确 `RunOutcome`。
-- 离线实验的 `pair_id`、identity version、protocol、first-pass、authority 与 comparison。
+- 离线实验 manifest、冻结输入 hash、ABBA/BAAB 顺序，以及四臂的 assignment、处理接收、first-pass、持久化和失败状态。
 - 每次调用的 arm、stage、attempt、request/response hash、latency、tokens 和 validator status。
 - 每次失败或兼容归一化的原始响应、字段路径、合法枚举、实际重试提示和 normalization before/after。
 - 人工真实结果 `analysis_outcomes`。
@@ -238,27 +244,37 @@ JSON record 是完整审计源；SQLite `records/audit/analysis.sqlite3` 是可�
 
 `analysis_outcomes` 只记录人工确认的执行结果。`counterfactual_outcomes` 只评估冻结计划，不代表真实 fill 或 live PnL。market order 缺真实 fill、同 K 入场与离场、同 K 同触 stop/target、突破跳空越价等情况必须保留为 unsupported/ambiguous。
 
+每条 record 的反事实只回放该 record 的正式订单，并在派生索引中标记为 `arm=official`。A/B 对照通过四条独立 record 的 experiment arm
+归组完成，禁止从一条生产 Shadow/Soft record 合成第二个“VPA arm”。
+
 常用命令：
 
 ```powershell
 python tools/review_analysis_audit.py rebuild --records-dir records/pending
 python tools/review_analysis_audit.py list --limit 50
+python tools/review_analysis_audit.py experiments --limit 50
 python tools/review_analysis_audit.py summary --min-snapshots 50
-python tools/review_analysis_audit.py counterfactual --min-snapshots 30
-python tools/review_analysis_audit.py quality --records-dir records/pending --min-runs 20
+python tools/review_analysis_audit.py counterfactual --min-snapshots 30 --cost-per-trade-r 0.05
+python tools/review_analysis_audit.py quality --min-snapshots 20
+python tools/run_pa_vpa_aabb.py records/pending/<source-record>.json
 ```
 
 ## 11. 严格质量门禁
 
-`quality` 只接纳完成的 full-prompt records，并同时检查：
+`quality` 只从完成且 protocol-valid 的 A/A/B/B manifest 加载四条 record，并同时检查：
 
-1. `first_pass_clean`：所有调用首轮通过，无 retry 或失败状态。
+1. `first_pass_clean`：所有调用首轮通过，无 retry、normalization、fallback 或失败状态；warning 可接受并保留审计。
 2. `pa_grounding`：存在事实引用与理论规则，且无 PA 语义校验错误。
 3. `vpa_grounding`：observation 引用的 evidence 确实含有可用相对量比较器，存在真正量价信息增量，且无 VPA 语义错误或越权。仅有 `source=volume` 或 raw volume 不计为通过。
-4. `ab_protocol`：pair identity、隔离客户端、冻结输入和 Prompt 差异均有效。
-5. `performance`：每次调用和整轮的 latency/token 数据完整并满足阈值。
+4. `aabb_protocol`：冻结身份、四臂分配、隔离客户端、处理边界和持久化内容均有效。
+5. `cohort_consistency`：一次质量评估只能包含一个 Provider/settings/源码/Prompt cohort。
+6. `repeatability`：A/A 与 B/B 的外部决策签名分歧率不超过预设上限。
+7. `performance`：每次调用和整轮的 latency/token 数据完整并满足阈值。
 
-默认性能阈值为：call p50 100 秒、call p95 150 秒、run p50 220 秒、run p95 300 秒、run token p50 180k、p95 250k、B/A latency ratio p95 2.2。门禁至少需要 20 个完成样本；样本不足返回 `insufficient_sample`，不是通过。
+默认性能阈值为：call p50 100 秒、call p95 150 秒、run p50 220 秒、run p95 300 秒、run token p50 180k、p95 250k、B/A latency ratio p95 2.2、B/A token ratio p95 1.35。门禁至少需要 20 个独立行情 Snapshot；repeatability 默认也需 20 个独立 Snapshot。重复实验不会增加样本数。样本不足返回 `insufficient_sample`，不是通过。
+
+`quality` 默认选择最近一个完成且 protocol-valid 的 cohort；使用 `--cohort-id` 可显式复核旧 cohort。
+`summary` 与 `counterfactual` 也支持该参数。跨 cohort 的默认汇总必须标记为 descriptive only，不能用于晋级。
 
 Gate 即使通过也固定返回 `ready_for_soft=false`。正式启用前还必须独立验收 matched counterfactual outcomes、交易频率稳定性，以及包含手续费和滑点的样本外表现。
 

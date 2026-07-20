@@ -160,7 +160,7 @@ def _format_vpa_summary(
 
     if isinstance(vpa_sidecar, dict):
         status = _first_text(vpa_sidecar, "status")
-        pair_id = _first_text(vpa_sidecar, "pair_id")
+        mode = _first_text(vpa_sidecar, "mode")
         raw_measurements = vpa_sidecar.get("evidence_catalog") or vpa_sidecar.get("measurements")
         measurements = dict(raw_measurements) if isinstance(raw_measurements, dict) else raw_measurements
         if isinstance(measurements, dict) and "data_status" in measurements:
@@ -173,23 +173,22 @@ def _format_vpa_summary(
                 f"{provenance.get('venue') or 'unknown'} · "
                 f"{provenance.get('volume_kind', 'unknown')} · {measurements.get('status', 'unknown')}"
             )
-        if status or pair_id:
-            lines.append(f"A/B：{status or 'unknown'}" + (f" · {pair_id}" if pair_id else ""))
-        if status == "failed":
-            arm = vpa_sidecar.get("vpa_arm")
-            exception = arm.get("exception") if isinstance(arm, dict) else None
-            if isinstance(exception, dict):
-                stage = _first_text(exception, "stage") or "unknown"
-                category = _first_text(exception, "category") or "unknown"
-                message = _first_text(exception, "message")
-                detail = f"VPA arm 失败：{stage}/{category}"
-                if message:
-                    detail += f" · {message[:180]}"
-                lines.append(detail)
+        if status or mode:
+            lines.append(
+                f"链路：{mode or 'unknown'} · {status or 'unknown'}"
+            )
+        degradation = vpa_sidecar.get("degradation")
+        if isinstance(degradation, dict):
+            stage = _first_text(degradation, "stage") or "unknown"
+            reason = _first_text(degradation, "reason")
+            detail = f"已降级为 PA-only：{stage}"
+            if reason:
+                detail += f" · {reason[:180]}"
+            lines.append(detail)
         comparison = vpa_sidecar.get("comparison")
         observed = comparison.get("observed_effect") if isinstance(comparison, dict) else None
         if isinstance(observed, dict) and observed.get("classification"):
-            lines.append(f"A/B实测差异：{observed['classification']}")
+            lines.append(f"PA/Joint差异：{observed['classification']}")
 
     return "\n".join(lines)
 

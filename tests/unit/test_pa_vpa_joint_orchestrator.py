@@ -332,3 +332,55 @@ def test_pa_gate_wait_still_allows_vpa_review_but_skips_joint_call() -> None:
         item["stage"] != "joint_arbiter" for item in record.call_attempts
     )
     writer.save_full.assert_called_once()
+
+
+def test_soft_role_path_uses_the_exact_supplied_frozen_catalog(monkeypatch) -> None:
+    frame = make_frame()
+    catalog = build_vpa_evidence_catalog(frame)
+    report = _vpa_report()
+    report["vpa_report"]["catalog_id"] = catalog["catalog_id"]
+    orchestrator, _client, _writer = _orchestrator(
+        "soft",
+        vpa_replies=[make_reply(report)],
+        joint_replies=[make_reply(_joint_lower_confidence())],
+    )
+
+    def must_not_rebuild(_frame):
+        raise AssertionError("frozen experiment catalog must not be regenerated")
+
+    monkeypatch.setattr(
+        "pa_agent.ai.vpa_measurements.build_vpa_evidence_catalog",
+        must_not_rebuild,
+    )
+    record = orchestrator.submit(
+        frame,
+        CancelToken(),
+        lambda _event: None,
+        frozen_vpa_catalog=catalog,
+    )
+
+    assert record.exception is None
+    assert record.vpa_sidecar["evidence_catalog"] == catalog
+
+
+def test_soft_role_path_rejects_a_frozen_catalog_from_another_snapshot() -> None:
+    frame = make_frame()
+    catalog = build_vpa_evidence_catalog(frame)
+    catalog["snapshot_hash"] = "0" * 64
+    orchestrator, client, writer = _orchestrator(
+        "soft",
+        vpa_replies=[],
+        joint_replies=[],
+    )
+
+    record = orchestrator.submit(
+        frame,
+        CancelToken(),
+        lambda _event: None,
+        frozen_vpa_catalog=catalog,
+    )
+
+    assert record.run_outcome["status"] == "unavailable_input"
+    assert record.exception["failed_check"] == "frozen_vpa_catalog_mismatch"
+    client.clone_with_provider.assert_not_called()
+    writer.save_partial.assert_called_once()

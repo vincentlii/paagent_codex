@@ -35,7 +35,6 @@
     "experience_max_chars_per_entry": 400,
     "stage1_inject_pattern_briefs": true,
     "vpa_mode": "off",
-    "vpa_shadow_design": "full_prompt_ab",
     "vpa_enabled": false
   },
   "validation": {},

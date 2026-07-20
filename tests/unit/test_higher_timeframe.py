@@ -95,6 +95,26 @@ def test_higher_timeframe_fetch_keeps_subscription_and_renders_price_only_contex
     assert "frame" not in payload
 
 
+def test_analysis_record_persists_full_htf_bars_for_exact_replay() -> None:
+    from pa_agent.config.settings import Settings
+    from pa_agent.orchestrator.two_stage import _build_empty_record
+
+    context = fetch_higher_timeframe_context(
+        source=_FakeSource(),
+        source_kind="tradingview",
+        symbol="XAUUSD",
+        current_timeframe="15m",
+        bar_count=20,
+        now_ms=1_700_000_000_000,
+    )
+
+    record = _build_empty_record(make_frame(), Settings(), htf_context=context)
+
+    assert record.schema_version == 4
+    assert len(record.htf_kline_data) == 20
+    assert record.htf_kline_data[0]["seq"] == 1
+
+
 def test_higher_timeframe_uses_frozen_identity_when_provided() -> None:
     source = _FakeSource()
     identity = ResolvedInstrumentIdentity(

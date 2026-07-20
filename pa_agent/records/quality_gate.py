@@ -1,8 +1,9 @@
-"""Strict, sample-size-aware acceptance gates for PA/VPA analysis experiments.
+"""Sample-aware engineering gates for true PA/VPA A/A/B/B experiments.
 
-The gate evaluates engineering and semantic quality only. It cannot prove
-profitability and never unlocks VPA Soft execution by itself.
+These gates assess protocol integrity, grounding, repeatability, and runtime
+quality. They do not prove profitability and never enable Soft automatically.
 """
+
 from __future__ import annotations
 
 import math
@@ -11,27 +12,37 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from pa_agent.ai.vpa_measurements import evidence_has_relative_volume_comparison
-from pa_agent.config.vpa import VPA_PAIR_IDENTITY_VERSION
+from pa_agent.experiments.pa_vpa_aabb import (
+    decision_signature,
+    first_pass_clean,
+    validate_aabb_records,
+)
 
 
 @dataclass(frozen=True)
 class QualityThresholds:
-    """Review thresholds; callers may override them without changing runtime logic."""
-
-    min_completed_runs: int = 20
+    min_unique_snapshots: int = 20
+    min_repeatability_snapshots: int = 20
     max_call_p50_latency_ms: float = 100_000.0
     max_call_p95_latency_ms: float = 150_000.0
     max_run_p50_latency_ms: float = 220_000.0
     max_run_p95_latency_ms: float = 300_000.0
     max_run_p50_tokens: int = 180_000
     max_run_p95_tokens: int = 250_000
-    max_vpa_to_baseline_latency_ratio_p95: float = 2.2
+    max_b_to_a_latency_ratio_p95: float = 2.2
+    max_b_to_a_token_ratio_p95: float = 1.35
+    max_a_disagreement_rate: float = 0.25
+    max_b_disagreement_rate: float = 0.35
 
     def __post_init__(self) -> None:
-        if self.min_completed_runs < 1:
-            raise ValueError("min_completed_runs must be positive")
+        if self.min_unique_snapshots < 1:
+            raise ValueError("min_unique_snapshots must be positive")
+        if self.min_repeatability_snapshots < 1:
+            raise ValueError("min_repeatability_snapshots must be positive")
         for name, value in asdict(self).items():
-            if name != "min_completed_runs" and float(value) <= 0:
+            if name.startswith("min_"):
+                continue
+            if float(value) <= 0:
                 raise ValueError(f"{name} must be positive")
 
 
@@ -54,30 +65,27 @@ def _percentile(values: list[float], quantile: float) -> float | None:
     return round(ordered[index], 3)
 
 
-def _semantic_prefixes(events: list[dict[str, Any]]) -> tuple[bool, bool]:
+def _semantic_roles(events: list[dict[str, Any]]) -> tuple[bool, bool]:
     pa_error = False
     vpa_error = False
     for event in events:
         category = str(event.get("category") or "")
-        if category == "normalization":
+        if category in {"warning", "normalization"}:
             continue
+        stage = str(event.get("stage") or "")
         fields = [
             str(value)
             for key in ("invalid_fields", "missing_fields")
             for value in event.get(key, [])
         ]
-        if category == "c" and not fields:
-            pa_error = True
-        for value in fields:
-            is_vpa = value.startswith(
-                (
-                    "vpa:",
-                    "vpa_pair:",
-                    "paired_vpa_",
-                    "vpa_context",
-                    "vpa_impact",
-                )
-            )
+        is_vpa_stage = stage in {"vpa_evidence", "joint_arbiter"}
+        if not fields:
+            if category in {"a", "b", "c", "d", "e"}:
+                vpa_error = vpa_error or is_vpa_stage
+                pa_error = pa_error or not is_vpa_stage
+            continue
+        for field in fields:
+            is_vpa = is_vpa_stage or field.startswith(("vpa:", "joint:"))
             vpa_error = vpa_error or is_vpa
             pa_error = pa_error or not is_vpa
     return pa_error, vpa_error
@@ -87,14 +95,14 @@ def _has_pa_grounding(record: Any) -> bool:
     stage1 = _value(record, "stage1_diagnosis", {}) or {}
     evidence = stage1.get("pa_evidence") if isinstance(stage1, dict) else None
     return bool(
-        isinstance(evidence, dict)
-        and evidence.get("fact_refs")
-        and evidence.get("theory_rule_ids")
+        isinstance(evidence, dict) and evidence.get("fact_refs") and evidence.get("theory_rule_ids")
     )
 
 
-def _has_vpa_information_increment(sidecar: dict[str, Any]) -> bool:
-    context = sidecar.get("stage1_context")
+def _has_vpa_information_increment(record: Any) -> bool:
+    sidecar = _value(record, "vpa_sidecar", {}) or {}
+    sidecar = sidecar if isinstance(sidecar, dict) else {}
+    context = _value(record, "vpa_evidence", None) or sidecar.get("stage1_context")
     impact = sidecar.get("stage2_impact")
     if not isinstance(context, dict) or not isinstance(impact, dict):
         return False
@@ -120,7 +128,6 @@ def _has_vpa_information_increment(sidecar: dict[str, Any]) -> bool:
         if isinstance(catalog, dict)
         else {}
     )
-    observations = context.get("observations") or []
     return any(
         isinstance(item, dict)
         and item.get("finding_kind") in substantive
@@ -128,44 +135,21 @@ def _has_vpa_information_increment(sidecar: dict[str, Any]) -> bool:
             evidence_has_relative_volume_comparison(evidence.get(str(evidence_id)))
             for evidence_id in item.get("evidence_ids", [])
         )
-        for item in observations
+        for item in context.get("observations", [])
     )
 
 
-def _is_sha256(value: Any) -> bool:
-    text = str(value or "")
-    return len(text) == 64 and all(character in "0123456789abcdef" for character in text)
-
-
-def _valid_full_prompt_protocol(
-    sidecar: dict[str, Any],
-    paired: dict[str, Any],
-) -> bool:
-    pair_input_hash = str(paired.get("pair_input_hash") or "")
-    baseline_hash = str(paired.get("baseline_stage1_messages_hash") or "")
-    vpa_hash = str(paired.get("vpa_stage1_messages_hash") or "")
-    return bool(
-        paired.get("experiment_type") == "full_prompt_ab"
-        and paired.get("pair_identity_version") == VPA_PAIR_IDENTITY_VERSION
-        and paired.get("protocol_valid") is True
-        and paired.get("full_prompt_ab_eligible") is True
-        and _is_sha256(pair_input_hash)
-        and sidecar.get("pair_id") == f"vpa-{pair_input_hash[:12]}"
-        and paired.get("official_arm") == "baseline"
-        and paired.get("arm_sequence") == ["baseline", "vpa"]
-        and paired.get("provider_fallback_allowed") is False
-        and paired.get("client_instances_isolated") is True
-        and paired.get("same_frozen_input") is True
-        and paired.get("baseline_has_vpa_catalog") is False
-        and paired.get("vpa_has_vpa_catalog") is True
-        and paired.get("intended_prompt_difference_present") is True
-        and paired.get("incremental_context_disabled_for_protocol") is True
-        and paired.get("stage2_baseline_prefix_reused") is False
-        and paired.get("baseline_prompt_price_only") is True
-        and _is_sha256(baseline_hash)
-        and _is_sha256(vpa_hash)
-        and baseline_hash != vpa_hash
-    )
+def _group_records(records: list[Any]) -> tuple[dict[str, list[Any]], list[str]]:
+    groups: dict[str, list[Any]] = {}
+    unassigned: list[str] = []
+    for index, record in enumerate(records):
+        context = _value(record, "experiment_context", {}) or {}
+        experiment_id = str(context.get("experiment_id") if isinstance(context, dict) else "")
+        if not experiment_id:
+            unassigned.append(_run_id(record, index))
+            continue
+        groups.setdefault(experiment_id, []).append(record)
+    return groups, unassigned
 
 
 def evaluate_analysis_quality(
@@ -173,87 +157,128 @@ def evaluate_analysis_quality(
     *,
     thresholds: QualityThresholds | None = None,
 ) -> dict[str, Any]:
-    """Evaluate full-prompt Shadow runs without confusing quality with PnL."""
+    """Evaluate one or more complete offline A/A/B/B experiments."""
     limits = thresholds or QualityThresholds()
     candidates = list(records)
-    completed = [record for record in candidates if not _value(record, "exception")]
+    experiments, unassigned = _group_records(candidates)
 
+    invalid_experiments: dict[str, list[str]] = {}
     first_pass_failed: list[str] = []
     pa_missing: list[str] = []
     pa_semantic: list[str] = []
     vpa_increment_missing: list[str] = []
     vpa_semantic: list[str] = []
     authority_failed: list[str] = []
-    ab_invalid: list[str] = []
-    call_latencies: list[float] = []
-    run_latencies: list[float] = []
-    run_tokens: list[float] = []
-    arm_ratios: list[float] = []
     call_status_failed: list[str] = []
     missing_latency_runs: list[str] = []
     missing_token_usage_runs: list[str] = []
-    missing_arm_runs: list[str] = []
+    call_latencies: list[float] = []
+    run_latencies: list[float] = []
+    run_tokens: list[float] = []
+    latency_ratios: list[float] = []
+    token_ratios: list[float] = []
+    a_disagreements_by_snapshot: dict[str, list[bool]] = {}
+    b_disagreements_by_snapshot: dict[str, list[bool]] = {}
+    valid_experiment_count = 0
+    cohort_ids: set[str] = set()
+    missing_cohort_experiments: list[str] = []
 
-    for index, record in enumerate(completed):
-        run_id = _run_id(record, index)
-        events = [
-            event
-            for event in (_value(record, "validation_audit", []) or [])
-            if isinstance(event, dict)
-        ]
-        calls = [
-            call
-            for call in (_value(record, "call_attempts", []) or [])
-            if isinstance(call, dict)
-        ]
-        if events or any(str(call.get("status")) != "validated" for call in calls):
-            first_pass_failed.append(run_id)
-        call_arms = {str(call.get("arm") or "") for call in calls}
-        if not {"baseline", "vpa"}.issubset(call_arms):
-            missing_arm_runs.append(run_id)
-        if not calls or any(str(call.get("status")) != "validated" for call in calls):
-            call_status_failed.append(run_id)
-        if any(call.get("latency_ms") is None for call in calls):
-            missing_latency_runs.append(run_id)
-        if any(int(call.get("total_tokens") or 0) <= 0 for call in calls):
-            missing_token_usage_runs.append(run_id)
-
-        pa_event, vpa_event = _semantic_prefixes(events)
-        if not _has_pa_grounding(record):
-            pa_missing.append(run_id)
-        if pa_event:
-            pa_semantic.append(run_id)
-        if vpa_event:
-            vpa_semantic.append(run_id)
-
-        sidecar = _value(record, "vpa_sidecar", {}) or {}
-        sidecar = sidecar if isinstance(sidecar, dict) else {}
-        paired = sidecar.get("paired_execution") or {}
-        paired = paired if isinstance(paired, dict) else {}
-        if not _has_vpa_information_increment(sidecar):
-            vpa_increment_missing.append(run_id)
-        if paired.get("authority_violations"):
-            authority_failed.append(run_id)
-        if not _valid_full_prompt_protocol(sidecar, paired):
-            ab_invalid.append(run_id)
-
-        usable_calls = [call for call in calls if call.get("latency_ms") is not None]
-        latencies = [max(0.0, float(call["latency_ms"])) for call in usable_calls]
-        tokens = [max(0, int(call.get("total_tokens") or 0)) for call in calls]
-        call_latencies.extend(latencies)
-        if calls:
-            run_latencies.append(sum(latencies))
-            run_tokens.append(float(sum(tokens)))
-        arm_latency: dict[str, float] = {}
-        for call in usable_calls:
-            arm = str(call.get("arm") or "")
-            arm_latency[arm] = arm_latency.get(arm, 0.0) + max(
-                0.0, float(call["latency_ms"])
+    for experiment_id, experiment_records in experiments.items():
+        experiment_cohorts = {
+            str((_value(record, "experiment_context", {}) or {}).get("cohort_id") or "")
+            for record in experiment_records
+        }
+        experiment_cohorts.discard("")
+        if not experiment_cohorts:
+            missing_cohort_experiments.append(experiment_id)
+        cohort_ids.update(experiment_cohorts)
+        protocol = validate_aabb_records(experiment_records)
+        if not protocol["valid"]:
+            invalid_experiments[experiment_id] = list(protocol["errors"])
+            continue
+        valid_experiment_count += 1
+        market_snapshot_hash = str(
+            (_value(experiment_records[0], "experiment_context", {}) or {}).get(
+                "market_snapshot_hash"
             )
-        baseline_latency = arm_latency.get("baseline", 0.0)
-        vpa_latency = arm_latency.get("vpa", 0.0)
-        if baseline_latency > 0 and vpa_latency > 0:
-            arm_ratios.append(vpa_latency / baseline_latency)
+            or ""
+        )
+        by_arm = {
+            str((_value(record, "experiment_context", {}) or {}).get("arm_id") or ""): record
+            for record in experiment_records
+        }
+        if {"A1", "A2"}.issubset(by_arm):
+            a_disagreements_by_snapshot.setdefault(market_snapshot_hash, []).append(
+                decision_signature(by_arm["A1"]) != decision_signature(by_arm["A2"])
+            )
+        if {"B1", "B2"}.issubset(by_arm):
+            b_disagreements_by_snapshot.setdefault(market_snapshot_hash, []).append(
+                decision_signature(by_arm["B1"]) != decision_signature(by_arm["B2"])
+            )
+
+        totals_by_group: dict[str, list[tuple[float, float]]] = {"A": [], "B": []}
+        for index, record in enumerate(experiment_records):
+            run_id = _run_id(record, index)
+            context = _value(record, "experiment_context", {}) or {}
+            group = str(context.get("group") or "")
+            events = [
+                event
+                for event in (_value(record, "validation_audit", []) or [])
+                if isinstance(event, dict)
+            ]
+            calls = [
+                call
+                for call in (_value(record, "call_attempts", []) or [])
+                if isinstance(call, dict)
+            ]
+            if not first_pass_clean(record):
+                first_pass_failed.append(run_id)
+            pa_event, vpa_event = _semantic_roles(events)
+            if not _has_pa_grounding(record):
+                pa_missing.append(run_id)
+            if pa_event:
+                pa_semantic.append(run_id)
+            if group == "B":
+                if not _has_vpa_information_increment(record):
+                    vpa_increment_missing.append(run_id)
+                if vpa_event:
+                    vpa_semantic.append(run_id)
+                sidecar = _value(record, "vpa_sidecar", {}) or {}
+                role_execution = sidecar.get("role_execution") if isinstance(sidecar, dict) else {}
+                if not isinstance(role_execution, dict) or role_execution.get(
+                    "authority_violations"
+                ):
+                    authority_failed.append(run_id)
+
+            if not calls or any(str(call.get("status") or "") != "validated" for call in calls):
+                call_status_failed.append(run_id)
+            if any(call.get("latency_ms") is None for call in calls):
+                missing_latency_runs.append(run_id)
+            if any(int(call.get("total_tokens") or 0) <= 0 for call in calls):
+                missing_token_usage_runs.append(run_id)
+            latencies = [
+                max(0.0, float(call["latency_ms"]))
+                for call in calls
+                if call.get("latency_ms") is not None
+            ]
+            tokens = [max(0, int(call.get("total_tokens") or 0)) for call in calls]
+            call_latencies.extend(latencies)
+            run_latency = sum(latencies)
+            run_token = float(sum(tokens))
+            if calls:
+                run_latencies.append(run_latency)
+                run_tokens.append(run_token)
+            if group in totals_by_group:
+                totals_by_group[group].append((run_latency, run_token))
+        if totals_by_group["A"] and totals_by_group["B"]:
+            a_latency = sum(value[0] for value in totals_by_group["A"]) / len(totals_by_group["A"])
+            b_latency = sum(value[0] for value in totals_by_group["B"]) / len(totals_by_group["B"])
+            a_tokens = sum(value[1] for value in totals_by_group["A"]) / len(totals_by_group["A"])
+            b_tokens = sum(value[1] for value in totals_by_group["B"]) / len(totals_by_group["B"])
+            if a_latency > 0:
+                latency_ratios.append(b_latency / a_latency)
+            if a_tokens > 0:
+                token_ratios.append(b_tokens / a_tokens)
 
     metrics = {
         "call_latency_ms": {
@@ -268,9 +293,8 @@ def evaluate_analysis_quality(
             "p50": _percentile(run_tokens, 0.50),
             "p95": _percentile(run_tokens, 0.95),
         },
-        "vpa_to_baseline_latency_ratio": {
-            "p95": _percentile(arm_ratios, 0.95),
-        },
+        "b_to_a_latency_ratio": {"p95": _percentile(latency_ratios, 0.95)},
+        "b_to_a_token_ratio": {"p95": _percentile(token_ratios, 0.95)},
     }
     performance_violations: list[str] = []
     comparisons = (
@@ -281,9 +305,14 @@ def evaluate_analysis_quality(
         ("run_total_tokens.p50", metrics["run_total_tokens"]["p50"], limits.max_run_p50_tokens),
         ("run_total_tokens.p95", metrics["run_total_tokens"]["p95"], limits.max_run_p95_tokens),
         (
-            "vpa_to_baseline_latency_ratio.p95",
-            metrics["vpa_to_baseline_latency_ratio"]["p95"],
-            limits.max_vpa_to_baseline_latency_ratio_p95,
+            "b_to_a_latency_ratio.p95",
+            metrics["b_to_a_latency_ratio"]["p95"],
+            limits.max_b_to_a_latency_ratio_p95,
+        ),
+        (
+            "b_to_a_token_ratio.p95",
+            metrics["b_to_a_token_ratio"]["p95"],
+            limits.max_b_to_a_token_ratio_p95,
         ),
     )
     for name, value, maximum in comparisons:
@@ -297,13 +326,45 @@ def evaluate_analysis_quality(
         performance_violations.append("incomplete_call_latency")
     if missing_token_usage_runs:
         performance_violations.append("incomplete_token_usage")
-    if missing_arm_runs:
-        performance_violations.append("incomplete_ab_call_ledger")
 
+    experiment_count = len(experiments)
+    valid_snapshot_hashes = set(a_disagreements_by_snapshot) | set(b_disagreements_by_snapshot)
+    unique_valid_snapshots = len(valid_snapshot_hashes)
+    cohort_consistent = not missing_cohort_experiments and len(cohort_ids) <= 1
+    repeatability_reviewable = (
+        cohort_consistent and unique_valid_snapshots >= limits.min_repeatability_snapshots
+    )
+    a_snapshot_rates = [
+        sum(values) / len(values) for values in a_disagreements_by_snapshot.values()
+    ]
+    b_snapshot_rates = [
+        sum(values) / len(values) for values in b_disagreements_by_snapshot.values()
+    ]
+    a_rate = sum(a_snapshot_rates) / len(a_snapshot_rates) if a_snapshot_rates else None
+    b_rate = sum(b_snapshot_rates) / len(b_snapshot_rates) if b_snapshot_rates else None
+    repeatability_passed = not repeatability_reviewable or bool(
+        a_rate is not None
+        and b_rate is not None
+        and a_rate <= limits.max_a_disagreement_rate
+        and b_rate <= limits.max_b_disagreement_rate
+    )
     axes = {
+        "aabb_protocol": {
+            "passed": not invalid_experiments and not unassigned,
+            "invalid_experiments": invalid_experiments,
+            "unassigned_runs": sorted(set(unassigned)),
+        },
+        "cohort_consistency": {
+            "passed": cohort_consistent,
+            "cohort_count": len(cohort_ids),
+            "cohort_ids": sorted(cohort_ids),
+            "missing_cohort_experiments": sorted(set(missing_cohort_experiments)),
+            "requirement": "quality metrics must use one analysis cohort",
+        },
         "first_pass_clean": {
             "passed": not first_pass_failed,
             "failed_runs": sorted(set(first_pass_failed)),
+            "warnings_are_accepted": True,
         },
         "pa_grounding": {
             "passed": not pa_missing and not pa_semantic,
@@ -311,43 +372,54 @@ def evaluate_analysis_quality(
             "semantic_error_runs": sorted(set(pa_semantic)),
         },
         "vpa_grounding": {
-            "passed": not vpa_increment_missing
-            and not vpa_semantic
-            and not authority_failed,
+            "passed": not vpa_increment_missing and not vpa_semantic and not authority_failed,
             "missing_information_increment_runs": sorted(set(vpa_increment_missing)),
             "semantic_error_runs": sorted(set(vpa_semantic)),
             "authority_violation_runs": sorted(set(authority_failed)),
         },
-        "ab_protocol": {
-            "passed": not ab_invalid,
-            "invalid_runs": sorted(set(ab_invalid)),
+        "repeatability": {
+            "passed": repeatability_passed,
+            "statistically_reviewable": repeatability_reviewable,
+            "experiments": valid_experiment_count,
+            "unique_market_snapshots": unique_valid_snapshots,
+            "a_disagreement_rate": round(a_rate, 4) if a_rate is not None else None,
+            "b_disagreement_rate": round(b_rate, 4) if b_rate is not None else None,
         },
         "performance": {
             "passed": not performance_violations,
             "metrics": metrics,
             "violations": performance_violations,
+            "failed_call_status_runs": sorted(set(call_status_failed)),
             "missing_latency_runs": sorted(set(missing_latency_runs)),
             "missing_token_usage_runs": sorted(set(missing_token_usage_runs)),
-            "missing_arm_runs": sorted(set(missing_arm_runs)),
         },
     }
-    enough = len(completed) >= limits.min_completed_runs
+    enough = unique_valid_snapshots >= limits.min_unique_snapshots
     axes_pass = all(bool(axis["passed"]) for axis in axes.values())
-    status = "pass" if enough and axes_pass else "fail" if enough else "insufficient_sample"
+    if not candidates:
+        status = "insufficient_sample"
+    elif not axes_pass:
+        status = "fail"
+    elif not enough:
+        status = "insufficient_sample"
+    else:
+        status = "pass"
     return {
         "status": status,
         "quality_gate_passed": status == "pass",
         "ready_for_soft": False,
         "sample": {
             "provided_runs": len(candidates),
-            "completed_runs": len(completed),
-            "minimum_completed_runs": limits.min_completed_runs,
+            "experiment_groups": experiment_count,
+            "completed_protocol_experiments": valid_experiment_count,
+            "unique_market_snapshots": unique_valid_snapshots,
+            "minimum_unique_snapshots": limits.min_unique_snapshots,
         },
         "thresholds": asdict(limits),
         "axes": axes,
         "promotion_requirements_not_evaluated": [
             "matched counterfactual outcomes",
             "trade-frequency stability",
-            "out-of-sample profitability after costs and slippage",
+            "independent out-of-sample profitability after costs and slippage",
         ],
     }

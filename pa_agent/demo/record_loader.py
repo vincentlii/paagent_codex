@@ -108,6 +108,7 @@ def frame_from_record_klines(
     symbol: str,
     timeframe: str,
     snapshot_ts_local_ms: int | None = None,
+    data_metadata: dict | None = None,
 ) -> KlineFrame:
     """Build a chart/analysis frame from persisted ``kline_data`` (newest-first)."""
     rebased: list[KlineBar] = []
@@ -124,6 +125,12 @@ def frame_from_record_klines(
                 low=float(b["low"]),
                 close=float(b["close"]),
                 volume=float(b.get("volume", 0)),
+                amount=float(b.get("amount", 0) or 0),
+                pct_chg=(
+                    float(b["pct_chg"])
+                    if b.get("pct_chg") is not None
+                    else None
+                ),
                 closed=bool(b.get("closed", True)),
             )
         )
@@ -135,4 +142,5 @@ def frame_from_record_klines(
         bars=tuple(rebased),
         indicators=compute_indicators(rebased),
         snapshot_ts_local_ms=snapshot_ts_local_ms or now_local_ms(),
+        data_metadata=dict(data_metadata or {}),
     )

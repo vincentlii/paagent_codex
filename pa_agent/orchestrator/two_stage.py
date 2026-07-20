@@ -21,7 +21,6 @@ are not retried; immutable-field cheat detection rejects suspicious retries.
 from __future__ import annotations
 
 import copy
-import dataclasses
 import hashlib
 import json
 import logging
@@ -54,6 +53,7 @@ from pa_agent.data.base import KlineFrame
 from pa_agent.orchestrator.role_call import StructuredRoleResult, run_structured_role
 from pa_agent.orchestrator.validation_retry import validate_with_retry
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
+from pa_agent.records.suppressed_writer import SuppressedRecordWriter
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 from pa_agent.util.timefmt import now_local_ms
 
@@ -82,45 +82,13 @@ def _has_executable_order(decision: dict[str, Any]) -> bool:
     }
 
 
-class _NoopPendingWriter:
-    """Suppress child-arm persistence; the parent saves one paired record."""
-
-    def save_full(self, record: AnalysisRecord) -> None:  # noqa: ARG002
-        return None
-
-    def save_partial(self, record: AnalysisRecord, reason: str) -> None:  # noqa: ARG002
-        return None
-
-
-def _vpa_pair_diff(baseline: AnalysisRecord, vpa: AnalysisRecord) -> dict[str, Any]:
-    """Compare only contract fields; never trust a model's self-declared overlap."""
-    if vpa.exception is not None:
-        failure = vpa.exception if isinstance(vpa.exception, dict) else {}
-        return {
-            "stage1": {},
-            "stage2": {},
-            "strategy_files": {
-                "baseline": list(baseline.strategy_files_used or []),
-                "vpa": list(vpa.strategy_files_used or []),
-            },
-            "observed_effect": {
-                "classification": "vpa_arm_failed",
-                "comparison_valid": False,
-                "failure_stage": failure.get("stage"),
-                "failure_category": failure.get("category"),
-                "baseline_has_executable_order": _has_executable_order(
-                    (baseline.stage2_decision or {}).get("decision", {})
-                ),
-                "vpa_has_executable_order": None,
-                "stage1_changed": None,
-                "stage2_changed": None,
-            },
-        }
-    base_s1 = baseline.stage1_diagnosis or {}
-    vpa_s1 = vpa.stage1_diagnosis or {}
+def _pa_joint_diff(
+    baseline: AnalysisRecord,
+    joint_stage2: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare the materialized Joint decision with its frozen PA baseline."""
     base_s2 = (baseline.stage2_decision or {}).get("decision", {})
-    vpa_s2 = (vpa.stage2_decision or {}).get("decision", {})
-    keys = (*_PA_STAGE1_PROTECTED_KEYS, "entry_setup", "bar_analysis")
+    joint_s2 = joint_stage2.get("decision", {})
     decision_keys = (
         "order_type",
         "order_direction",
@@ -131,41 +99,30 @@ def _vpa_pair_diff(baseline: AnalysisRecord, vpa: AnalysisRecord) -> dict[str, A
         "trade_confidence",
         "estimated_win_rate",
     )
-    stage1_diff = {
-        key: {"baseline": base_s1.get(key), "vpa": vpa_s1.get(key)}
-        for key in keys
-        if base_s1.get(key) != vpa_s1.get(key)
-    }
     stage2_diff = {
-        key: {"baseline": base_s2.get(key), "vpa": vpa_s2.get(key)}
+        key: {"baseline": base_s2.get(key), "joint": joint_s2.get(key)}
         for key in decision_keys
-        if base_s2.get(key) != vpa_s2.get(key)
+        if base_s2.get(key) != joint_s2.get(key)
     }
     baseline_trade = _has_executable_order(base_s2)
-    vpa_trade = _has_executable_order(vpa_s2)
-    if baseline_trade and not vpa_trade:
-        effect = "vpa_reduced_entry_attempt"
-    elif not baseline_trade and vpa_trade:
-        effect = "vpa_added_entry_attempt"
-    elif baseline_trade and vpa_trade and stage2_diff:
-        effect = "vpa_modified_entry_attempt"
-    elif stage1_diff or stage2_diff:
-        effect = "diagnosis_or_timing_changed_without_trade_rate_effect"
+    joint_trade = _has_executable_order(joint_s2)
+    if baseline_trade and not joint_trade:
+        effect = "joint_reduced_entry_attempt"
+    elif not baseline_trade and joint_trade:
+        effect = "joint_added_entry_attempt"
+    elif baseline_trade and joint_trade and stage2_diff:
+        effect = "joint_modified_entry_attempt"
+    elif stage2_diff:
+        effect = "joint_timing_changed_without_trade_rate_effect"
     else:
         effect = "keep_baseline"
     return {
-        "stage1": stage1_diff,
         "stage2": stage2_diff,
-        "strategy_files": {
-            "baseline": list(baseline.strategy_files_used or []),
-            "vpa": list(vpa.strategy_files_used or []),
-        },
         "observed_effect": {
             "classification": effect,
             "comparison_valid": True,
             "baseline_has_executable_order": baseline_trade,
-            "vpa_has_executable_order": vpa_trade,
-            "stage1_changed": bool(stage1_diff),
+            "joint_has_executable_order": joint_trade,
             "stage2_changed": bool(stage2_diff),
         },
     }
@@ -510,13 +467,17 @@ def _build_empty_record(
             "context_window": p.context_window,
         }
 
-    # Serialize kline bars
-    kline_data: list[dict] = []
-    for bar in frame.bars:
-        if dataclasses.is_dataclass(bar) and not isinstance(bar, type):
-            kline_data.append(dataclasses.asdict(bar))
-        else:
-            kline_data.append(bar.__dict__)
+    from pa_agent.data.snapshot_bundle import serialize_frame_bars
+
+    kline_data = serialize_frame_bars(frame)
+    htf_frame = (
+        htf_context.get("frame")
+        if isinstance(htf_context, dict) and htf_context.get("status") == "available"
+        else None
+    )
+    htf_kline_data = serialize_frame_bars(
+        htf_frame if isinstance(htf_frame, KlineFrame) else None
+    )
 
     from pa_agent.ai.decision_stance import normalize_stance
 
@@ -552,6 +513,7 @@ def _build_empty_record(
         kline_data=kline_data,
         htf_text=render_higher_timeframe_context(htf_context),
         htf_context=serialize_higher_timeframe_context(htf_context),
+        htf_kline_data=htf_kline_data,
         snapshot_context=compact_snapshot_context(frame),
         stage1_messages=[],
         stage1_response=None,
@@ -714,8 +676,6 @@ class TwoStageOrchestrator:
     ) -> bool:
         """Persist a completed record and emit an event matching the write result."""
         result = self._pending_writer.save_full(record)
-        if isinstance(self._pending_writer, _NoopPendingWriter):
-            return True
         ok = bool(getattr(result, "ok", True))
         if not ok:
             on_event(OrchestratorEvent.RecordSaveFailed)
@@ -731,8 +691,6 @@ class TwoStageOrchestrator:
     ) -> bool:
         """Persist a partial record without confusing it with a completed result."""
         result = self._pending_writer.save_partial(record, reason)
-        if isinstance(self._pending_writer, _NoopPendingWriter):
-            return True
         ok = result is not None and bool(getattr(result, "ok", True))
         if not ok:
             on_event(OrchestratorEvent.RecordSaveFailed)
@@ -757,6 +715,7 @@ class TwoStageOrchestrator:
         previous_record: AnalysisRecord | None = None,
         incremental_new_bar_count: int | None = None,
         htf_context: dict[str, Any] | None = None,
+        frozen_vpa_catalog: dict[str, Any] | None = None,
     ) -> AnalysisRecord:
         """Run the two-stage analysis pipeline and return an AnalysisRecord.
 
@@ -799,6 +758,7 @@ class TwoStageOrchestrator:
                 previous_record=previous_record,
                 incremental_new_bar_count=incremental_new_bar_count,
                 htf_context=htf_context,
+                frozen_vpa_catalog=frozen_vpa_catalog,
             )
 
         # ── Step 1: Build partial record ──────────────────────────────────────
@@ -1728,10 +1688,14 @@ class TwoStageOrchestrator:
         previous_record: AnalysisRecord | None,
         incremental_new_bar_count: int | None,
         htf_context: dict[str, Any] | None,
+        frozen_vpa_catalog: dict[str, Any] | None,
     ) -> AnalysisRecord:
         """Run PA, independent VPA evidence, and a bounded joint arbiter."""
         from pa_agent.ai.json_validator import JsonValidator
-        from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
+        from pa_agent.ai.vpa_measurements import (
+            build_vpa_evidence_catalog,
+            validate_frozen_vpa_catalog,
+        )
         from pa_agent.data.snapshot_bundle import build_snapshot_bundle
 
         assert self._settings is not None
@@ -1786,6 +1750,37 @@ class TwoStageOrchestrator:
             on_event(OrchestratorEvent.InsufficientData)
             return preflight_record
 
+        if frozen_vpa_catalog is not None:
+            try:
+                frozen_vpa_catalog = validate_frozen_vpa_catalog(
+                    frame,
+                    frozen_vpa_catalog,
+                )
+            except ValueError as exc:
+                preflight_record = preflight_record.model_copy(
+                    update={
+                        "exception": {
+                            "type": "insufficient_data",
+                            "stage": "preflight",
+                            "failed_check": "frozen_vpa_catalog_mismatch",
+                            "message": str(exc),
+                        },
+                        "run_outcome": RunOutcome(
+                            status="unavailable_input",
+                            official_path="none",
+                            requested_vpa_mode=configured_mode,
+                            reason=str(exc),
+                        ).model_dump(),
+                    }
+                )
+                self._persist_partial(
+                    preflight_record,
+                    "frozen_vpa_catalog_mismatch",
+                    on_event,
+                )
+                on_event(OrchestratorEvent.InsufficientData)
+                return preflight_record
+
         baseline_settings = self._settings.model_copy(deep=True)
         baseline_settings.prompt.vpa_mode = "off"
         baseline_settings.prompt.vpa_enabled = False
@@ -1814,7 +1809,7 @@ class TwoStageOrchestrator:
             ),
             router=self._router,
             validator=JsonValidator(baseline_settings),
-            pending_writer=_NoopPendingWriter(),
+            pending_writer=SuppressedRecordWriter(),
             exp_reader=self._exp_reader,
             settings=baseline_settings,
             call_arm="pa",
@@ -1884,7 +1879,11 @@ class TwoStageOrchestrator:
         baseline_stage2 = copy.deepcopy(baseline.stage2_decision or {})
         hypotheses = PaHypothesisSet.from_stage1(stage1)
         hypotheses_dict = hypotheses.model_dump()
-        catalog = build_vpa_evidence_catalog(frame)
+        catalog = (
+            copy.deepcopy(frozen_vpa_catalog)
+            if frozen_vpa_catalog is not None
+            else build_vpa_evidence_catalog(frame)
+        )
         snapshot_hash = str(catalog.get("snapshot_hash") or "")
         role_assembler = self._assembler.clone_with_prompt_settings(
             role_settings.prompt,
@@ -2073,10 +2072,7 @@ class TwoStageOrchestrator:
                 if isinstance(joint_envelope, dict)
                 else copy.deepcopy(baseline_stage2)
             )
-            comparison_record = baseline.model_copy(
-                update={"stage2_decision": joint_stage2}
-            )
-            comparison = _vpa_pair_diff(baseline, comparison_record)
+            comparison = _pa_joint_diff(baseline, joint_stage2)
             arbitration = (
                 copy.deepcopy(joint_envelope.get("joint_arbitration"))
                 if isinstance(joint_envelope, dict)

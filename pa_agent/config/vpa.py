@@ -10,7 +10,6 @@ from typing import Literal
 
 VpaMode = Literal["off", "shadow", "soft"]
 _VALID_VPA_MODES = frozenset(("off", "shadow", "soft"))
-VPA_PAIR_IDENTITY_VERSION = "initial_stage1_requests_v1"
 
 
 def resolve_vpa_mode(prompt_settings: object | None) -> VpaMode:

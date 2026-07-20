@@ -1,7 +1,7 @@
 # AGENTS
 
 - 回应与生成文件优先使用中文；代码、API、错误信息、产品名保留英文。
-- 修改 PA / Wyckoff VPA 融合链路前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md`、`docs/architecture/ADR-0001-analysis-authority.md`、`docs/architecture/ADR-0002-provider-validation-boundary.md`、`docs/architecture/ADR-0003-pa-vpa-joint-roles.md` 与 `docs/architecture/ADR-0004-context-sliced-prompts.md`。
+- 修改 PA / Wyckoff VPA 融合链路前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0005`。
 - 每个实现 Phase 必须按 `docs/quality/acceptance.md` 完成测试、临时文件清理和独立提交；机器阈值以 `config/quality_contract.toml` 为准。
 - VPA 必须保持开关化：以 `resolve_vpa_mode(...) == "off"` 为准，VPA prompt、测量块及历史 `vpa_*` / `wyckoff_*` 字段不得进入原 PA 链路。
 - 程序只拥有可确定、可复算、无歧义的事实测量、Schema、引用范围、订单数学和执行安全；趋势、周期、Setup、位置、信号质量及 Wyckoff 解释属于 LLM。
@@ -13,7 +13,8 @@
 - VPA observation 的 `bar_range` 由程序根据 evidence ID 生成。解释字段不得复写 OHLC/volume/RVOL 等数值或声明无明确窗口的新高/新低；基础事实只能引用程序目录。
 - §9.0P 计划型限价只由程序校验 entry 相对 K1.close 的正确一侧；不得因 K1 影线历史触价、推测 tick size 或自由文本而自动判失效、改价或改单。
 - `analysis_outcomes` 只保存人工核验的真实执行结果；`counterfactual_outcomes` 只保存闭盘 OHLC 对计划的反事实回放。两者不得混为真实 PnL、胜率或训练标签。
-- 完整 A/B 与反事实报告只接纳当前 `pair_identity_version` 且通过 protocol/first-pass/authority 校验的记录，并按 `pair_id` 聚合重复实验；market order、同 K 入场与出场、同 K 同触止损与目标、突破跳空越价必须保留为 unsupported/ambiguous。同 timestamp OHLC 冲突时拒绝历史，原始快照滚出窗口时停止推进，不得猜测成交路径。
+- PA/VPA 增量只能用离线 `pa_vpa_aabb_v1` 四臂协议估计：模型调用前登记 A1/A2/B1/B2，使用同一冻结输入、四个独立客户端及 ABBA/BAAB 顺序，并同时报告 ITT、per-protocol、A/A 与 B/B 分歧。生产 Shadow/Soft 不得自称 A/B；每条 record 的反事实只回放自己的正式订单。market order、同 K 入场与出场、同 K 同触止损与目标、突破跳空越价必须保留为 unsupported/ambiguous。同 timestamp OHLC 冲突时拒绝历史，原始快照滚出窗口时停止推进，不得猜测成交路径。
+- A/A/B/B 统计以 `market_snapshot_hash` 为独立样本，以 `cohort_id` 隔离 Provider/settings/源码/Prompt 版本；重复臂、重跑和同一行情的跨版本复核不得重复计样，质量门禁不得混合 cohort。
 - 自动回放目标周期由 `general.counterfactual_horizon_bars` 配置，但单条记录不得超过 `analysis_bar_count - 1`；分析最少需要 20 根已收盘 K 线。
 - 冻结快照分析期间必须暂停网络刷新；Shadow/Soft 的 PA baseline 与 Joint 判断都发生在置信度执行策略之前，执行策略只对正式结果应用一次。
 - DeepSeek 原生 OpenAI-compatible 请求使用 `extra_body.thinking.type` 与顶层 `reasoning_effort`；不得混入 Anthropic `output_config.effort` 语义。

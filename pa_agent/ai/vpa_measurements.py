@@ -3,8 +3,10 @@
 The module deliberately measures reproducible facts.  It never labels a
 Wyckoff event, infers participant intent, or creates a trade decision.
 """
+
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -16,6 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_agent.data.base import KlineBar, KlineFrame
 from pa_agent.data.datetime_ts import ts_open_to_ms
+from pa_agent.data.snapshot_bundle import seasonality_context_hash
 
 
 def _finite(value: float | int | None) -> float | None:
@@ -396,9 +399,7 @@ def compute_vpa_measurements(
         base_median = median(baseline) if baseline_ready else None
         relative_volume = volume / base_median if volume_available and base_median else None
         volume_percentile = (
-            _percentile_rank(volume, baseline)
-            if volume_available and baseline_ready
-            else None
+            _percentile_rank(volume, baseline) if volume_available and baseline_ready else None
         )
 
         spread = max(0.0, float(bar.high) - float(bar.low))
@@ -424,23 +425,15 @@ def compute_vpa_measurements(
             samples,
             min_samples=min_seasonality_samples,
         )
-        seasonal_rvol = (
-            volume / seasonal_median
-            if volume_available and seasonal_median
-            else None
-        )
+        seasonal_rvol = volume / seasonal_median if volume_available and seasonal_median else None
         older_volume = volumes[index + 1] if index + 1 < len(volumes) else None
         volume_vs_previous = (
             volume / older_volume
             if volume_available and older_volume is not None and older_volume > 0
             else None
         )
-        prior_5_high, prior_5_low, prior_5_count = _prior_window_extremes(
-            bars, index, 5
-        )
-        prior_20_high, prior_20_low, prior_20_count = _prior_window_extremes(
-            bars, index, 20
-        )
+        prior_5_high, prior_5_low, prior_5_count = _prior_window_extremes(bars, index, 5)
+        prior_20_high, prior_20_low, prior_20_count = _prior_window_extremes(bars, index, 20)
 
         recent.append(
             {
@@ -452,9 +445,7 @@ def compute_vpa_measurements(
                 "candle_direction": (
                     "bullish"
                     if float(bar.close) > float(bar.open)
-                    else "bearish"
-                    if float(bar.close) < float(bar.open)
-                    else "flat"
+                    else "bearish" if float(bar.close) < float(bar.open) else "flat"
                 ),
                 "volume": _round(volume, 2) if volume_available else None,
                 "volume_available": volume_available,
@@ -528,22 +519,22 @@ def compute_vpa_measurements(
             }
         )
 
-    newest_context = recent[0]["time_context"] if recent else {
-        "time_bucket": "unknown",
-        "day_of_week": "unknown",
-    }
-    positive_recent_volume_count = sum(
-        1 for item in recent if item.get("volume_available")
+    newest_context = (
+        recent[0]["time_context"]
+        if recent
+        else {
+            "time_bucket": "unknown",
+            "day_of_week": "unknown",
+        }
     )
+    positive_recent_volume_count = sum(1 for item in recent if item.get("volume_available"))
     volume_coverage = {
         "bar_count": len(recent),
         "positive_volume_count": positive_recent_volume_count,
         "complete": positive_recent_volume_count == len(recent),
     }
     usable_baseline_count = sum(
-        1
-        for item in recent
-        if item.get("baseline_sample_count", 0) >= baseline_min_samples
+        1 for item in recent if item.get("baseline_sample_count", 0) >= baseline_min_samples
     )
     baseline_coverage = {
         "bar_count": len(recent),
@@ -553,7 +544,9 @@ def compute_vpa_measurements(
     }
     if not volume_coverage["complete"] or not baseline_coverage["complete"]:
         status = "limited"
-    seasonality_available = bool(recent and recent[0]["seasonality_sample_count"] >= min_seasonality_samples)
+    seasonality_available = bool(
+        recent and recent[0]["seasonality_sample_count"] >= min_seasonality_samples
+    )
     return {
         "status": status,
         "provenance": provenance,
@@ -595,13 +588,17 @@ def compute_vpa_measurements(
 
 def _snapshot_hash(frame: KlineFrame) -> str:
     """Return a deterministic raw-snapshot identity, ignoring local run time."""
+    provenance = {
+        key: _metadata_text(frame, key, "")
+        for key in ("source", "venue", "volume_kind", "volume_quality", "timezone_basis")
+    }
+    seasonal_hash = seasonality_context_hash(frame.data_metadata)
+    if seasonal_hash is not None:
+        provenance["seasonality_context_hash"] = seasonal_hash
     payload = {
         "symbol": frame.symbol,
         "timeframe": frame.timeframe,
-        "provenance": {
-            key: _metadata_text(frame, key, "")
-            for key in ("source", "venue", "volume_kind", "volume_quality", "timezone_basis")
-        },
+        "provenance": provenance,
         "bars": [
             {
                 "seq": bar.seq,
@@ -618,6 +615,34 @@ def _snapshot_hash(frame: KlineFrame) -> str:
     }
     encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def vpa_snapshot_hash(frame: KlineFrame) -> str:
+    """Public immutable OHLCV/provenance identity used by experiment replay."""
+    return _snapshot_hash(frame)
+
+
+def vpa_catalog_id(catalog: dict[str, Any]) -> str:
+    """Recompute a catalog identity from every field except ``catalog_id``."""
+    core = {key: value for key, value in catalog.items() if key != "catalog_id"}
+    serialized = json.dumps(
+        core,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return "vpa-catalog-" + hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+
+def validate_frozen_vpa_catalog(frame: KlineFrame, catalog: object) -> dict[str, Any]:
+    """Return a copied catalog only when its frame and content identities match."""
+    if not isinstance(catalog, dict):
+        raise ValueError("frozen VPA catalog must be an object")
+    if str(catalog.get("snapshot_hash") or "") != vpa_snapshot_hash(frame):
+        raise ValueError("frozen VPA catalog snapshot_hash does not match the frame")
+    if str(catalog.get("catalog_id") or "") != vpa_catalog_id(catalog):
+        raise ValueError("frozen VPA catalog_id does not match its contents")
+    return copy.deepcopy(catalog)
 
 
 def build_vpa_evidence_catalog(
@@ -721,8 +746,7 @@ def build_vpa_evidence_catalog(
         "institutional_intent_attribution": False,
         "interpretation_ceiling": (
             "price_volume_context_only"
-            if str(measurements["provenance"].get("volume_kind") or "").lower()
-            == "real"
+            if str(measurements["provenance"].get("volume_kind") or "").lower() == "real"
             else "relative_activity_only"
         ),
     }
@@ -749,10 +773,9 @@ def build_vpa_evidence_catalog(
         },
         "evidence": evidence,
     }
-    serialized = json.dumps(catalog_core, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     return {
         **catalog_core,
-        "catalog_id": "vpa-catalog-" + hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16],
+        "catalog_id": vpa_catalog_id(catalog_core),
     }
 
 

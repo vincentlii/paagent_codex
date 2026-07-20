@@ -10,7 +10,7 @@ import pytest
 
 from pa_agent.data.base import DataSourceTransientError
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
-from pa_agent.data.snapshot_bundle import compact_snapshot_context
+from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.data.tradingview import TradingViewSource
 from tests.integration.conftest import make_frame
 
@@ -105,6 +105,16 @@ def test_identity_round_trip_and_comparison_are_case_insensitive() -> None:
     )
 
 
+def test_frame_bar_serialization_is_explicit_and_lossless() -> None:
+    frame = make_frame()
+    serialized = serialize_frame_bars(frame)
+
+    assert serialized == [bar.__dict__ for bar in frame.bars]
+    assert serialize_frame_bars(SimpleNamespace(bars=({"open": 1.0},))) == [{"open": 1.0}]
+    with pytest.raises(TypeError, match="unsupported bar type"):
+        serialize_frame_bars(SimpleNamespace(bars=(1,)))
+
+
 def test_compact_snapshot_context_keeps_identity_without_seasonality_payload() -> None:
     identity = ResolvedInstrumentIdentity(
         provider="tradingview",
@@ -125,4 +135,5 @@ def test_compact_snapshot_context_keeps_identity_without_seasonality_payload() -
 
     assert context["source_identity"] == identity.to_dict()
     assert context["seasonality_history_bars"] == 50
+    assert len(context["seasonality_context_hash"]) == 64
     assert "seasonality_samples" not in context

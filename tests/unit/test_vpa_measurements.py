@@ -174,15 +174,37 @@ def test_vpa_snapshot_identity_ignores_local_observation_time() -> None:
 
 def test_vpa_catalog_identity_includes_injected_measurement_context() -> None:
     frame = _frame([120] * 12)
-    asia = build_vpa_evidence_catalog(
-        replace(frame, data_metadata={"market_session": "Asia"})
-    )
-    london = build_vpa_evidence_catalog(
-        replace(frame, data_metadata={"market_session": "London"})
-    )
+    asia = build_vpa_evidence_catalog(replace(frame, data_metadata={"market_session": "Asia"}))
+    london = build_vpa_evidence_catalog(replace(frame, data_metadata={"market_session": "London"}))
 
     assert asia["snapshot_hash"] == london["snapshot_hash"]
     assert asia["catalog_id"] != london["catalog_id"]
+
+
+def test_vpa_snapshot_identity_covers_raw_seasonality_history() -> None:
+    frame = _frame([120] * 12)
+    first = build_vpa_evidence_catalog(
+        replace(
+            frame,
+            data_metadata={
+                "timezone_basis": "UTC",
+                "seasonality_history_bars": 8,
+                "seasonality_samples": {"00:00": [100.0] * 8},
+            },
+        )
+    )
+    second = build_vpa_evidence_catalog(
+        replace(
+            frame,
+            data_metadata={
+                "timezone_basis": "UTC",
+                "seasonality_history_bars": 8,
+                "seasonality_samples": {"00:00": [200.0] * 8},
+            },
+        )
+    )
+
+    assert first["snapshot_hash"] != second["snapshot_hash"]
 
 
 def test_vpa_uses_close_to_close_progress_and_sequence_comparison() -> None:
