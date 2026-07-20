@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from pa_agent.data.base import DataSource
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.factory import volume_metadata_for_source
 from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS, build_display_frame
 from pa_agent.data.validation import validate_analysis_frame
@@ -67,6 +68,7 @@ def fetch_higher_timeframe_context(
     bar_count: int = 60,
     override: str = "",
     now_ms: int | None = None,
+    resolved_identity: ResolvedInstrumentIdentity | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fetch one optional background snapshot without changing chart subscription.
 
@@ -88,6 +90,7 @@ def fetch_higher_timeframe_context(
             "frame": None,
             "metadata": {},
         }
+    identity = ResolvedInstrumentIdentity.from_value(resolved_identity)
     try:
         supported = set(source.supported_timeframes())
         if target not in supported:
@@ -100,12 +103,24 @@ def fetch_higher_timeframe_context(
                 "metadata": {},
             }
         usable_count = max(20, min(int(bar_count), 300))
-        raw = source.fetch_snapshot_for(
-            symbol,
-            target,
-            usable_count + INDICATOR_WARMUP_BARS + 5,
+        if identity is not None:
+            raw = source.fetch_snapshot_for_identity(
+                identity,
+                target,
+                usable_count + INDICATOR_WARMUP_BARS + 5,
+            )
+        else:
+            raw = source.fetch_snapshot_for(
+                symbol,
+                target,
+                usable_count + INDICATOR_WARMUP_BARS + 5,
+            )
+        metadata = volume_metadata_for_source(
+            source_kind,
+            source,
+            identity=identity,
+            symbol=symbol,
         )
-        metadata = volume_metadata_for_source(source_kind, source)
         frame = build_display_frame(
             raw,
             usable_count,
@@ -123,7 +138,12 @@ def fetch_higher_timeframe_context(
                 "frame": None,
                 "metadata": metadata,
             }
-        validation = validate_analysis_frame(frame, minimum_bars=20)
+        validation = validate_analysis_frame(
+            frame,
+            minimum_bars=20,
+            now_ms=now_ms,
+            expected_identity=identity,
+        )
         if not validation.ok:
             return {
                 "status": "unavailable",
@@ -140,6 +160,7 @@ def fetch_higher_timeframe_context(
             "reason": None,
             "frame": frame,
             "metadata": metadata,
+            "source_identity": identity.to_dict() if identity is not None else None,
         }
     except Exception as exc:  # noqa: BLE001
         logger.info(

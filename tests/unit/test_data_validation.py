@@ -5,7 +5,12 @@ from dataclasses import replace
 import pytest
 
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
-from pa_agent.data.validation import validate_analysis_frame
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
+from pa_agent.data.validation import (
+    assess_analysis_frame,
+    validate_analysis_frame,
+    validate_snapshot_identities,
+)
 
 
 def _frame(count: int = 20) -> KlineFrame:
@@ -114,3 +119,85 @@ def test_invalid_frame_is_rejected_by_exact_check(mutate, failed_check: str) -> 
     assert result.ok is False
     assert result.failed_check == failed_check
 
+
+def test_duplicate_timestamp_has_specific_quality_issue() -> None:
+    frame = _frame()
+    duplicate = replace(
+        frame,
+        bars=(
+            frame.bars[0],
+            replace(frame.bars[1], ts_open=frame.bars[0].ts_open),
+            *frame.bars[2:],
+        ),
+    )
+
+    report = assess_analysis_frame(duplicate, now_ms=frame.snapshot_ts_local_ms)
+
+    assert report.ok is False
+    assert report.failed_check == "bar_timestamp_duplicate"
+
+
+def test_future_bar_is_hard_failure() -> None:
+    frame = _frame()
+    future = replace(
+        frame,
+        bars=(
+            replace(frame.bars[0], ts_open=frame.snapshot_ts_local_ms + 120_000),
+            *frame.bars[1:],
+        ),
+    )
+
+    report = assess_analysis_frame(future, now_ms=frame.snapshot_ts_local_ms)
+
+    assert report.ok is False
+    assert any(issue.code == "bar_timestamp_in_future" for issue in report.hard_errors)
+
+
+def test_staleness_is_hard_only_when_market_is_known_open_or_continuous() -> None:
+    frame = _frame()
+    stale_now = frame.snapshot_ts_local_ms + 10 * 60_000
+
+    unknown = assess_analysis_frame(frame, now_ms=stale_now)
+    continuous = assess_analysis_frame(
+        replace(frame, data_metadata={"continuous_market": True}),
+        now_ms=stale_now,
+    )
+
+    assert unknown.ok is True
+    assert any(issue.code == "snapshot_stale" for issue in unknown.warnings)
+    assert continuous.ok is False
+    assert any(issue.code == "snapshot_stale" for issue in continuous.hard_errors)
+
+
+def test_cross_timeframe_identity_drift_is_rejected() -> None:
+    current_identity = ResolvedInstrumentIdentity(
+        provider="tradingview",
+        requested_symbol="XAUUSD",
+        resolved_symbol="XAUUSD",
+        venue="PEPPERSTONE",
+    )
+    other_identity = ResolvedInstrumentIdentity(
+        provider="tradingview",
+        requested_symbol="XAUUSD",
+        resolved_symbol="XAUUSD",
+        venue="OANDA",
+    )
+    current = replace(_frame(), data_metadata=current_identity.to_metadata())
+    higher = replace(
+        _frame(),
+        timeframe="1h",
+        data_metadata=other_identity.to_metadata(),
+    )
+
+    report = validate_snapshot_identities(
+        current,
+        higher,
+        expected_identity=current_identity,
+        now_ms=current.snapshot_ts_local_ms,
+    )
+
+    assert report.ok is False
+    assert any(
+        issue.code == "cross_timeframe_source_identity_drift"
+        for issue in report.hard_errors
+    )

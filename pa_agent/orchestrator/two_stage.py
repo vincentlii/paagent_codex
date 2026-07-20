@@ -584,12 +584,14 @@ def _build_empty_record(
         render_higher_timeframe_context,
         serialize_higher_timeframe_context,
     )
+    from pa_agent.data.snapshot_bundle import compact_snapshot_context
 
     return AnalysisRecord(
         meta=meta,
         kline_data=kline_data,
         htf_text=render_higher_timeframe_context(htf_context),
         htf_context=serialize_higher_timeframe_context(htf_context),
+        snapshot_context=compact_snapshot_context(frame),
         stage1_messages=[],
         stage1_response=None,
         stage1_diagnosis=None,
@@ -864,8 +866,16 @@ class TwoStageOrchestrator:
             return record
 
         # ── Step 2.5: Preflight data gate (before Stage1Started) ─────────────
-        from pa_agent.data.validation import validate_analysis_frame
-        pf = validate_analysis_frame(frame)
+        from pa_agent.data.snapshot_bundle import build_snapshot_bundle
+
+        snapshot_bundle = build_snapshot_bundle(
+            frame,
+            htf_context,
+            expected_identity=getattr(frame, "data_metadata", {}),
+            captured_at_ms=getattr(frame, "snapshot_ts_local_ms", None),
+        )
+        pf = snapshot_bundle.data_quality
+        record = record.model_copy(update={"data_quality": pf.to_dict()})
         if not pf.ok:
             record = record.model_copy(update={
                 "exception": {
@@ -1622,7 +1632,7 @@ class TwoStageOrchestrator:
         """Run a frozen-snapshot baseline/VPA experiment and persist the A arm."""
         from pa_agent.ai.json_validator import JsonValidator
         from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
-        from pa_agent.data.validation import validate_analysis_frame
+        from pa_agent.data.snapshot_bundle import build_snapshot_bundle
 
         assert self._settings is not None
         preflight_record = _build_empty_record(
@@ -1634,7 +1644,16 @@ class TwoStageOrchestrator:
             self._persist_partial(preflight_record, "user_cancelled", on_event)
             on_event(OrchestratorEvent.Cancelled)
             return preflight_record
-        preflight = validate_analysis_frame(frame)
+        snapshot_bundle = build_snapshot_bundle(
+            frame,
+            htf_context,
+            expected_identity=getattr(frame, "data_metadata", {}),
+            captured_at_ms=getattr(frame, "snapshot_ts_local_ms", None),
+        )
+        preflight = snapshot_bundle.data_quality
+        preflight_record = preflight_record.model_copy(
+            update={"data_quality": preflight.to_dict()}
+        )
         if not preflight.ok:
             preflight_record = preflight_record.model_copy(
                 update={

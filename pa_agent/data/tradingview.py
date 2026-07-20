@@ -1,10 +1,10 @@
 """TradingView data source using tvdatafeed."""
 from __future__ import annotations
 
-from datetime import datetime
 import logging
 import threading
 import time
+from datetime import datetime
 
 from pa_agent.data.base import (
     DataSource,
@@ -12,14 +12,17 @@ from pa_agent.data.base import (
     KlineBar,
     normalize_kline_bar,
 )
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.datetime_ts import datetime_to_ts_ms, naive_local_to_utc
 from pa_agent.data.market_defaults import (
+    TV_CRYPTO_EXCHANGES,
+    is_likely_crypto_symbol,
     is_tv_exchange_auto,
     resolve_tv_fetch_pair,
     tv_auto_probe_plan,
 )
-from pa_agent.data.tv_symbol_lookup import TvSymbolNotFoundError
 from pa_agent.data.tradingview_errors import format_tradingview_fetch_error
+from pa_agent.data.tv_symbol_lookup import TvSymbolNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +91,7 @@ class TradingViewSource(DataSource):
         self._timeframe: str = ""
         self._exchange: str = ""
         self._resolved_exchange: str = ""
+        self._resolved_symbol: str = ""
         # Mutex: tvDatafeed is NOT thread-safe — its get_hist() creates a
         # WebSocket and stores it on self.ws; concurrent calls clobber the
         # same socket and cause C++ segfaults.
@@ -104,10 +108,40 @@ class TradingViewSource(DataSource):
         """Venue that supplied the most recent successful snapshot."""
         return self._resolved_exchange
 
+    @property
+    def resolved_symbol(self) -> str:
+        """Provider symbol that supplied the most recent successful snapshot."""
+        return self._resolved_symbol
+
+    def current_identity(
+        self,
+        requested_symbol: str | None = None,
+    ) -> ResolvedInstrumentIdentity | None:
+        requested = str(requested_symbol or self._symbol or "").strip()
+        resolved = str(self._resolved_symbol or requested).strip()
+        if not requested or not resolved or not self._resolved_exchange:
+            return None
+        return ResolvedInstrumentIdentity(
+            provider="tradingview",
+            requested_symbol=requested,
+            resolved_symbol=resolved,
+            venue=self._resolved_exchange,
+            market=(
+                "crypto"
+                if self._resolved_exchange in TV_CRYPTO_EXCHANGES
+                or is_likely_crypto_symbol(resolved)
+                else ""
+            ),
+            timezone_basis="UTC",
+            volume_kind="unknown",
+            volume_quality="unknown",
+        )
+
     def set_exchange(self, exchange: str) -> None:
         """Set TradingView exchange id (e.g. ``BINANCE``); empty = auto-detect."""
         self._exchange = (exchange or "").strip().upper()
         self._resolved_exchange = ""
+        self._resolved_symbol = ""
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -196,6 +230,7 @@ class TradingViewSource(DataSource):
         self._timeframe = timeframe
         self._symbol = symbol.strip()
         self._resolved_exchange = ""
+        self._resolved_symbol = ""
         # Abort any in-flight get_hist() blocked on a stalled connection so the
         # new symbol/timeframe takes effect immediately instead of waiting out
         # the previous request's timeout. Closing the socket raises inside the
@@ -270,7 +305,7 @@ class TradingViewSource(DataSource):
         plan: list[tuple[str, str]],
         interval: object,
         n_bars: int,
-    ) -> tuple[object, str]:
+    ) -> tuple[object, str, str]:
         """Try each (exchange, symbol) in *plan* until one returns bars."""
         if not plan:
             raise DataSourceTransientError(
@@ -307,7 +342,7 @@ class TradingViewSource(DataSource):
                     label,
                     ", ".join(tried),
                 )
-                return df, exchange
+                return df, exchange, code
         if last_exc is not None:
             raise last_exc
         raise DataSourceTransientError(
@@ -336,6 +371,31 @@ class TradingViewSource(DataSource):
                 n=n,
             )
 
+    def fetch_snapshot_for_identity(
+        self,
+        identity: ResolvedInstrumentIdentity,
+        timeframe: str,
+        n: int,
+    ) -> list[KlineBar]:
+        """Fetch an HTF snapshot without re-running venue auto discovery."""
+        if identity.provider != "tradingview":
+            raise DataSourceTransientError(
+                "TradingView identity provider must be 'tradingview'"
+            )
+        if not identity.venue or not identity.resolved_symbol:
+            raise DataSourceTransientError(
+                "TradingView identity must include resolved venue and symbol"
+            )
+        if timeframe not in _TF_MAP:
+            raise ValueError(f"Unsupported timeframe: {timeframe!r}. Use one of {list(_TF_MAP)}")
+        with self._snapshot_lock:
+            return self._snapshot_for_inner(
+                symbol=identity.requested_symbol,
+                timeframe=timeframe,
+                n=n,
+                pinned_identity=identity,
+            )
+
     def _latest_snapshot_inner(self, n: int) -> list[KlineBar]:
         """Actual snapshot logic — caller holds ``_snapshot_lock``."""
         return self._snapshot_for_inner(
@@ -350,6 +410,7 @@ class TradingViewSource(DataSource):
         symbol: str,
         timeframe: str,
         n: int,
+        pinned_identity: ResolvedInstrumentIdentity | None = None,
     ) -> list[KlineBar]:
         """Fetch a specified snapshot while caller holds ``_snapshot_lock``."""
         if self._tv is None:
@@ -359,15 +420,28 @@ class TradingViewSource(DataSource):
 
         user_symbol = symbol
         req_exchange = self._exchange
-        exchange = req_exchange or ""
-        fetch_symbol = user_symbol
-        auto_probe = is_tv_exchange_auto(req_exchange)
-        probe_plan = tv_auto_probe_plan(user_symbol) if auto_probe else []
+        if pinned_identity is not None:
+            exchange = pinned_identity.venue
+            fetch_symbol = pinned_identity.resolved_symbol
+            auto_probe = False
+            probe_plan: list[tuple[str, str]] = []
+        else:
+            exchange = req_exchange or ""
+            fetch_symbol = user_symbol
+            auto_probe = is_tv_exchange_auto(req_exchange)
+            probe_plan = tv_auto_probe_plan(user_symbol) if auto_probe else []
         try:
             from tvDatafeed import Interval  # type: ignore[import]
             interval = getattr(Interval, _TF_MAP[timeframe])
-            if auto_probe and probe_plan:
-                df, exchange = self._fetch_tv_auto_probe(
+            if pinned_identity is not None:
+                df = self._fetch_hist_with_retry(
+                    symbol=fetch_symbol,
+                    exchange=exchange,
+                    interval=interval,
+                    n_bars=n + 1,
+                )
+            elif auto_probe and probe_plan:
+                df, exchange, fetch_symbol = self._fetch_tv_auto_probe(
                     symbol=user_symbol,
                     plan=probe_plan,
                     interval=interval,
@@ -407,6 +481,7 @@ class TradingViewSource(DataSource):
             raise DataSourceTransientError(msg)
 
         self._resolved_exchange = str(exchange or req_exchange or "").upper()
+        self._resolved_symbol = str(fetch_symbol or user_symbol).strip()
 
         df = df.iloc[::-1].reset_index()
 

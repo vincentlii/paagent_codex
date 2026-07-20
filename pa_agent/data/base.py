@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
 
 # ── KlineBar ──────────────────────────────────────────────────────────────────
 
@@ -136,3 +137,45 @@ class DataSource(ABC):
         raise DataSourceTransientError(
             f"{type(self).__name__} does not support isolated timeframe snapshots"
         )
+
+    def current_identity(
+        self,
+        requested_symbol: str | None = None,
+    ) -> ResolvedInstrumentIdentity | None:
+        """Return the identity attached to the latest successful snapshot.
+
+        Legacy adapters expose a conservative identity from their active symbol.
+        Providers with symbol/venue discovery must override this method.
+        """
+        symbol = str(
+            requested_symbol
+            or getattr(self, "_symbol", "")
+            or ""
+        ).strip()
+        if not symbol:
+            return None
+        provider = type(self).__name__.removesuffix("Source").lower().lstrip("_")
+        return ResolvedInstrumentIdentity(
+            provider=provider,
+            requested_symbol=symbol,
+            resolved_symbol=symbol,
+        )
+
+    def fetch_snapshot_for_identity(
+        self,
+        identity: ResolvedInstrumentIdentity,
+        timeframe: str,
+        n: int,
+    ) -> list[KlineBar]:
+        """Fetch another timeframe for an already resolved instrument.
+
+        The default is suitable for providers whose symbol uniquely identifies
+        the instrument. Discovery-based providers must pin their resolved venue
+        and symbol instead of probing again.
+        """
+        current = self.current_identity(identity.requested_symbol)
+        if current is not None and current.provider != identity.provider:
+            raise DataSourceTransientError(
+                "resolved identity provider does not match active data source"
+            )
+        return self.fetch_snapshot_for(identity.resolved_symbol, timeframe, n)

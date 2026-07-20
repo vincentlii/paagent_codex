@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pa_agent.data.base import DataSource
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.market_defaults import (
     A_SHARE_DEFAULT_SYMBOL,
     GOLD_MT5_SYMBOL,
@@ -69,7 +70,70 @@ def data_source_label(kind: str | None) -> str:
     return "MT5"
 
 
-def volume_metadata_for_source(kind: str | None, source: object | None = None) -> dict[str, Any]:
+def resolved_identity_for_source(
+    kind: str | None,
+    source: object | None,
+    *,
+    symbol: str = "",
+) -> ResolvedInstrumentIdentity | None:
+    """Read the identity attached to the latest successful provider fetch."""
+    normalized = normalize_data_source_kind(kind)
+    current_identity = getattr(source, "current_identity", None)
+    identity = None
+    if callable(current_identity):
+        try:
+            identity = current_identity(symbol or None)
+        except (TypeError, ValueError):
+            identity = None
+    if isinstance(identity, ResolvedInstrumentIdentity):
+        if identity.provider == normalized:
+            return identity
+        return ResolvedInstrumentIdentity(
+            provider=normalized,
+            requested_symbol=identity.requested_symbol,
+            resolved_symbol=identity.resolved_symbol,
+            venue=identity.venue,
+            market=identity.market,
+            timezone_basis=identity.timezone_basis,
+            volume_kind=identity.volume_kind,
+            volume_quality=identity.volume_quality,
+        )
+
+    requested = str(
+        symbol
+        or getattr(source, "_symbol", "")
+        or ""
+    ).strip()
+    if not requested:
+        return None
+    venue = ""
+    if normalized == "tradingview":
+        venue = str(
+            getattr(source, "resolved_exchange", "")
+            or getattr(source, "exchange", "")
+            or ""
+        ).upper()
+    return ResolvedInstrumentIdentity(
+        provider=normalized,
+        requested_symbol=requested,
+        resolved_symbol=str(
+            getattr(source, "resolved_symbol", "")
+            or requested
+        ),
+        venue=venue,
+        timezone_basis="UTC",
+        volume_kind="tick" if normalized == "mt5" else "unknown",
+        volume_quality="proxy" if normalized == "mt5" else "unknown",
+    )
+
+
+def volume_metadata_for_source(
+    kind: str | None,
+    source: object | None = None,
+    *,
+    identity: ResolvedInstrumentIdentity | None = None,
+    symbol: str = "",
+) -> dict[str, Any]:
     """Return only provider-known volume provenance for VPA measurement.
 
     TradingView volume semantics vary by resolved venue and instrument, so it
@@ -77,7 +141,12 @@ def volume_metadata_for_source(kind: str | None, source: object | None = None) -
     adapter explicitly records real exchange volume.
     """
     normalized = normalize_data_source_kind(kind)
-    metadata = {
+    resolved = identity or resolved_identity_for_source(
+        normalized,
+        source,
+        symbol=symbol,
+    )
+    metadata: dict[str, Any] = {
         "source": normalized,
         "venue": "",
         "volume_kind": "unknown",
@@ -95,6 +164,10 @@ def volume_metadata_for_source(kind: str | None, source: object | None = None) -
             or getattr(source, "exchange", "")
             or ""
         ).upper()
+    if resolved is not None:
+        metadata.update(resolved.to_metadata())
+    if type(source).__name__ in {"TradingViewSource", "MT5Source"}:
+        metadata["strict_close_time"] = True
     return metadata
 
 

@@ -14,7 +14,6 @@ from pa_agent.indicators.ema import ema_full
 
 
 def _bars_newest_first(closes: list[float]) -> list[KlineBar]:
-    n = len(closes)
     out: list[KlineBar] = []
     for i, close in enumerate(reversed(closes)):
         seq = i + 1
@@ -62,6 +61,25 @@ def test_build_analysis_frame_falls_back_when_buffer_unavailable() -> None:
     frame = build_analysis_frame(bars_raw, 20, "XAUUSD", "5m")
     assert frame is not None
     assert len(frame.bars) == 20
+
+
+def test_seasonality_samples_use_only_history_older_than_analysis_window() -> None:
+    bars_raw = _bars_newest_first([100.0 + index for index in range(80)])
+
+    frame = build_analysis_frame(
+        bars_raw,
+        20,
+        "XAUUSD",
+        "1h",
+        data_metadata={"timezone_basis": "UTC"},
+    )
+
+    assert frame is not None
+    assert frame.data_metadata["seasonality_history_bars"] == INDICATOR_WARMUP_BARS
+    samples = frame.data_metadata["seasonality_samples"]
+    assert sum(len(values) for key, values in samples.items() if "|" not in key) == (
+        INDICATOR_WARMUP_BARS
+    )
 
 
 def test_feature_limit_uses_full_frame_prev_context() -> None:

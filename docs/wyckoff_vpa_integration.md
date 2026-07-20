@@ -29,6 +29,21 @@
 
 Normalizer 只能复制白名单字段和规范无语义记号。它不得补市场结论、改价、改单或创建决策节点。仅当 reasoning 已明确引用快照内 K 线时，程序可以把已有 `bar_range` 扩展为覆盖这些引用的最小包络。
 
+### 2.1 冻结数据身份与质量
+
+一次分析首先形成不可变 `ResolvedInstrumentIdentity`。TradingView 自动探测只允许在主周期执行一次；
+高周期必须复用同一 `provider + resolved_symbol + venue`，不得再次探测或读取随后被覆盖的
+`resolved_exchange`。主周期与高周期组成 `AnalysisSnapshotBundle`，所有模型阶段只能读取该 Bundle。
+
+`DataQualityReport` 在模型调用前检查 OHLC、闭盘状态、序号、重复/未来时间戳、声明周期、缺口、
+新鲜度和跨周期身份。OHLC 错误、重复/未来 K 线、真实来源的周期不规则、同源漂移属于
+`hard_error`；市场日历或历史来源未知造成的缺口/陈旧只能先记为 `warning`，不能把周末或休市
+机械判为断流。真实 TradingView/MT5 快照同时校验 K1 理论收盘时间。
+
+Volume seasonality 使用数据层提供的、早于当前分析窗口的同源历史样本。时间桶先把 UTC epoch
+转换到明确的 `timezone_basis`；时区无效或样本不足时必须标记 unavailable，不得用当前窗口自身
+构造看似充分的季节性基线。
+
 ## 3. 运行模式
 
 ### `off`

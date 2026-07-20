@@ -48,6 +48,8 @@ class AnalysisRecord(BaseModel):
     validation_audit: list[dict] = Field(default_factory=list)
     call_attempts: list[dict] = Field(default_factory=list)
     vpa_sidecar: Optional[dict] = None  # Paired VPA arm and comparison; absent in off mode records
+    data_quality: dict = Field(default_factory=dict)
+    snapshot_context: dict = Field(default_factory=dict)
 
 
 class FollowupTurn(BaseModel):

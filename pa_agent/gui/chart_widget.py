@@ -45,6 +45,7 @@ class ChartWidget(pg.PlotWidget):
     """
 
     def __init__(self, parent=None) -> None:
+        self._shutting_down: bool = False
         super().__init__(parent=parent)
 
         # Configure plot appearance
@@ -307,6 +308,10 @@ class ChartWidget(pg.PlotWidget):
         Otherwise we delegate to the superclass so normal pan/zoom/drag
         on the ViewBox works as usual.
         """
+        if getattr(self, "_shutting_down", False):
+            ev.accept()
+            return True
+
         et = ev.type()
 
         if et == QEvent.Type.MouseMove:
@@ -342,6 +347,27 @@ class ChartWidget(pg.PlotWidget):
             return True
 
         return super().viewportEvent(ev)
+
+    def shutdown(self) -> None:
+        """Stop queued redraws before Qt starts deleting pyqtgraph scene items."""
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        self._dirty = False
+        self._latest_frame = None
+        self._timer.stop()
+        try:
+            self._timer.timeout.disconnect(self._on_timer)
+        except (TypeError, RuntimeError):
+            pass
+        self.setUpdatesEnabled(False)
+        viewport = self.viewport()
+        if viewport is not None:
+            viewport.setUpdatesEnabled(False)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self.shutdown()
+        super().closeEvent(event)
 
     def reset(self) -> None:
         """Clear all chart items (candles, labels, EMA, overlay lines)."""

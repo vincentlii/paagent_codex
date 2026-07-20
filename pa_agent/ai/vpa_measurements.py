@@ -12,8 +12,10 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from statistics import median
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_agent.data.base import KlineBar, KlineFrame
+from pa_agent.data.datetime_ts import ts_open_to_ms
 
 
 def _finite(value: float | int | None) -> float | None:
@@ -110,13 +112,21 @@ def _time_context(
 ) -> dict[str, str]:
     """Return a factual clock context without guessing an asset's session."""
     try:
-        moment = datetime.fromtimestamp(float(ts_open) / 1000, tz=UTC)
-    except (OSError, OverflowError, TypeError, ValueError):
+        moment = datetime.fromtimestamp(float(ts_open_to_ms(ts_open)) / 1000, tz=UTC)
+        zone = UTC if timezone_basis.upper() == "UTC" else ZoneInfo(timezone_basis)
+        moment = moment.astimezone(zone)
+    except (
+        OSError,
+        OverflowError,
+        TypeError,
+        ValueError,
+        ZoneInfoNotFoundError,
+    ):
         return {
             "market_session": market_session or "unclassified",
             "time_bucket": "unknown",
             "day_of_week": "unknown",
-            "timezone_basis": timezone_basis,
+            "timezone_basis": "invalid",
         }
     return {
         "market_session": market_session or "unclassified",

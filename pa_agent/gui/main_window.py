@@ -2914,6 +2914,7 @@ class MainWindow(QMainWindow):
             data_metadata=volume_metadata_for_source(
                 self._current_data_source_kind(),
                 getattr(self._ctx, "data_source", None),
+                symbol=symbol,
             ),
             higher_timeframe_enabled=bool(
                 getattr(getattr(settings, "general", None), "higher_timeframe_enabled", True)
@@ -4018,6 +4019,9 @@ class MainWindow(QMainWindow):
         """Stop background work before Qt destroys widgets."""
         self._window_closing = True
         try:
+            chart = getattr(self, "_chart_widget", None)
+            if chart is not None:
+                chart.shutdown()
             self._cancel_analysis_worker()
             self._cancel_snapshot_fetch_worker()
             self._stop_refresh_loop()

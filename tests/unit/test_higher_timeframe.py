@@ -11,6 +11,7 @@ from pa_agent.ai.higher_timeframe import (
 from pa_agent.ai.json_validator import JsonValidator, ValidationError
 from pa_agent.config.settings import Settings
 from pa_agent.data.base import DataSource, KlineBar
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.higher_timeframe import (
     fetch_higher_timeframe_context,
     resolve_higher_timeframe,
@@ -91,6 +92,29 @@ def test_higher_timeframe_fetch_keeps_subscription_and_renders_price_only_contex
     assert payload is not None
     assert payload["bar_count"] == 20
     assert "frame" not in payload
+
+
+def test_higher_timeframe_uses_frozen_identity_when_provided() -> None:
+    source = _FakeSource()
+    identity = ResolvedInstrumentIdentity(
+        provider="fake",
+        requested_symbol="XAUUSD",
+        resolved_symbol="XAUUSD",
+        venue="TEST",
+    )
+    context = fetch_higher_timeframe_context(
+        source=source,
+        source_kind="fake",
+        symbol="XAUUSD",
+        current_timeframe="15m",
+        bar_count=20,
+        now_ms=1_700_000_000_000,
+        resolved_identity=identity,
+    )
+
+    assert context["status"] == "available"
+    assert context["source_identity"] == identity.to_dict()
+    assert context["metadata"]["source_identity"] == identity.to_dict()
 
 
 def test_higher_timeframe_prompt_keeps_full_window_as_facts_but_caps_detail_rows() -> None:

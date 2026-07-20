@@ -17,6 +17,7 @@ class AnalysisPrepResult:
     incremental_new_bar_count: int | None
     incremental_detail: str | None
     htf_context: dict[str, Any] = field(default_factory=dict)
+    snapshot_bundle: Any | None = None
 
 
 class AnalysisPrepWorker(QThread):
@@ -85,6 +86,8 @@ class AnalysisPrepWorker(QThread):
             )
 
             if self._higher_timeframe_enabled:
+                from pa_agent.data.contracts import ResolvedInstrumentIdentity
+
                 htf_context = fetch_higher_timeframe_context(
                     source=self._data_source,
                     source_kind=self._data_source_kind,
@@ -93,9 +96,24 @@ class AnalysisPrepWorker(QThread):
                     bar_count=self._higher_timeframe_bar_count,
                     override=self._higher_timeframe_override,
                     now_ms=self._now_ms,
+                    resolved_identity=ResolvedInstrumentIdentity.from_value(
+                        self._data_metadata
+                    ),
                 )
             else:
                 htf_context = disabled_higher_timeframe_context(self._timeframe)
+
+            from pa_agent.data.snapshot_bundle import build_snapshot_bundle
+
+            snapshot_bundle = build_snapshot_bundle(
+                frame,
+                htf_context,
+                expected_identity=self._data_metadata,
+                captured_at_ms=self._now_ms,
+            )
+            if not snapshot_bundle.data_quality.ok:
+                self.failed.emit(snapshot_bundle.data_quality.reason)
+                return
 
             previous = None
             incremental_new_bar_count: int | None = None
@@ -139,6 +157,7 @@ class AnalysisPrepWorker(QThread):
                     incremental_new_bar_count=incremental_new_bar_count,
                     incremental_detail=incremental_detail,
                     htf_context=htf_context,
+                    snapshot_bundle=snapshot_bundle,
                 )
             )
         except Exception as exc:  # noqa: BLE001

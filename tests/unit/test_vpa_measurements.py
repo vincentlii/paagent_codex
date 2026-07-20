@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta, timezone
 
 from pa_agent.ai.vpa_measurements import (
     build_vpa_evidence_catalog,
@@ -207,7 +208,7 @@ def test_vpa_seasonality_requires_adapter_supplied_same_slot_history() -> None:
         indicators=frame.indicators,
         snapshot_ts_local_ms=frame.snapshot_ts_local_ms,
         data_metadata={
-            "seasonality_samples": {"Tuesday|16:00": [100, 100, 100, 100, 100]},
+            "seasonality_samples": {"Tuesday|22:00": [100, 100, 100, 100, 100]},
             "seasonality_min_samples": 5,
         },
     )
@@ -215,3 +216,22 @@ def test_vpa_seasonality_requires_adapter_supplied_same_slot_history() -> None:
 
     assert data["seasonality_context"]["seasonality_available"] is True
     assert data["recent_bars"][0]["seasonality_relative_volume"] == 1.5
+
+
+def test_time_bucket_is_converted_to_declared_timezone(monkeypatch) -> None:
+    import pa_agent.ai.vpa_measurements as measurements
+
+    monkeypatch.setattr(
+        measurements,
+        "ZoneInfo",
+        lambda _name: timezone(timedelta(hours=8)),
+    )
+
+    context = measurements._time_context(
+        1_700_000_000_000,
+        timezone_basis="Asia/Shanghai",
+        market_session="",
+    )
+
+    assert context["time_bucket"] == "06:00"
+    assert context["timezone_basis"] == "Asia/Shanghai"

@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import math
+from collections import defaultdict
+from datetime import UTC, datetime
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_agent.data.bar_close_wait import has_forming_bar_at_head
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, normalize_kline_bar
@@ -53,7 +57,7 @@ def take_snapshot_from_bars(
     timeframe: str,
     *,
     now_ms: int | None = None,
-    data_metadata: dict[str, str] | None = None,
+    data_metadata: dict[str, Any] | None = None,
 ) -> KlineFrame:
     """Build an analysis KlineFrame from a newest-first bar list (same as AI table).
 
@@ -115,8 +119,8 @@ def compute_indicators(bars: list[KlineBar]) -> IndicatorBundle:
     Indicators are computed on the reversed (oldest-first) sequence and then
     reversed back so that index *i* aligns with ``bars[i]`` (K1 at index 0).
     """
-    from pa_agent.indicators.ema import ema_full
     from pa_agent.indicators.atr import atr_full
+    from pa_agent.indicators.ema import ema_full
 
     # bars is newest-first; indicators need oldest-first input
     bars_asc = list(reversed(bars))
@@ -142,7 +146,7 @@ def build_display_frame(
     timeframe: str,
     *,
     now_ms: int | None = None,
-    data_metadata: dict[str, str] | None = None,
+    data_metadata: dict[str, Any] | None = None,
 ) -> KlineFrame | None:
     """Chart display frame — same semantics as AI (K1 = newest **closed** bar)."""
     return build_analysis_frame(
@@ -236,6 +240,33 @@ def _rebase_closed_bars(closed_raw: list[KlineBar]) -> list[KlineBar]:
     ]
 
 
+def _historical_seasonality_samples(
+    bars: list[KlineBar],
+    *,
+    timezone_basis: str,
+) -> dict[str, list[float]]:
+    """Group older provider bars by local clock slot without market labels."""
+    try:
+        zone = UTC if timezone_basis.upper() == "UTC" else ZoneInfo(timezone_basis)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = UTC
+    grouped: dict[str, list[float]] = defaultdict(list)
+    for bar in bars:
+        try:
+            volume = float(bar.volume)
+            moment = datetime.fromtimestamp(float(bar.ts_open) / 1000, tz=UTC)
+        except (OSError, OverflowError, TypeError, ValueError):
+            continue
+        if not math.isfinite(volume) or volume <= 0:
+            continue
+        local = moment.astimezone(zone)
+        bucket = f"{local.hour:02d}:00"
+        day = local.strftime("%A")
+        grouped[bucket].append(volume)
+        grouped[f"{day}|{bucket}"].append(volume)
+    return {key: values for key, values in grouped.items() if values}
+
+
 def build_analysis_frame(
     bars_raw: list[KlineBar],
     n: int,
@@ -243,7 +274,7 @@ def build_analysis_frame(
     timeframe: str,
     *,
     now_ms: int | None = None,
-    data_metadata: dict[str, str] | None = None,
+    data_metadata: dict[str, Any] | None = None,
 ) -> KlineFrame | None:
     """Build a snapshot for AI analysis: *n* newest **closed** bars only.
 
@@ -283,11 +314,21 @@ def build_analysis_frame(
         ema20=indicators_all.ema20[:n],
         atr14=indicators_all.atr14[:n],
     )
+    metadata = dict(data_metadata or {})
+    historical = rebased_all[n:]
+    if "seasonality_samples" not in metadata and historical:
+        timezone_basis = str(metadata.get("timezone_basis") or "UTC")
+        metadata["seasonality_samples"] = _historical_seasonality_samples(
+            historical,
+            timezone_basis=timezone_basis,
+        )
+        metadata["seasonality_history_bars"] = len(historical)
+        metadata.setdefault("seasonality_min_samples", 8)
     return KlineFrame(
         symbol=symbol,
         timeframe=timeframe,
         bars=tuple(rebased),
         indicators=indicators,
         snapshot_ts_local_ms=now_local_ms(),
-        data_metadata=dict(data_metadata or {}),
+        data_metadata=metadata,
     )

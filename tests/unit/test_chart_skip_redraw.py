@@ -1,8 +1,6 @@
 """Chart skip-redraw when frozen closed frame matches snapshot."""
 from __future__ import annotations
 
-import math
-
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
 from pa_agent.data.snapshot import frame_is_pure_closed, frames_equal_for_chart
 from pa_agent.gui.chart_widget import ChartWidget
@@ -81,3 +79,17 @@ def test_set_frame_now_redraws_when_forming_removed(qtbot) -> None:
     n_forming = len(widget._candle_items)
     widget.set_frame_now(_frame())
     assert len(widget._candle_items) == n_forming
+
+
+def test_shutdown_stops_redraws_before_scene_teardown(qtbot) -> None:
+    widget = ChartWidget()
+    qtbot.addWidget(widget)
+    widget.show()
+    widget.set_frame(_frame())
+
+    widget.shutdown()
+
+    assert widget._shutting_down is True
+    assert widget._timer.isActive() is False
+    assert widget.updatesEnabled() is False
+    assert widget.viewport().updatesEnabled() is False
