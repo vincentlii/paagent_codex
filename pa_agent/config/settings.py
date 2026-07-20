@@ -39,10 +39,8 @@ class PromptSettings(BaseModel):
     experience_max_chars_per_entry: int = Field(default=400, ge=100, le=4000)
     #: Inject pattern判定表 + 速查 brief into Stage 1 user prompt (reduces missed tags).
     stage1_inject_pattern_briefs: bool = True
-    #: New VPA mode. ``shadow`` keeps the original PA result official and records a paired VPA run.
+    #: ``shadow`` keeps PA-only official; ``soft`` adopts a validated joint decision.
     vpa_mode: VpaMode | None = None
-    #: Shadow protocol: full independent prompts by default; sidecar is a marginal diagnostic.
-    vpa_shadow_design: Literal["full_prompt_ab", "marginal_sidecar"] = "full_prompt_ab"
     #: Legacy switch retained for existing settings files. New writes set ``vpa_mode``.
     vpa_enabled: bool = False
 

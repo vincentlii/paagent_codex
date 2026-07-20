@@ -41,7 +41,7 @@ def test_cancel_before_stage2(frame, pending_writer, assembler, exp_reader):
 
     events: list[OrchestratorEvent] = []
 
-    orchestrator.submit(
+    record = orchestrator.submit(
         frame=frame,
         cancel_token=cancel_token,
         on_event=events.append,
@@ -49,6 +49,8 @@ def test_cancel_before_stage2(frame, pending_writer, assembler, exp_reader):
 
     # Cancelled event must appear
     assert OrchestratorEvent.Cancelled in events
+    assert record.run_outcome["status"] == "cancelled"
+    assert record.run_outcome["official_path"] == "none"
 
     # Stage2Started must NOT appear
     assert OrchestratorEvent.Stage2Started not in events

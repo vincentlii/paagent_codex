@@ -30,7 +30,7 @@ class AnalysisRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = 2
+    schema_version: int = 3
     meta: RecordMeta
     kline_data: list[dict]              # Same data as sent to AI
     htf_text: str
@@ -47,7 +47,12 @@ class AnalysisRecord(BaseModel):
     usage_total: dict                   # Cumulative usage for audit
     validation_audit: list[dict] = Field(default_factory=list)
     call_attempts: list[dict] = Field(default_factory=list)
-    vpa_sidecar: Optional[dict] = None  # Paired VPA arm and comparison; absent in off mode records
+    pa_hypotheses: Optional[dict] = None
+    vpa_evidence: Optional[dict] = None
+    joint_decision: Optional[dict] = None
+    run_outcome: dict = Field(default_factory=dict)
+    # Compatibility view for GUI/audit readers; canonical role outputs live above.
+    vpa_sidecar: Optional[dict] = None
     data_quality: dict = Field(default_factory=dict)
     snapshot_context: dict = Field(default_factory=dict)
 

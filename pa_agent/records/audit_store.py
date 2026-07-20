@@ -1089,6 +1089,21 @@ class AnalysisAuditStore:
         terminal = stage2.get("terminal") if isinstance(stage2, dict) else {}
         terminal = terminal if isinstance(terminal, dict) else {}
         sidecar = record.vpa_sidecar if isinstance(record.vpa_sidecar, dict) else {}
+        pa_hypotheses = (
+            record.pa_hypotheses
+            if isinstance(record.pa_hypotheses, dict)
+            else {}
+        )
+        canonical_vpa = (
+            record.vpa_evidence
+            if isinstance(record.vpa_evidence, dict)
+            else {}
+        )
+        canonical_joint = (
+            record.joint_decision
+            if isinstance(record.joint_decision, dict)
+            else {}
+        )
         catalog = sidecar.get("evidence_catalog") if isinstance(sidecar, dict) else {}
         catalog = catalog if isinstance(catalog, dict) else {}
         provenance = catalog.get("provenance") if isinstance(catalog, dict) else {}
@@ -1103,18 +1118,29 @@ class AnalysisAuditStore:
         observed = observed if isinstance(observed, dict) else {}
         paired_execution = sidecar.get("paired_execution") if isinstance(sidecar, dict) else {}
         paired_execution = paired_execution if isinstance(paired_execution, dict) else {}
+        role_execution = sidecar.get("role_execution") if isinstance(sidecar, dict) else {}
+        role_execution = role_execution if isinstance(role_execution, dict) else {}
         vpa_arm = sidecar.get("vpa_arm") if isinstance(sidecar, dict) else {}
         vpa_arm = vpa_arm if isinstance(vpa_arm, dict) else {}
-        vpa_stage2 = vpa_arm.get("stage2_decision") if isinstance(vpa_arm, dict) else {}
+        vpa_stage2 = (
+            sidecar.get("joint_stage2")
+            if isinstance(sidecar.get("joint_stage2"), dict)
+            else vpa_arm.get("stage2_decision")
+        )
         vpa_stage2 = vpa_stage2 if isinstance(vpa_stage2, dict) else {}
         vpa_decision = vpa_stage2.get("decision") if isinstance(vpa_stage2, dict) else {}
         vpa_decision = vpa_decision if isinstance(vpa_decision, dict) else {}
         htf = record.htf_context if isinstance(record.htf_context, dict) else {}
         exception = record.exception if isinstance(record.exception, dict) else {}
+        run_outcome = (
+            record.run_outcome if isinstance(record.run_outcome, dict) else {}
+        )
         if exception:
             run_status = "failed"
         elif partial_reason:
             run_status = "partial"
+        elif run_outcome.get("status") == "degraded_pa_only":
+            run_status = "degraded"
         else:
             run_status = "completed"
         provider = record.meta.ai_provider if isinstance(record.meta.ai_provider, dict) else {}
@@ -1138,8 +1164,22 @@ class AnalysisAuditStore:
             "resistance_levels": stage1.get("resistance_levels"),
             "vpa_context": vpa_context,
             "vpa_impact": impact,
+            "pa_hypotheses": pa_hypotheses,
+            "vpa_evidence": canonical_vpa,
+            "joint_arbitration": canonical_joint.get("joint_arbitration"),
+            "run_outcome": run_outcome,
             "decision_review": decision_review,
         }
+        baseline_stage2 = (
+            sidecar.get("baseline_stage2")
+            if isinstance(sidecar.get("baseline_stage2"), dict)
+            else {}
+        )
+        baseline_decision = baseline_stage2.get("decision")
+        baseline_decision = (
+            baseline_decision if isinstance(baseline_decision, dict) else {}
+        )
+        authority_source = paired_execution or role_execution
         return {
             "run_id": record.meta.run_id,
             "record_path": str(record_path),
@@ -1178,9 +1218,17 @@ class AnalysisAuditStore:
             "vpa_background_relation": impact.get("background_relation"),
             "vpa_timing_relation": impact.get("entry_timing_relation"),
             "vpa_effect": impact.get("decision_effect"),
-            "baseline_order_type": decision.get("order_type") if sidecar else None,
+            "baseline_order_type": (
+                baseline_decision.get("order_type")
+                if baseline_decision
+                else decision.get("order_type") if sidecar else None
+            ),
             "vpa_order_type": vpa_decision.get("order_type"),
-            "baseline_trade_confidence": decision.get("trade_confidence") if sidecar else None,
+            "baseline_trade_confidence": (
+                baseline_decision.get("trade_confidence")
+                if baseline_decision
+                else decision.get("trade_confidence") if sidecar else None
+            ),
             "vpa_trade_confidence": vpa_decision.get("trade_confidence"),
             "vpa_order_direction": vpa_decision.get("order_direction"),
             "vpa_entry_price": vpa_decision.get("entry_price"),
@@ -1198,7 +1246,7 @@ class AnalysisAuditStore:
                 bool(paired_execution.get("first_pass_clean"))
             ),
             "authority_violations_json": cls._json(
-                paired_execution.get("authority_violations") or []
+                authority_source.get("authority_violations") or []
             ),
             "review_context_json": cls._json(review_context),
             "validation_audit_json": cls._json(record.validation_audit),

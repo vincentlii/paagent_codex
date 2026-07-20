@@ -1,6 +1,7 @@
 """Prompt assembler for Stage 1 (diagnosis) and Stage 2 (decision)."""
 from __future__ import annotations
 
+import copy
 import functools
 import json
 import logging
@@ -69,6 +70,34 @@ _PAIRED_VPA_CONTEXT_SYSTEM_V4 = """
 - provenance capability 是推断上限。OHLCV 不支持参与者身份、主动买卖方或机构意图归因；unknown/tick/proxy 只支持同源相对活跃度比较。
 - 下一步确认只能等待未来已收盘 K 线，不得引用 K0、形成中或未收盘 K 线。
 - “收盘靠近本棒高点/低点”只描述单根 K 线内部位置，不等于跨窗口创新高/新低；使用极值事件语言时必须写清比较窗口并引用证据。
+""".strip()
+
+_VPA_EVIDENCE_ANALYST_SYSTEM = """
+你是 PA Agent 的独立 Wyckoff VPA 证据分析员。
+
+职责边界：
+- PA 已经定义市场框架、方向、Setup 与候选；你不得重做或修改这些结论。
+- 你只解释程序提供的量价事实，并分别评估它们对每个 PA 假设、整体背景和当前入场时机的支持、挑战或信息不足。
+- Evidence first, label last。先讨论 Background、Location、Effort versus Result、Leg/Wave Comparison、Acceptance/Follow-through，再谨慎使用 Wyckoff 事件标签。
+- 单根 K 线只能形成候选解释；没有可比背景、位置和后续已收盘 K 线时，不得把 Spring、UTAD、Absorption、Exhaustion、No Demand 或 No Supply 写成已确认事件。
+- OHLCV 不能识别参与者身份、主动买卖方向或机构意图。tick/proxy/unknown volume 只能支持同源相对活动比较。
+- 只引用 VPA_PROGRAM_EVIDENCE_CATALOG 中存在的 evidence ID；不得复写或心算 OHLC、Volume、RVOL、ATR、百分比或价格。
+- 下一步确认只能等待下一根已收盘 K 线，不得引用 K0、形成中或未收盘 K 线。
+- 只输出一个 JSON object，不输出 Markdown、PA 字段、交易方向、订单、胜率或置信度。
+""".strip()
+
+_JOINT_ARBITER_SYSTEM = """
+你是 PA Agent 的联合决策裁决员。
+
+PA defines. VPA informs. You arbitrate the current Entry Attempt.
+
+职责边界：
+- PA 假设、方向、Gate、Brooks Setup 和候选集合已经冻结；只能选择、延后或拒绝现有 PA candidate，不得创造新 Setup、逆转方向或绕过 Gate。
+- VPA 是独立证据维度，不是机械 Gate。你要判断其信息增量，而不是复述 PA 或 VPA。
+- `estimated_win_rate` 与 `diagnosis_confidence` 已冻结，禁止修改。VPA 只可影响当前时机、`trade_confidence`、`watch_points`、`risk_assessment`、触发条件或拒绝当前尝试。
+- `neutral` / `insufficient_data` 必须保持 PA baseline。PA baseline 为不下单时，VPA 不得创造订单。
+- 所有价格与订单仍须满足原 Stage 2 Schema、交易者方程、结构止损和执行安全规则。
+- 只输出一个 JSON object，不输出 Markdown 或额外说明。
 """.strip()
 
 _PA_FACTUAL_CLAIM_RULE = """
@@ -1238,6 +1267,168 @@ class PromptAssembler:
             {"role": "system", "content": system_content},
             {"role": "user", "content": user_content},
         ]
+
+    def build_vpa_evidence_report(
+        self,
+        frame: KlineFrame,
+        stage1_json: dict[str, Any],
+        pa_hypotheses: dict[str, Any],
+        *,
+        htf_context: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build an independent VPA evidence call over frozen PA hypotheses."""
+        if not self._vpa_enabled():
+            raise ValueError("VPA evidence analysis requires VPA to be enabled")
+        frozen_keys = (
+            "cycle_position",
+            "alternative_cycle_position",
+            "direction",
+            "spike_stage",
+            "climax_risk",
+            "market_phase",
+            "transition_risk",
+            "detected_patterns",
+            "htf_context",
+            "entry_setup",
+            "support_levels",
+            "resistance_levels",
+            "risk_warning",
+            "bar_analysis",
+            "pa_evidence",
+            "gate_result",
+        )
+        frozen_pa = {
+            key: stage1_json[key]
+            for key in frozen_keys
+            if key in stage1_json
+        }
+        htf_identity = (
+            {
+                key: htf_context.get(key)
+                for key in ("timeframe", "available", "reason")
+                if key in htf_context
+            }
+            if isinstance(htf_context, dict)
+            else {}
+        )
+        knowledge = self._load_vpa_rule_prompt(stage1_json=stage1_json)
+        measurements = self._render_vpa_measurements_block(frame)
+        user_content = (
+            "## VPA_EVIDENCE_ANALYSIS_TASK\n\n"
+            "以下 PA 内容已经通过程序校验并冻结。你只能评估量价证据与这些"
+            "假设及候选的关系，不能重写 PA。\n\n"
+            "### PA_HYPOTHESES\n\n"
+            f"```json\n{json.dumps(pa_hypotheses, ensure_ascii=False, indent=2)}\n```\n\n"
+            "### FROZEN_PA_CONTEXT\n\n"
+            f"```json\n{json.dumps(frozen_pa, ensure_ascii=False, indent=2)}\n```\n\n"
+            + (
+                "### HTF_IDENTITY_ONLY\n\n"
+                f"```json\n{json.dumps(htf_identity, ensure_ascii=False, indent=2)}\n```\n\n"
+                if htf_identity
+                else ""
+            )
+            + (f"{knowledge}\n\n" if knowledge else "")
+            + (f"{measurements}\n\n" if measurements else "")
+            + """输出且只输出：
+{
+  "vpa_report": {
+    "catalog_id": "逐字复制程序 catalog_id",
+    "data_status": "逐字复制程序 data_status",
+    "summary": "核心量价解释、竞争解释与不确定性，不复写数字",
+    "observations": [{
+      "evidence_ids": ["仅使用目录中的 ID"],
+      "finding_kind": "background | effort_result | sequence_comparison | acceptance_rejection | entry_timing",
+      "interpretation": "上下文解释、竞争解释与局限，不复写数字"
+    }],
+    "hypothesis_assessments": [{
+      "hypothesis_id": "逐字复制每个 PA hypothesis_id；每个假设恰好一项",
+      "relation": "supports | neutral | challenges | insufficient_data",
+      "evidence_ids": ["实际使用的 evidence ID；无证据时为空数组"],
+      "reason": "该量价证据为何支持、挑战或不足"
+    }],
+    "background_relation": "supports | neutral | challenges | insufficient_data",
+    "entry_timing_relation": "supports | neutral | challenges | insufficient_data",
+    "next_confirmation": {
+      "state": "pending_closed_bar | not_applicable",
+      "trigger": "下一根已收盘 K 线需要验证的 acceptance/rejection",
+      "requires_closed_bar": true
+    }
+  }
+}
+
+不要输出 `bar_range`，程序会根据 evidence IDs 唯一生成。数据可用时，
+至少给出一项真正的 Effort/Result、序列比较、Acceptance/Rejection 或
+Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并明确写
+`insufficient_data`。"""
+        )
+        return [
+            {"role": "system", "content": _VPA_EVIDENCE_ANALYST_SYSTEM},
+            {"role": "user", "content": user_content},
+        ]
+
+    def build_joint_decision(
+        self,
+        baseline_messages: list[dict[str, Any]],
+        baseline_stage2: dict[str, Any],
+        pa_hypotheses: dict[str, Any],
+        vpa_report: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Reuse the PA-only Stage 2 prefix and append a focused joint task."""
+        if not baseline_messages:
+            raise ValueError("joint arbiter requires PA-only Stage 2 messages")
+        messages = [copy.deepcopy(message) for message in baseline_messages]
+        while messages and messages[-1].get("role") == "assistant":
+            messages.pop()
+        user_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "user"
+            ),
+            None,
+        )
+        if user_index is None:
+            raise ValueError("PA-only Stage 2 messages contain no user turn")
+        addon = (
+            "\n\n---\n\n## JOINT_DECISION_ARBITRATION_TASK\n\n"
+            "上方是完整、仍然有效的 PA-only Stage 2 请求。现在只增加经过"
+            "校验的 PA 候选、VPA 证据报告和 PA-only baseline，由你裁决当前"
+            " Entry Attempt。不要重做 PA 或重新计算程序事实。\n\n"
+            "### PA_HYPOTHESES_AND_CANDIDATES\n\n"
+            f"```json\n{json.dumps(pa_hypotheses, ensure_ascii=False, indent=2)}\n```\n\n"
+            "### VALIDATED_VPA_REPORT\n\n"
+            f"```json\n{json.dumps(vpa_report, ensure_ascii=False, indent=2)}\n```\n\n"
+            "### FROZEN_PA_ONLY_STAGE2_BASELINE\n\n"
+            f"```json\n{json.dumps(baseline_stage2, ensure_ascii=False, indent=2)}\n```\n\n"
+            """输出且只输出：
+{
+  "joint_arbitration": {
+    "selected_candidate_id": "现有 PA candidate_id；不执行时可为 null",
+    "decision_effect": "keep_brooks_baseline | require_confirmation | prefer_retest | lower_confidence | reject_current_attempt",
+    "evidence_used": ["仅引用 validated VPA report 已使用的 evidence ID"],
+    "reason": "VPA 对当前 Entry Attempt 的信息增量及裁决理由"
+  },
+  "stage2_decision": {
+    "...": "完整 Stage 2 JSON，字段与原 Schema 完全一致"
+  }
+}
+
+`keep_brooks_baseline` 时 `stage2_decision` 必须逐字段等于 baseline。
+非 baseline effect 必须落实到现有 timing、trigger、trade_confidence、
+watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
+禁止提高主观胜率、修改 PA 方向/Gate/Setup，或从不下单 baseline 创造交易。
+"""
+        )
+        messages[user_index]["content"] = (
+            str(messages[user_index].get("content") or "") + addon
+        )
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = (
+                _JOINT_ARBITER_SYSTEM
+                + "\n\n---\n\n"
+                + str(messages[0].get("content") or "")
+            )
+        return messages
 
     def build_paired_vpa_context(
         self,

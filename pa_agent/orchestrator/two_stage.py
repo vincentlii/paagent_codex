@@ -39,8 +39,19 @@ if TYPE_CHECKING:
 from pa_agent.ai.json_validator import Ok, ValidationError
 from pa_agent.ai.model_call_runner import ModelCallRunner
 from pa_agent.ai.provider_failures import ModelCallFailure
-from pa_agent.config.vpa import VPA_PAIR_IDENTITY_VERSION
+from pa_agent.ai.role_contracts import (
+    JOINT_DECISION_SCHEMA,
+    VPA_EVIDENCE_SCHEMA,
+    PaHypothesisSet,
+    RunOutcome,
+    VpaEvidenceReport,
+)
+from pa_agent.ai.role_validator import (
+    validate_joint_decision,
+    validate_vpa_evidence,
+)
 from pa_agent.data.base import KlineFrame
+from pa_agent.orchestrator.role_call import StructuredRoleResult, run_structured_role
 from pa_agent.orchestrator.validation_retry import validate_with_retry
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
@@ -160,73 +171,6 @@ def _vpa_pair_diff(baseline: AnalysisRecord, vpa: AnalysisRecord) -> dict[str, A
     }
 
 
-def _vpa_authority_violations(baseline: Any, vpa: Any) -> list[str]:
-    """Report fields VPA is not authorized to own, without hiding A/B drift."""
-    base_s1 = getattr(baseline, "stage1_diagnosis", None) or {}
-    vpa_s1 = getattr(vpa, "stage1_diagnosis", None) or {}
-    violations: list[str] = []
-    for key in _PA_STAGE1_PROTECTED_KEYS:
-        if base_s1.get(key) != vpa_s1.get(key):
-            violations.append(f"stage1.{key}_changed")
-    base_bar = base_s1.get("bar_analysis") or {}
-    vpa_bar = vpa_s1.get("bar_analysis") or {}
-    base_signal = base_bar.get("signal_bar") or {}
-    vpa_signal = vpa_bar.get("signal_bar") or {}
-    bar_semantics = {
-        "always_in": (base_bar.get("always_in"), vpa_bar.get("always_in")),
-        "bar_type": (base_bar.get("bar_type"), vpa_bar.get("bar_type")),
-        "signal_bar.bar": (base_signal.get("bar"), vpa_signal.get("bar")),
-        "signal_bar.quality": (
-            base_signal.get("quality"),
-            vpa_signal.get("quality"),
-        ),
-        "signal_bar.pattern": (
-            base_signal.get("pattern"),
-            vpa_signal.get("pattern"),
-        ),
-        "entry_setup_type": (
-            base_bar.get("entry_setup_type"),
-            vpa_bar.get("entry_setup_type"),
-        ),
-        "follow_through": (
-            base_bar.get("follow_through"),
-            vpa_bar.get("follow_through"),
-        ),
-    }
-    violations.extend(
-        f"stage1.bar_analysis.{field}_changed"
-        for field, (baseline_value, vpa_value) in bar_semantics.items()
-        if baseline_value != vpa_value
-    )
-    if list(getattr(baseline, "strategy_files_used", None) or []) != list(
-        getattr(vpa, "strategy_files_used", None) or []
-    ):
-        violations.append("routing.strategy_files_changed")
-
-    base_decision = (getattr(baseline, "stage2_decision", None) or {}).get(
-        "decision", {}
-    )
-    vpa_decision = (getattr(vpa, "stage2_decision", None) or {}).get("decision", {})
-    base_trade = _has_executable_order(base_decision)
-    vpa_trade = _has_executable_order(vpa_decision)
-    if not base_trade and vpa_trade:
-        violations.append("stage2.created_trade_from_no_order")
-    if base_trade and vpa_trade:
-        base_direction = str(base_decision.get("order_direction") or "").lower()
-        vpa_direction = str(vpa_decision.get("order_direction") or "").lower()
-        if base_direction != vpa_direction:
-            violations.append("stage2.order_direction_changed")
-    if base_decision.get("estimated_win_rate") != vpa_decision.get(
-        "estimated_win_rate"
-    ):
-        violations.append("stage2.estimated_win_rate_changed")
-    if base_decision.get("diagnosis_confidence") != vpa_decision.get(
-        "diagnosis_confidence"
-    ):
-        violations.append("stage2.diagnosis_confidence_changed")
-    return violations
-
-
 def _stable_hash(value: Any) -> str:
     """Hash audit metadata without retaining a second prompt or response copy."""
     encoded = json.dumps(value, ensure_ascii=True, default=str, separators=(",", ":"), sort_keys=True)
@@ -331,17 +275,6 @@ def _apply_validation_to_call_attempts(
     elif final_call.get("status") != "validation_failed":
         final_call["status"] = "validation_failed"
         final_call["validation_category"] = result.category
-
-
-def _provider_fingerprint(provider: Any) -> dict[str, Any]:
-    """Record reproducibility-relevant settings without storing credentials."""
-    return {
-        "model": str(getattr(provider, "model", "") or ""),
-        "base_url": str(getattr(provider, "base_url", "") or ""),
-        "thinking": bool(getattr(provider, "thinking", False)),
-        "reasoning_effort": str(getattr(provider, "reasoning_effort", "") or ""),
-        "context_window": int(getattr(provider, "context_window", 0) or 0),
-    }
 
 
 def _apply_confidence_threshold(stage2: dict, threshold: int) -> dict:
@@ -608,6 +541,11 @@ def _build_empty_record(
         serialize_higher_timeframe_context,
     )
     from pa_agent.data.snapshot_bundle import compact_snapshot_context
+    from pa_agent.config.vpa import resolve_vpa_mode
+
+    requested_mode = resolve_vpa_mode(
+        getattr(settings, "prompt", None) if settings is not None else None
+    )
 
     return AnalysisRecord(
         meta=meta,
@@ -625,7 +563,46 @@ def _build_empty_record(
         experience_loaded=[],
         exception=None,
         usage_total={},
+        run_outcome=RunOutcome(
+            status="internal_error",
+            official_path="none",
+            requested_vpa_mode=requested_mode,
+            reason="run_not_completed",
+        ).model_dump(),
     )
+
+
+def _with_run_outcome(
+    record: AnalysisRecord,
+    *,
+    status: str,
+    requested_vpa_mode: str,
+    reason: str | None = None,
+    official_path: str = "none",
+) -> AnalysisRecord:
+    """Attach one explicit terminal run state before persistence."""
+    return record.model_copy(
+        update={
+            "run_outcome": RunOutcome(
+                status=status,
+                official_path=official_path,
+                requested_vpa_mode=requested_vpa_mode,
+                reason=reason,
+            ).model_dump()
+        }
+    )
+
+
+def _completed_run_status(
+    record: AnalysisRecord,
+    *extra_audit: dict[str, Any],
+) -> str:
+    """Distinguish clean completion from accepted quality warnings."""
+    has_validation_warning = any(
+        str(item.get("category") or "") == "warning"
+        for item in [*record.validation_audit, *extra_audit]
+    )
+    return "completed_with_warnings" if has_validation_warning else "completed"
 
 
 def _accumulate_usage(current: dict, reply_or_usage: Any) -> dict:
@@ -696,12 +673,7 @@ class TwoStageOrchestrator:
         exp_reader: "ExperienceReader",
         settings: Optional["Settings"] = None,
         *,
-        paired_arm: str | None = None,
-        paired_baseline_stage1: dict[str, Any] | None = None,
-        paired_baseline_stage2_messages: list[dict[str, Any]] | None = None,
-        paired_baseline_stage2: dict[str, Any] | None = None,
-        paired_strategy_files: list[str] | None = None,
-        vpa_evidence_catalog: dict[str, Any] | None = None,
+        call_arm: str = "baseline",
         allow_provider_fallback: bool = True,
         defer_execution_policy: bool = False,
     ) -> None:
@@ -712,16 +684,7 @@ class TwoStageOrchestrator:
         self._pending_writer = pending_writer
         self._exp_reader = exp_reader
         self._settings = settings
-        self._paired_arm = paired_arm
-        self._paired_baseline_stage1 = copy.deepcopy(paired_baseline_stage1)
-        self._paired_baseline_stage2_messages = copy.deepcopy(
-            paired_baseline_stage2_messages
-        )
-        self._paired_baseline_stage2 = copy.deepcopy(paired_baseline_stage2)
-        self._paired_strategy_files = (
-            list(paired_strategy_files) if paired_strategy_files is not None else None
-        )
-        self._vpa_evidence_catalog = copy.deepcopy(vpa_evidence_catalog)
+        self._call_arm = call_arm
         self._allow_provider_fallback = allow_provider_fallback
         self._defer_execution_policy = defer_execution_policy
         self._initial_stage2_messages: list[dict[str, Any]] = []
@@ -737,7 +700,7 @@ class TwoStageOrchestrator:
         """Return the clean Stage-2 request before any validation retry turns."""
         return copy.deepcopy(self._initial_stage2_messages)
 
-    def _clone_paired_client(self, provider: Any) -> tuple[Any, bool]:
+    def _clone_role_client(self, provider: Any) -> tuple[Any, bool]:
         """Clone provider state when the client supports it; mocks stay compatible."""
         clone = getattr(self._client, "clone_with_provider", None)
         if callable(clone):
@@ -820,25 +783,13 @@ class TwoStageOrchestrator:
 
         configured_mode = resolve_vpa_mode(getattr(self._settings, "prompt", None))
         mode = configured_mode
-        if configured_mode == "soft":
-            logger.warning("VPA Soft is locked pending Shadow acceptance; using Shadow")
-            mode = "shadow"
-        if self._paired_arm is None and mode == "shadow":
-            shadow_design = str(
-                getattr(
-                    getattr(self._settings, "prompt", None),
-                    "vpa_shadow_design",
-                    "full_prompt_ab",
-                )
-                or "full_prompt_ab"
-            )
-            return self._submit_vpa_paired(
+        if mode in {"shadow", "soft"}:
+            return self._submit_vpa_roles(
                 frame,
                 cancel_token,
                 on_event,
                 mode=mode,
                 configured_mode=configured_mode,
-                shadow_design=shadow_design,
                 on_stage1_reasoning=on_stage1_reasoning,
                 on_stage1_content=on_stage1_content,
                 on_stage2_reasoning=on_stage2_reasoning,
@@ -852,7 +803,7 @@ class TwoStageOrchestrator:
 
         # ── Step 1: Build partial record ──────────────────────────────────────
         record = _build_empty_record(frame, self._settings, htf_context=htf_context)
-        call_arm = self._paired_arm or "baseline"
+        call_arm = self._call_arm
         call_attempts = list(record.call_attempts)
 
         def _append_call(
@@ -884,6 +835,12 @@ class TwoStageOrchestrator:
 
         # ── Step 2: Pre-Stage-1 cancel check ─────────────────────────────────
         if cancel_token.is_set():
+            record = _with_run_outcome(
+                record,
+                status="cancelled",
+                requested_vpa_mode=mode,
+                reason="cancelled_before_preflight",
+            )
             self._persist_partial(record, "user_cancelled", on_event)
             on_event(OrchestratorEvent.Cancelled)
             return record
@@ -908,6 +865,12 @@ class TwoStageOrchestrator:
                     "message": pf.reason,
                 }
             })
+            record = _with_run_outcome(
+                record,
+                status="unavailable_input",
+                requested_vpa_mode=mode,
+                reason=pf.reason,
+            )
             self._persist_partial(record, "insufficient_data", on_event)
             on_event(OrchestratorEvent.InsufficientData)
             return record
@@ -923,13 +886,7 @@ class TwoStageOrchestrator:
             )
 
         # ── Step 4: Build Stage 1 messages ───────────────────────────────────
-        if self._paired_baseline_stage1 is not None:
-            messages_s1 = self._assembler.build_paired_vpa_context(
-                frame,
-                self._paired_baseline_stage1,
-                htf_context=htf_context,
-            )
-        elif previous_record is not None and incremental_new_bar_count is not None:
+        if previous_record is not None and incremental_new_bar_count is not None:
             messages_s1 = self._assembler.build_incremental_stage1(
                 frame,
                 previous_record,
@@ -996,6 +953,12 @@ class TwoStageOrchestrator:
             )
         except ModelCallFailure as exc:
             if exc.failure.kind == "cancelled":
+                record = _with_run_outcome(
+                    record,
+                    status="cancelled",
+                    requested_vpa_mode=mode,
+                    reason="cancelled_during_stage1",
+                )
                 self._persist_partial(record, "user_cancelled", on_event)
                 on_event(OrchestratorEvent.Cancelled)
                 return record
@@ -1006,6 +969,12 @@ class TwoStageOrchestrator:
                     "call_attempts": copy.deepcopy(call_attempts),
                     "exception": self._provider_failure_payload(exc, stage="stage1"),
                 }
+            )
+            record = _with_run_outcome(
+                record,
+                status="unavailable_provider",
+                requested_vpa_mode=mode,
+                reason=str(exc),
             )
             self._persist_partial(record, "provider_error", on_event)
             on_event(OrchestratorEvent.Stage1Failed)
@@ -1031,6 +1000,12 @@ class TwoStageOrchestrator:
                     "usage_total": _accumulate_usage(record.usage_total, reply_s1),
                     "call_attempts": copy.deepcopy(call_attempts),
                 }
+            )
+            record = _with_run_outcome(
+                record,
+                status="cancelled",
+                requested_vpa_mode=mode,
+                reason="cancelled_after_stage1",
             )
             self._persist_partial(record, "user_cancelled", on_event)
             on_event(OrchestratorEvent.Cancelled)
@@ -1095,12 +1070,10 @@ class TwoStageOrchestrator:
                 validation_settings=self._validation_settings(),
                 validate_kwargs={
                     "kline_frame": frame,
-                    "vpa_evidence_catalog": self._vpa_evidence_catalog,
                     "incremental_new_bar_count": int(
                         incremental_new_bar_count or 0
                     ),
                     "incremental_previous_stage1": prev_s1,
-                    "paired_baseline_stage1": self._paired_baseline_stage1,
                     "htf_context": htf_context,
                 },
                 call_api=_call_s1_retry,
@@ -1120,6 +1093,16 @@ class TwoStageOrchestrator:
                     ),
                     "exception": failure,
                 }
+            )
+            record = _with_run_outcome(
+                record,
+                status=(
+                    "cancelled"
+                    if exc.failure.kind == "cancelled"
+                    else "unavailable_provider"
+                ),
+                requested_vpa_mode=mode,
+                reason=str(exc),
             )
             if exc.failure.kind == "cancelled":
                 self._persist_partial(record, "user_cancelled", on_event)
@@ -1179,6 +1162,12 @@ class TwoStageOrchestrator:
                     },
                 }
             )
+            record = _with_run_outcome(
+                record,
+                status="unavailable_provider",
+                requested_vpa_mode=mode,
+                reason=err_message,
+            )
             self._persist_partial(record, f"stage1_{err.category}", on_event)
             on_event(OrchestratorEvent.Stage1Failed)
             return record
@@ -1187,19 +1176,12 @@ class TwoStageOrchestrator:
         assert isinstance(result_s1, Ok)
         stage1_json: dict = result_s1.obj
         stage1_for_stage2 = stage1_json
-        if self._paired_baseline_stage1 is not None:
-            stage1_for_stage2 = copy.deepcopy(self._paired_baseline_stage1)
-            vpa_context = stage1_json.get("vpa_context")
-            if isinstance(vpa_context, dict):
-                stage1_for_stage2["vpa_context"] = vpa_context
 
         # ── Step 9: Stage 1 done ──────────────────────────────────────────────
         on_event(OrchestratorEvent.Stage1Done)
 
         # ── Step 10: Route strategy files ─────────────────────────────────────
-        if self._paired_strategy_files is not None:
-            strategy_files = list(self._paired_strategy_files)
-        elif callable(self._router) and not hasattr(self._router, "route"):
+        if callable(self._router) and not hasattr(self._router, "route"):
             strategy_files = self._router(stage1_for_stage2)
         else:
             strategy_files = self._router.route(stage1_for_stage2)
@@ -1241,6 +1223,12 @@ class TwoStageOrchestrator:
                     "usage_total": _accumulate_usage(record.usage_total, reply_s1),
                 }
             )
+            record = _with_run_outcome(
+                record,
+                status="cancelled",
+                requested_vpa_mode=mode,
+                reason="cancelled_before_stage2",
+            )
             self._persist_partial(record, "user_cancelled", on_event)
             on_event(OrchestratorEvent.Cancelled)
             return record
@@ -1263,20 +1251,6 @@ class TwoStageOrchestrator:
             _emit_buffered_stream(short_msg, on_stage2_content)
 
             stage2_json = build_stage2_gate_wait_response(stage1_for_stage2)
-            if self._paired_arm == "vpa":
-                vpa_context = stage1_for_stage2.get("vpa_context")
-                vpa_context = vpa_context if isinstance(vpa_context, dict) else {}
-                stage2_json["vpa_impact"] = {
-                    "background_relation": vpa_context.get(
-                        "background_relation", "insufficient_data"
-                    ),
-                    "entry_timing_relation": vpa_context.get(
-                        "entry_timing_relation", "insufficient_data"
-                    ),
-                    "evidence_used": [],
-                    "decision_effect": "keep_brooks_baseline",
-                    "reason": "阶段一闸门未通过，阶段二未执行 VPA 入场影响评估。",
-                }
             on_event(OrchestratorEvent.Stage2Done)
             logger.info("next_bar_prediction direction=null probs=null/null/null unpredictable=true (gate short-circuit)")
             usage_total = _accumulate_usage(record.usage_total, reply_s1)
@@ -1295,6 +1269,11 @@ class TwoStageOrchestrator:
                     ],
                     "usage_total": usage_total,
                     "exception": None,
+                    "run_outcome": RunOutcome(
+                        status=_completed_run_status(record),
+                        official_path="pa_only",
+                        requested_vpa_mode=mode,
+                    ).model_dump(),
                 }
             )
             if not self._persist_full(record, on_event):
@@ -1306,27 +1285,19 @@ class TwoStageOrchestrator:
         _enable_next_bar = bool(
             getattr(getattr(self._settings, "general", None), "enable_next_bar_prediction", False)
         )
-        if self._paired_baseline_stage2_messages:
-            messages_s2 = self._assembler.build_paired_vpa_stage2(
-                self._paired_baseline_stage2_messages,
-                self._paired_baseline_stage2 or {},
-                frame,
-                stage1_for_stage2,
-            )
-        else:
-            messages_s2 = self._assembler.build_stage2_continuation(
-                frame=frame,
-                stage1_messages=messages_s1,
-                stage1_reply_content=reply_s1.content,
-                stage1_json=stage1_for_stage2,
-                strategy_files=strategy_files,
-                experience_entries=experience_entries,
-                decision_stance=record.meta.decision_stance,
-                previous_record=previous_record,
-                enable_next_bar_prediction=_enable_next_bar,
-                provider_settings=getattr(self._settings, "provider", None),
-                htf_context=htf_context,
-            )
+        messages_s2 = self._assembler.build_stage2_continuation(
+            frame=frame,
+            stage1_messages=messages_s1,
+            stage1_reply_content=reply_s1.content,
+            stage1_json=stage1_for_stage2,
+            strategy_files=strategy_files,
+            experience_entries=experience_entries,
+            decision_stance=record.meta.decision_stance,
+            previous_record=previous_record,
+            enable_next_bar_prediction=_enable_next_bar,
+            provider_settings=getattr(self._settings, "provider", None),
+            htf_context=htf_context,
+        )
         self._initial_stage2_messages = copy.deepcopy(messages_s2)
 
         # ── Step 15: Call AI for Stage 2 ──────────────────────────────────────
@@ -1379,6 +1350,30 @@ class TwoStageOrchestrator:
             )
         except ModelCallFailure as exc:
             if exc.failure.kind == "cancelled":
+                record = record.model_copy(
+                    update={
+                        "stage1_messages": messages_s1,
+                        "stage1_response": reply_s1.raw,
+                        "stage1_diagnosis": stage1_json,
+                        "stage2_messages": messages_s2,
+                        "call_attempts": copy.deepcopy(call_attempts),
+                        "strategy_files_used": strategy_files,
+                        "experience_loaded": [
+                            e.model_dump() if hasattr(e, "model_dump") else dict(e)
+                            for e in experience_entries
+                        ],
+                        "usage_total": _accumulate_usage(
+                            record.usage_total,
+                            reply_s1,
+                        ),
+                    }
+                )
+                record = _with_run_outcome(
+                    record,
+                    status="cancelled",
+                    requested_vpa_mode=mode,
+                    reason="cancelled_during_stage2",
+                )
                 self._persist_partial(record, "user_cancelled", on_event)
                 on_event(OrchestratorEvent.Cancelled)
                 return record
@@ -1398,6 +1393,12 @@ class TwoStageOrchestrator:
                     "usage_total": _accumulate_usage(record.usage_total, reply_s1),
                     "exception": self._provider_failure_payload(exc, stage="stage2"),
                 }
+            )
+            record = _with_run_outcome(
+                record,
+                status="unavailable_provider",
+                requested_vpa_mode=mode,
+                reason=str(exc),
             )
             self._persist_partial(record, "provider_error", on_event)
             on_event(OrchestratorEvent.Stage2Failed)
@@ -1434,6 +1435,12 @@ class TwoStageOrchestrator:
                         reply_s2,
                     ),
                 }
+            )
+            record = _with_run_outcome(
+                record,
+                status="cancelled",
+                requested_vpa_mode=mode,
+                reason="cancelled_after_stage2",
             )
             self._persist_partial(record, "user_cancelled", on_event)
             on_event(OrchestratorEvent.Cancelled)
@@ -1496,8 +1503,6 @@ class TwoStageOrchestrator:
                     "kline_frame": frame,
                     "stage1_json": stage1_for_stage2,
                     "skip_next_bar": not _enable_next_bar,
-                    "vpa_evidence_catalog": self._vpa_evidence_catalog,
-                    "paired_baseline_stage2": self._paired_baseline_stage2,
                 },
                 call_api=_call_s2_retry,
                 provider_settings=getattr(self._settings, "provider", None),
@@ -1524,6 +1529,16 @@ class TwoStageOrchestrator:
                     ),
                     "exception": failure,
                 }
+            )
+            record = _with_run_outcome(
+                record,
+                status=(
+                    "cancelled"
+                    if exc.failure.kind == "cancelled"
+                    else "unavailable_provider"
+                ),
+                requested_vpa_mode=mode,
+                reason=str(exc),
             )
             if exc.failure.kind == "cancelled":
                 self._persist_partial(record, "user_cancelled", on_event)
@@ -1593,6 +1608,12 @@ class TwoStageOrchestrator:
                         "validation_attempts": vr_s2.attempts,
                     },
                 }
+            )
+            record = _with_run_outcome(
+                record,
+                status="unavailable_provider",
+                requested_vpa_mode=mode,
+                reason=err_message,
             )
             self._persist_partial(record, f"stage2_{err.category}", on_event)
             on_event(OrchestratorEvent.Stage2Failed)
@@ -1672,6 +1693,11 @@ class TwoStageOrchestrator:
                 ],
                 "usage_total": usage_total,
                 "exception": None,
+                "run_outcome": RunOutcome(
+                    status=_completed_run_status(record),
+                    official_path="pa_only",
+                    requested_vpa_mode=mode,
+                ).model_dump(),
             }
         )
 
@@ -1685,7 +1711,7 @@ class TwoStageOrchestrator:
         # ── Step 24: Return ───────────────────────────────────────────────────
         return record
 
-    def _submit_vpa_paired(
+    def _submit_vpa_roles(
         self,
         frame: KlineFrame,
         cancel_token: CancelToken,
@@ -1693,7 +1719,6 @@ class TwoStageOrchestrator:
         *,
         mode: str,
         configured_mode: str,
-        shadow_design: str,
         on_stage1_reasoning: Callable[[str], None] | None,
         on_stage1_content: Callable[[str], None] | None,
         on_stage2_reasoning: Callable[[str], None] | None,
@@ -1704,7 +1729,7 @@ class TwoStageOrchestrator:
         incremental_new_bar_count: int | None,
         htf_context: dict[str, Any] | None,
     ) -> AnalysisRecord:
-        """Run a frozen-snapshot baseline/VPA experiment and persist the A arm."""
+        """Run PA, independent VPA evidence, and a bounded joint arbiter."""
         from pa_agent.ai.json_validator import JsonValidator
         from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
         from pa_agent.data.snapshot_bundle import build_snapshot_bundle
@@ -1716,9 +1741,20 @@ class TwoStageOrchestrator:
             htf_context=htf_context,
         )
         if cancel_token.is_set():
+            preflight_record = preflight_record.model_copy(
+                update={
+                    "run_outcome": RunOutcome(
+                        status="cancelled",
+                        official_path="none",
+                        requested_vpa_mode=configured_mode,
+                        reason="cancelled_before_preflight",
+                    ).model_dump()
+                }
+            )
             self._persist_partial(preflight_record, "user_cancelled", on_event)
             on_event(OrchestratorEvent.Cancelled)
             return preflight_record
+
         snapshot_bundle = build_snapshot_bundle(
             frame,
             htf_context,
@@ -1737,7 +1773,13 @@ class TwoStageOrchestrator:
                         "stage": "preflight",
                         "failed_check": preflight.failed_check,
                         "message": preflight.reason,
-                    }
+                    },
+                    "run_outcome": RunOutcome(
+                        status="unavailable_input",
+                        official_path="none",
+                        requested_vpa_mode=configured_mode,
+                        reason=preflight.reason,
+                    ).model_dump(),
                 }
             )
             self._persist_partial(preflight_record, "insufficient_data", on_event)
@@ -1747,16 +1789,19 @@ class TwoStageOrchestrator:
         baseline_settings = self._settings.model_copy(deep=True)
         baseline_settings.prompt.vpa_mode = "off"
         baseline_settings.prompt.vpa_enabled = False
-        vpa_settings = self._settings.model_copy(deep=True)
-        vpa_settings.prompt.vpa_mode = "shadow"
-        vpa_settings.prompt.vpa_enabled = True
-        catalog = build_vpa_evidence_catalog(frame)
-        snapshot_hash = str(catalog["snapshot_hash"])
-        full_prompt_ab = shadow_design == "full_prompt_ab"
-        baseline_client, baseline_client_isolated = self._clone_paired_client(
+        role_settings = self._settings.model_copy(deep=True)
+        role_settings.prompt.vpa_mode = mode
+        role_settings.prompt.vpa_enabled = True
+
+        baseline_client, baseline_isolated = self._clone_role_client(
             baseline_settings.provider
         )
-        vpa_client, vpa_client_isolated = self._clone_paired_client(vpa_settings.provider)
+        vpa_client, vpa_isolated = self._clone_role_client(
+            role_settings.provider
+        )
+        joint_client, joint_isolated = self._clone_role_client(
+            role_settings.provider
+        )
 
         def relay_baseline_event(event: OrchestratorEvent) -> None:
             if event != OrchestratorEvent.RecordSaved:
@@ -1764,13 +1809,15 @@ class TwoStageOrchestrator:
 
         baseline_runner = TwoStageOrchestrator(
             client=baseline_client,
-            assembler=self._assembler.clone_with_prompt_settings(baseline_settings.prompt),
+            assembler=self._assembler.clone_with_prompt_settings(
+                baseline_settings.prompt
+            ),
             router=self._router,
             validator=JsonValidator(baseline_settings),
             pending_writer=_NoopPendingWriter(),
             exp_reader=self._exp_reader,
             settings=baseline_settings,
-            paired_arm="baseline",
+            call_arm="pa",
             allow_provider_fallback=False,
             defer_execution_policy=True,
         )
@@ -1784,231 +1831,517 @@ class TwoStageOrchestrator:
             on_stage2_content=on_stage2_content,
             on_stage_prompt=on_stage_prompt,
             on_stage2_files=on_stage2_files,
-            previous_record=None if full_prompt_ab else previous_record,
-            incremental_new_bar_count=(
-                None if full_prompt_ab else incremental_new_bar_count
-            ),
+            previous_record=previous_record,
+            incremental_new_bar_count=incremental_new_bar_count,
             htf_context=htf_context,
         )
         if baseline.exception is not None or cancel_token.is_set():
-            self._persist_partial(baseline, "vpa_baseline_failed", on_event)
+            if cancel_token.is_set():
+                baseline = baseline.model_copy(
+                    update={
+                        "run_outcome": RunOutcome(
+                            status="cancelled",
+                            official_path="none",
+                            requested_vpa_mode=configured_mode,
+                            reason="cancelled_during_pa",
+                        ).model_dump()
+                    }
+                )
+                reason = "user_cancelled"
+            else:
+                baseline_outcome = (
+                    baseline.run_outcome
+                    if isinstance(baseline.run_outcome, dict)
+                    else {}
+                )
+                baseline_status = str(
+                    baseline_outcome.get("status") or "internal_error"
+                )
+                if baseline_status not in {
+                    "unavailable_input",
+                    "unavailable_provider",
+                    "internal_error",
+                }:
+                    baseline_status = "internal_error"
+                baseline = baseline.model_copy(
+                    update={
+                        "run_outcome": RunOutcome(
+                            status=baseline_status,
+                            official_path="none",
+                            requested_vpa_mode=configured_mode,
+                            reason=(
+                                str(baseline_outcome.get("reason") or "")
+                                or "PA framework or PA-only decision failed"
+                            ),
+                        ).model_dump()
+                    }
+                )
+                reason = "pa_analysis_failed"
+            self._persist_partial(baseline, reason, on_event)
             return baseline
 
-        vpa_runner_kwargs: dict[str, Any] = {}
-        if not full_prompt_ab:
-            vpa_runner_kwargs.update(
-                paired_baseline_stage1=baseline.stage1_diagnosis or {},
-                paired_baseline_stage2_messages=baseline_runner.initial_stage2_messages(),
-                paired_baseline_stage2=baseline.stage2_decision or {},
-                paired_strategy_files=baseline.strategy_files_used,
-            )
-        vpa_runner = TwoStageOrchestrator(
-            client=vpa_client,
-            assembler=self._assembler.clone_with_prompt_settings(
-                vpa_settings.prompt,
-                vpa_evidence_catalog=catalog,
-            ),
-            router=self._router,
-            validator=JsonValidator(vpa_settings),
-            pending_writer=_NoopPendingWriter(),
-            exp_reader=self._exp_reader,
-            settings=vpa_settings,
-            paired_arm="vpa",
+        stage1 = copy.deepcopy(baseline.stage1_diagnosis or {})
+        baseline_stage2 = copy.deepcopy(baseline.stage2_decision or {})
+        hypotheses = PaHypothesisSet.from_stage1(stage1)
+        hypotheses_dict = hypotheses.model_dump()
+        catalog = build_vpa_evidence_catalog(frame)
+        snapshot_hash = str(catalog.get("snapshot_hash") or "")
+        role_assembler = self._assembler.clone_with_prompt_settings(
+            role_settings.prompt,
             vpa_evidence_catalog=catalog,
-            allow_provider_fallback=False,
-            defer_execution_policy=True,
-            **vpa_runner_kwargs,
         )
-        vpa = vpa_runner.submit(
+        role_calls: list[dict[str, Any]] = []
+        role_audit: list[dict[str, Any]] = []
+        role_replies: list[Any] = []
+        thinking, effort = self._thinking_params()
+
+        def execute_role(
+            *,
+            role: str,
+            client: Any,
+            schema: dict[str, Any],
+            messages: list[dict[str, Any]],
+            validate: Callable[[str], Any],
+        ) -> tuple[StructuredRoleResult | None, dict[str, Any] | None]:
+            def call_api(current_messages: list[dict[str, Any]]) -> Any:
+                attempt = 1 + sum(
+                    1
+                    for item in role_calls
+                    if item.get("arm") == role and item.get("stage") == role
+                )
+                try:
+                    result = ModelCallRunner(
+                        client,
+                        role_settings.provider,
+                    ).run_stream(
+                        current_messages,
+                        stage=role,
+                        schema=schema,
+                        on_reasoning_token=None,
+                        on_content_token=None,
+                        cancel_token=cancel_token,
+                        thinking=thinking,
+                        reasoning_effort=effort,
+                    )
+                except ModelCallFailure as exc:
+                    failed = _call_attempt_entry(
+                        arm=role,
+                        stage=role,
+                        attempt=attempt,
+                        messages=current_messages,
+                        status="request_failed",
+                        error_type=exc.failure.kind,
+                    )
+                    failed["transport_attempts"] = [
+                        dict(item) for item in exc.attempts
+                    ]
+                    role_calls.append(failed)
+                    raise
+                self._annotate_model_reply(
+                    result,
+                    provider_fallback_used=False,
+                )
+                reply = result.reply
+                role_replies.append(reply)
+                role_calls.append(
+                    _call_attempt_entry(
+                        arm=role,
+                        stage=role,
+                        attempt=attempt,
+                        messages=current_messages,
+                        reply=reply,
+                    )
+                )
+                return reply
+
+            try:
+                result = run_structured_role(
+                    role=role,
+                    messages=messages,
+                    call_api=call_api,
+                    validate=validate,
+                    max_repairs=1,
+                )
+            except ModelCallFailure as exc:
+                return None, self._provider_failure_payload(exc, stage=role)
+
+            role_audit.extend(
+                {
+                    "stage": role,
+                    "arm": role,
+                    **copy.deepcopy(event),
+                }
+                for event in result.validation_events
+            )
+            validation_result: Ok | ValidationError
+            if result.ok:
+                validation_result = Ok(result.obj or {})
+            else:
+                validation_result = ValidationError(
+                    category="c",
+                    stage=role,
+                    raw_text="",
+                    invalid_fields=list(result.hard_errors),
+                    message="; ".join(result.hard_errors),
+                )
+            _apply_validation_to_call_attempts(
+                role_calls,
+                arm=role,
+                stage=role,
+                validation_events=list(result.validation_events),
+                result=validation_result,
+            )
+            if result.ok:
+                return result, None
+            return result, {
+                "type": "validation_error",
+                "stage": role,
+                "category": "c",
+                "message": "; ".join(result.hard_errors),
+                "invalid_fields": list(result.hard_errors),
+                "validation_attempts": len(result.replies),
+            }
+
+        def role_response_payload(
+            result: StructuredRoleResult | None,
+        ) -> list[dict[str, Any]]:
+            if result is None:
+                return []
+            return [
+                copy.deepcopy(getattr(reply, "raw", {}))
+                for reply in result.replies
+            ]
+
+        def finish_cancelled(
+            reason: str,
+            *,
+            vpa_report_obj: dict[str, Any] | None = None,
+        ) -> AnalysisRecord:
+            record = baseline.model_copy(
+                update={
+                    "pa_hypotheses": copy.deepcopy(hypotheses_dict),
+                    "vpa_evidence": copy.deepcopy(vpa_report_obj),
+                    "run_outcome": RunOutcome(
+                        status="cancelled",
+                        official_path="none",
+                        requested_vpa_mode=configured_mode,
+                        reason=reason,
+                    ).model_dump(),
+                    "usage_total": _accumulate_usage_calls(
+                        baseline.usage_total,
+                        role_replies,
+                    ),
+                    "call_attempts": [
+                        *copy.deepcopy(baseline.call_attempts),
+                        *copy.deepcopy(role_calls),
+                    ],
+                    "validation_audit": [
+                        *copy.deepcopy(baseline.validation_audit),
+                        *copy.deepcopy(role_audit),
+                    ],
+                }
+            )
+            self._persist_partial(record, "user_cancelled", on_event)
+            on_event(OrchestratorEvent.Cancelled)
+            return record
+
+        def finish(
+            *,
+            status: str,
+            official_path: str,
+            official_stage2: dict[str, Any],
+            vpa_result: StructuredRoleResult | None,
+            vpa_report_obj: dict[str, Any] | None,
+            joint_result: StructuredRoleResult | None,
+            joint_envelope: dict[str, Any] | None,
+            degradation_stage: str | None = None,
+            degradation_reason: str | None = None,
+        ) -> AnalysisRecord:
+            threshold = int(
+                getattr(
+                    getattr(self._settings, "general", None),
+                    "decision_confidence_threshold",
+                    0,
+                )
+            )
+            executable_stage2 = _apply_confidence_threshold(
+                official_stage2,
+                threshold,
+            )
+            joint_stage2 = (
+                copy.deepcopy(joint_envelope.get("stage2_decision") or {})
+                if isinstance(joint_envelope, dict)
+                else copy.deepcopy(baseline_stage2)
+            )
+            comparison_record = baseline.model_copy(
+                update={"stage2_decision": joint_stage2}
+            )
+            comparison = _vpa_pair_diff(baseline, comparison_record)
+            arbitration = (
+                copy.deepcopy(joint_envelope.get("joint_arbitration"))
+                if isinstance(joint_envelope, dict)
+                else None
+            )
+            compatibility_impact = None
+            if isinstance(arbitration, dict) and isinstance(vpa_report_obj, dict):
+                compatibility_impact = {
+                    "background_relation": vpa_report_obj.get(
+                        "background_relation"
+                    ),
+                    "entry_timing_relation": vpa_report_obj.get(
+                        "entry_timing_relation"
+                    ),
+                    "evidence_used": copy.deepcopy(
+                        arbitration.get("evidence_used") or []
+                    ),
+                    "decision_effect": arbitration.get("decision_effect"),
+                    "reason": arbitration.get("reason"),
+                }
+            completed_status = _completed_run_status(
+                baseline,
+                *role_audit,
+            )
+            effective_status = (
+                completed_status
+                if status == "completed"
+                else status
+            )
+            vpa_not_normalized = not any(
+                item.get("stage") == "vpa_evidence"
+                and item.get("category") == "normalization"
+                for item in role_audit
+            )
+            joint_not_normalized = not any(
+                item.get("stage") == "joint_arbiter"
+                and item.get("category") == "normalization"
+                for item in role_audit
+            )
+            role_execution = {
+                "design": "pa_vpa_joint_v1",
+                "same_frozen_input": True,
+                "snapshot_hash": snapshot_hash,
+                "pa_source_digest": hypotheses.source_digest,
+                "official_path": official_path,
+                "client_instances_isolated": bool(
+                    baseline_isolated and vpa_isolated and joint_isolated
+                ),
+                "provider_fallback_allowed": False,
+                "vpa_first_pass": bool(
+                    vpa_result is not None
+                    and vpa_result.ok
+                    and len(vpa_result.replies) == 1
+                    and vpa_not_normalized
+                ),
+                "joint_first_pass": bool(
+                    joint_result is None
+                    or (
+                        joint_result.ok
+                        and len(joint_result.replies) == 1
+                        and joint_not_normalized
+                    )
+                ),
+                "authority_violations": [],
+            }
+            sidecar = {
+                "mode": mode,
+                "configured_mode": configured_mode,
+                "status": effective_status,
+                "snapshot_hash": snapshot_hash,
+                "evidence_catalog": copy.deepcopy(catalog),
+                "pa_hypotheses": copy.deepcopy(hypotheses_dict),
+                "vpa_report": copy.deepcopy(vpa_report_obj),
+                "joint_arbitration": arbitration,
+                "baseline_stage2": copy.deepcopy(baseline_stage2),
+                "joint_stage2": joint_stage2,
+                "comparison": comparison,
+                "role_execution": role_execution,
+                "stage1_context": copy.deepcopy(vpa_report_obj),
+                "stage2_impact": compatibility_impact,
+                "degradation": (
+                    {
+                        "stage": degradation_stage,
+                        "reason": degradation_reason,
+                    }
+                    if degradation_stage
+                    else None
+                ),
+                "role_responses": {
+                    "vpa_evidence": role_response_payload(vpa_result),
+                    "joint_arbiter": role_response_payload(joint_result),
+                },
+            }
+            usage = _accumulate_usage_calls(
+                baseline.usage_total,
+                role_replies,
+            )
+            outcome = RunOutcome(
+                status=effective_status,
+                official_path=official_path,
+                requested_vpa_mode=configured_mode,
+                degradation_stage=degradation_stage,
+                reason=degradation_reason,
+            ).model_dump()
+            record = baseline.model_copy(
+                update={
+                    "stage2_decision": executable_stage2,
+                    "pa_hypotheses": copy.deepcopy(hypotheses_dict),
+                    "vpa_evidence": copy.deepcopy(vpa_report_obj),
+                    "joint_decision": copy.deepcopy(joint_envelope),
+                    "run_outcome": outcome,
+                    "vpa_sidecar": sidecar,
+                    "usage_total": usage,
+                    "call_attempts": [
+                        *copy.deepcopy(baseline.call_attempts),
+                        *copy.deepcopy(role_calls),
+                    ],
+                    "validation_audit": [
+                        *copy.deepcopy(baseline.validation_audit),
+                        *copy.deepcopy(role_audit),
+                    ],
+                    "exception": None,
+                }
+            )
+            if not self._persist_full(record, on_event):
+                return record
+            on_event(OrchestratorEvent.RecordSaved)
+            return record
+
+        vpa_messages = role_assembler.build_vpa_evidence_report(
             frame,
-            cancel_token,
-            lambda _event: None,
-            previous_record=None if full_prompt_ab else previous_record,
-            incremental_new_bar_count=(
-                None if full_prompt_ab else incremental_new_bar_count
-            ),
+            stage1,
+            hypotheses_dict,
             htf_context=htf_context,
         )
+        vpa_result, vpa_failure = execute_role(
+            role="vpa_evidence",
+            client=vpa_client,
+            schema=VPA_EVIDENCE_SCHEMA,
+            messages=vpa_messages,
+            validate=lambda raw: validate_vpa_evidence(
+                raw,
+                catalog=catalog,
+                pa_hypotheses=hypotheses,
+            ),
+        )
+        if cancel_token.is_set() or (vpa_failure or {}).get(
+            "failure_kind"
+        ) == "cancelled":
+            return finish_cancelled("cancelled_during_vpa_evidence")
+        if vpa_failure is not None or vpa_result is None or not vpa_result.ok:
+            return finish(
+                status="degraded_pa_only",
+                official_path="pa_only",
+                official_stage2=baseline_stage2,
+                vpa_result=vpa_result,
+                vpa_report_obj=None,
+                joint_result=None,
+                joint_envelope=None,
+                degradation_stage="vpa_evidence",
+                degradation_reason=(
+                    str((vpa_failure or {}).get("message") or "")
+                    or "VPA evidence role failed"
+                ),
+            )
 
-        vpa_stage1 = vpa.stage1_diagnosis or {}
-        baseline_model_stage2 = copy.deepcopy(baseline.stage2_decision or {})
-        vpa_model_stage2 = copy.deepcopy(vpa.stage2_decision or {})
-        confidence_threshold = int(
+        assert vpa_result.obj is not None
+        vpa_report_obj = copy.deepcopy(vpa_result.obj["vpa_report"])
+        vpa_report = VpaEvidenceReport.model_validate(vpa_report_obj)
+        gate_result = str(stage1.get("gate_result") or "unknown")
+        if gate_result != "proceed" or not baseline_runner.initial_stage2_messages():
+            joint_envelope = {
+                "joint_arbitration": {
+                    "selected_candidate_id": None,
+                    "decision_effect": "keep_brooks_baseline",
+                    "evidence_used": [],
+                    "reason": (
+                        f"PA gate_result={gate_result}; VPA cannot bypass the PA gate."
+                    ),
+                },
+                "stage2_decision": copy.deepcopy(baseline_stage2),
+            }
+            return finish(
+                status="completed",
+                official_path="pa_only",
+                official_stage2=baseline_stage2,
+                vpa_result=vpa_result,
+                vpa_report_obj=vpa_report_obj,
+                joint_result=None,
+                joint_envelope=joint_envelope,
+            )
+
+        joint_messages = role_assembler.build_joint_decision(
+            baseline_runner.initial_stage2_messages(),
+            baseline_stage2,
+            hypotheses_dict,
+            vpa_report_obj,
+        )
+        enable_next_bar = bool(
             getattr(
                 getattr(self._settings, "general", None),
-                "decision_confidence_threshold",
-                0,
+                "enable_next_bar_prediction",
+                False,
             )
         )
-        baseline_execution_stage2 = _apply_confidence_threshold(
-            baseline_model_stage2,
-            confidence_threshold,
+        joint_result, joint_failure = execute_role(
+            role="joint_arbiter",
+            client=joint_client,
+            schema=JOINT_DECISION_SCHEMA,
+            messages=joint_messages,
+            validate=lambda raw: validate_joint_decision(
+                raw,
+                baseline_stage2=baseline_stage2,
+                stage1=stage1,
+                pa_hypotheses=hypotheses,
+                vpa_report=vpa_report,
+                catalog=catalog,
+                kline_frame=frame,
+                skip_next_bar=not enable_next_bar,
+            ),
         )
-        vpa_execution_stage2 = _apply_confidence_threshold(
-            vpa_model_stage2,
-            confidence_threshold,
-        )
-        baseline_execution = baseline.model_copy(
-            update={"stage2_decision": baseline_execution_stage2}
-        )
-        vpa_execution = vpa.model_copy(
-            update={"stage2_decision": vpa_execution_stage2}
-        )
-        execution_comparison = _vpa_pair_diff(baseline_execution, vpa_execution)
-        model_comparison = _vpa_pair_diff(baseline, vpa)
-        clients_isolated = baseline_client_isolated and vpa_client_isolated
-        authority_violations = _vpa_authority_violations(baseline, vpa)
-        baseline_audit = [
-            {**copy.deepcopy(event), "arm": "baseline"}
-            for event in baseline.validation_audit
-        ]
-        vpa_audit = [
-            {**copy.deepcopy(event), "arm": "vpa"}
-            for event in vpa.validation_audit
-        ]
-        paired_audit = [*baseline_audit, *vpa_audit]
-        paired_calls = [
-            *copy.deepcopy(baseline.call_attempts),
-            *copy.deepcopy(vpa.call_attempts),
-        ]
-        first_pass_clean = bool(baseline.call_attempts and vpa.call_attempts) and not paired_audit
-        first_pass_clean = first_pass_clean and all(
-            str(call.get("status") or "") == "validated" for call in paired_calls
-        )
-        same_frozen_input = bool(
-            baseline.kline_data == vpa.kline_data
-            and baseline.htf_context == vpa.htf_context
-        )
-        catalog_id = str(catalog["catalog_id"])
-        baseline_has_vpa_catalog = any(
-            catalog_id in str(message.get("content", ""))
-            for message in baseline.stage1_messages
-        )
-        vpa_has_vpa_catalog = any(
-            catalog_id in str(message.get("content", ""))
-            for message in vpa.stage1_messages
-        )
-        intended_prompt_difference_present = bool(
-            not baseline_has_vpa_catalog and vpa_has_vpa_catalog
-        )
-        protocol_valid = bool(
-            clients_isolated
-            and baseline.exception is None
-            and vpa.exception is None
-            and baseline.meta.run_id != vpa.meta.run_id
-            and same_frozen_input
-            and intended_prompt_difference_present
-        )
-        full_prompt_ab_eligible = bool(
-            full_prompt_ab
-            and protocol_valid
-            and first_pass_clean
-            and not authority_violations
-        )
-        if full_prompt_ab:
-            design_name = "independent_full_prompt_counterfactual_v1"
-            experiment_type = "full_prompt_ab"
-            counterfactual_scope = "independent_brooks_vs_brooks_plus_vpa"
-        else:
-            design_name = "frozen_brooks_vpa_marginal_v4"
-            experiment_type = "online_vpa_marginal_sidecar"
-            counterfactual_scope = "vpa_evidence_delta_on_frozen_brooks"
-        provider_fingerprint = _provider_fingerprint(self._settings.provider)
-        baseline_stage1_messages_hash = _stable_hash(baseline.stage1_messages)
-        vpa_stage1_messages_hash = _stable_hash(vpa.stage1_messages)
-        pair_input_hash = _stable_hash(
-            {
-                "design": design_name,
-                "counterfactual_scope": counterfactual_scope,
-                "snapshot_hash": snapshot_hash,
-                "catalog_id": catalog["catalog_id"],
-                "provider": provider_fingerprint,
-                "baseline_stage1_messages_hash": baseline_stage1_messages_hash,
-                "vpa_stage1_messages_hash": vpa_stage1_messages_hash,
-            }
-        )
-        pair_id = f"vpa-{pair_input_hash[:12]}"
-        sidecar = {
-            "mode": mode,
-            "configured_mode": configured_mode,
-            "pair_id": pair_id,
-            "snapshot_hash": snapshot_hash,
-            "status": "completed" if vpa.exception is None else "failed",
-            "evidence_catalog": catalog,
-            "stage1_context": vpa_stage1.get("vpa_context"),
-            "stage2_impact": vpa_model_stage2.get("vpa_impact"),
-            "comparison": execution_comparison,
-            "model_comparison": model_comparison,
-            "paired_execution": {
-                "design": design_name,
-                "experiment_type": experiment_type,
-                "counterfactual_scope": counterfactual_scope,
-                "protocol_valid": protocol_valid,
-                "full_prompt_ab_eligible": full_prompt_ab_eligible,
-                "first_pass_clean": first_pass_clean,
-                "authority_violations": authority_violations,
-                "official_arm": "baseline",
-                "arm_sequence": ["baseline", "vpa"],
-                "provider": provider_fingerprint,
-                "pair_input_hash": pair_input_hash,
-                "pair_identity_version": VPA_PAIR_IDENTITY_VERSION,
-                "provider_fallback_allowed": False,
-                "client_instances_isolated": clients_isolated,
-                "same_frozen_input": same_frozen_input,
-                "baseline_has_vpa_catalog": baseline_has_vpa_catalog,
-                "vpa_has_vpa_catalog": vpa_has_vpa_catalog,
-                "intended_prompt_difference_present": intended_prompt_difference_present,
-                "attempt_run_id": baseline.meta.run_id,
-                "baseline_stage1_messages_hash": baseline_stage1_messages_hash,
-                "vpa_stage1_messages_hash": vpa_stage1_messages_hash,
-                "baseline_stage2_messages_hash": _stable_hash(baseline.stage2_messages),
-                "vpa_stage2_messages_hash": _stable_hash(vpa.stage2_messages),
-                "stage2_request_messages_hash": _stable_hash(
-                    baseline_runner.initial_stage2_messages()
+        if cancel_token.is_set() or (joint_failure or {}).get(
+            "failure_kind"
+        ) == "cancelled":
+            return finish_cancelled(
+                "cancelled_during_joint_arbiter",
+                vpa_report_obj=vpa_report_obj,
+            )
+        if (
+            joint_failure is not None
+            or joint_result is None
+            or not joint_result.ok
+        ):
+            return finish(
+                status="degraded_pa_only",
+                official_path="pa_only",
+                official_stage2=baseline_stage2,
+                vpa_result=vpa_result,
+                vpa_report_obj=vpa_report_obj,
+                joint_result=joint_result,
+                joint_envelope=None,
+                degradation_stage="joint_arbiter",
+                degradation_reason=(
+                    str((joint_failure or {}).get("message") or "")
+                    or "Joint arbiter failed"
                 ),
-                "stage2_baseline_prefix_reused": bool(
-                    not full_prompt_ab and baseline_runner.initial_stage2_messages()
-                ),
-                "baseline_prompt_price_only": True,
-                "incremental_context_disabled_for_protocol": full_prompt_ab,
-                "execution_policy": {
-                    "decision_confidence_threshold": confidence_threshold,
-                    "applied_after_both_model_arms": True,
-                },
-            },
-            "vpa_arm": {
-                "stage1_messages": vpa.stage1_messages,
-                "stage1_response": vpa.stage1_response,
-                "stage1_diagnosis": vpa_stage1,
-                "stage2_messages": vpa.stage2_messages,
-                "stage2_response": vpa.stage2_response,
-                "stage2_model_decision": vpa_model_stage2,
-                "stage2_decision": vpa_execution_stage2,
-                "strategy_files_used": vpa.strategy_files_used,
-                "exception": vpa.exception,
-                "usage_total": vpa.usage_total,
-                "validation_audit": vpa_audit,
-            },
-        }
-        final_stage2 = copy.deepcopy(baseline_execution_stage2)
-        final_usage = {
-            key: int((baseline.usage_total or {}).get(key, 0) or 0)
-            + int((vpa.usage_total or {}).get(key, 0) or 0)
-            for key in set((baseline.usage_total or {})) | set((vpa.usage_total or {}))
-        }
-        final_record = baseline.model_copy(
-            update={
-                "stage2_decision": final_stage2,
-                "vpa_sidecar": sidecar,
-                "usage_total": final_usage,
-                "call_attempts": paired_calls,
-                "validation_audit": paired_audit,
-            }
+            )
+
+        assert joint_result.obj is not None
+        joint_envelope = copy.deepcopy(joint_result.obj)
+        official_path = "joint" if mode == "soft" else "pa_only"
+        official_stage2 = (
+            joint_envelope["stage2_decision"]
+            if official_path == "joint"
+            else baseline_stage2
         )
-        if not self._persist_full(final_record, on_event):
-            return final_record
-        on_event(OrchestratorEvent.RecordSaved)
-        return final_record
+        return finish(
+            status="completed",
+            official_path=official_path,
+            official_stage2=official_stage2,
+            vpa_result=vpa_result,
+            vpa_report_obj=vpa_report_obj,
+            joint_result=joint_result,
+            joint_envelope=joint_envelope,
+        )
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

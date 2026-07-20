@@ -20,12 +20,6 @@ def test_vpa_mode_migrates_legacy_enabled_to_shadow() -> None:
     assert vpa_is_enabled(settings) is True
 
 
-def test_shadow_defaults_to_full_prompt_ab_design() -> None:
-    settings = PromptSettings(vpa_mode="shadow")
-
-    assert settings.vpa_shadow_design == "full_prompt_ab"
-
-
 def test_validator_observes_runtime_mode_changes() -> None:
     settings = Settings(prompt=PromptSettings(vpa_mode="off"))
     validator = JsonValidator(settings)

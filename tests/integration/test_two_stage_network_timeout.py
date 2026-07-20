@@ -39,13 +39,15 @@ def test_httpx_read_error_stage1(frame, pending_writer, assembler, exp_reader):
     )
 
     events: list[OrchestratorEvent] = []
-    orchestrator.submit(
+    record = orchestrator.submit(
         frame=frame,
         cancel_token=CancelToken(),
         on_event=events.append,
     )
 
     assert OrchestratorEvent.Stage1Failed in events
+    assert record.run_outcome["status"] == "unavailable_provider"
+    assert record.run_outcome["official_path"] == "none"
     pending_writer.save_partial.assert_called_once()
     assert pending_writer.save_partial.call_args[0][1] == "provider_error"
 
@@ -69,7 +71,7 @@ def test_network_timeout_stage1(frame, pending_writer, assembler, exp_reader):
     events: list[OrchestratorEvent] = []
     cancel_token = CancelToken()
 
-    orchestrator.submit(
+    record = orchestrator.submit(
         frame=frame,
         cancel_token=cancel_token,
         on_event=events.append,
@@ -77,6 +79,7 @@ def test_network_timeout_stage1(frame, pending_writer, assembler, exp_reader):
 
     # Stage1Failed event must appear
     assert OrchestratorEvent.Stage1Failed in events
+    assert record.run_outcome["status"] == "unavailable_provider"
 
     # Stage2 must never start
     assert OrchestratorEvent.Stage2Started not in events
@@ -119,6 +122,7 @@ def test_non_retryable_stage1_request_error_is_persisted_once(
     assert client.stream_chat.call_count == 1
     assert record.exception["failure_kind"] == "authentication"
     assert record.exception["status_code"] == 401
+    assert record.run_outcome["status"] == "unavailable_provider"
     assert pending_writer.save_partial.call_args.args[1] == "provider_error"
     assert OrchestratorEvent.Stage1Failed in events
 
@@ -148,6 +152,7 @@ def test_stage1_validation_retry_provider_failure_does_not_escape(
     assert client.stream_chat.call_count == 2
     assert record.exception["phase"] == "validation_retry"
     assert record.exception["failure_kind"] == "invalid_request"
+    assert record.run_outcome["status"] == "unavailable_provider"
     assert pending_writer.save_partial.call_args.args[1] == "provider_error"
     assert OrchestratorEvent.Stage1Failed in events
 
@@ -181,5 +186,6 @@ def test_stage2_validation_retry_provider_failure_does_not_escape(
     assert client.stream_chat.call_count == 3
     assert record.exception["phase"] == "validation_retry"
     assert record.exception["failure_kind"] == "invalid_request"
+    assert record.run_outcome["status"] == "unavailable_provider"
     assert pending_writer.save_partial.call_args.args[1] == "provider_error"
     assert OrchestratorEvent.Stage2Failed in events

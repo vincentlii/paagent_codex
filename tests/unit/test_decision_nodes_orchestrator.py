@@ -4,7 +4,7 @@ Property 1b: data insufficient → zero AI calls, record.exception.type=="insuff
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -95,6 +95,8 @@ def test_insufficient_data_zero_ai_calls(frame_factory, expected_check):
     assert record.exception is not None
     assert record.exception["type"] == "insufficient_data"
     assert record.exception["failed_check"] == expected_check
+    assert record.run_outcome["status"] == "unavailable_input"
+    assert record.run_outcome["official_path"] == "none"
     assert record.stage1_response is None
     assert record.stage1_diagnosis is None
 
