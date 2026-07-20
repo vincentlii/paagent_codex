@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 
 from pa_agent.data.base import (
@@ -56,6 +57,7 @@ class MT5Source(DataSource):
         self._symbol: str = ""
         self._timeframe: str = ""
         self._connected: bool = False
+        self._snapshot_lock = threading.Lock()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -190,9 +192,28 @@ class MT5Source(DataSource):
         - position 0 = current forming bar
         - position 1..n = closed bars
         """
+        with self._snapshot_lock:
+            return self._snapshot_for_inner(self._symbol, self._timeframe, n)
+
+    def fetch_snapshot_for(self, symbol: str, timeframe: str, n: int) -> list[KlineBar]:
+        """Fetch HTF bars without altering the active MT5 subscription."""
+        if timeframe not in _TF_MAP:
+            raise ValueError(
+                f"Unsupported timeframe: {timeframe!r}. Use one of {list(_TF_MAP)}"
+            )
+        with self._snapshot_lock:
+            return self._snapshot_for_inner(symbol.strip(), timeframe, n)
+
+    def _snapshot_for_inner(
+        self,
+        symbol: str,
+        timeframe: str,
+        n: int,
+    ) -> list[KlineBar]:
+        """Copy one symbol/timeframe while caller holds ``_snapshot_lock``."""
         if not self._connected:
             raise DataSourceTransientError("Not connected — call connect() first")
-        if not self._symbol or not self._timeframe:
+        if not symbol or not timeframe:
             raise DataSourceTransientError("Not subscribed — call subscribe() first")
 
         try:
@@ -200,7 +221,7 @@ class MT5Source(DataSource):
         except ImportError as exc:
             raise DataSourceTransientError("MetaTrader5 not installed") from exc
 
-        tf_name = _TF_MAP[self._timeframe]
+        tf_name = _TF_MAP[timeframe]
         try:
             tf_const = getattr(mt5, tf_name)
         except AttributeError as exc:
@@ -210,17 +231,17 @@ class MT5Source(DataSource):
 
         # Ensure the symbol is selected/subscribed in MT5 for real-time data
         try:
-            mt5.symbol_select(self._symbol, True)
+            mt5.symbol_select(symbol, True)
         except Exception:  # noqa: BLE001
             pass  # Non-fatal; proceed with fetch
 
         # Fetch n+1 bars starting from position 0 (current forming bar)
-        rates = mt5.copy_rates_from_pos(self._symbol, tf_const, 0, n + 1)
+        rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, n + 1)
 
         if rates is None or len(rates) == 0:
             error = mt5.last_error()
             raise DataSourceTransientError(
-                f"MT5 copy_rates_from_pos failed for {self._symbol} {self._timeframe}: "
+                f"MT5 copy_rates_from_pos failed for {symbol} {timeframe}: "
                 f"{error}"
             )
 

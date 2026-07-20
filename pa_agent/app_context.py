@@ -120,6 +120,7 @@ class AppContext:
             pending_dir=RECORDS_PENDING_DIR,
             event_bus=event_bus,
             api_key=settings.provider.api_key,
+            counterfactual_horizon_bars=settings.general.counterfactual_horizon_bars,
         )
 
         # ── Session ledger ────────────────────────────────────────────────────

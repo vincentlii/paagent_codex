@@ -85,8 +85,8 @@ class TestNoLinesWhenNotTrading:
             f"but found {_count_infinite_lines(chart_widget)}."
         )
 
-    def test_continuity_overlay_keeps_lines_on_wait_no_order(self, chart_widget):
-        """不下单 + chart_overlay_active should still draw prior entry/TP/SL."""
+    def test_untrusted_overlay_fields_cannot_draw_lines_for_no_order(self, chart_widget):
+        """A no-order decision never inherits executable prices from old plans."""
         chart_widget.set_decision({
             "order_type": "不下单",
             "order_direction": "做多",
@@ -96,7 +96,7 @@ class TestNoLinesWhenNotTrading:
             "chart_overlay_active": True,
             "reasoning": "延续等待上一轮限价方案。",
         })
-        assert _count_infinite_lines(chart_widget) == 3
+        assert _count_infinite_lines(chart_widget) == 0
 
     def test_short_decision_shows_down_arrow(self, chart_widget, qtbot):
         """做空 decision draws a ▼ marker at the newest bar."""

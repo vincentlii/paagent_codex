@@ -13,37 +13,13 @@ logger = logging.getLogger(__name__)
 ORDER_OPPORTUNITY_TYPES: frozenset[str] = frozenset({"限价单", "突破单", "市价单"})
 
 
-def _parse_trade_confidence(decision: dict[str, Any]) -> int | None:
-    """Extract trade_confidence as 0-100 int, or None if absent/invalid."""
-    raw = decision.get("trade_confidence")
-    if raw is None or raw == "":
-        return None
-    try:
-        return max(0, min(100, int(float(str(raw).strip()))))
-    except (ValueError, TypeError):
-        return None
-
-
 def has_order_opportunity(
     decision: dict[str, Any] | None,
-    *,
-    confidence_threshold: int | None = None,
 ) -> bool:
-    """Return True when stage-2 decision proposes an actual order.
-
-    When *confidence_threshold* is provided, the decision is only treated as
-    an order opportunity when ``trade_confidence >= confidence_threshold``.
-    """
+    """Return True when the finalized Stage-2 result contains an actual order."""
     if not isinstance(decision, dict):
         return False
-    if str(decision.get("order_type") or "") not in ORDER_OPPORTUNITY_TYPES:
-        return False
-    # Confidence gate: if threshold set, require trade_confidence >= threshold
-    if confidence_threshold is not None and confidence_threshold > 0:
-        conf = _parse_trade_confidence(decision)
-        if conf is None or conf < confidence_threshold:
-            return False
-    return True
+    return str(decision.get("order_type") or "") in ORDER_OPPORTUNITY_TYPES
 
 
 def _fmt_price(value: Any) -> str:

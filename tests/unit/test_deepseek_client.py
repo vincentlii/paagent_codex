@@ -1,19 +1,20 @@
 """Unit tests for DeepSeekClient (task 6.5)."""
 from __future__ import annotations
 
-import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, call
-from pa_agent.config.settings import AIProviderSettings
+
 from pa_agent.ai.deepseek_client import (
-    DeepSeekClient,
     AIReply,
-    AIUsage,
     CancelledError,
+    DeepSeekClient,
     _completion_max_tokens,
     _is_deepseek_model,
     _openclaw_agent_request_extra,
+    _resolve_thinking_params,
 )
+from pa_agent.config.settings import AIProviderSettings
 
 
 def _make_settings(api_key: str = "sk-test-1234abcd") -> AIProviderSettings:
@@ -52,7 +53,7 @@ def test_chat_does_not_send_forbidden_params():
     mock_openai.return_value.chat.completions.create.return_value = mock_resp
 
     with patch("pa_agent.ai.deepseek_client._OpenAI", mock_openai):
-        reply = client.chat([{"role": "user", "content": "hi"}])
+        client.chat([{"role": "user", "content": "hi"}])
 
     call_kwargs = mock_openai.return_value.chat.completions.create.call_args
     kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
@@ -84,6 +85,21 @@ def test_chat_extra_body_thinking_enabled():
     assert kwargs["reasoning_effort"] == "max"
 
 
+def test_deepseek_v4_maps_medium_reasoning_effort_to_supported_value():
+    settings = _make_settings()
+    settings.base_url = "https://api.deepseek.com"
+    settings.model = "deepseek-v4-pro"
+
+    extra, effort = _resolve_thinking_params(
+        settings,
+        thinking=True,
+        reasoning_effort="medium",
+    )
+
+    assert extra == {"thinking": {"type": "enabled"}}
+    assert effort == "high"
+
+
 def test_completion_max_tokens_deepseek_cap():
     settings = _make_settings()
     settings.base_url = "https://api.deepseek.com"
@@ -94,6 +110,7 @@ def test_completion_max_tokens_deepseek_cap():
 def test_completion_max_tokens_packy_claude_cap():
     settings = _make_settings()
     settings.base_url = "https://www.packyapi.com/v1"
+    settings.model = "claude-sonnet-4-6"
     extra_body = {"thinking": {"type": "enabled", "budget_tokens": 127_999}}
     assert _completion_max_tokens(settings, extra_body=extra_body, effort="max") == 128_000
 
@@ -149,6 +166,7 @@ def test_chat_kkai_sends_thinking_object_not_reasoning_effort():
     """KKAI Claude: thinking budget in extra_body; reasoning_effort rejected upstream."""
     settings = _make_settings()
     settings.base_url = "https://api.kkone.vip/v1"
+    settings.model = "claude-opus-4-5"
     settings.thinking = True
     settings.reasoning_effort = "high"
     client = DeepSeekClient(settings)
@@ -161,13 +179,14 @@ def test_chat_kkai_sends_thinking_object_not_reasoning_effort():
         client.chat([{"role": "user", "content": "hi"}])
 
     kwargs = mock_openai.return_value.chat.completions.create.call_args.kwargs
-    assert kwargs["extra_body"]["thinking"] == {"type": "enabled", "budget_tokens": 999_998}
+    assert kwargs["extra_body"]["thinking"] == {"type": "enabled", "budget_tokens": 524_287}
     assert "reasoning_effort" not in kwargs
 
 
 def test_chat_kkai_thinking_off_sends_no_thinking_params():
     settings = _make_settings()
     settings.base_url = "https://api.kkone.vip/v1"
+    settings.model = "claude-opus-4-5"
     settings.thinking = False
     client = DeepSeekClient(settings)
 
@@ -226,6 +245,7 @@ def test_chat_yunwu_thinking_off_sends_nothing():
 def test_stream_kkai_passes_thinking_extra_body():
     settings = _make_settings()
     settings.base_url = "https://api.kkone.vip/v1"
+    settings.model = "claude-opus-4-5"
     settings.thinking = True
     settings.reasoning_effort = "medium"
     client = DeepSeekClient(settings)
@@ -261,7 +281,7 @@ def test_stream_kkai_passes_thinking_extra_body():
         )
 
     kwargs = mock_openai.return_value.chat.completions.create.call_args.kwargs
-    assert kwargs["extra_body"]["thinking"]["budget_tokens"] == 999_998
+    assert kwargs["extra_body"]["thinking"]["budget_tokens"] == 524_287
     assert "reasoning_effort" not in kwargs
     assert reply.reasoning_content == "think"
 

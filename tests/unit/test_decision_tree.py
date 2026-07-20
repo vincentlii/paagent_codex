@@ -41,6 +41,7 @@ def test_load_decision_tree_has_sections() -> None:
     tree = load_decision_tree()
     assert len(tree["sections"]) >= 10
     assert "0.1" in tree["node_index"]
+    assert tree["node_index"]["14"]["question"] == "是否触犯任一禁止行为？"
 
 
 def test_node_branch_outcomes_from_txt() -> None:
@@ -89,6 +90,92 @@ def test_validate_gate_proceed_ok() -> None:
 
 def test_validate_stage2_trade_ok() -> None:
     assert not validate_stage2_trace_consistency(VALID_STAGE2)
+
+
+def test_stage2_trade_requires_clear_section14_scan() -> None:
+    missing = {
+        **VALID_STAGE2,
+        "decision_trace": [
+            item for item in VALID_STAGE2["decision_trace"] if item["node_id"] != "14"
+        ],
+    }
+    violated = {
+        **VALID_STAGE2,
+        "decision_trace": [
+            {**item, "answer": "是"} if item["node_id"] == "14" else item
+            for item in VALID_STAGE2["decision_trace"]
+        ],
+    }
+
+    assert any("node 14" in error for error in validate_stage2_trace_consistency(missing))
+    assert any("node 14" in error for error in validate_stage2_trace_consistency(violated))
+
+
+def test_stage2_trade_requires_signal_bar_assessment() -> None:
+    missing = {
+        **VALID_STAGE2,
+        "decision_trace": [
+            item for item in VALID_STAGE2["decision_trace"] if item["node_id"] != "9.0"
+        ],
+    }
+
+    assert any("node 9.0" in error for error in validate_stage2_trace_consistency(missing))
+
+
+def test_model_trace_rejects_unknown_or_duplicate_nodes() -> None:
+    unknown = {
+        **VALID_STAGE2,
+        "decision_trace": [
+            *VALID_STAGE2["decision_trace"],
+            {
+                "node_id": "99.1",
+                "question": "invented",
+                "answer": "是",
+                "reason": "invented",
+                "bar_range": "K1",
+            },
+        ],
+    }
+    duplicate = {
+        **VALID_STAGE2,
+        "decision_trace": [
+            *VALID_STAGE2["decision_trace"],
+            dict(VALID_STAGE2["decision_trace"][-1]),
+        ],
+    }
+
+    assert any("不属于阶段二" in error for error in validate_stage2_trace_consistency(unknown))
+    assert any("不得重复" in error for error in validate_stage2_trace_consistency(duplicate))
+
+
+def test_stage1_trace_rejects_non_gate_node() -> None:
+    from tests.integration.conftest import VALID_STAGE1
+
+    bad = {
+        **VALID_STAGE1,
+        "gate_trace": [
+            *VALID_STAGE1["gate_trace"],
+            {
+                "node_id": "3.1",
+                "question": "wrong stage",
+                "answer": "是",
+                "reason": "wrong stage",
+                "bar_range": "K1",
+            },
+        ],
+    }
+
+    assert any("不属于阶段一" in error for error in validate_gate_result_consistency(bad))
+
+
+def test_signal_bar_failure_must_continue_to_background_limit_path() -> None:
+    trace = [dict(item) for item in VALID_STAGE2["decision_trace"]]
+    node_90 = next(item for item in trace if item["node_id"] == "9.0")
+    node_90["answer"] = "否"
+
+    errors = validate_stage2_trace_consistency({**VALID_STAGE2, "decision_trace": trace})
+
+    assert any("9.0P" in error for error in errors)
 
 
 def test_validate_stage2_no_order_trade_conflict() -> None:

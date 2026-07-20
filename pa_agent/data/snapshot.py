@@ -53,6 +53,7 @@ def take_snapshot_from_bars(
     timeframe: str,
     *,
     now_ms: int | None = None,
+    data_metadata: dict[str, str] | None = None,
 ) -> KlineFrame:
     """Build an analysis KlineFrame from a newest-first bar list (same as AI table).
 
@@ -61,7 +62,14 @@ def take_snapshot_from_bars(
 
     Raises ValueError if insufficient bars are available.
     """
-    frame = build_analysis_frame(bars_raw, n, symbol, timeframe, now_ms=now_ms)
+    frame = build_analysis_frame(
+        bars_raw,
+        n,
+        symbol,
+        timeframe,
+        now_ms=now_ms,
+        data_metadata=data_metadata,
+    )
     if frame is None:
         raise ValueError(
             f"Need at least {n} closed bars (or {n + 1} with a forming bar at index 0); "
@@ -134,9 +142,17 @@ def build_display_frame(
     timeframe: str,
     *,
     now_ms: int | None = None,
+    data_metadata: dict[str, str] | None = None,
 ) -> KlineFrame | None:
     """Chart display frame — same semantics as AI (K1 = newest **closed** bar)."""
-    return build_analysis_frame(bars_raw, n, symbol, timeframe, now_ms=now_ms)
+    return build_analysis_frame(
+        bars_raw,
+        n,
+        symbol,
+        timeframe,
+        now_ms=now_ms,
+        data_metadata=data_metadata,
+    )
 
 
 def build_live_frame(
@@ -184,6 +200,8 @@ def build_live_frame(
                     low=b.low,
                     close=b.close,
                     volume=b.volume,
+                    amount=getattr(b, "amount", 0.0),
+                    pct_chg=getattr(b, "pct_chg", None),
                     closed=not is_forming,
                 )
             )
@@ -209,6 +227,8 @@ def _rebase_closed_bars(closed_raw: list[KlineBar]) -> list[KlineBar]:
                 low=b.low,
                 close=b.close,
                 volume=b.volume,
+                amount=getattr(b, "amount", 0.0),
+                pct_chg=getattr(b, "pct_chg", None),
                 closed=True,
             )
         )
@@ -223,6 +243,7 @@ def build_analysis_frame(
     timeframe: str,
     *,
     now_ms: int | None = None,
+    data_metadata: dict[str, str] | None = None,
 ) -> KlineFrame | None:
     """Build a snapshot for AI analysis: *n* newest **closed** bars only.
 
@@ -268,4 +289,5 @@ def build_analysis_frame(
         bars=tuple(rebased),
         indicators=indicators,
         snapshot_ts_local_ms=now_local_ms(),
+        data_metadata=dict(data_metadata or {}),
     )

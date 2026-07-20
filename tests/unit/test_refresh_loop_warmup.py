@@ -32,3 +32,16 @@ def test_refresh_loop_snapshot_count_includes_indicator_warmup() -> None:
     assert isinstance(arg.left.op, ast.Add)
     assert isinstance(arg.left.left, ast.Attribute)
     assert arg.left.left.attr == "_n_bars"
+
+
+def test_refresh_loop_exposes_pause_control_before_fetching() -> None:
+    src = Path(__file__).resolve().parents[2] / "pa_agent" / "data" / "refresh_loop.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    methods = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    assert "set_paused" in methods
+    assert "_paused" in ast.unparse(methods["run"])

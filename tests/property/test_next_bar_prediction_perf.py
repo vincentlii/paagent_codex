@@ -96,7 +96,7 @@ def test_panel_render_time():
     app = QApplication.instance() or QApplication(sys.argv)
     panel = DecisionPanel()
 
-    decision = {
+    stage2 = {
         "decision": {
             "order_type": "不下单",
             "order_direction": None,
@@ -115,7 +115,6 @@ def test_panel_render_time():
             "risk_assessment": "t",
             "invalidation_condition": "t",
         },
-        "diagnosis_summary": {"cycle_position": "normal_channel", "direction": "bullish", "key_signals": []},
         "decision_trace": [{"node_id": "10.3", "question": "q", "answer": "否", "reason": "r", "bar_range": "K1"}],
         "terminal": {"node_id": "10.3", "outcome": "wait", "label": "test"},
         "next_bar_prediction": {
@@ -126,14 +125,22 @@ def test_panel_render_time():
             "features_used": ["stage1_diagnosis"],
         },
     }
+    stage1 = {
+        "cycle_position": "normal_channel",
+        "direction": "bullish",
+        "key_signals": [],
+    }
+    from pa_agent.gui.stage2_payload import merge_stage2_for_panels
+
+    decision = merge_stage2_for_panels(stage2)
 
     # Warm up
-    panel.set_decision(decision)
+    panel.set_decision(decision, stage1_diagnosis=stage1)
 
     n = 20
     start = time.perf_counter()
     for _ in range(n):
-        panel.set_decision(decision)
+        panel.set_decision(decision, stage1_diagnosis=stage1)
     elapsed = (time.perf_counter() - start) / n
 
     assert elapsed < 0.05, f"Panel render took {elapsed*1000:.1f}ms, exceeds 50ms budget"

@@ -8,6 +8,7 @@ from pa_agent.data.factory import (
     default_symbol_for_kind,
     default_tradingview_exchange,
     normalize_data_source_kind,
+    volume_metadata_for_source,
 )
 from pa_agent.data.eastmoney_source import EastMoneySource
 from pa_agent.data.mt5 import MT5Source
@@ -16,8 +17,8 @@ from pa_agent.data.tradingview import TradingViewSource
 
 
 def test_normalize_data_source_kind_defaults_unknown():
-    assert normalize_data_source_kind("invalid") == "mt5"
-    assert normalize_data_source_kind(None) == "mt5"
+    assert normalize_data_source_kind("invalid") == "tradingview"
+    assert normalize_data_source_kind(None) == "tradingview"
 
 
 def test_normalize_data_source_kind_hidden_sources():
@@ -56,6 +57,32 @@ def test_default_tradingview_exchange_is_auto():
     assert default_tradingview_exchange() == ""
 
 
+def test_volume_metadata_marks_mt5_as_tick_proxy() -> None:
+    metadata = volume_metadata_for_source("mt5")
+
+    assert metadata["volume_kind"] == "tick"
+    assert metadata["volume_quality"] == "proxy"
+
+
+def test_volume_metadata_keeps_tradingview_semantics_unknown() -> None:
+    source = TradingViewSource()
+    source.set_exchange("OANDA")
+    metadata = volume_metadata_for_source("tradingview", source)
+
+    assert metadata["venue"] == "OANDA"
+    assert metadata["volume_kind"] == "unknown"
+
+
+def test_volume_metadata_prefers_resolved_tradingview_venue() -> None:
+    source = TradingViewSource()
+    source.set_exchange("")
+    source._resolved_exchange = "FOREXCOM"
+
+    metadata = volume_metadata_for_source("tradingview", source)
+
+    assert metadata["venue"] == "FOREXCOM"
+
+
 def test_general_settings_last_data_source_default():
     g = GeneralSettings()
-    assert g.last_data_source == "mt5"
+    assert g.last_data_source == "tradingview"

@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pa_agent.ai.pattern_routing import merge_detected_patterns
+from pa_agent.ai.pattern_routing import normalize_detected_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -95,24 +95,17 @@ def route_strategy_files(stage1_json: dict[str, Any]) -> list[str]:
     Returns:
         List of file names to load, in the order they should appear in the
         Stage 2 system prompt. Always a subset of the known prompt files.
-        Empty list means "do not trade" (extreme_tr / unknown).
+        An empty list only means no context-specific strategy file is loaded;
+        it is not a trading decision or gate.
     """
     cp = stage1_json.get("cycle_position", "unknown")
     direction = stage1_json.get("direction", "neutral")
-    patterns = merge_detected_patterns(stage1_json)
+    patterns = normalize_detected_patterns(stage1_json.get("detected_patterns"))
     spike_stage = stage1_json.get("spike_stage")
     alternative_cp = stage1_json.get("alternative_cycle_position")
 
     files: list[str] = []
     files.extend(_base_files_for_cycle(cp, direction, spike_stage=spike_stage))
-
-    # Brooks: near-term spike is trading core even when cycle_position is channel/range
-    tc = stage1_json.get("trend_context") or {}
-    recent_spike = tc.get("recent_spike") if isinstance(tc, dict) else None
-    if recent_spike == "bullish" and cp != "spike" and direction == "bullish":
-        files.extend(_BULLISH_SPIKE_FILES)
-    elif recent_spike == "bearish" and cp != "spike" and direction == "bearish":
-        files.extend(_BEARISH_SPIKE_FILES)
 
     if alternative_cp and alternative_cp != cp:
         files.extend(_base_files_for_cycle(str(alternative_cp), direction, spike_stage=None))
@@ -214,14 +207,14 @@ def _base_files_for_cycle(
 
     # ── Skip states (extreme_tr / unknown) ────────────────────────────────────
     elif cp in _SKIP_STATES:
-        pass  # no strategy files — do not trade
+        pass  # no context-specific strategy files
 
     else:
         logger.warning(
             "Unknown cycle_position %r — no strategy files loaded. "
             "If this is a pattern name (e.g. 'descending_triangle'), it belongs in "
             "detected_patterns, not cycle_position. "
-            "Run normalize_stage1() before route_strategy_files() to auto-correct.",
+            "The model must use a supported cycle state and put formations in detected_patterns.",
             cp,
         )
 

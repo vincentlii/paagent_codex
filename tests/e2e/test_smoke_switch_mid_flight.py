@@ -7,12 +7,13 @@ from __future__ import annotations
 import json
 import threading
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pa_agent.app_context import AppContext
-from tests.fixtures.kline_bars import make_newest_first_bars
+from pa_agent.config.settings import Settings
+from tests.fixtures.kline_bars import make_bullish_analysis_bars
 from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.router import route_strategy_files
 
@@ -65,7 +66,8 @@ def _make_ctx_slow_stage2(tmp_path):
 
     pending_writer = MagicMock()
 
-    ctx = AppContext()
+    ctx = AppContext(settings=Settings())
+    ctx.settings.provider.api_key = "sk-e2e-test"
     ctx.client = mock_client
     ctx.assembler = mock_assembler
     ctx.router = route_strategy_files
@@ -88,29 +90,26 @@ def test_switch_mid_flight_cancels_worker(qtbot, tmp_path):
     qtbot.addWidget(window)
     window.show()
 
-    window._ctx.settings.general.analysis_bar_count = 5
-    window._last_frame_ready_bars = make_newest_first_bars(9, with_forming=True)
+    window._ctx.settings.general.analysis_bar_count = 20
+    window._last_frame_ready_bars = make_bullish_analysis_bars(24, with_forming=True)
 
     window._on_submit_analysis()
+    qtbot.waitUntil(lambda: window._worker is not None, timeout=10_000)
     worker = window._worker
     assert worker is not None, "Worker should have been created"
 
     # Wait until stage2 has started (so we know the worker is mid-flight)
     assert stage2_started.wait(timeout=5.0), "Stage 2 did not start within 5 s"
 
-    # Trigger symbol switch mid-flight
-    window._symbol_combo.setCurrentText("EURUSD")
+    # Trigger the actual switch command. Editing the symbol field alone only
+    # updates its validation hint until the user fetches/submits.
+    with patch("pa_agent.config.settings.save_settings"):
+        window._on_symbol_or_tf_changed("EURUSD", "15m")
 
     # Worker should be cancelled and finish within a reasonable time
     # (the slow_chat loop checks cancel_token every 50 ms)
     finished = worker.wait(6_000)  # 6 s timeout
     assert finished, "Worker did not finish after symbol switch"
 
-    # Tab2 input should be disabled after a symbol switch
-    chat_tab = window._tabs.widget(1)
-    from PyQt6.QtWidgets import QPlainTextEdit
-    input_widgets = chat_tab.findChildren(QPlainTextEdit)
-    for widget in input_widgets:
-        assert not widget.isEnabled(), (
-            "Tab2 input should be disabled after symbol switch"
-        )
+    # Follow-up input should be disabled after a symbol switch.
+    assert not window._stream_panel._input_edit.isEnabled()

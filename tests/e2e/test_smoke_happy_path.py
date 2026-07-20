@@ -10,7 +10,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from pa_agent.app_context import AppContext
-from tests.fixtures.kline_bars import make_newest_first_bars
+from pa_agent.config.settings import Settings
+from tests.fixtures.kline_bars import make_bullish_analysis_bars
 from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.router import route_strategy_files
 
@@ -46,7 +47,8 @@ def _make_ctx(tmp_path, stage2_response=None):
 
     pending_writer = MagicMock()
 
-    ctx = AppContext()
+    ctx = AppContext(settings=Settings())
+    ctx.settings.provider.api_key = "sk-e2e-test"
     ctx.client = mock_client
     ctx.assembler = mock_assembler
     ctx.router = route_strategy_files
@@ -69,8 +71,8 @@ def test_happy_path_shows_trading_decision(qtbot, tmp_path):
     qtbot.addWidget(window)
     window.show()
 
-    window._ctx.settings.general.analysis_bar_count = 5
-    window._last_frame_ready_bars = make_newest_first_bars(9, with_forming=True)
+    window._ctx.settings.general.analysis_bar_count = 20
+    window._last_frame_ready_bars = make_bullish_analysis_bars(24, with_forming=True)
 
     window._on_submit_analysis()
 
@@ -92,4 +94,8 @@ def test_happy_path_shows_trading_decision(qtbot, tmp_path):
     )
 
     # PendingWriter.save_full should have been called
-    pending_writer.save_full.assert_called_once()
+    assert pending_writer.save_full.call_count == 1, (
+        f"save_full calls={pending_writer.save_full.call_count}; "
+        f"save_partial={pending_writer.save_partial.call_args!r}; "
+        f"status={window._status_bar.currentMessage()!r}"
+    )

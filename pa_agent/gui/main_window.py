@@ -129,6 +129,7 @@ class _AnalysisWorker(QThread):
         cancel_token: Any,
         previous_record: Any = None,
         incremental_new_bar_count: int | None = None,
+        htf_context: dict[str, Any] | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -137,6 +138,7 @@ class _AnalysisWorker(QThread):
         self._cancel_token = cancel_token
         self._previous_record = previous_record
         self._incremental_new_bar_count = incremental_new_bar_count
+        self._htf_context = dict(htf_context or {})
 
     def _persist_program_error_record(self, exc: Exception) -> Any:
         """Write a minimal failed record to pending when submit() raises unexpectedly."""
@@ -147,7 +149,11 @@ class _AnalysisWorker(QThread):
             pending_writer = getattr(self._orchestrator, "_pending_writer", None)
             if pending_writer is None:
                 return None
-            record = _build_empty_record(self._frame, settings)
+            record = _build_empty_record(
+                self._frame,
+                settings,
+                htf_context=self._htf_context,
+            )
             record = record.model_copy(
                 update={
                     "exception": {
@@ -174,6 +180,8 @@ class _AnalysisWorker(QThread):
             OrchestratorEvent.Stage2Retry: "阶段二重试",
             OrchestratorEvent.Stage2Done: "阶段二完成",
             OrchestratorEvent.RecordSaved: "记录已保存",
+            OrchestratorEvent.RecordSaveFailed: "记录保存失败",
+            OrchestratorEvent.RecordAuditFailed: "复盘索引保存失败",
             OrchestratorEvent.Cancelled: "已取消",
             OrchestratorEvent.Stage1Failed: "阶段一失败",
             OrchestratorEvent.Stage2Failed: "阶段二失败",
@@ -218,6 +226,7 @@ class _AnalysisWorker(QThread):
                 on_stage2_files=on_stage2_files,
                 previous_record=self._previous_record,
                 incremental_new_bar_count=self._incremental_new_bar_count,
+                htf_context=self._htf_context,
             )
             decision = record.stage2_decision or {}
         except Exception as exc:  # noqa: BLE001
@@ -244,6 +253,10 @@ class MainWindow(QMainWindow):
 
     def __init__(self, ctx: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        if ctx.settings is None:
+            from pa_agent.config.settings import Settings
+
+            ctx.settings = Settings()
         self.setWindowTitle(
             "PA Agent — Trading Terminal（分析仅供参考，不构成投资建议）"
         )
@@ -720,8 +733,13 @@ class MainWindow(QMainWindow):
         if settings is not None:
             interval_ms = getattr(settings.general, "refresh_interval_ms", 1000)
             n_bars = self._analysis_bar_count()
-        if self._current_data_source_kind() in ("akshare", "eastmoney", "tushare") and interval_ms < 2500:
-            interval_ms = 2500
+        from pa_agent.data.refresh_policy import effective_refresh_interval_ms
+
+        interval_ms = effective_refresh_interval_ms(
+            self._current_data_source_kind(),
+            interval_ms,
+            timeframe=self._tf_combo.currentText(),
+        )
 
         self._refresh_cancel_token = CancelToken()
         self._refresh_loop = RefreshLoop(
@@ -1117,13 +1135,14 @@ class MainWindow(QMainWindow):
 
     def _populate_timeframe_combo_for_source(self) -> None:
         data_source = getattr(self._ctx, "data_source", None)
+        if data_source is None:
+            return
         preferred = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
         supported: list[str] = []
-        if data_source is not None:
-            try:
-                supported = list(data_source.supported_timeframes())
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("supported_timeframes failed: %s", exc)
+        try:
+            supported = list(data_source.supported_timeframes())
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("supported_timeframes failed: %s", exc)
         items = [tf for tf in preferred if tf in supported]
         if not items and supported:
             items = supported[:12]
@@ -1415,6 +1434,10 @@ class MainWindow(QMainWindow):
     def _set_chart_refresh_paused(self, paused: bool) -> None:
         """Pause or resume live chart updates from RefreshLoop."""
         self._chart_refresh_paused = paused
+        loop = getattr(self, "_refresh_loop", None)
+        set_paused = getattr(loop, "set_paused", None)
+        if callable(set_paused):
+            set_paused(paused)
         btn = getattr(self, "_resume_chart_btn", None)
         if btn is not None:
             btn.setEnabled(paused)
@@ -2858,6 +2881,10 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Prepare analysis off the UI thread, then launch the AI worker."""
         self._sync_buffer_from_snapshot_bars(snapshot_bars)
+        # The submitted snapshot is now frozen; stop data-source polling during
+        # both preparation and model calls so A/B analysis does not open a new
+        # TradingView connection on every chart refresh tick.
+        self._set_chart_refresh_paused(True)
 
         settings = getattr(self._ctx, "settings", None)
         threshold = int(
@@ -2871,6 +2898,7 @@ class MainWindow(QMainWindow):
         self._decision_badge.setText("准备中…")
 
         from pa_agent.gui.analysis_prep_worker import AnalysisPrepWorker
+        from pa_agent.data.factory import volume_metadata_for_source
 
         self._cancel_analysis_prep_worker()
         prep_id = object()
@@ -2883,6 +2911,21 @@ class MainWindow(QMainWindow):
             now_ms=self._reference_now_ms(),
             force_incremental=force_incremental,
             incremental_threshold=threshold,
+            data_metadata=volume_metadata_for_source(
+                self._current_data_source_kind(),
+                getattr(self._ctx, "data_source", None),
+            ),
+            higher_timeframe_enabled=bool(
+                getattr(getattr(settings, "general", None), "higher_timeframe_enabled", True)
+            ),
+            higher_timeframe_override=str(
+                getattr(getattr(settings, "general", None), "higher_timeframe_override", "") or ""
+            ),
+            higher_timeframe_bar_count=int(
+                getattr(getattr(settings, "general", None), "higher_timeframe_bar_count", 60)
+            ),
+            data_source=getattr(self._ctx, "data_source", None),
+            data_source_kind=self._current_data_source_kind(),
             parent=None,
         )
         self._prep_worker = prep
@@ -2910,6 +2953,7 @@ class MainWindow(QMainWindow):
             self._prep_worker = None
             self._analysis_in_progress = False
             self._update_submit_button_state()
+            self._set_chart_refresh_paused(False)
             self._status_bar.showMessage(msg or "准备分析失败")
             self._decision_badge.setText("")
 
@@ -2932,6 +2976,7 @@ class MainWindow(QMainWindow):
         if frame is None:
             self._analysis_in_progress = False
             self._update_submit_button_state()
+            self._set_chart_refresh_paused(False)
             self._status_bar.showMessage("数据不足，请等待图表刷新后再提交")
             return
 
@@ -2940,11 +2985,13 @@ class MainWindow(QMainWindow):
         self._analysis_previous_record = previous_record
         incremental_new_bar_count = getattr(prep, "incremental_new_bar_count", None)
         incremental_detail = getattr(prep, "incremental_detail", None)
+        htf_context = getattr(prep, "htf_context", {})
 
         if force_incremental and previous_record is None:
             reason = self._incremental_unavailable_reason(frame, symbol, timeframe)
             self._analysis_in_progress = False
             self._update_submit_button_state()
+            self._set_chart_refresh_paused(False)
             self._status_bar.showMessage(reason)
             QMessageBox.warning(self, "无法增量分析", reason)
             return
@@ -2953,6 +3000,7 @@ class MainWindow(QMainWindow):
         if orchestrator is None:
             self._analysis_in_progress = False
             self._update_submit_button_state()
+            self._set_chart_refresh_paused(False)
             self._status_bar.showMessage("编排器未就绪，请检查设置")
             return
 
@@ -2995,6 +3043,7 @@ class MainWindow(QMainWindow):
             cancel_token=self._cancel_token,
             previous_record=previous_record,
             incremental_new_bar_count=incremental_new_bar_count,
+            htf_context=htf_context,
             parent=None,
         )
         def _on_worker_finished(decision: dict) -> None:
@@ -3030,7 +3079,6 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
         self._chart_widget.set_frame_now(frame, fit_view=True)
-        self._set_chart_refresh_paused(True)
         self._update_submit_button_state()
 
         # Reset FlowBar and SummaryStrip at the start of every analysis
@@ -3204,14 +3252,16 @@ class MainWindow(QMainWindow):
     def _on_analysis_finished(self, decision: dict) -> None:
         """Called on the main thread when the AI worker completes.
 
-        *decision* is the full stage2 JSON dict (``{"decision": {...},
-        "diagnosis_summary": {...}}``).  The chart and panel widgets expect
-        the inner ``decision`` sub-dict, so we extract it here.
+        *decision* is the full Stage 2 JSON dict.  The chart and panel widgets
+        expect the inner ``decision`` sub-dict, so we extract it here.
         """
         if not self._ui_is_alive():
             return
         if decision:
-            from pa_agent.gui.stage2_payload import prepare_stage2_for_ui
+            from pa_agent.gui.stage2_payload import (
+                prepare_stage2_for_ui,
+                sidecar_for_stage2_record,
+            )
 
             stage1_diag = self._current_stage1_diagnosis()
             inner = prepare_stage2_for_ui(
@@ -3220,34 +3270,17 @@ class MainWindow(QMainWindow):
                 skip_next_bar=not bool(
                     getattr(getattr(self._ctx.settings, "general", None), "enable_next_bar_prediction", False)
                 ) if self._ctx.settings is not None else False,
+                vpa_sidecar=sidecar_for_stage2_record(
+                    getattr(self, "_last_analysis_record", None),
+                    decision,
+                ),
             )
-            from pa_agent.gui.chart_decision_overlay import enrich_decision_for_chart_overlay
-
-            cooldown = 3
-            if self._ctx.settings is not None:
-                cooldown = int(
-                    getattr(self._ctx.settings.general, "structure_flip_cooldown_bars", 3) or 3
-                )
-            chart_decision = enrich_decision_for_chart_overlay(
-                inner,
-                stage2_full=decision if isinstance(decision, dict) else None,
-                frame=getattr(self, "_last_analysis_frame", None),
-                stage1_json=stage1_diag or None,
-                previous_record=getattr(self, "_analysis_previous_record", None),
-                cooldown_bars=cooldown,
-            )
-            self._chart_widget.set_decision(chart_decision)
+            self._chart_widget.set_decision(inner)
             if getattr(self, "_demo_mode", False):
                 self._chart_widget.fit_view()
-            stance = None
-            if self._ctx.settings is not None:
-                stance = getattr(self._ctx.settings.general, "decision_stance", None)
             self._decision_panel.set_decision(
                 inner,
-                diagnosis_summary=decision.get("diagnosis_summary"),
                 stage1_diagnosis=stage1_diag or None,
-                decision_stance=stance,
-                confidence_threshold=self._confidence_threshold(),
             )
             self._future_trend_panel.set_prediction(inner)
             self._bind_decision_tree(decision, stage1_diag or None)
@@ -3270,14 +3303,14 @@ class MainWindow(QMainWindow):
             # ── SummaryStrip: populate key metrics ────────────────────────────
             strip = getattr(self, "_summary_strip", None)
             if strip is not None:
-                diag = decision.get("diagnosis_summary") or {}
+                diag = stage1_diag
 
                 from pa_agent.ai.cycle_enums import (
                     format_cycle_with_direction,
                     format_trend_label,
                 )
 
-                # Current market cycle from diagnosis_summary
+                # Current market cycle comes from the single Stage 1 diagnosis.
                 cur_cycle = diag.get("cycle_position") or ""
                 # Include direction prefix for cycle labels (e.g. 下跌宽通道 / 震荡交易区间).
                 cur_cycle_zh = format_cycle_with_direction(cur_cycle, diag.get("direction"))
@@ -3656,15 +3689,11 @@ class MainWindow(QMainWindow):
                 skip_next_bar=not bool(
                     getattr(getattr(self._ctx.settings, "general", None), "enable_next_bar_prediction", False)
                 ) if self._ctx.settings is not None else False,
+                vpa_sidecar=getattr(record, "vpa_sidecar", None),
             )
-            meta = getattr(record, "meta", None)
-            stance = getattr(meta, "decision_stance", None) if meta is not None else None
             self._decision_panel.set_decision(
                 inner,
-                diagnosis_summary=s2_full.get("diagnosis_summary"),
                 stage1_diagnosis=s1_diag if isinstance(s1_diag, dict) else None,
-                decision_stance=stance,
-                confidence_threshold=self._confidence_threshold(),
             )
             self._future_trend_panel.set_prediction(inner)
             self._bind_decision_tree(
@@ -3828,20 +3857,10 @@ class MainWindow(QMainWindow):
             return True
         return bool(getattr(settings.general, "alert_on_order_opportunity", True))
 
-    def _confidence_threshold(self) -> int:
-        """Return the decision confidence threshold from settings (default 0 = no gate)."""
-        settings = self._ctx.settings
-        if settings is None:
-            return 0
-        return int(getattr(settings.general, "decision_confidence_threshold", 0))
-
     def _has_order_opportunity(self, decision_inner: dict) -> bool:
         from pa_agent.gui.order_opportunity import has_order_opportunity
 
-        return has_order_opportunity(
-            decision_inner,
-            confidence_threshold=self._confidence_threshold(),
-        )
+        return has_order_opportunity(decision_inner)
 
     def _spawn_post_order_followup(self, inner: dict, decision: dict) -> None:
         """Run trade CSV/chart + notifications off the UI thread (can take seconds)."""
@@ -3873,11 +3892,6 @@ class MainWindow(QMainWindow):
                     meta_timeframe=meta_timeframe,
                     decision_stance=decision_stance,
                     model_name=model_name,
-                    structure_flip_cooldown_bars=int(
-                        getattr(settings.general, "structure_flip_cooldown_bars", 3) or 3
-                    )
-                    if settings is not None
-                    else 3,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Trade record logging failed: %s", exc)

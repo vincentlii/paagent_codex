@@ -13,7 +13,9 @@ import pytest
 
 from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.router import route_strategy_files
+from pa_agent.config.settings import Settings
 from pa_agent.data.base import KlineFrame
+from pa_agent.gui.future_trend_panel import FutureTrendPanel
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 
@@ -46,6 +48,12 @@ def _make_stage2_with_prediction(prediction: dict) -> dict:
     s2 = json.loads(json.dumps(VALID_STAGE2))  # deep copy
     s2["next_bar_prediction"] = prediction
     return s2
+
+
+def _prediction_settings() -> Settings:
+    settings = Settings()
+    settings.general.enable_next_bar_prediction = True
+    return settings
 
 
 @pytest.fixture
@@ -99,6 +107,7 @@ def test_orchestrator_passes_through_prediction(
         validator=validator,
         pending_writer=pending_writer,
         exp_reader=exp_reader,
+        settings=_prediction_settings(),
     )
 
     record = orchestrator.submit(
@@ -131,6 +140,7 @@ def test_orchestrator_calls_client_twice_max(
         validator=validator,
         pending_writer=pending_writer,
         exp_reader=exp_reader,
+        settings=_prediction_settings(),
     )
 
     orchestrator.submit(frame=frame, cancel_token=CancelToken(), on_event=lambda e: None)
@@ -167,6 +177,7 @@ def test_short_circuit_emits_unpredictable(
         validator=validator,
         pending_writer=pending_writer,
         exp_reader=exp_reader,
+        settings=_prediction_settings(),
     )
 
     record = orchestrator.submit(frame=frame, cancel_token=CancelToken(), on_event=lambda e: None)
@@ -193,6 +204,7 @@ def test_log_emits_prediction_line(
         validator=validator,
         pending_writer=pending_writer,
         exp_reader=exp_reader,
+        settings=_prediction_settings(),
     )
 
     with caplog.at_level(logging.INFO, logger="pa_agent.orchestrator.two_stage"):
@@ -221,6 +233,7 @@ def test_save_full_round_trip(
         validator=validator,
         pending_writer=pending_writer,
         exp_reader=exp_reader,
+        settings=_prediction_settings(),
     )
 
     record = orchestrator.submit(frame=frame, cancel_token=CancelToken(), on_event=lambda e: None)
@@ -235,13 +248,12 @@ def test_save_full_round_trip(
 def test_demo_mode_replays_legacy_record(
     frame, pending_writer, assembler, exp_reader
 ):
-    """Legacy record without prediction must not crash DecisionPanel (R10.1)."""
-    from pa_agent.gui.decision_panel import DecisionPanel
+    """Legacy record without prediction must not crash FutureTrendPanel (R10.1)."""
     from PyQt6.QtWidgets import QApplication
     import sys
 
     app = QApplication.instance() or QApplication(sys.argv)
-    panel = DecisionPanel()
+    panel = FutureTrendPanel()
 
     # Legacy: no next_bar_prediction key
     legacy_s2 = json.loads(json.dumps(VALID_STAGE2))
@@ -249,8 +261,8 @@ def test_demo_mode_replays_legacy_record(
     legacy_s2.pop("next_bar_prediction", None)
 
     # Must not raise
-    panel.set_decision(legacy_s2)
-    assert not panel._prediction_group.isVisible()
+    panel.set_prediction(legacy_s2)
+    assert not panel._bar_group.isVisible()
 
 
 def test_cancel_no_prediction_required(
@@ -269,6 +281,7 @@ def test_cancel_no_prediction_required(
         validator=validator,
         pending_writer=pending_writer,
         exp_reader=exp_reader,
+        settings=_prediction_settings(),
     )
 
     # Should not raise, and client should not be called
@@ -297,6 +310,7 @@ def test_network_error_no_prediction_required(
         validator=validator,
         pending_writer=pending_writer,
         exp_reader=exp_reader,
+        settings=_prediction_settings(),
     )
 
     record = orchestrator.submit(frame=frame, cancel_token=CancelToken(), on_event=lambda e: None)

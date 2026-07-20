@@ -319,6 +319,10 @@ class CursorSdkClient:
     def update_provider(self, settings: AIProviderSettings) -> None:
         self._settings = settings
 
+    def clone_with_provider(self, settings: AIProviderSettings) -> CursorSdkClient:
+        """Create an isolated client for a paired experiment arm."""
+        return CursorSdkClient(settings, logger_=self._log)
+
     def stream_chat(
         self,
         messages: list[dict[str, Any]],

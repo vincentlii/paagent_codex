@@ -142,13 +142,48 @@ class SettingsDialog(QDialog):
         self._enable_next_bar_check.stateChanged.connect(self._on_enable_next_bar_changed)
         general_form.addRow("下根K线预期:", self._enable_next_bar_check)
 
+        self._vpa_mode_combo = QComboBox()
+        self._vpa_mode_combo.addItem("关闭（原 PA 流程）", "off")
+        self._vpa_mode_combo.addItem("Shadow（A/B 审计）", "shadow")
+        self._vpa_mode_combo.addItem("Soft（受限影响入场）", "soft")
+        soft_index = self._vpa_mode_combo.findData("soft")
+        soft_item = self._vpa_mode_combo.model().item(soft_index)
+        if soft_item is not None:
+            soft_item.setEnabled(False)
+            soft_item.setToolTip("Soft 在 Shadow 统计验收前暂不开放")
+        self._vpa_mode_combo.setToolTip(
+            "Shadow：原 PA 结果为正式结果，同时运行同快照 VPA 对照。\n"
+            "Soft：只允许 VPA 通过受限、可审计的入场影响进入最终结果。"
+        )
+        general_form.addRow("Wyckoff VPA:", self._vpa_mode_combo)
+
         self._analysis_bar_count_spin = QSpinBox()
-        self._analysis_bar_count_spin.setRange(2, 5_000)
+        from pa_agent.config.settings import MIN_ANALYSIS_BARS
+
+        self._analysis_bar_count_spin.setRange(MIN_ANALYSIS_BARS, 5_000)
         self._analysis_bar_count_spin.setToolTip(
             "提交 AI 分析时使用的已收盘 K 线根数（不含当前未收盘 K 线）。"
             "图表实时刷新也会按此数量拉取显示。"
         )
         general_form.addRow("用于分析的 K 线数量:", self._analysis_bar_count_spin)
+
+        self._higher_timeframe_check = QCheckBox("启用一个更高周期背景（不作为硬性开仓门槛）")
+        self._higher_timeframe_check.setToolTip(
+            "当前周期仍负责方向、Setup 与 Gate；高周期只补充长程结构和位置。"
+        )
+        general_form.addRow("更高周期背景:", self._higher_timeframe_check)
+
+        self._higher_timeframe_override_edit = QLineEdit()
+        self._higher_timeframe_override_edit.setPlaceholderText("留空=自动映射，例如 15m → 1h")
+        general_form.addRow("高周期覆盖:", self._higher_timeframe_override_edit)
+
+        self._higher_timeframe_bar_count_spin = QSpinBox()
+        self._higher_timeframe_bar_count_spin.setRange(20, 300)
+        self._higher_timeframe_bar_count_spin.setSuffix(" 根")
+        self._higher_timeframe_bar_count_spin.setToolTip(
+            "背景 K 线越多，结构上下文越充分，但会增加取数和 prompt 长度。"
+        )
+        general_form.addRow("高周期 K 线数量:", self._higher_timeframe_bar_count_spin)
 
         self._refresh_interval_spin = QSpinBox()
         self._refresh_interval_spin.setRange(100, 10_000)
@@ -265,6 +300,7 @@ class SettingsDialog(QDialog):
     def _load_values(self) -> None:
         p = self._settings.provider
         g = self._settings.general
+        prompt = self._settings.prompt
 
         self._model_edit.setText(p.model)
         self._base_url_edit.setText(p.base_url)
@@ -276,6 +312,15 @@ class SettingsDialog(QDialog):
             self._reasoning_effort_combo.setCurrentIndex(idx)
 
         self._analysis_bar_count_spin.setValue(g.analysis_bar_count)
+        self._higher_timeframe_check.setChecked(
+            bool(getattr(g, "higher_timeframe_enabled", True))
+        )
+        self._higher_timeframe_override_edit.setText(
+            str(getattr(g, "higher_timeframe_override", "") or "")
+        )
+        self._higher_timeframe_bar_count_spin.setValue(
+            int(getattr(g, "higher_timeframe_bar_count", 60))
+        )
         self._refresh_interval_spin.setValue(g.refresh_interval_ms)
         self._auto_resume_chart_check.setChecked(
             bool(getattr(g, "auto_resume_chart_after_analysis", False))
@@ -301,6 +346,11 @@ class SettingsDialog(QDialog):
             bool(getattr(g, "enable_next_bar_prediction", False))
         )
         self._enable_next_bar_check.blockSignals(False)
+        from pa_agent.config.vpa import resolve_vpa_mode
+
+        vpa_idx = self._vpa_mode_combo.findData(resolve_vpa_mode(prompt))
+        if vpa_idx >= 0:
+            self._vpa_mode_combo.setCurrentIndex(vpa_idx)
         self._decision_conf_threshold_spin.setValue(
             int(getattr(g, "decision_confidence_threshold", 40))
         )
@@ -396,6 +446,7 @@ class SettingsDialog(QDialog):
     def _on_save(self) -> None:
         p = self._settings.provider
         g = self._settings.general
+        prompt = self._settings.prompt
 
         model = self._model_edit.text().strip()
         base_url = self._base_url_edit.text().strip()
@@ -435,6 +486,9 @@ class SettingsDialog(QDialog):
         p.reasoning_effort = self._reasoning_effort_combo.currentText()  # type: ignore[assignment]
 
         g.analysis_bar_count = self._analysis_bar_count_spin.value()
+        g.higher_timeframe_enabled = self._higher_timeframe_check.isChecked()
+        g.higher_timeframe_override = self._higher_timeframe_override_edit.text().strip()
+        g.higher_timeframe_bar_count = self._higher_timeframe_bar_count_spin.value()
         g.refresh_interval_ms = self._refresh_interval_spin.value()
         g.auto_resume_chart_after_analysis = self._auto_resume_chart_check.isChecked()
         g.keep_analysis = self._keep_analysis_check.isChecked()
@@ -445,6 +499,8 @@ class SettingsDialog(QDialog):
         g.incremental_max_new_bars = self._incremental_max_new_bars_spin.value()
         g.decision_stance = self._decision_stance_combo.currentData()  # type: ignore[assignment]
         g.enable_next_bar_prediction = self._enable_next_bar_check.isChecked()
+        prompt.vpa_mode = self._vpa_mode_combo.currentData()  # type: ignore[assignment]
+        prompt.vpa_enabled = prompt.vpa_mode != "off"
         g.last_symbol = self._last_symbol_edit.text().strip()
         g.last_timeframe = self._last_timeframe_edit.text().strip()
         g.alert_on_order_opportunity = self._alert_on_order_check.isChecked()

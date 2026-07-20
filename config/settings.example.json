@@ -9,35 +9,36 @@
   },
   "general": {
     "analysis_bar_count": 100,
+    "higher_timeframe_enabled": true,
+    "higher_timeframe_override": "",
+    "higher_timeframe_bar_count": 60,
     "refresh_interval_ms": 1000,
     "context_warning_threshold_pct": 80.0,
-    "last_data_source": "mt5",
+    "last_data_source": "tradingview",
     "last_tradingview_exchange": "OANDA",
-    "last_symbol": "XAUUSDm",
+    "last_symbol": "XAUUSD",
     "last_timeframe": "15m",
     "decision_flow_auto_play": true,
     "decision_flow_play_seconds": 50,
     "incremental_max_new_bars": 10,
     "decision_stance": "balanced",
-    "structure_flip_cooldown_bars": 3,
     "decision_flow_default_zoom_pct": 600,
     "stream_pane_font_pt": 11,
     "chart_seq_label_font_pt": 11,
     "auto_resume_chart_after_analysis": true,
+    "counterfactual_horizon_bars": 20,
     "enable_next_bar_prediction": false
   },
   "prompt": {
     "stage2_load_full_strategy_library": false,
     "experience_max_entries": 0,
     "experience_max_chars_per_entry": 400,
-    "stage1_inject_pattern_briefs": true
+    "stage1_inject_pattern_briefs": true,
+    "vpa_mode": "off",
+    "vpa_shadow_design": "full_prompt_ab",
+    "vpa_enabled": false
   },
-  "validation": {
-    "normalization_mode": "strict",
-    "trace_semantic_checks": true,
-    "strict_bar_by_bar_features": true,
-    "disable_truncation_repair": true
-  },
+  "validation": {},
   "feishu": {
     "enabled": true,
     "webhook_url": "",

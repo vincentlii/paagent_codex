@@ -40,7 +40,7 @@ def _make_frame() -> KlineFrame:
             low=1990.0 + (n - 1 - i) * 2.0,
             close=2005.0 + (n - 1 - i) * 2.0,
             volume=100.0,
-            closed=(i > 0),
+            closed=True,
         )
         for i in range(n)
     )

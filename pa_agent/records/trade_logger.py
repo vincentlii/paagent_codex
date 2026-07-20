@@ -23,6 +23,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +68,9 @@ _CSV_FIELDNAMES = [
     "diag_cycle_position",
     "diag_direction",
     "diag_key_signals",
-    # ── Bar analysis (stage-2) ────────────────────────────────────────────────
-    "s2_always_in",
-    "s2_bar_type",
+    # ── Bar analysis ──────────────────────────────────────────────────────────
+    "s1_always_in",
+    "s1_bar_type",
     "s2_signal_bar_bar",
     "s2_signal_bar_quality",
     "s2_signal_bar_pattern",
@@ -92,9 +93,14 @@ _CSV_FIELDNAMES = [
     "decision_trace_summary",
     # ── Continuity audit (vs previous CSV row) ────────────────────────────────
     "prev_plan_relation",
-    "prev_plan_invalidated",
     "prev_plan_entry",
-    "bars_since_prev_plan",
+    "estimated_bars_since_prev_plan",
+    "prev_plan_entry_touched",
+    "prev_plan_stop_touched",
+    "prev_plan_target1_touched",
+    "prev_plan_target2_touched",
+    "prev_plan_touch_ambiguity",
+    "prev_plan_touch_basis",
     # ── Image path ────────────────────────────────────────────────────────────
     "chart_image",
 ]
@@ -147,6 +153,33 @@ def _get(d: dict | None, *keys: str, default: Any = "") -> Any:
         if cur is None:
             return default
     return cur if cur is not None else default
+
+
+def _append_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
+    """Append under the current schema; migrate legacy headers atomically once."""
+    normalized = {field: "" if row.get(field) is None else str(row.get(field, "")) for field in _CSV_FIELDNAMES}
+    existing_rows: list[dict[str, str]] = []
+    if csv_path.exists():
+        with csv_path.open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            existing_rows = list(reader)
+            if reader.fieldnames == _CSV_FIELDNAMES:
+                with csv_path.open("a", newline="", encoding="utf-8-sig") as append_handle:
+                    csv.DictWriter(append_handle, fieldnames=_CSV_FIELDNAMES).writerow(normalized)
+                return
+
+    temp_path = csv_path.with_name(f".{csv_path.name}.{uuid4().hex}.tmp")
+    try:
+        with temp_path.open("x", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=_CSV_FIELDNAMES, extrasaction="ignore")
+            writer.writeheader()
+            for existing in existing_rows:
+                writer.writerow({field: existing.get(field, "") for field in _CSV_FIELDNAMES})
+            writer.writerow(normalized)
+        os.replace(temp_path, csv_path)
+    except OSError:
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 # ── Chart rendering ───────────────────────────────────────────────────────────
@@ -438,7 +471,6 @@ def save_trade_record(
     meta_timeframe: str,
     decision_stance: str,
     model_name: str,
-    structure_flip_cooldown_bars: int = 3,
 ) -> None:
     """Append one row to the trade CSV and generate the chart image.
 
@@ -454,7 +486,6 @@ def save_trade_record(
             meta_timeframe=meta_timeframe,
             decision_stance=decision_stance,
             model_name=model_name,
-            structure_flip_cooldown_bars=structure_flip_cooldown_bars,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("save_trade_record failed: %s", exc, exc_info=True)
@@ -470,11 +501,10 @@ def _save_trade_record_impl(
     meta_timeframe: str,
     decision_stance: str,
     model_name: str,
-    structure_flip_cooldown_bars: int = 3,
 ) -> None:
     s1 = stage1_diagnosis or {}
     dec = decision_inner or {}
-    diag = stage2_full.get("diagnosis_summary") or {}
+    stage1_bar_analysis = s1.get("bar_analysis") or {}
     bar_analysis = stage2_full.get("bar_analysis") or {}
     terminal = stage2_full.get("terminal") or {}
     next_cycle = stage2_full.get("next_cycle_prediction") or {}
@@ -535,7 +565,6 @@ def _save_trade_record_impl(
         prev_csv_row,
         dec,
         frame=frame,
-        cooldown_bars=structure_flip_cooldown_bars,
     )
 
     # ── Build CSV row ─────────────────────────────────────────────────────────
@@ -569,12 +598,12 @@ def _save_trade_record_impl(
         "risk_assessment": _get(dec, "risk_assessment"),
         "invalidation_condition": _get(dec, "invalidation_condition"),
 
-        "diag_cycle_position": _get(diag, "cycle_position"),
-        "diag_direction": _get(diag, "direction"),
-        "diag_key_signals": _j(_get(diag, "key_signals")),
+        "diag_cycle_position": _get(s1, "cycle_position"),
+        "diag_direction": _get(s1, "direction"),
+        "diag_key_signals": _j(_get(s1, "key_signals")),
 
-        "s2_always_in": _get(bar_analysis, "always_in"),
-        "s2_bar_type": _get(bar_analysis, "bar_type"),
+        "s1_always_in": _get(stage1_bar_analysis, "always_in"),
+        "s1_bar_type": _get(stage1_bar_analysis, "bar_type"),
         "s2_signal_bar_bar": _get(signal_bar, "bar"),
         "s2_signal_bar_quality": _get(signal_bar, "quality"),
         "s2_signal_bar_pattern": _get(signal_bar, "pattern"),
@@ -597,30 +626,18 @@ def _save_trade_record_impl(
         "decision_trace_summary": trace_summary,
 
         "prev_plan_relation": audit.get("prev_plan_relation", ""),
-        "prev_plan_invalidated": audit.get("prev_plan_invalidated", ""),
         "prev_plan_entry": audit.get("prev_plan_entry", ""),
-        "bars_since_prev_plan": audit.get("bars_since_prev_plan", ""),
+        "estimated_bars_since_prev_plan": audit.get("estimated_bars_since_prev_plan", ""),
+        "prev_plan_entry_touched": audit.get("prev_plan_entry_touched", ""),
+        "prev_plan_stop_touched": audit.get("prev_plan_stop_touched", ""),
+        "prev_plan_target1_touched": audit.get("prev_plan_target1_touched", ""),
+        "prev_plan_target2_touched": audit.get("prev_plan_target2_touched", ""),
+        "prev_plan_touch_ambiguity": audit.get("prev_plan_touch_ambiguity", ""),
 
         "chart_image": image_filename if chart_written else "",
     }
 
     # ── Write CSV (rewrite with unified header for schema migrations) ─────────
-    existing_rows: list[dict[str, str]] = []
-    if csv_path.exists():
-        try:
-            with open(csv_path, encoding="utf-8-sig", newline="") as f:
-                existing_rows = list(csv.DictReader(f))
-        except OSError:
-            existing_rows = []
-    merged_row = {k: str(row.get(k, "")) for k in _CSV_FIELDNAMES}
-    for k, v in row.items():
-        if k in _CSV_FIELDNAMES:
-            merged_row[k] = "" if v is None else str(v)
-    existing_rows.append(merged_row)
-    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=_CSV_FIELDNAMES, extrasaction="ignore")
-        writer.writeheader()
-        for r in existing_rows:
-            writer.writerow({k: r.get(k, "") for k in _CSV_FIELDNAMES})
+    _append_csv_row(csv_path, row)
 
     logger.info("Trade record appended: %s", csv_path)

@@ -1,0 +1,12 @@
+# Trading Range and Wyckoff Event Reference
+
+Apply only when PA identifies `trading_range`, `trending_tr` or a credible range boundary. A range can remain congestion; do not force an accumulation/distribution campaign or phase sequence.
+
+Use candidates first. A structural event needs range location, boundary interaction, relevant volume-price facts and a later closed-bar response. Event and confirmation bars differ. A range midpoint, short lookback high/low, or isolated wick is not enough to establish a true boundary event.
+
+- Spring: downside boundary breach, recovery into range, then later upside acceptance. No fixed penetration percentage.
+- UT/UTAD: upside breach, failure back into range, then later downside acceptance. Write Automatic Rally/Reaction, never naked “AR”.
+- SOS/SOW: range escape plus meaningful later acceptance/rejection, not one large bar.
+- LPS/LPSY: later test after confirmed range resolution, not the first pullback.
+
+No Demand, No Supply, Test, Shakeout and Upthrust are VSA bar/sequence descriptions, not guaranteed classic events. They need appropriate background and later confirmation. Without context, source quality or follow-through, state facts and remain neutral. Cause/effect may describe potential but PA Agent does not use Point-and-Figure projections. Do not assign a Wyckoff phase sequence merely because several familiar labels can be attached after the fact.

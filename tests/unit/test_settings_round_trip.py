@@ -1,11 +1,13 @@
 """Unit tests for settings load/save round-trip (task 2.4)."""
 from __future__ import annotations
+
 import json
 from unittest.mock import patch
 
 import pytest
-from pathlib import Path
-from pa_agent.config.settings import Settings, load_settings, save_settings
+from pydantic import ValidationError
+
+from pa_agent.config.settings import GeneralSettings, Settings, load_settings, save_settings
 
 
 def test_defaults(tmp_path):
@@ -18,12 +20,18 @@ def test_defaults(tmp_path):
     assert s.provider.reasoning_effort == "high"
     assert s.provider.context_window == 2_000_000
     assert s.general.analysis_bar_count == 100
-    assert s.general.last_symbol == "XAUUSDm"
+    assert s.general.last_symbol == "XAUUSD"
     assert s.general.last_timeframe == "15m"
     assert s.general.decision_stance == "balanced"
     assert s.general.decision_flow_auto_play is True
     assert s.general.auto_resume_chart_after_analysis is False
+    assert s.general.counterfactual_horizon_bars == 20
     assert p.exists(), "defaults should be written to disk"
+
+
+def test_analysis_bar_count_cannot_be_below_preflight_minimum():
+    with pytest.raises(ValidationError):
+        GeneralSettings(analysis_bar_count=19)
 
 
 def test_round_trip(tmp_path):
@@ -36,7 +44,7 @@ def test_round_trip(tmp_path):
     loaded = load_settings(p)
     assert loaded.provider.api_key == "sk-test-1234"
     # Crypto symbols migrate to gold defaults on load
-    assert loaded.general.last_symbol == "XAUUSDm"
+    assert loaded.general.last_symbol == "XAUUSD"
     assert loaded.provider.model == original.provider.model
 
 

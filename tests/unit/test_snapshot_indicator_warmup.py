@@ -65,7 +65,7 @@ def test_build_analysis_frame_falls_back_when_buffer_unavailable() -> None:
 
 
 def test_feature_limit_uses_full_frame_prev_context() -> None:
-    """Incremental limit must not drop prev bar for overlap / inside."""
+    """Incremental limits retain exact previous-bar geometry from the full frame."""
     frame = build_analysis_frame(
         _bars_newest_first([10.0, 10.5, 11.0, 11.2, 11.1, 11.3, 11.4]),
         5,
@@ -79,7 +79,8 @@ def test_feature_limit_uses_full_frame_prev_context() -> None:
     assert len(limited) == 2
     assert limited[0].seq == 1
     assert limited[1].overlap_prev_ratio == full[1].overlap_prev_ratio
-    assert limited[1].bar_type == full[1].bar_type
+    assert limited[1].relation_to_previous == full[1].relation_to_previous
+    assert limited[1].close_delta_prev == full[1].close_delta_prev
 
 
 def test_warmup_constant_covers_ema_period() -> None:

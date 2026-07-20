@@ -1,6 +1,7 @@
 """TradingView data source using tvdatafeed."""
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 import threading
 import time
@@ -11,13 +12,13 @@ from pa_agent.data.base import (
     KlineBar,
     normalize_kline_bar,
 )
-from pa_agent.data.datetime_ts import datetime_to_ts_ms
+from pa_agent.data.datetime_ts import datetime_to_ts_ms, naive_local_to_utc
 from pa_agent.data.market_defaults import (
     is_tv_exchange_auto,
     resolve_tv_fetch_pair,
     tv_auto_probe_plan,
 )
-from pa_agent.data.tv_symbol_lookup import TvSymbolNotFoundError, is_tv_name_input
+from pa_agent.data.tv_symbol_lookup import TvSymbolNotFoundError
 from pa_agent.data.tradingview_errors import format_tradingview_fetch_error
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ class TradingViewSource(DataSource):
         self._symbol: str = ""
         self._timeframe: str = ""
         self._exchange: str = ""
+        self._resolved_exchange: str = ""
         # Mutex: tvDatafeed is NOT thread-safe — its get_hist() creates a
         # WebSocket and stores it on self.ws; concurrent calls clobber the
         # same socket and cause C++ segfaults.
@@ -97,9 +99,15 @@ class TradingViewSource(DataSource):
     def exchange(self) -> str:
         return self._exchange
 
+    @property
+    def resolved_exchange(self) -> str:
+        """Venue that supplied the most recent successful snapshot."""
+        return self._resolved_exchange
+
     def set_exchange(self, exchange: str) -> None:
         """Set TradingView exchange id (e.g. ``BINANCE``); empty = auto-detect."""
         self._exchange = (exchange or "").strip().upper()
+        self._resolved_exchange = ""
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -187,6 +195,7 @@ class TradingViewSource(DataSource):
             raise ValueError(f"Unsupported timeframe: {timeframe!r}. Use one of {list(_TF_MAP)}")
         self._timeframe = timeframe
         self._symbol = symbol.strip()
+        self._resolved_exchange = ""
         # Abort any in-flight get_hist() blocked on a stalled connection so the
         # new symbol/timeframe takes effect immediately instead of waiting out
         # the previous request's timeout. Closing the socket raises inside the
@@ -316,14 +325,39 @@ class TradingViewSource(DataSource):
         with self._snapshot_lock:
             return self._latest_snapshot_inner(n)
 
+    def fetch_snapshot_for(self, symbol: str, timeframe: str, n: int) -> list[KlineBar]:
+        """Fetch background bars without changing the visible subscription."""
+        if timeframe not in _TF_MAP:
+            raise ValueError(f"Unsupported timeframe: {timeframe!r}. Use one of {list(_TF_MAP)}")
+        with self._snapshot_lock:
+            return self._snapshot_for_inner(
+                symbol=symbol.strip(),
+                timeframe=timeframe,
+                n=n,
+            )
+
     def _latest_snapshot_inner(self, n: int) -> list[KlineBar]:
         """Actual snapshot logic — caller holds ``_snapshot_lock``."""
+        return self._snapshot_for_inner(
+            symbol=self._symbol,
+            timeframe=self._timeframe,
+            n=n,
+        )
+
+    def _snapshot_for_inner(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        n: int,
+    ) -> list[KlineBar]:
+        """Fetch a specified snapshot while caller holds ``_snapshot_lock``."""
         if self._tv is None:
             raise DataSourceTransientError("TradingView 未连接，请先选择数据来源 TradingView")
-        if not self._symbol or not self._timeframe:
+        if not symbol or not timeframe:
             raise DataSourceTransientError("TradingView 未订阅品种/周期")
 
-        user_symbol = self._symbol
+        user_symbol = symbol
         req_exchange = self._exchange
         exchange = req_exchange or ""
         fetch_symbol = user_symbol
@@ -331,7 +365,7 @@ class TradingViewSource(DataSource):
         probe_plan = tv_auto_probe_plan(user_symbol) if auto_probe else []
         try:
             from tvDatafeed import Interval  # type: ignore[import]
-            interval = getattr(Interval, _TF_MAP[self._timeframe])
+            interval = getattr(Interval, _TF_MAP[timeframe])
             if auto_probe and probe_plan:
                 df, exchange = self._fetch_tv_auto_probe(
                     symbol=user_symbol,
@@ -372,6 +406,8 @@ class TradingViewSource(DataSource):
             )
             raise DataSourceTransientError(msg)
 
+        self._resolved_exchange = str(exchange or req_exchange or "").upper()
+
         df = df.iloc[::-1].reset_index()
 
         bars: list[KlineBar] = []
@@ -397,7 +433,7 @@ class TradingViewSource(DataSource):
                 from pa_agent.data.bar_close_wait import seconds_until_bar_closes
 
                 secs_left = seconds_until_bar_closes(
-                    ts_ms, self._timeframe, now_ms=None
+                    ts_ms, timeframe, now_ms=None
                 )
                 still_forming = secs_left is not None and secs_left > 0
                 bar = KlineBar(
@@ -419,4 +455,9 @@ class TradingViewSource(DataSource):
 
 def _row_ts_ms(row) -> int:
     """Extract bar open time in milliseconds from a tvDatafeed DataFrame row."""
-    return datetime_to_ts_ms(getattr(row, "datetime", None))
+    value = getattr(row, "datetime", None)
+    if isinstance(value, datetime) and value.tzinfo is None:
+        # tvDatafeed builds its index with datetime.fromtimestamp(), so naive
+        # values are host-local wall time rather than UTC wall time.
+        value = naive_local_to_utc(value)
+    return datetime_to_ts_ms(value)

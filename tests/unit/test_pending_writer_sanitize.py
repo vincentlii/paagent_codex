@@ -3,11 +3,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from pa_agent.records.pending_writer import PendingWriter
 from pa_agent.util.mask_secret import mask_secret
+
+
+def test_counterfactual_horizon_is_forwarded_to_audit_store(tmp_path: Path) -> None:
+    with patch("pa_agent.records.pending_writer.AnalysisAuditStore") as store_cls:
+        PendingWriter(pending_dir=tmp_path / "pending", counterfactual_horizon_bars=37)
+
+    store_cls.assert_called_once_with(
+        tmp_path / "audit" / "analysis.sqlite3",
+        simulation_horizon_bars=37,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -170,3 +181,12 @@ class TestSavePartialSanitizes:
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["_partial_reason"] == "stage2_c"
         assert data["exception"]["partial_reason"] == "stage2_c"
+
+
+def test_atomic_writer_reports_non_json_data_as_a_failed_save(tmp_path) -> None:
+    writer = PendingWriter(pending_dir=tmp_path)
+
+    ok = writer._write_json(tmp_path / "bad.json", {"not_json": {1, 2, 3}})
+
+    assert ok is False
+    assert not (tmp_path / "bad.json").exists()

@@ -153,7 +153,11 @@
 
 ---
 
-## 6. 相关文档
+## 6. TradingView 时间语义
+
+tvDatafeed 返回的 naive datetime 是运行主机的本地墙钟时间。TradingView adapter 会先按主机本地时区转换为 UTC epoch，再写入统一快照；因此 Windows 与 Linux VPS 必须配置正确的系统时区。该修正仅作用于 TradingView，不会改变 MT5 等数据源已有的时间语义。
+
+## 7. 相关文档
 
 - 整体用法：[`PA_Agent使用文档.md`](../PA_Agent使用文档.md)  
 - 项目概述：[`README.md`](../README.md)  

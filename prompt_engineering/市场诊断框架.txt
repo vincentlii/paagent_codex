@@ -13,7 +13,7 @@
 >
 > ⚠️ **四条全局硬禁令**（详见 `提示词大纲_人设与思维方式.txt`）：禁止逆势下单、禁止追高潮/SCS、禁止仓位管理、不依赖成交量。
 >
-> **分析窗口与程序对齐**（单周期 n 根 K 线；n 通常=100）：
+> **建议观察窗口**（单周期 n 根 K 线；n 通常=100）：
 > | 层级 | 窗口 | 用途 |
 > |------|------|------|
 > | 长程背景 | K{n}–K41（n≤40 时与近期重叠） | `htf_context`、§2.2 背景方向、磁力位 |
@@ -22,7 +22,7 @@
 > | 即时信号 | K10–K1 | §9 信号棒、阶段二入场评估 |
 > | 逐棒摘要 | K5–K1 | `bar_by_bar_summary` 恰好 5 条 |
 >
-> Brooks 嵌套叙述中「K100–K1 长程」指**全数据背景**（与程序硬切分 **K{n}–K41** 同义，n 通常为 100）；程序投票与 gate_trace 的**硬切分**以上表为准。
+> Brooks 嵌套叙述中「K100–K1 长程」指全数据背景。上表用于保持观察尺度一致，不是机械投票或硬分类；必要时可扩展实际证据范围并在 `bar_range` 中如实记录。
 
 ---
 
@@ -256,7 +256,7 @@
 □ 长程结构窗口的方向偏好与即时信号窗口的潜在入场方向是否一致？
 
 
-综合以上检查，得出当前市场在周期频谱中的位置，并记录 diagnosis_confidence（0-100整数）。strategy_files_needed 仅记录你认为阶段二可能需要的参考文件；实际加载列表由程序路由根据 cycle_position、direction、spike_stage、alternative_cycle_position、market_phase 与 detected_patterns 决定。
+综合以上检查，得出当前市场在周期频谱中的位置，并记录 diagnosis_confidence（0-100整数）。程序只根据已验证的 cycle_position、direction、spike_stage、alternative_cycle_position 与 detected_patterns 加载参考知识；阶段一不要输出策略文件名。
 
 ---
 
@@ -292,9 +292,9 @@
 
 核心原则：项目只输入**单一周期的100根K线**。不要假设存在任何外部周期图表；所有背景、结构和信号都必须来自这100根K线本身。
 
-【单周期多尺度窗口（与程序实现对齐）】
+【单周期多尺度观察窗口】
 
-当输入 n 根 K 线（通常 n=100）时，采用下列**硬切分**（与阶段一 user 提示、程序三窗口预填一致）：
+当输入 n 根 K 线（通常 n=100）时，优先用下列窗口组织观察。它们是注意力脚手架，不是程序预填、投票或硬分类；证据跨窗时应扩大 `bar_range`。
 
 | 层级 | 窗口 | 用途 |
 |------|------|------|
@@ -420,7 +420,7 @@ Brooks 原则：长程背景**不否决**近期 `direction`；冲突时近期为
 步骤6：持续更新
 - 每根K线收盘后，重新评估三个观察窗口的结构关系。
 - 如果周期位置发生变化（如尖峰变成通道），立即更新判断
-- 周期位置变化时，更新 cycle_position、direction、strategy_files_needed；**不因**转换期单独设 gate_result=wait（见二元决策 §2.5；阶段二提高门槛即可）
+- 周期位置变化时，更新 cycle_position、direction 与 detected_patterns；**不因**转换期单独设 gate_result=wait（见二元决策 §2.5；阶段二结合 Setup 处理）
 
 
 【例外与陷阱】
@@ -1378,7 +1378,6 @@ K线收盘的附加规则：
   "key_signals": ["信号1", "信号2"],
   "htf_context": "长程结构窗口的背景描述",
   "entry_setup": "是否出现入场形态（是/否/等待）",
-  "strategy_files_needed": ["策略文件名1", "策略文件名2"]（仅供参考，实际加载由程序静态路由决定，不可覆盖程序路由）,
   "risk_warning": "需要警惕的风险点（如有）"
 }
 ```
@@ -1391,7 +1390,7 @@ diagnosis_confidence：必填整数 0–100（禁止 high/medium/low 字符串�
 - 三角形、楔形、双顶底、MTR 等形态是**叠加在市场状态之上的结构特征**，必须填在 `detected_patterns` 数组中，而不是 `cycle_position`。
 - 正确做法：先判断底层市场状态（例如 `"trading_range"`），再将形态名填入 `detected_patterns`（例如 `["descending_triangle"]`）。
 
-⚠️ 诊断不清时（diagnosis_confidence **低于 50** 且 key_signals 为空），阶段二应强烈倾向不下单；confidence 在 30–49 时亦应显著降低 trade_confidence。
+诊断置信度只描述对周期与方向解释的把握，不是独立交易 Gate。阶段二仍须结合 Setup、位置、触发、结构失效位与交易者方程独立判断。
 
 ⚠️ spike_stage路由规则（解决尖峰结束后策略文件加载问题）：
 - spike_stage="active" → 阶段二加载「极速上涨/下跌策略」+「极速上涨/下跌识别」
@@ -1439,12 +1438,12 @@ diagnosis_confidence：必填整数 0–100（禁止 high/medium/low 字符串�
 - 阶段一在 `support_levels`/`resistance_levels` 与 `htf_context` 中可提及 MM 候选；具体 TP 在阶段二按文件23 填写。
 
 硬规则：
-- 形态勿只写在 key_signals；必须写入 detected_patterns（程序路由只认该数组 + entry_setup_type 补全）。
+- 形态勿只写在 key_signals；需要加载相关知识时必须由你明确写入 detected_patterns，程序不会从 entry_setup_type 或自由文本补全。
 - bar_analysis.entry_setup_type=wedge → detected_patterns 须含 wedge；entry_setup_type=breakout_pullback → 须含 breakout_pullback。
 - 多个形态可同时出现（如 wedge + reversal_attempt），程序加载所有对应文件。
 - 无特殊形态时填 []。
 
 ⚠️ cycle_position="unknown" 处理规则（数据不足时的兜底）：
 - 当K线数量<20或数据质量不足以做出有效诊断时，AI应输出 cycle_position="unknown"
-- 程序路由：unknown → 不加载任何策略文件，阶段二输出 action="wait"
-- diagnosis_confidence 此时不得超过 30（整数 0–100）
+- cycle_position=unknown 时 gate_result 应为 wait/unknown，程序据此短路阶段二；Router 不加载知识文件本身不构成交易结论。
+- diagnosis_confidence 应与“证据不足”的理由一致，但不套用未经校准的固定上限。

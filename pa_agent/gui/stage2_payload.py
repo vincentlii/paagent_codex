@@ -1,19 +1,42 @@
 """Helpers to merge stage-2 JSON for UI panels."""
 from __future__ import annotations
 
-import copy
 from typing import Any
 
 
-def merge_stage2_for_panels(s2_full: dict[str, Any] | None) -> dict[str, Any]:
+def sidecar_for_stage2_record(
+    record: Any,
+    stage2: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return a sidecar only when it belongs to the displayed Stage-2 result."""
+    if record is None or not isinstance(stage2, dict):
+        return None
+    if getattr(record, "stage2_decision", None) != stage2:
+        return None
+    sidecar = getattr(record, "vpa_sidecar", None)
+    return sidecar if isinstance(sidecar, dict) else None
+
+
+def merge_stage2_for_panels(
+    s2_full: dict[str, Any] | None,
+    *,
+    vpa_sidecar: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Merge top-level prediction fields into the inner decision dict for panels."""
     if not isinstance(s2_full, dict):
         return {}
     inner = s2_full.get("decision")
     payload: dict[str, Any] = dict(inner) if isinstance(inner, dict) else {}
-    for key in ("next_bar_prediction", "next_cycle_prediction"):
+    for key in ("next_bar_prediction", "next_cycle_prediction", "vpa_impact"):
         if key in s2_full:
             payload[key] = s2_full[key]
+    sidecar = vpa_sidecar if isinstance(vpa_sidecar, dict) else s2_full.get("vpa_sidecar")
+    if isinstance(sidecar, dict):
+        payload["vpa_sidecar"] = sidecar
+        if isinstance(sidecar.get("stage1_context"), dict):
+            payload["vpa_context"] = sidecar["stage1_context"]
+        if isinstance(sidecar.get("stage2_impact"), dict):
+            payload["vpa_impact"] = sidecar["stage2_impact"]
     return payload
 
 
@@ -22,15 +45,14 @@ def prepare_stage2_for_ui(
     *,
     stage1_json: dict[str, Any] | None = None,
     skip_next_bar: bool = False,
+    vpa_sidecar: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Normalize / synthesize predictions for display (e.g. demo replay of old records)."""
+    """Prepare validated fields for display without inventing missing analysis."""
     if not isinstance(s2_full, dict):
         return {}
-    out = copy.deepcopy(s2_full)
-    from pa_agent.ai.stage2_normalizer import ensure_stage2_predictions
-
-    if skip_next_bar:
-        out.pop("next_bar_prediction", None)
-
-    ensure_stage2_predictions(out, stage1_json=stage1_json, skip_next_bar=skip_next_bar)
-    return merge_stage2_for_panels(out)
+    del stage1_json
+    if not skip_next_bar:
+        return merge_stage2_for_panels(s2_full, vpa_sidecar=vpa_sidecar)
+    without_next_bar = dict(s2_full)
+    without_next_bar.pop("next_bar_prediction", None)
+    return merge_stage2_for_panels(without_next_bar, vpa_sidecar=vpa_sidecar)

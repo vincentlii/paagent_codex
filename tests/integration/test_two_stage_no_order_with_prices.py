@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.router import route_strategy_files
+from pa_agent.config.settings import Settings
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 
@@ -24,6 +25,8 @@ def test_no_order_with_non_null_price_fails_stage2(
         make_reply(VALID_STAGE1),
         make_reply(bad_s2),
     ]
+    settings = Settings()
+    settings.validation.retry_enabled = False
 
     orchestrator = TwoStageOrchestrator(
         client=client,
@@ -32,6 +35,7 @@ def test_no_order_with_non_null_price_fails_stage2(
         validator=schema_test_validator(),
         pending_writer=pending_writer,
         exp_reader=exp_reader,
+        settings=settings,
     )
 
     events: list[OrchestratorEvent] = []

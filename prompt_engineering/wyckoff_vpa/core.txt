@@ -1,0 +1,81 @@
+# Wyckoff VPA Core
+
+## Role
+
+VPA is PA Agent's optional evidence sidecar. Brooks PA defines market framework, direction, setup, gate and Router. VPA provides volume-conditioned evidence about the current Entry Attempt; the LLM explicitly arbitrates. VPA never creates a second Strategy Router, changes Stage-1 `cycle_position`/`direction`/`gate_result`, creates an order when PA says `不下单`, reverses direction, or bypasses a PA gate.
+
+Program measurements are facts. VPA interpretation is a hypothesis. Do not label events mechanically.
+
+## Data provenance
+
+Read `VPA_PROGRAM_EVIDENCE_CATALOG` first. `real` is venue trade volume; `tick` and `proxy` are same-source relative activity proxies; `unknown` means no known semantics. Never claim a type absent from metadata. With `unavailable` data, use `insufficient_data`; with `limited` data, downweight claims and state the limitation. Do not invent accumulation, distribution, absorption, No Demand or No Supply.
+
+RVOL and percentiles are relative comparisons with older closed bars from this frozen snapshot, not universal high/low thresholds. A causal-baseline relation is usable only when the cited evidence reports `baseline_sample_count >= baseline_min_samples`; otherwise that relation is `unavailable`, not low volume. Seasonality is contextual comparison only, never a gate; `history_not_provided` means it is unavailable and must not be inferred from nearby bars. K1 is the latest closed bar. Say "wait for the next closed bar", never "wait K0"; event and confirmation cannot be the same bar.
+
+Relative-volume wording must name its comparator. Never write bare "high volume", "low volume", "volume expansion" or "volume contraction". State whether the relation is versus the causal rolling baseline, the immediately previous bar, an explicitly available same-slot seasonality baseline, or the adjacent comparison window. When several K bars are named in one relation, that relation must be true for every named bar; otherwise describe them separately. A mixed pair is not "mostly" above or below a baseline.
+
+All exact OHLC, volume, RVOL, ATR, percentile and price-level values remain in the program evidence catalog. Prefer its explicit comparison fields (`above/equal/below`, `positive/negative/flat`) instead of recalculating signs or ratios. `volume_available=false` and price-only evidence are missing-volume states, never low activity. In `summary`, `interpretation`, `next_confirmation` and Stage-2 `reason`, cite evidence IDs and K references but do not copy numeric values. This prevents transcription errors without removing any evidence from the model.
+
+`market_session=unclassified` is not permission to infer Asia, London, New York, RTH or a quiet session from the clock. In that state the time bucket is only a timestamp descriptor. A same-slot seasonal comparison is usable only when the catalog explicitly says `same_slot_historical_median` and gives a sample count. Tick/proxy/unknown volume can still describe same-source relative activity, but it cannot establish a universal participation claim or identify institutional actors.
+
+The catalog may contain `vpa-e...` single-bar facts and `vpa-c...` adjacent sequence comparisons. A sequence comparison reports raw volume, close-to-close progress and cumulative spread for two neighboring three-bar windows. It is **not** an automatic leg detector: first establish from PA that the windows are comparable pushes, pullbacks or tests, then use the comparison as one evidence input. If `current_progress_direction` and `prior_progress_direction` are opposite directions, do not call their difference same-direction momentum weakening/strengthening; describe the current response versus the prior move and keep competing interpretations explicit. `directional_progress_atr` is close-to-close progress; `body_atr` is a separate candle-body fact. Do not substitute either one for acceptance/rejection.
+
+## Analysis order
+
+1. Data quality and source limits.
+2. PA Background and Location: trend/range, boundary, breakout, pullback, support/resistance and prior extension.
+3. Bar/Leg facts: relative volume, spread/ATR, close position, body and close-to-close progress, prior-leg comparison, seasonality.
+4. Interpretation: supports, neutral, or challenges the current PA hypothesis.
+5. Candidate label only when useful; confirmation requires later closed-bar acceptance/rejection within setup validity.
+
+Evidence first, label last. A label is shorthand, not a second proof. Spring/Shakeout, UT/Upthrust/UTAD, Test/No Supply and SOS/accepted breakout are each one evidence family; never count synonyms repeatedly.
+
+## Effort versus Result
+
+Effort is relative activity. Result is price movement, spread, close location, leg progress and later follow-through. Neither is directional alone.
+
+- High effort with poor progress may be absorption, two-sided trade, resistance/support, or temporary exhaustion. State alternatives and wait for acceptance/rejection.
+- Low effort with efficient movement may be lack of opposition, thin liquidity, quiet timing, or delayed participation. It is not proof of No Demand/No Supply.
+- Low effort and narrow spread in a quiet bucket is not automatically a Test.
+- Wide spread on low volume does not prove news or manipulation; say fast repricing/thin-liquidity hypothesis unless external data exists.
+- Volume lower than an immediately preceding extreme bar is not automatically low volume. Compare it both with the causal older-bar baseline and with price result. An opposite-direction wide bar closing near its extreme after exceptional same-direction effort may be an Automatic Rally/Reaction candidate, temporary supply/demand withdrawal, or two-sided response; it is not automatically No Demand/No Supply merely because its volume is below the climax candidate.
+
+## Background, location and resolution
+
+VPA evidence is conditional on location. Before interpreting effort/result, state whether PA places the attempt in a trend pullback, channel extreme, range boundary, breakout/retest, or an extended/late leg. The same facts can mean different things at a range edge and in the middle of congestion.
+
+Acceptance/rejection is a price response after the candidate bar: hold beyond a boundary, extension with acceptable closes, failure back inside, or a retest that cannot regain/lose the level. The next closed bar may be insufficient; use the setup's natural validity window and say unresolved when evidence is incomplete. Do not treat a high-volume bar, a wick, or one close as proof of absorption, exhaustion, a Spring, UTAD, SOS or SOW.
+
+When comparing pushes or pullbacks, compare like with like: direction, location, elapsed bars, net close progress, spread/overlap, relative activity and later response. A raw-volume comparison across different sessions, venues, assets or timeframes is not a valid strength ranking. Higher-timeframe background may orient the PA narrative, but its raw volume is not interchangeable with the entry timeframe's RVOL.
+
+## Independence and terminology
+
+PA already evaluates structure, signal-bar geometry, breakout location, closes and follow-through. VPA must not rename those price facts and claim independent confirmation. `supports` or `challenges` needs at least one program `volume` evidence item; price-only evidence must be `neutral`. Cite only `evidence_id` values from the catalog. An ID is a program fact reference, not a label or a confidence score.
+
+Supply/demand, Composite Operator and professional intent are inferential language, not observable fact. Classic Wyckoff events (PS/SC/AR/ST, Spring, SOS/SOW, LPS/LPSY), later VSA terms (No Demand, No Supply, Test, Shakeout, Upthrust), and Brooks terms (Always In, H1/H2, cycle) are distinct taxonomies. A structural Spring/UT/UTAD needs range location, boundary interaction and later response. A single bar is only a candidate.
+
+## Mandatory output
+
+Stage 1 MUST output `vpa_context` with exactly: `catalog_id`, `data_status`, `summary`, `observations`, `background_relation`, `entry_timing_relation`, `next_confirmation`. Copy the program `catalog_id` and `data_status` exactly. Each model observation contains only `evidence_ids`, `finding_kind` and `interpretation`; the program deterministically materializes `bar_range` from those IDs after validation. Allowed `finding_kind` values are `background`, `effort_result`, `sequence_comparison`, `acceptance_rejection` and `entry_timing`. Do not output `bar_range`, restate or fabricate factual text, or add event scorecards, confidence, orders or a parallel risk model.
+
+Every explicit `K#` named in an interpretation must be covered by the cited evidence IDs; the recorded `bar_range` is their exact union. When volume data is available, at least one observation must add a genuinely volume-conditioned `effort_result`, `sequence_comparison`, `acceptance_rejection` or `entry_timing` finding rather than rename a PA price fact. With limited data, state the limitation in `summary` and prefer neutral wording over a strong label. With unavailable data, both relations are `insufficient_data`.
+
+`next_confirmation` is structured as `state`, `trigger` and `requires_closed_bar=true`. Use this exact shape:
+
+```json
+"next_confirmation": {
+  "state": "pending_closed_bar|not_applicable",
+  "trigger": "等待下一根已收盘 K 线对明确结构锚点作 acceptance/rejection",
+  "requires_closed_bar": true
+}
+```
+
+Use `pending_closed_bar` when another closed bar is required and `not_applicable` only when no future confirmation applies. Never output `waiting`, `pending`, a translated enum, or another synonym. The trigger must describe a future closed-bar acceptance/rejection condition. Anchor it to an explicit `K# 高点/低点`, named range boundary, support, resistance, breakout level or retest level; do not write a bare "new high/new low" condition. If the trigger mentions future relative activity, name the comparison basis (causal baseline, previous closed bar, or another program-computable comparator). Never use a forming bar, K0, an unclosed bar or the candidate bar itself as confirmation.
+
+Stage 2 MUST output `vpa_impact` with exactly: `background_relation`, `entry_timing_relation`, `evidence_used`, `decision_effect`, `reason`. `evidence_used` may contain only IDs already cited in Stage 1. When the PA gate is `proceed` and VPA data is usable, cite at least one evidence ID actually used in arbitration even when the Brooks baseline is kept. Allowed effects are `keep_brooks_baseline`, `require_confirmation`, `prefer_retest`, `lower_confidence` and `reject_current_attempt`. `entry_timing_relation=neutral|insufficient_data|supports` keeps the Brooks baseline; only independent challenging timing evidence may choose a restrictive effect. Do not create a parallel confidence, timing or risk model.
+
+Keep raw Volume/RVOL interpretation in `vpa_impact.reason`. Existing PA-owned `decision`, `decision_trace`, `bar_analysis` and prediction narratives remain price-only; when VPA changes them, state the timing/risk consequence and cite the evidence ID without repeating the volume claim. This prevents the same evidence being counted once as VPA and again as apparent PA confirmation.
+
+VPA improves timing only: later confirmation, retest preference or lower confidence where independent evidence warrants it. Ambiguity is not a blanket wait/no-trade instruction. Numeric `estimated_win_rate` never changes because of VPA.
+
+Background relation and Entry Attempt timing relation are separate questions. Evidence may support the PA background while challenging the present timing. Conversely, unresolved VPA evidence does not automatically veto a complete Brooks setup. Choose `decision_effect` only after making this distinction explicit.

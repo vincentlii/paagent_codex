@@ -147,28 +147,16 @@ def test_openclaw_wb_on_load_keeps_submodel_from_settings() -> None:
     assert s.provider.model == "openclaw_wb/deepseek-v4-flash"
 
 
-def test_openclaw_cs_overrides_user_url_and_key() -> None:
-    """When model is openclaw_cs*, user-filled base_url/api_key must be ignored."""
+def test_openclaw_cs_uses_cursor_sdk_without_gateway_url() -> None:
+    """Cursor SDK keeps its API key and does not pretend to use an HTTP gateway."""
     s = Settings()
     s.provider.model = "openclaw_cs"
     s.provider.base_url = "https://example.com/v1"
-    s.provider.api_key = "sk-user-input"
+    s.provider.api_key = "crsr_user_input"
 
-    with patch("pa_agent.ai.qclaw_connector.detect_qclaw", return_value=True), patch(
-        "pa_agent.ai.qclaw_connector.qclaw_provider_settings"
-    ) as resolve, patch("pa_agent.ai.qclaw_connector.qclaw_health_check_base", return_value=(True, "ok")):
-        resolved = MagicMock()
-        resolved.model = "openclaw_cs"
-        resolved.base_url = "http://127.0.0.1:51187/v1"
-        resolved.api_key = "tok-from-qclaw"
-        resolved.thinking = True
-        resolved.reasoning_effort = "max"
-        resolved.context_window = 2_000_000
-        resolve.return_value = resolved
+    err = apply_cursor_provider_to_settings(s, preferred_model="openclaw_cs")
 
-        err = apply_cursor_provider_to_settings(s, preferred_model="openclaw_cs")
-        assert err is None
-
-    assert s.provider.base_url == "http://127.0.0.1:51187/v1"
-    assert s.provider.api_key == "tok-from-qclaw"
+    assert err is None
+    assert s.provider.base_url == ""
+    assert s.provider.api_key == "crsr_user_input"
 

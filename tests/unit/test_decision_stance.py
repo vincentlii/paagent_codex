@@ -17,30 +17,31 @@ def test_normalize_stance_defaults_unknown_to_conservative():
 def test_stance_guidance_conservative_is_baseline():
     text = build_decision_stance_guidance("conservative")
     assert "保守" in text
-    assert "当前系统默认" in text
+    assert "证据均较清晰" in text
+    assert "固定置信度" in text
 
 
 def test_stance_guidance_balanced_more_aggressive_than_conservative():
     conservative = build_decision_stance_guidance("conservative")
     balanced = build_decision_stance_guidance("balanced")
-    assert "次优但可执行" in balanced
-    assert "次优但可执行" not in conservative
+    assert "证据完整但不完美" in balanced
+    assert "证据完整但不完美" not in conservative
 
 
 def test_stance_guidance_aggressive_more_than_balanced():
     balanced = build_decision_stance_guidance("balanced")
     aggressive = build_decision_stance_guidance("aggressive")
-    assert "30–44" in aggressive
-    assert "30–44" not in balanced
+    assert "更早触发" in aggressive
+    assert "更早触发" not in balanced
 
 
-def test_stance_guidance_extreme_aggressive_forces_trade():
+def test_stance_guidance_extreme_aggressive_never_forces_trade():
     aggressive = build_decision_stance_guidance("aggressive")
     extreme = build_decision_stance_guidance("extreme_aggressive")
     assert normalize_stance("极度激进") == "extreme_aggressive"
-    assert "强制产出交易" in extreme
-    assert "禁止因犹豫而输出「不下单」" in extreme
-    assert "强制产出交易" not in aggressive
+    assert "不等于强制交易" in extreme
+    assert "仍须不下单" in extreme
+    assert "不等于强制交易" not in aggressive
 
 
 def test_stance_label_zh():

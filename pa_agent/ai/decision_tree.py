@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from pa_agent.ai.kline_references import K_BAR_RANGE_RE
 from pa_agent.config.paths import PROMPT_DIR
 
 _BINARY_DECISION_FILE = "二元决策.txt"
@@ -19,13 +20,24 @@ _BRANCH_OUTCOME_LINE_RE = re.compile(
 _BRANCH_OUTCOME_STOP_RE = re.compile(
     r"^(处理|判断依据|条件|说明|多头条件|空头条件|上涨|下跌)[：:]"
 )
-_BAR_RANGE_RE = re.compile(r"^K(\d+)-K(\d+)$", re.IGNORECASE)
-_SINGLE_BAR_RE = re.compile(r"^K(\d+)$", re.IGNORECASE)
 _QUESTION_BAR_BASIS_SUFFIX_RE = re.compile(r"（基于[^）]+判断）$")
 
 GATE_RESULTS = frozenset({"proceed", "wait", "unknown"})
 TRACE_ANSWERS = frozenset({"是", "否", "中性", "等待", "不适用"})
 TERMINAL_OUTCOMES = frozenset({"wait", "reject", "trade", "proceed"})
+_EXECUTABLE_ORDER_TYPES = frozenset({"限价单", "突破单", "市价单"})
+_STAGE2_MODEL_SECTION_IDS = frozenset(str(value) for value in range(3, 12))
+
+# Stage 1 owns only the semantic gate after the program data preflight.
+STAGE1_GATE_NODE_IDS = (
+    "1.2",
+    "1.3",
+    "2.1",
+    "2.2",
+    "2.3",
+    "2.4",
+    "2.5",
+)
 
 # 阶段一禁止当作闸门的节点（原则/执行层，非诊断闸门）
 STAGE1_FORBIDDEN_GATE_NODES = frozenset({"0.3"})
@@ -65,8 +77,6 @@ def _node_sort_key(node_id: str) -> tuple[int, str]:
         ("10.2", 102),
         ("10.3", 103),
         ("11.", 110),
-        ("12.", 120),
-        ("13.", 130),
         ("14.", 140),
     )
     for prefix, rank in prefixes:
@@ -229,24 +239,13 @@ def load_decision_tree(path: Path | None = None) -> dict[str, Any]:
 
 
 def normalize_bar_range(item: dict[str, Any], *, default_max_seq: int | None = None) -> str:
-    """Return display token like ``K50-K1`` or ``K1`` from a trace item.
-
-    When *default_max_seq* is provided, K0 references (unclosed bar) are
-    automatically capped to K1 so that downstream validators see valid seqs.
-    """
+    """Return a canonical display token from the required ``bar_range`` field."""
     from pa_agent.ai.trace_normalize import fix_bar_range_string
 
     raw = item.get("bar_range")
     if raw is not None and str(raw).strip():
         return fix_bar_range_string(str(raw), default_max_seq=default_max_seq)
 
-    bar_from = item.get("bar_from")
-    bar_to = item.get("bar_to")
-    if bar_from is not None and bar_to is not None:
-        bf, bt = int(bar_from), int(bar_to)
-        if bf == bt:
-            return f"K{bf}"
-        return f"K{max(bf, bt)}-K{min(bf, bt)}"
     return ""
 
 
@@ -343,18 +342,15 @@ def validate_bar_range_field(item: dict[str, Any], path: str) -> list[str]:
         errors.append(f"{path}: bar_range must be actual K-line seqs from the table, not a placeholder")
         return errors
 
-    text = br.upper().replace(" ", "")
-    m = _BAR_RANGE_RE.match(text)
+    m = K_BAR_RANGE_RE.fullmatch(br)
     if m:
-        older, newer = int(m.group(1)), int(m.group(2))
-        if older < newer:
+        first = int(m.group("first"))
+        second_raw = m.group("second")
+        if second_raw is not None and first < int(second_raw):
             errors.append(
-                f"{path}: bar_range K{older}-K{newer} invalid; "
+                f"{path}: bar_range K{first}-K{int(second_raw)} invalid; "
                 "older bar must have larger seq (e.g. K50-K1)"
             )
-        return errors
-
-    if _SINGLE_BAR_RE.match(text):
         return errors
 
     errors.append(f"{path}: bar_range must look like K50-K1 or K1 (seq1=newest bar)")
@@ -393,8 +389,6 @@ def build_stage2_gate_wait_response(stage1_json: dict[str, Any]) -> dict[str, An
     node_id = str(last.get("node_id", "1.3"))
     label = str(last.get("reason") or last.get("action") or "闸门未通过，等待更清晰信号")
 
-    cycle = stage1_json.get("cycle_position", "")
-    direction = stage1_json.get("direction", "")
     key_signals = stage1_json.get("key_signals") or []
 
     return {
@@ -402,6 +396,9 @@ def build_stage2_gate_wait_response(stage1_json: dict[str, Any]) -> dict[str, An
             "order_direction": None,
             "order_type": "不下单",
             "entry_price": None,
+            "entry_basis_bar": None,
+            "entry_basis_extreme": None,
+            "entry_rule": None,
             "take_profit_price": None,
             "take_profit_price_2": None,
             "stop_loss_price": None,
@@ -418,16 +415,30 @@ def build_stage2_gate_wait_response(stage1_json: dict[str, Any]) -> dict[str, An
             "trade_confidence": 0,
             "trade_confidence_reasoning": "闸门未通过，不执行交易决策。",
             "estimated_win_rate": None,
-            "estimated_win_rate_reasoning": "未进入 §10.3，无交易胜率估计。",
+            "estimated_win_rate_reasoning": None,
             "key_factors": list(key_signals)[:5],
             "watch_points": ["等待结构明朗或闸门节点转为可继续"],
             "risk_assessment": stage1_json.get("risk_warning") or "闸门等待",
             "invalidation_condition": None,
         },
-        "diagnosis_summary": {
-            "cycle_position": cycle,
-            "direction": direction,
-            "key_signals": list(key_signals),
+        "bar_analysis": {
+            "signal_bar": {
+                "bar": None,
+                "quality": "invalid",
+                "pattern": "none",
+                "reason": "阶段一闸门未通过，未评估信号棒。",
+            },
+            "entry_bar": {
+                "bar": None,
+                "strength": "not_triggered",
+                "follow_through": False,
+                "still_valid": False,
+                "freshness": "invalid",
+            },
+            "second_entry": {
+                "is_second_entry": False,
+                "type": "none",
+            },
         },
         "decision_trace": [],
         "terminal": {
@@ -472,15 +483,23 @@ def validate_gate_result_consistency(stage1: dict[str, Any]) -> list[str]:
         errors.append("gate_trace must be a non-empty array")
         return errors
 
+    seen_node_ids: set[str] = set()
     for i, item in enumerate(trace):
         if not isinstance(item, dict):
             errors.append(f"gate_trace[{i}] must be an object")
             continue
         nid = str(item.get("node_id", ""))
+        if nid in seen_node_ids:
+            errors.append(f"gate_trace node {nid} 不得重复")
+        seen_node_ids.add(nid)
         if nid in STAGE1_FORBIDDEN_GATE_NODES:
             errors.append(
                 f"gate_trace[{i}] node {nid}: 交易者方程不得在阶段一评估，"
                 "请在阶段二节点 10.3（止损止盈确定后）评估"
+            )
+        elif nid not in STAGE1_GATE_NODE_IDS:
+            errors.append(
+                f"gate_trace[{i}].node_id {nid!r} 不属于阶段一模型闸门"
             )
         ans = item.get("answer")
         if ans not in TRACE_ANSWERS:
@@ -489,34 +508,33 @@ def validate_gate_result_consistency(stage1: dict[str, Any]) -> list[str]:
 
     if gate_result in ("wait", "unknown"):
         last = trace[-1]
-        if isinstance(last, dict) and last.get("answer") not in ("否", "等待"):
-            errors.append(
-                "gate_result wait/unknown should end with answer 否 or 等待 on last gate node"
+        if isinstance(last, dict):
+            node_id = str(last.get("node_id", "")).replace("§", "")
+            answer = str(last.get("answer", "")).strip()
+            valid_stop = (
+                (node_id == "1.2" and answer in {"否", "等待"})
+                or (node_id == "1.3" and answer == "是")
             )
+            if not valid_stop:
+                errors.append(
+                    "gate_result wait/unknown 只能由 §1.2 无法识别（否/等待）"
+                    "或 §1.3 极端混乱（是）结束"
+                )
 
-    # Check node_id ordering: gate_trace must be in ascending chapter-section order.
-    # merge_program_nodes now sorts injected nodes, but validate here to catch any
-    # future regression or manually constructed traces with wrong ordering.
-    #
-    # Exception: when gate_result=wait/unknown, merge_program_nodes_head prepends
-    # program nodes so the AI's terminating node (answer=否/等待) stays at the tail.
-    # That terminal node is intentionally out of numeric order — skip the ordering
-    # check for the last node in wait/unknown traces.
+    # The model emits the trace in decision-tree order; no program nodes are injected.
     node_ids = [
         str(item.get("node_id", ""))
         for item in trace
         if isinstance(item, dict) and item.get("node_id")
     ]
-    terminal_exempt = gate_result in ("wait", "unknown") and len(node_ids) > 1
-    check_up_to = len(node_ids) - 1 if terminal_exempt else len(node_ids)
-    for idx in range(1, check_up_to):
+    for idx in range(1, len(node_ids)):
         prev_key = _gate_trace_sort_key(node_ids[idx - 1])
         curr_key = _gate_trace_sort_key(node_ids[idx])
         if curr_key < prev_key:
             errors.append(
                 f"gate_trace node ordering error: {node_ids[idx - 1]} "
                 f"should come before {node_ids[idx]} "
-                f"(章节顺序错乱，程序节点注入后未正确排序)"
+                "(章节顺序错乱)"
             )
 
     return errors
@@ -544,15 +562,16 @@ def validate_stage2_trace_consistency(stage2: dict[str, Any]) -> list[str]:
 
     decision = stage2.get("decision", {})
     order_type = decision.get("order_type") if isinstance(decision, dict) else None
+    executable_order = order_type in _EXECUTABLE_ORDER_TYPES
 
     if order_type == "不下单" and outcome == "trade":
         errors.append('order_type 不下单 cannot pair with terminal.outcome "trade"')
-    if order_type in ("限价单", "突破单", "市价单") and outcome in ("wait", "reject"):
+    if executable_order and outcome in ("wait", "reject"):
         errors.append(
             f"order_type {order_type} cannot pair with terminal.outcome {outcome!r}"
         )
     if (
-        order_type in ("限价单", "突破单", "市价单")
+        executable_order
         and outcome == "trade"
         and str(terminal.get("node_id", "") or "").strip().startswith("14")
     ):
@@ -561,16 +580,32 @@ def validate_stage2_trace_consistency(stage2: dict[str, Any]) -> list[str]:
             "use the final §11 order node or 10.3"
         )
 
+    allowed_node_ids = {
+        node_id
+        for node_id in load_decision_tree().get("node_index", {})
+        if node_id == "14" or node_id.split(".", 1)[0] in _STAGE2_MODEL_SECTION_IDS
+    }
+    seen_node_ids: set[str] = set()
     for i, item in enumerate(trace):
         if isinstance(item, dict):
             errors.extend(validate_bar_range_field(item, f"decision_trace[{i}]"))
+            node_id = str(item.get("node_id", "") or "").strip()
+            if node_id == "0.3":
+                errors.append(
+                    "decision_trace must not include 0.3; use 10.3 after stop/target are set"
+                )
+            elif node_id not in allowed_node_ids:
+                errors.append(
+                    f"decision_trace[{i}].node_id {node_id!r} 不属于阶段二模型路径"
+                )
+            elif node_id in seen_node_ids:
+                errors.append(f"decision_trace node {node_id} 不得重复")
+            seen_node_ids.add(node_id)
 
     node_ids = _trace_node_ids(trace)
-
-    if "0.3" in node_ids:
-        errors.append(
-            "decision_trace must not include 0.3; use 10.3 after stop/target are set"
-        )
+    terminal_node_id = str(terminal.get("node_id", "") or "").strip()
+    if terminal_node_id not in node_ids:
+        errors.append("terminal.node_id 必须对应 decision_trace 中已评估的节点")
 
     # §10 子节点顺序：10.1 → 10.2 → 10.3
     for a, b in (("10.1", "10.2"), ("10.2", "10.3")):
@@ -580,8 +615,18 @@ def validate_stage2_trace_consistency(stage2: dict[str, Any]) -> list[str]:
 
     idx_103 = _index_of(node_ids, "10.3")
     idx_11 = next((i for i, n in enumerate(node_ids) if n.startswith("11.")), -1)
+    idx_14 = _index_of(node_ids, "14")
 
-    if order_type in ("限价单", "突破单", "市价单"):
+    if executable_order:
+        if "9.0" not in node_ids:
+            errors.append("order_type requires decision_trace node 9.0")
+        for required in ("10.1", "10.2", "10.3"):
+            if required not in node_ids:
+                errors.append(f"order_type requires decision_trace node {required}")
+        if idx_14 < 0:
+            errors.append("order_type requires decision_trace node 14 prohibition scan")
+        elif trace[idx_14].get("answer") != "否":
+            errors.append("node 14 must be 否 when placing an order")
         if idx_103 < 0:
             errors.append(
                 "order_type requires trade: decision_trace must include node 10.3 "
@@ -599,10 +644,23 @@ def validate_stage2_trace_consistency(stage2: dict[str, Any]) -> list[str]:
             if idx_9 >= 0 and idx_101 >= 0 and idx_9 > idx_101:
                 errors.append("§9 入场信号 must appear before §10.1 止损")
 
+    idx_90 = _index_of(node_ids, "9.0")
+    idx_90p = _index_of(node_ids, "9.0P")
+    if idx_90 >= 0 and str(trace[idx_90].get("answer", "")).strip() in {"否", "等待"}:
+        if idx_90p < 0:
+            errors.append("§9.0=否/等待 时必须继续评估 §9.0P")
+        elif executable_order:
+            if trace[idx_90p].get("answer") != "是":
+                errors.append("§9.0=否/等待 的可执行订单要求 §9.0P=是")
+            if order_type != "限价单":
+                errors.append("§9.0P 背景计划只能生成限价单")
+
+    if terminal_node_id == "14":
+        if idx_14 < 0 or trace[idx_14].get("answer") != "是":
+            errors.append("terminal.node_id=14 仅允许用于已触犯 §14 禁止项")
+
     if order_type == "不下单" and outcome in ("wait", "reject"):
         term_nid = str(terminal.get("node_id", ""))
-        if idx_103 >= 0 and term_nid not in ("10.3", "10.2", "10.1", "9.5", "9.2"):
-            pass  # allow other legitimate early stops
         if idx_103 >= 0 and trace[idx_103].get("answer") == "否" and term_nid != "10.3":
             errors.append(
                 "when 10.3 answer is 否, terminal.node_id should be 10.3"
@@ -614,10 +672,8 @@ def validate_stage2_trace_consistency(stage2: dict[str, Any]) -> list[str]:
         # In that case outcome="reject" is semantically wrong (you can't reject a
         # plan that never existed) — outcome must be "wait".
         #
-        # Exception: if §14 is genuinely violated (answer=是 AND reason does NOT
-        # contain denial phrases), outcome="reject" is correct because the
-        # prohibition explicitly terminated the analysis.  §14 is a stronger
-        # stop reason than §9.0=否 and takes semantic precedence.
+        # An explicit §14 answer=是 takes precedence because the prohibition
+        # terminated the analysis. Free-text reason wording is never parsed.
         idx_90 = _index_of(node_ids, "9.0")
         idx_101 = _index_of(node_ids, "10.1")
         idx_90p = _index_of(node_ids, "9.0P")
@@ -638,14 +694,8 @@ def validate_stage2_trace_consistency(stage2: dict[str, Any]) -> list[str]:
             if ans_101 == "否":
                 no_entry_plan = True
         if no_entry_plan and outcome == "reject":
-            # Check if §14 genuinely triggered (true violation, not AI misuse)
-            _DENIAL = ("未触犯", "未违反", "无触犯", "无违规", "通过扫描", "扫描通过", "无禁止", "未触发")
-            sec14_genuinely_violated = any(
-                str(item.get("node_id", "")).strip().startswith("14")
-                and str(item.get("answer", "")).strip() == "是"
-                and not any(p in str(item.get("reason", "") or "") for p in _DENIAL)
-                for item in trace
-                if isinstance(item, dict)
+            sec14_genuinely_violated = (
+                idx_14 >= 0 and str(trace[idx_14].get("answer", "")).strip() == "是"
             )
             if not sec14_genuinely_violated:
                 errors.append(

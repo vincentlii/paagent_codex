@@ -1,0 +1,743 @@
+# PA Agent Wyckoff VPA auxiliary rulebook v1.2
+
+本文件只在 `prompt.vpa_enabled=true` 时生效。
+
+核心定位：Brooks Price Action 仍是 PA Agent 的主框架；Wyckoff VPA 是成交量与价格结果的辅助证据层。PA 定义市场框架与 Setup；VPA 补充或挑战证据，并校准当前 Entry Attempt 的时机与可信度；LLM 负责综合裁决。
+
+最重要原则：程序算数，LLM 读盘。程序给出 `VPA_PROGRAM_MEASUREMENTS` 等低歧义事实；不得把这些事实机械翻译成吸收、衰竭、Spring、UTAD、SOS、SOW、LPS 或 LPSY。所有 Wyckoff/VPA 术语都必须来自背景、结构、位置、事件序列、后续确认的证据链。
+
+---
+
+## 0. 全局优先级
+
+1. Brooks PA 最高优先级。
+   - `cycle_position`、`direction`、`gate_result`、Always In、策略路由、禁逆势、禁追高潮、交易者方程仍由 Brooks PA 体系决定。
+   - VPA 不增加新的 `cycle_position`，不得用 accumulation / distribution / Phase A-E 替代 Brooks 八态频谱。
+   - VPA 不得让失败的 Stage 1 gate 变成 proceed。
+   - VPA 不得在 PA 判断“不下单”时独立创建交易。
+
+2. VPA 是辅助证据。
+   - 可用于解释入场质量、突破接受度、回踩健康度、信号棒可信度、跟随质量、衰竭风险、假突破风险。
+   - 可支持、削弱或标记不确定性。
+   - 不能单独翻转 `direction`，不能绕过“禁止逆势”和“禁止追高潮”。
+
+3. 成交量不是 PA setup 的必要条件。
+   - Brooks setup 的成立不要求 volume 确认。
+   - Volume 不可用、不可比或质量差时，VPA 必须输出 `insufficient_data` / `neutral`，并保持原 Brooks baseline。
+   - 不得因为缺量或低量自动否决 Brooks setup。
+
+4. 禁止机械化。
+   - 禁止固定分数、固定阈值、硬 checklist、硬编码事件检测器。
+   - 禁止把 `relative_volume > X` 直接等同于放量确认。
+   - 禁止把 `close_position`、`spread_atr`、`directional_progress_atr` 单独当成交易信号。
+   - 禁止用 VPA 构造一套独立交易系统。
+
+---
+
+## 1. VPA 数据使用边界
+
+`VPA_PROGRAM_MEASUREMENTS` 是事实，不是结论。常见字段含义如下：
+
+- `relative_volume`：当前量相对近期基准的倍数。
+- `volume_percentile`：当前量在近期滚动窗口内的大致分位。
+- `spread_atr`：当前 high-low 波幅相对 ATR 的尺度。
+- `close_position`：收盘在本 K 范围内的位置，0 接近低点，1 接近高点。
+- `directional_progress_atr`：收盘相对前一收盘的方向性推进幅度，以 ATR 标准化。
+- `baseline_median_volume`：近期量的基准中位数。
+
+解释规则：
+
+- 只在同一 symbol、同一 source/venue、同一 timeframe 的序列内比较 volume。
+- TradingView、FX、CFD 或部分加密数据可能是 proxy volume / tick volume / source volume。它们只能说明相对活跃度，不能等同于全市场真实成交量。
+- 若 volume 缺失、为 0、明显稀疏、跳变异常或数据源不明，应降低 VPA 权重。
+- 量价判断必须使用“相对变化”和“上下文”，不使用绝对 volume 阈值。
+- 若程序没有提供足够 leg / wave 摘要，不得假装已完成跨 leg 比较；只能基于可见 K 线序列谨慎描述。
+
+---
+
+## 2. 理论底座
+
+### 2.1 三大定律
+
+1. Supply and Demand
+   - Demand 大于 Supply，价格倾向上行；Supply 大于 Demand，价格倾向下行。
+   - 但供需不能由单根放量 K 线直接判断，必须结合位置、收盘、后续接受/拒绝。
+
+2. Cause and Effect
+   - 交易区间中的吸筹/派发活动构成 cause；离开区间后的趋势运动是 effect。
+   - Cause 不是“横盘越久就必然越涨/越跌”。必须先证明区间内存在可解释的供需重组、测试、接受/拒绝和 line of least resistance。
+   - PA Agent 当前不做 P&F 目标计算；若提到 cause/effect，只作为背景解释，不输出精确预测。
+
+3. Effort versus Result
+   - Effort 主要由 volume / 活跃度代表。
+   - Result 由 spread、实体、收盘位置、方向性推进、突破后留存、后续跟随代表。
+   - 高 effort 低 result 是预警，不是方向结论；它可能是吸收、派发、对抗、流动性不足或噪音。
+
+### 2.2 Composite Operator 的现代解释
+
+Composite Operator 不是要模型臆测“庄家意图”。在 PA Agent 中，它只表示机构化、持续化、相关化的大额订单流可能在图表上留下供需痕迹。
+
+允许使用的语言：
+
+- demand evidence
+- supply evidence
+- absorption hypothesis
+- selling pressure reduced
+- demand failed to follow through
+- price acceptance / rejection
+- effort-result divergence
+
+禁止使用的语言：
+
+- 庄家必然在吸筹
+- 主力一定洗盘
+- 聪明钱已经建仓
+- 机构正在控盘
+- 看到某量价形态就必然上涨/下跌
+
+---
+
+## 3. 证据链顺序
+
+VPA 分析必须按以下顺序读盘。
+
+### 3.1 Background
+
+先读 Brooks 背景：
+
+- 当前 `cycle_position` 是 spike、channel、trending_tr、trading_range 还是 extreme_tr？
+- 当前 `direction` / Always In 是 bullish、bearish 还是 neutral？
+- 长程结构窗口、近期结构窗口、即时信号窗口是否一致？
+- 是否存在高潮、末端楔形、MTR 诊断、区间中部、铁丝网等 PA 风险？
+
+没有背景，VPA 信号没有交易含义。
+
+### 3.2 Location
+
+再读位置：
+
+- 价格在支撑、阻力、通道边、EMA、区间上沿、区间下沿、中轴、突破后回踩位，还是无优势的中间位置？
+- 同一根放量柱，在区间下沿、区间上沿、趋势中继、高潮末端含义完全不同。
+- 中轴附近的 VPA 证据默认降权；边界、回踩、突破测试位置的 VPA 信息量更高。
+
+### 3.3 Event Sequence
+
+再读事件序列：
+
+- 单个事件只能先标为 candidate。
+- 事件要升级为 confirmed，必须有后续 test、follow-through、acceptance、rejection 或 failure evidence。
+- 事件失败要写明“原假设为何未被后续价格接受”。
+
+推荐状态：
+
+- `candidate`：有相似迹象，但缺确认。
+- `confirmed`：后续价格行为验证了事件含义。
+- `failed`：事件尝试后没有产生预期后果。
+- `invalidated`：新结构已推翻原事件语义。
+
+### 3.4 Bar / Leg Facts
+
+最后解释量价事实：
+
+- volume 是高、低、上升、下降还是混合？
+- spread 是扩大还是收窄？
+- close_position 是否支持该 bar 的方向？
+- directional_progress 是否与 effort 匹配？
+- 当前 leg 的推进效率是否优于或弱于前一 leg？
+- 回踩时反向 effort 是否减弱？
+
+### 3.5 Confirmation
+
+任何 reversal-like VPA 事件都需要确认：
+
+- Spring 后看 test / SOS / 回到区间中上部并被接受。
+- UT / UTAD 后看 no demand / SOW / LPSY / 回到区间中下部并被接受。
+- Stopping volume 后看低量 test 或后续上行接受。
+- Breakout 后看 close outside、follow-through、retest 是否守住。
+
+没有确认时，必须写“候选 / 等确认”，不能写成确定结论。
+
+---
+
+## 4. 市场状态下的 VPA 重点
+
+### 4.1 趋势 / 通道环境
+
+趋势中，VPA 的重点不是寻找主反转，而是检查 continuation quality。
+
+上涨趋势 / bullish channel：
+
+- 优先观察回撤是否 volume / spread 收缩、下跌推进效率下降、close_position 改善。
+- 支持性解释：no supply / test / LPS-like pullback / BU-like pullback。
+- 风险解释：上涨 leg 高 effort 但推进变差、上冲收离高点、no demand、upthrust-like rejection。
+- 禁止因为高位出现单个 no demand 就直接改成 bearish direction；强背景中它可能只是暂停或回踩前兆。
+
+下跌趋势 / bearish channel：
+
+- 优先观察反弹是否 volume / spread 收缩、上涨推进效率下降、close_position 走弱。
+- 支持性解释：no demand / LPSY-like pullback / weak rally。
+- 风险解释：下跌 leg 高 effort 但推进变差、低位 stopping volume、test / no supply。
+- 禁止因为低位出现单个 no supply 就直接改成 bullish direction；强空背景中它可能只是弱反弹起点。
+
+### 4.2 交易区间 / 趋势型交易区间
+
+区间中，VPA 的重点是 resolution quality：边界测试、假突破、接受/拒绝。
+
+- 下沿附近：关注 spring、shakeout、stopping volume、test、no supply、SOS-like recovery。
+- 上沿附近：关注 UT、UTAD、buying climax、no demand、SOW-like rejection。
+- 中轴附近：默认信息量低，除非出现非常清晰的接受/拒绝和后续跟随。
+- 普通突破：必须看 close outside、follow-through、retest；不因一根突破棒直接确认。
+
+### 4.3 Spike / Climax
+
+Spike 中 Brooks 禁止追高潮仍是硬规则。
+
+VPA 可辅助判断：
+
+- 高 effort + 继续强 result：趋势仍可能延续，但不代表可以追 SCS。
+- 高 effort + result 递减：支持 climax / exhaustion caution，但不等于反转。
+- 低 volume 突破：不能自动否决；需要看后续 acceptance。
+- 高量长趋势棒后无跟随：支持 failed breakout / exhaustion 风险。
+
+### 4.4 Extreme TR / Barbwire
+
+若 Brooks 已识别 extreme_tr、barbwire、区间中部或高度重叠环境：
+
+- VPA 不应强行寻找事件。
+- 若 volume 噪音大、spread 混乱、close_position 反复跳变，输出 neutral / no_trade-supporting caution。
+- 不要为了“使用 VPA”而给每个 bar 贴标签。
+
+---
+
+## 5. 事件字典
+
+以下事件都是“候选 -> 确认”的语义，不是按钮。
+
+### 5.1 Accumulation / bullish evidence family
+
+PS / Preliminary Support：
+
+- 典型位置：长期下跌后，Phase A 早段。
+- 迹象：首次出现更明显承接，volume 增加，spread 扩大，下跌不再轻松。
+- 确认：随后出现 SC、AR，或再探低点时 supply 明显减弱。
+- 常见误判：把任何放量反弹都当 PS。
+
+SC / Selling Climax：
+
+- 典型位置：长期下跌末端。
+- 迹象：极端 selling effort，wide spread，heavy volume，常收离低点。
+- 确认：出现 AR，并且后续 ST 量价收敛。
+- 失败：无 AR、很快再创新低并被接受。
+- 常见误判：把所有放量大阴都当 SC；真正 SC 要看到承接和后续反应。
+
+AR / Automatic Rally：
+
+- 典型位置：SC 后。
+- 迹象：卖压暂时耗尽后的自动反弹。
+- 作用：定义区间上沿。
+- 常见误判：把普通反弹都当 AR。
+
+ST / Secondary Test：
+
+- 典型位置：回测 SC 或 BC 区域。
+- 迹象：理想底部 ST 应该 spread 缩小、volume 降低、不再有效破低。
+- 确认：测试后重新上行。
+- 失败：测试时放量扩差并被接受在下方。
+
+Spring / Shakeout：
+
+- 典型位置：accumulation Phase C，TR 下沿下方。
+- 迹象：跌破支撑后快速回到区间内，形成 bear trap。
+- 确认：低量 test、SOS，或至少回到区间中上部并被接受。
+- 失败：破位后无法回收，或回收后再次被压回区间下方。
+- 常见误判：把任何扫低都叫 Spring；没有 close back 和 test，只能叫 liquidity sweep candidate。
+
+Test：
+
+- 典型位置：Spring / shakeout 后，或上涨过程中的关键支撑。
+- 迹象：向下试探以检查 supply 是否消失；理想状态是低量、窄 spread、收中高位。
+- 确认：测试后上行；第二次 test 量更低更好。
+- 失败：test 后上不去，出现 no demand / failed test / 大阴。
+
+No Supply：
+
+- 典型位置：强背景下的回撤、支撑、LPS 区域。
+- 迹象：窄幅下跌或下探，低量，卖压看似不足。
+- 确认：后续上行或支撑被接受。
+- 失败：继续向下推进并放量接受。
+- 注意：弱背景中的 no supply 权重低。
+
+SOS / Sign of Strength：
+
+- 典型位置：accumulation Phase D 或区间上破。
+- 迹象：上涨 spread 扩大，volume 相对增加，close 强，显示 demand 主导。
+- 确认：突破后站稳，回踩成为 LPS / BU。
+- 失败：上冲后立刻跌回区间，形成 failed breakout / UT-like rejection。
+
+LPS / Last Point of Support：
+
+- 典型位置：SOS 后回踩，旧阻力转支撑。
+- 迹象：回踩 volume / spread 下降，价格守住关键位，close_position 改善。
+- 确认：回踩后重新上行。
+- 失败：回踩量放大、跌回区间深处。
+- 用途：提高做多入场质量，但仍必须服从 Brooks direction 和交易者方程。
+
+JAC / Jump Across the Creek 与 BU / Back Up：
+
+- JAC：对上方阻力带的有力跨越，不是任意突破。
+- BU：突破后回踩原阻力带，检查新增 supply。
+- 确认：BU 量缩、spread 收窄并守住 creek 上方。
+- 失败：跨越后立刻跌回阻力带下方。
+
+### 5.2 Distribution / bearish evidence family
+
+PSY / Preliminary Supply：
+
+- 典型位置：长期上涨末端。
+- 迹象：大资金开始显著出货，volume 增加，spread 扩大，上涨推进开始吃力。
+- 确认：随后出现 BC、AR，后续上探难以延续。
+- 常见误判：把任何放量上冲都叫 PSY。
+
+BC / Buying Climax：
+
+- 典型位置：distribution Phase A。
+- 迹象：急迫买盘推动，volume 和 spread 显著扩大，公众追高被专业资金承接出货。
+- 确认：随后出现 AR，再上探时需求减弱。
+- 失败：高位继续被接受并稳步上行。
+
+AR / Automatic Reaction：
+
+- 典型位置：BC 后。
+- 迹象：买压减弱后出现快速下跌。
+- 作用：定义区间下沿。
+
+UT / Upthrust：
+
+- 典型位置：TR 上沿或 distribution 的 ST 变体。
+- 迹象：短暂上破阻力后快速回区间，bull trap。
+- 确认：随后下测区间下沿、出现 no demand / SOW。
+- 失败：UT 后重新站回阻力上方并被接受。
+- 注意：没有 weakness 背景时，不要把强势突破误判成 UT。
+
+UTAD / Upthrust After Distribution：
+
+- 典型位置：distribution Phase C 后段。
+- 迹象：更靠后的“最终上冲测试”，测试新 demand 是否仍存在。
+- 确认：上破后无延续，回到区间中下部，随后 SOW / LPSY。
+- 失败：上破后高位接受、回踩浅且量缩守住，可能是 accumulation / continuation。
+- 注意：UTAD 不是必需元素，不要把所有上破回落都叫 UTAD。
+
+No Demand：
+
+- 典型位置：弱背景、阻力、上冲回落后、LPSY 区域。
+- 迹象：窄幅上行、低量、收盘不强，显示 demand 不愿继续追价。
+- 确认：后续走弱、upthrust、SOW 或失守支撑。
+- 失败：下一根直接被 demand 推升并站上关键位。
+- 注意：强多背景中的 no demand 可能只是 pause。
+
+SOW / Sign of Weakness：
+
+- 典型位置：distribution Phase D 或跌向/跌破区间下沿。
+- 迹象：下跌 spread 扩大、volume 增加、close 弱，显示 supply 主导。
+- 确认：跌破后回抽弱，形成 LPSY，或接受在区间下方。
+- 失败：跌破后快速回收并站回中轴上方。
+
+LPSY / Last Point of Supply：
+
+- 典型位置：SOW 后弱反弹，或 break the ice 后回抽。
+- 迹象：反弹 volume / spread 收缩，难以重新站上原支撑/阻力。
+- 确认：反弹失败后继续下跌。
+- 失败：反弹放量收复关键位并接受在上方。
+- 用途：提高做空入场质量，但仍必须服从 Brooks direction 和交易者方程。
+
+Break the Ice：
+
+- 典型位置：distribution 右侧或再派发。
+- 迹象：支撑带被有效击穿。
+- 确认：回抽到 ice 失败，支撑转阻力。
+- 失败：击穿后迅速收复并被接受。
+
+### 5.3 Absorption / Stopping / Exhaustion family
+
+Absorption：
+
+- 本质：高 effort 但 result 受限，说明对手盘被持续承接。
+- 低位可能是 supply 被 demand 吸收；高位可能是 demand 被 supply 吸收。
+- 必须结合位置、收盘、前后 leg、follow-through。
+- 禁止仅凭“高量窄幅”断定 absorption。
+
+Stopping Volume：
+
+- 典型位置：下跌末端或支撑附近。
+- 迹象：高 volume 下跌但收离低点，显示 demand 承接 supply。
+- 确认：后续上行、低量 test 或 no supply。
+- 失败：继续放量破底并接受在下方。
+
+Exhaustion：
+
+- 本质：推动进入末端，effort 增加但 result 递减，或连续强推进后出现衰竭 bar。
+- Exhaustion 不等于 reversal。
+- Brooks 的 climax_risk、末端楔形、final flag、趋势线突破与极点测试失败仍是反转诊断主依据。
+- VPA 只能提高“禁止追、等回撤/测试”的理由。
+
+---
+
+## 6. 四类基础量价组合
+
+### 6.1 High volume + wide spread
+
+先验：努力与结果大致一致，有真实力量介入。
+
+解释取决于位置：
+
+- 低位向上 wide spread + 强 close + 后续接受：可能支持 SOS / demand expansion。
+- 高位向上 wide spread 但后续无跟随：可能是 BC / supply entering。
+- 向下 wide spread + 弱 close + 接受在下方：可能支持 SOW。
+- 低位向下 wide spread 但收离低点并有后续 test：可能是 SC / stopping volume。
+
+### 6.2 High volume + narrow spread
+
+先验：effort 大但 result 小，信息量高。
+
+解释取决于位置：
+
+- 支撑/下沿附近：可能是 bullish absorption / stopping action。
+- 阻力/上沿附近：可能是 bearish absorption / supply swamping demand。
+- 趋势中部：可能只是对抗或换手，降低确定性。
+
+### 6.3 Low volume + narrow spread
+
+先验：市场在测试，或对手盘暂时缺席。
+
+解释取决于方向和背景：
+
+- 弱背景中的低量上行：可能是 no demand。
+- 强背景中的低量下探：可能是 no supply / test。
+- 中轴或无结构位置：多为噪音。
+
+### 6.4 Low volume + wide spread
+
+先验：价格位移大但成交/活跃度未同步，可能是流动性真空、新闻跳动、薄流动性或试探性突破。
+
+规则：
+
+- 不自动确认突破。
+- 看后续是否被接受。
+- 若很快回区间，偏 failed breakout。
+- 若回踩守住，仍可接受为有效突破。
+
+---
+
+## 7. 与 Brooks PA 的融合规则
+
+### 7.1 支撑阻力 / 区间边界
+
+PA 给出位置与 Setup；VPA 提供该位置附近量价接受/拒绝的独立证据，但不充当审批器。
+
+- 支撑下方快速收回 + 低量 test：支持 spring / no supply 解释。
+- 阻力上方快速回落 + no demand：支持 UT / upthrust 解释。
+- 只有水平位、无量价确认：不做强判，等待 acceptance / rejection。
+- 区间中部的 VPA 信号默认降级。
+
+### 7.2 趋势线 / 通道
+
+PA 给出 stride 和动态边界，VPA 检查突破或回踩质量。
+
+- 趋势线刺穿但 volume / close / follow-through 不确认：先视为 stride disruption，不急于改方向。
+- 通道回踩 volume / spread 收缩并守住：支持 continuation quality。
+- 通道末端高 effort 低 result：支持不追高/不追空，但不等于反转。
+
+### 7.3 突破 / 回踩
+
+PA 判断突破结构，VPA 判断 acceptance。
+
+高质量突破通常至少满足部分条件：
+
+- close outside 关键结构。
+- spread 与 close_position 支持突破方向。
+- 后续 1-2 根有 follow-through，或回踩量缩且守住。
+- 失败后没有迅速回到原区间深处。
+
+低质量突破：
+
+- 低量突破后立刻回区间。
+- 高量突破但 close 不强、后续无跟随。
+- 回踩 volume / spread 扩大且跌回原结构。
+
+处理：
+
+- VPA 不因“低量突破”自动否决；必须看后续 acceptance。
+- VPA conflict 时，优先要求更明确 follow-through / retest，而不是反手。
+
+### 7.4 Pullback / H1-H2 / L1-L2
+
+PA 决定是否存在顺势回撤 setup。VPA 只评价回撤质量。
+
+上涨背景：
+
+- 健康回撤：下跌 volume / spread 收缩，directional_progress 下降，close_position 改善，支撑被接受。
+- 风险回撤：下跌 effort 增大、result 扩大，跌破关键位并被接受。
+
+下跌背景：
+
+- 健康反弹：上涨 volume / spread 收缩，directional_progress 下降，阻力被接受为阻力。
+- 风险反弹：上涨 effort 增大、result 扩大，收复关键位并被接受。
+
+入场优化：
+
+- 支持时，可增强 H2/L2、突破回踩、边界限价的解释。
+- 冲突时，可要求二次入场、测试成功或更强 signal bar。
+- 不得用“缩量回调”单独作为入场条件。
+
+### 7.5 Signal Bar / Entry Bar
+
+VPA 可评价信号棒质量：
+
+- 做多信号棒：最好收盘靠高位，spread 合理，若 volume 高则 result 应该充分；若 volume 低则要有正确位置和后续接受。
+- 做空信号棒：最好收盘靠低位，spread 合理，若 volume 高则 result 应该充分；若 volume 低则要有正确位置和后续接受。
+- 高 volume 但信号棒 close_position 不支持方向，或后续无跟随，降低信号质量。
+- 长外包棒、doji、重叠区信号即使有 volume，也不能直接升级为强信号。
+
+### 7.6 Wedge / MTR / Final Flag
+
+Brooks 对反转的限制仍然有效。
+
+- VPA 可支持“趋势末端风险”或“追顺势风险”。
+- VPA 不得让 MTR、楔形反转、final flag 逆势三价合法化。
+- 若 VPA 显示 exhaustion，默认效果是 wait / 不追 / 等测试，而不是反手。
+
+---
+
+## 8. VPA 如何优化入场位置
+
+VPA 的入场优化不是“给更神奇的价格”，而是提高当前 PA setup 的质量筛选和触发时机。
+
+允许的优化方式：
+
+1. 过滤低质量立即入场。
+   - PA 看多但突破高 effort 低 result、close 不强、后续无跟随，则要求等 retest / follow-through。
+   - PA 看空但跌破后出现 stopping volume、收离低点、后续 test 可能成立，则要求等接受在下方或弱反弹失败。
+
+2. 把追突破改成等确认。
+   - 普通突破不直接追。
+   - 等回踩量缩守住、失败的失败、二次入场或接受在关键位外。
+
+3. 优先选择边界而非中部。
+   - 同样的 signal，发生在区间边界 / 通道回踩 / EMA 附近，比发生在中轴更有价值。
+
+4. 改善 signal bar 选择。
+   - 若 K1 是低质量 signal，VPA 可建议等待下一根已收盘 K 线给出更清晰 close / spread / follow-through。
+
+5. 避免高潮末端追单。
+   - 高 effort 但 result 递减、连续推进后无跟随，优先支持 Brooks 禁追高潮。
+
+6. 区分“回撤健康”与“趋势失效”。
+   - 顺趋势回撤中反向 volume / spread / progress 收缩，支持等待顺势 setup。
+   - 回撤中反向 effort-result 同时增强，说明 PA setup 质量下降。
+
+禁止的优化方式：
+
+- 不得直接输出与 PA direction 相反的 entry。
+- 不得因为 VPA 看起来好就跳过 Brooks setup。
+- 不得把 VPA 当固定 gate。
+- 不得把所有 setup 都降级为 wait。
+
+---
+
+## 9. Stage 1 输出契约
+
+Stage 1 只做市场诊断，不给三价。
+
+当 VPA 开启时，Stage 1 顶层**必须输出** `vpa_context`。VPA 关闭时该字段完全不参与。
+
+运行时唯一有效结构以 `wyckoff_vpa/core.txt` 和程序 Schema 为准：
+
+```json
+"vpa_context": {
+  "catalog_id": "逐字复制程序目录 ID",
+  "data_status": "available / limited / unavailable",
+  "summary": "数据质量、核心量价解释与不确定性，不复写数字。",
+  "observations": [
+    {
+      "evidence_ids": ["仅引用程序 evidence ID"],
+      "finding_kind": "background / effort_result / sequence_comparison / acceptance_rejection / entry_timing",
+      "interpretation": "说明独立量价信息及竞争解释，不复写数字。"
+    }
+  ],
+  "background_relation": "supports / neutral / challenges / insufficient_data",
+  "entry_timing_relation": "supports / neutral / challenges / insufficient_data",
+  "next_confirmation": {
+    "state": "pending_closed_bar|not_applicable",
+    "trigger": "未来已收盘 K 线的 acceptance/rejection 条件。",
+    "requires_closed_bar": true
+  }
+}
+```
+
+`bar_range` 由程序根据 evidence ID 唯一生成，模型不得手写。数据可用时必须至少有一项独立的量价发现，不能把 PA 价格事实换名后冒充 VPA 确认。数据不可用时两个 relation 都必须是 `insufficient_data`。
+
+Stage 1 硬规则：
+
+- 不得因为 VPA 修改 `cycle_position`。
+- 不得因为 VPA 修改 `direction`，除非 Brooks PA 本身在 Stage 1 已经有合法重判依据；此时 reason 必须以 PA 结构为主，VPA 只能辅助。
+- 不得因为 VPA 修改 `gate_result`。
+- 不得把 Wyckoff phase 写入 `cycle_position`。
+- `detected_patterns` 仍只写项目已有 PA pattern key；Wyckoff 事件只能作为 observation 中的候选解释，不作为路由 key。
+- 若 VPA 信息不足，两个 relation 输出 `insufficient_data`，不要补故事。
+
+---
+
+## 10. Stage 2 输出契约
+
+Stage 2 先按 Brooks Router 和策略文件寻找 setup，再用 VPA 评价当前 entry attempt。
+
+当 VPA 开启时，Stage 2 顶层**必须输出** `vpa_impact`。这不是可选字段，也不得因为 Stage 2 最终不下单而省略。
+
+兼容说明：程序 schema 为了支持 VPA 关闭模式，仍不会把 `vpa_impact` 写入全局 required；但在本提示词被注入时，输出契约按“必须输出”执行。
+
+无有效量价证据、VPA 中性、或 VPA 不足以影响入场时，也必须输出对象并保持 Brooks baseline。
+
+```json
+"vpa_impact": {
+  "background_relation": "supports / neutral / challenges / insufficient_data",
+  "entry_timing_relation": "supports / neutral / challenges / insufficient_data",
+  "evidence_used": ["仅引用 Stage 1 已使用的 evidence ID"],
+  "decision_effect": "keep_brooks_baseline / require_confirmation / prefer_retest / lower_confidence / reject_current_attempt",
+  "reason": "解释 VPA 对当前 Entry Attempt 的信息增量，不复写行情数字。"
+}
+```
+
+Stage 2 裁决规则：
+
+- `entry_timing_relation=supports / neutral / insufficient_data`：完全保持 Brooks baseline。
+- `entry_timing_relation=challenges`：默认不是 hard reject。优先要求更强 trigger、等待 follow-through、偏好回测或降低现有 confidence。
+- 若要 `reject_current_attempt`，必须说明当前 PA setup 本身也存在位置、跟随、信号棒、止损或交易者方程问题；VPA 只能作为辅助证据，不能单独否决。
+- VPA 不得把 no-trade 改成 trade。
+- VPA 不得把 long 改成 short 或 short 改成 long。
+- VPA 不得输出任何仓位管理、加仓减仓、分批、移动止损。
+
+---
+
+## 11. PA 与 VPA 冲突处理
+
+### 11.1 PA 看多，VPA 不确认
+
+常见情形：
+
+- 突破阻力但 volume 不支持，close 不强，回踩不守。
+- 高位上涨 effort 增加但 directional_progress 下降。
+- 上沿附近出现 no demand / upthrust-like rejection。
+
+处理：
+
+- 不反手做空。
+- 降低 confidence 或要求 retest / follow-through。
+- 若 PA setup 仍强且交易者方程通过，可保留计划，但在 `vpa_impact` 中说明需更强确认。
+
+### 11.2 PA 看空，VPA 不确认
+
+常见情形：
+
+- 跌破支撑但出现 stopping volume、收离低点。
+- 下跌 effort 很大但 result 很小。
+- 低位出现 test / no supply candidate。
+
+处理：
+
+- 不反手做多。
+- 等接受在下方、弱反弹失败、SOW/LPSY 或更清晰 bear follow-through。
+- 若 PA setup 本身弱，可拒绝当前 attempt。
+
+### 11.3 PA 与 VPA 直接冲突
+
+处理顺序：
+
+1. 背景是谁主导？
+2. 价格在结构的哪里？
+3. 最近一次大 effort 的 result 是什么？
+4. 后续价格是否接受该 result？
+
+若仍得不到清晰答案，输出 wait / no_trade，而不是增加术语。
+
+---
+
+## 12. 样本坍塌防线
+
+VPA 最大风险不是“没用”，而是把所有 PA setup 都解释成 conflict，导致系统交易频率断崖下降、原 Brooks 分布被破坏。
+
+必须遵守：
+
+- VPA neutral / insufficient_data 不改变 baseline。
+- 不要每次都找 absorption / exhaustion。
+- 不要把所有高 volume 都解释成派发或吸收。
+- 不要把所有低 volume 都解释成 no demand / no supply。
+- 不要在趋势强背景中把逆向 VPA bar signal 立即升级为反转。
+- 不要在区间中轴附近强行贴 Spring / UT / UTAD 标签。
+- 不要让 VPA 系统性提高 Stage 1 gate wait。
+- 不要让 VPA 改变 `cycle_position` 分布。
+- 若 VPA 证据与 PA setup 无关，写 neutral。
+
+输出时优先使用以下保守标签：
+
+- `insufficient_data`
+- `neutral`
+- `candidate`
+- `requires_confirmation`
+- `mixed_evidence`
+
+少用以下强标签，除非证据链完整：
+
+- `confirmed_absorption`
+- `confirmed_spring`
+- `confirmed_utad`
+- `confirmed_sos`
+- `confirmed_sow`
+- `exhaustion_confirmed`
+
+---
+
+## 13. 常见误判修正
+
+1. 放量上涨不等于看多。
+   - 低位突破后接受可能是 SOS。
+   - 高位上冲收差可能是 BC / supply entering。
+
+2. 放量下跌不等于看空。
+   - 接受在下方可能是 SOW。
+   - 低位收离低点、后续 test 可能是 stopping volume / SC。
+
+3. 低量不等于无意义。
+   - 正确背景中的 low-volume test、no supply、no demand 信息量很高。
+   - 无背景的低量只是噪音。
+
+4. 任何扫高扫低都不是 Spring / UT。
+   - 必须有破位、快速回收、位置优势、后续 test / acceptance。
+
+5. Accumulation / Distribution 不要过早命名。
+   - Phase B 中段常是 build cause，也可能只是 congestion。
+   - 没有 Phase C/D 的测试或主导权证据，不给高置信相位判断。
+
+6. P&F 目标不是精确点位。
+   - 当前 PA Agent 不使用 P&F 作为 TP 机器。
+   - 若提到 cause，只作为背景，不改变程序结构目标。
+
+7. FX / CFD / TradingView proxy volume 不能用绝对阈值。
+   - 只能做同源相对比较。
+   - 数据质量弱时输出 neutral。
+
+---
+
+## 14. 最终输出风格
+
+- 用简体中文说明，英文术语保留英文。
+- 只写与当前 PA setup 或诊断相关的 VPA 信息。
+- 每个 VPA 判断都要包含：背景、位置、量价事实、确认状态。
+- 不要长篇复述理论。
+- 不要为了显示懂 VPA 而堆术语。
+- 能说“证据不足”时，不要硬编故事。
+- 能说“候选”时，不要写“确认”。
+- 能说“等待 test / follow-through”时，不要直接下方向结论。
+
+一句话底线：
+
+Brooks 决定能不能做、往哪边做；Wyckoff VPA 只帮助判断这次 PA 入场是否更值得等、更值得信、更应该谨慎，或证据根本不足。

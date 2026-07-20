@@ -9,35 +9,51 @@ Categories:
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from pa_agent.ai.kline_references import K_REFERENCE_RE, parse_k_bar_range_bounds
+from pa_agent.ai.vpa_measurements import evidence_has_relative_volume_comparison
+
 logger = logging.getLogger(__name__)
 
-# Tokens in §9 / decision reasoning that justify trading on weak|invalid signal_bar.
-_EXPLICIT_S9_TRADABLE_TOKENS = (
-    "弱",
-    "瑕疵",
-    "激进",
-    "仍可",
-    "例外",
-    "次优",
-    "等待信号",
-    "无信号",
-    "挂单",
-    "计划型",
-    "接受",
-    "限价",
-    "结构位",
-    "边界",
-    "宽通道",
-    "回撤",
-    "反弹",
-    "tr_boundary",
+_VPA_UNCLASSIFIED_SESSION_RE = re.compile(
+    r"\b(?:asia|asian|london|new\s*york|tokyo|sydney)\b|亚洲|伦敦|纽约|东京|悉尼",
+    re.IGNORECASE,
 )
+_VPA_ACTOR_ATTRIBUTION_RE = re.compile(
+    r"\binstitution(?:al)?\b|\bsmart\s+money\b|\bactive\s+(?:buyer|seller)s?\b|"
+    r"\baggress(?:ive|or)\s+(?:buying|selling|side)\b|\bbuyer[- ]initiated\b|"
+    r"\bseller[- ]initiated\b|\u673a\u6784|\u4e3b\u529b|\u806a\u660e\u94b1|"
+    r"\u4e3b\u52a8\u4e70\u76d8|\u4e3b\u52a8\u5356\u76d8|\u4e70\u65b9\u4e3b\u52a8|\u5356\u65b9\u4e3b\u52a8",
+    re.IGNORECASE,
+)
+_VPA_PROXY_CERTAINTY_RE = re.compile(
+    r"\bactive\s+demand\b|\bactive\s+supply\b|\bdemand\s+participation\b|"
+    r"\bsupply\s+participation\b|"
+    r"\b(?:bulls?|bears?)\s+(?:fully|aggressively|actively)\s+"
+    r"(?:push(?:ed|ing)?|buy(?:ing)?|sell(?:ing)?|press(?:ed|ing)?)\b|"
+    r"\u9700\u6c42\u6d3b\u8dc3|\u4f9b\u7ed9\u6d3b\u8dc3|"
+    r"\u4e70\u65b9\u79ef\u6781\u53c2\u4e0e|\u5356\u65b9\u79ef\u6781\u53c2\u4e0e|"
+    r"(?:\u591a\u5934|\u7a7a\u5934).{0,4}?"
+    r"(?:\u5168\u529b|\u4e3b\u52a8|\u79ef\u6781).{0,4}?"
+    r"(?:\u63a8\u52a8|\u8fdb\u653b|\u6253\u538b|\u629b\u552e|\u4e70\u5165|\u5356\u51fa)",
+    re.IGNORECASE,
+)
+_VPA_FORMING_BAR_RE = re.compile(
+    r"\bforming\s+bar\b|\bunclosed\s+bar\b|"
+    r"(?<![A-Za-z0-9_])K\s*0(?![A-Za-z0-9_.])|\u672a\u6536\u76d8|\u672a\u95ed\u5408",
+    re.IGNORECASE,
+)
+
+
+def _vpa_bar_range_bounds(value: object) -> tuple[int, int] | None:
+    """Return inclusive K-line bounds for a simple VPA observation range."""
+    return parse_k_bar_range_bounds(value)
 
 # ── Result types ──────────────────────────────────────────────────────────────
 
@@ -45,6 +61,7 @@ _EXPLICIT_S9_TRADABLE_TOKENS = (
 class Ok:
     """Successful validation result."""
     obj: dict[str, Any]
+    normalization_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -106,26 +123,12 @@ def _strip_fences(text: str) -> str:
     if not t:
         return t
 
-    # ── 清洗模型输出的非标准 Unicode 引号 / 控制字符 ──
-    _SMART_QUOTE_MAP = {
-        "\u201c": '"',   # " → "
-        "\u201d": '"',   # " → "
-        "\u2018": "'",   # ' → '
-        "\u2019": "'",   # ' → '
-        "\u2013": "-",   # en-dash
-        "\u2014": "-",   # em-dash
-    }
-    for bad, good in _SMART_QUOTE_MAP.items():
-        t = t.replace(bad, good)
-    # 去掉除 \t \n \r 外的控制字符（0x00-0x1f 除了这三个）
-    t = "".join(ch for ch in t if ch >= " " or ch in "\t\n\r")
-
     # ── Priority: find an embedded ```json ... ``` fence anywhere in text ──
     # Handles the case where the model outputs prose first, then a fenced block.
     m_embedded = _FENCE_RE.search(t)
     if m_embedded:
         t = m_embedded.group(1).strip()
-        return _repair_unescaped_quotes(_repair_semicolon_separator(_extract_outer_json_object(t)))
+        return _extract_outer_json_object(t)
 
     # Fully fenced ```json ... ``` starting at top
     if t.startswith("```"):
@@ -138,56 +141,22 @@ def _strip_fences(text: str) -> str:
     # Common model mistake: raw JSON + trailing ``` only
     t = _TRAILING_FENCE_RE.sub("", t).strip()
 
-    return _repair_unescaped_quotes(_repair_semicolon_separator(_extract_outer_json_object(t)))
-
-
-def _escape_control_chars_in_json_strings(text: str) -> str:
-    """Escape raw newlines/tabs/control chars inside JSON string literals."""
-    out: list[str] = []
-    in_string = False
-    escape = False
-    for ch in text:
-        if not in_string:
-            if ch == '"':
-                in_string = True
-            out.append(ch)
-            continue
-        if escape:
-            escape = False
-            out.append(ch)
-            continue
-        if ch == "\\":
-            escape = True
-            out.append(ch)
-            continue
-        if ch == '"':
-            in_string = False
-            out.append(ch)
-            continue
-        if ch == "\n":
-            out.append("\\n")
-        elif ch == "\r":
-            out.append("\\r")
-        elif ch == "\t":
-            out.append("\\t")
-        elif ch < " ":
-            continue
-        else:
-            out.append(ch)
-    return "".join(out)
+    return _extract_outer_json_object(t)
 
 
 def coalesce_model_json_text(content: str, reasoning: str | None = None) -> str:
     """Prefer content JSON; fall back to reasoning when content is empty or prose."""
-    stripped = _strip_fences(content or "")
+    content_text = content if isinstance(content, str) else ""
+    reasoning_text = reasoning if isinstance(reasoning, str) else ""
+    stripped = _strip_fences(content_text)
     if stripped.startswith("{") or stripped.startswith("["):
-        return content or ""
-    if reasoning:
-        from_reasoning = _strip_fences(reasoning)
+        return content_text
+    if reasoning_text:
+        from_reasoning = _strip_fences(reasoning_text)
         if from_reasoning.startswith("{") or from_reasoning.startswith("["):
             logger.info("Extracting JSON from reasoning_content (content was not JSON)")
             return from_reasoning
-    return content or ""
+    return content_text
 
 
 def format_model_json_for_context(raw_text: str) -> str | None:
@@ -204,229 +173,6 @@ def format_model_json_for_context(raw_text: str) -> str | None:
     return stripped
 
 
-# ── Unescaped quote repair ────────────────────────────────────────────────────
-
-_STRING_END_CHARS = frozenset(",:}]")
-
-
-def _repair_unescaped_quotes(text: str) -> str:
-    """Escape ``"`` inside JSON string values that were not backslash-escaped.
-
-    Uses a peek-ahead heuristic: a quote ends the string only when the next
-    non-whitespace character is structural (`,`, `:`, `}`, `]`, or EOF).
-    """
-    out: list[str] = []
-    in_string = False
-    escape = False
-    i = 0
-    n = len(text)
-
-    while i < n:
-        ch = text[i]
-        if not in_string:
-            if ch == '"':
-                in_string = True
-            out.append(ch)
-            i += 1
-            continue
-
-        if escape:
-            escape = False
-            out.append(ch)
-            i += 1
-            continue
-        if ch == "\\":
-            escape = True
-            out.append(ch)
-            i += 1
-            continue
-        if ch == '"':
-            j = i + 1
-            while j < n and text[j] in " \t\r\n":
-                j += 1
-            if j >= n or text[j] in _STRING_END_CHARS:
-                in_string = False
-                out.append(ch)
-            else:
-                out.append('\\"')
-            i += 1
-            continue
-
-        out.append(ch)
-        i += 1
-
-    return "".join(out)
-
-
-def _repair_semicolon_separator(text: str) -> str:
-    """Replace stray semicolons used as field separators outside JSON strings.
-
-    Models occasionally write ``"field": "value";`` instead of ``"field": "value",``
-    which is a common typo.  Only replaces ``;`` that appears in struct-separator
-    position (outside a string, followed by optional whitespace then ``"`` or ``}``).
-    """
-    out: list[str] = []
-    in_string = False
-    escape = False
-    i = 0
-    n = len(text)
-    while i < n:
-        ch = text[i]
-        if in_string:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_string = False
-            out.append(ch)
-            i += 1
-            continue
-        if ch == '"':
-            in_string = True
-            out.append(ch)
-            i += 1
-            continue
-        if ch == ";":
-            j = i + 1
-            while j < n and text[j] in " \t\r\n":
-                j += 1
-            if j < n and text[j] in ('"', '}', ']'):
-                out.append(",")
-                i += 1
-                continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-# ── Truncated JSON repair ───────────────────────────────────────────────────────
-
-def _balance_json_brackets(text: str) -> str:
-    """Close unclosed ``{`` / ``[`` outside JSON strings."""
-    stack: list[str] = []
-    in_string = False
-    escape = False
-    for ch in text:
-        if in_string:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_string = False
-            continue
-        if ch == '"':
-            in_string = True
-            continue
-        if ch == "{":
-            stack.append("{")
-        elif ch == "[":
-            stack.append("[")
-        elif ch == "}" and stack and stack[-1] == "{":
-            stack.pop()
-        elif ch == "]" and stack and stack[-1] == "[":
-            stack.pop()
-    closers = "".join("]" if opener == "[" else "}" for opener in reversed(stack))
-    return text + closers
-
-
-def _inject_stage1_missing_tail(text: str) -> str:
-    """Append minimal gate_trace tail when stage1 JSON was truncated mid-object."""
-    tail = text.rstrip()
-    if not tail.endswith((",", "]", "}")):
-        return text
-
-    if not tail.endswith(","):
-        tail += ","
-
-    stub_trace = (
-        '{"node_id":"AUTO","question":"输出是否在gate_trace前被截断？",'
-        '"answer":"否","reason":"JSON在gate_trace前截断，程序已补全最小闸门记录",'
-        '"bar_range":"K1"}'
-    )
-    tail += f'"gate_trace":[{stub_trace}],"gate_result":"unknown"'
-    return _balance_json_brackets(tail)
-
-
-def _repair_unclosed_string_before_brace(text: str) -> str:
-    """Close strings broken by a raw newline followed by ``}`` / ``]``.
-
-    Models sometimes omit the closing quote in long ``summary`` / ``reasoning``
-    fields, e.g. ``"summary": "text\\n}\\n  },"`` → insert ``"`` before ``}``.
-    """
-    out: list[str] = []
-    in_string = False
-    escape = False
-    i = 0
-    n = len(text)
-
-    while i < n:
-        ch = text[i]
-        if not in_string:
-            if ch == '"':
-                in_string = True
-            out.append(ch)
-            i += 1
-            continue
-        if escape:
-            escape = False
-            out.append(ch)
-            i += 1
-            continue
-        if ch == "\\":
-            escape = True
-            out.append(ch)
-            i += 1
-            continue
-        if ch == '"':
-            in_string = False
-            out.append(ch)
-            i += 1
-            continue
-        if ch == "\n":
-            j = i + 1
-            while j < n and text[j] in " \t\r":
-                j += 1
-            if j < n and text[j] in "}]":
-                out.append('"')
-                in_string = False
-                continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-def _try_repair_json_syntax(
-    text: str,
-    stage: Literal["stage1", "stage2"],
-    *,
-    allow_tail_inject: bool = False,
-) -> str | None:
-    """Return repaired JSON text when truncation/syntax slip caused parse failure."""
-    if not text.strip().startswith("{"):
-        return None
-
-    bases: list[str] = [text.rstrip()]
-    if stage == "stage1" and allow_tail_inject:
-        bases.append(_inject_stage1_missing_tail(bases[0]))
-
-    seen: set[str] = set()
-    for base in bases:
-        for variant in (base, _repair_unclosed_string_before_brace(base)):
-            candidate = _balance_json_brackets(variant.rstrip())
-            if candidate in seen:
-                continue
-            seen.add(candidate)
-            try:
-                json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            if candidate != text.rstrip():
-                return candidate
-    return None
-
-
 # ── JsonValidator ─────────────────────────────────────────────────────────────
 
 class JsonValidator:
@@ -436,59 +182,65 @@ class JsonValidator:
         from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
         from pa_agent.config.settings import ValidationSettings
 
+        self._prompt_settings: Any | None = None
         if validation is None:
             self._validation = ValidationSettings()
         elif hasattr(validation, "validation"):
             self._validation = validation.validation
+            prompt = getattr(validation, "prompt", None)
+            self._prompt_settings = prompt
         else:
             self._validation = validation
 
         self._schemas = {
-            "stage1": STAGE1_SCHEMA,
-            "stage2": STAGE2_SCHEMA,
+            "stage1": copy.deepcopy(STAGE1_SCHEMA),
+            "stage2": copy.deepcopy(STAGE2_SCHEMA),
         }
+        if self._vpa_enabled():
+            for stage, field_name in (
+                ("stage1", "vpa_context"),
+                ("stage2", "vpa_impact"),
+            ):
+                required = self._schemas[stage]["required"]
+                if field_name not in required:
+                    required.append(field_name)
+                self._schemas[stage]["properties"][field_name]["type"] = "object"
+
+    def _vpa_enabled(self) -> bool:
+        from pa_agent.config.vpa import vpa_is_enabled
+
+        return vpa_is_enabled(self._prompt_settings)
 
     def normalize_parsed(
         self,
         stage: Literal["stage1", "stage2"],
         obj: dict[str, Any],
         *,
-        decision_stance: str | None = None,
         kline_frame: Any = None,
-        stage1_json: dict[str, Any] | None = None,
         incremental_new_bar_count: int = 0,
         incremental_previous_stage1: dict[str, Any] | None = None,
         skip_next_bar: bool = False,
-        previous_record: Any | None = None,
-        structure_flip_cooldown_bars: int = 3,
     ) -> dict[str, Any]:
         """Apply the same post-parse normalization as :meth:`validate`."""
-        norm_mode = getattr(self._validation, "normalization_mode", "strict")
         if stage == "stage1":
             from pa_agent.ai.stage1_normalizer import normalize_stage1
 
             return normalize_stage1(
                 obj,
-                normalization_mode=norm_mode,
                 kline_frame=kline_frame,
                 incremental_new_bar_count=int(incremental_new_bar_count or 0),
                 incremental_previous_stage1=incremental_previous_stage1
                 if incremental_new_bar_count > 0
                 else None,
+                vpa_enabled=self._vpa_enabled(),
             )
         from pa_agent.ai.stage2_normalizer import normalize_stage2
 
-        # Always satisfy STAGE2_SCHEMA.required during validation; orchestrator
-        # strips next_bar_prediction before save when the feature is disabled.
         return normalize_stage2(
             obj,
-            normalization_mode=norm_mode,
             kline_frame=kline_frame,
-            decision_stance=decision_stance,
-            stage1_json=stage1_json,
-            skip_next_bar=False,
-            previous_record=previous_record,
-            structure_flip_cooldown_bars=structure_flip_cooldown_bars,
+            skip_next_bar=skip_next_bar,
+            vpa_enabled=self._vpa_enabled(),
         )
 
     def validate(
@@ -496,14 +248,15 @@ class JsonValidator:
         stage: Literal["stage1", "stage2"],
         raw_text: str,
         *,
-        decision_stance: str | None = None,
         kline_frame: Any = None,
         stage1_json: dict[str, Any] | None = None,
+        vpa_evidence_catalog: dict[str, Any] | None = None,
         incremental_new_bar_count: int = 0,
         incremental_previous_stage1: dict[str, Any] | None = None,
         skip_next_bar: bool = False,
-        previous_record: Any | None = None,
-        structure_flip_cooldown_bars: int = 3,
+        paired_baseline_stage1: dict[str, Any] | None = None,
+        paired_baseline_stage2: dict[str, Any] | None = None,
+        htf_context: dict[str, Any] | None = None,
     ) -> Result:
         """Validate *raw_text* against the schema for *stage*.
 
@@ -535,50 +288,17 @@ class JsonValidator:
             )
 
         # ── Category a: syntax error ──────────────────────────────────────────
-        obj: dict | list | None = None
-        parse_exc: json.JSONDecodeError | None = None
         try:
             obj = json.loads(stripped)
         except json.JSONDecodeError as exc:
-            parse_exc = exc
-            escaped = _escape_control_chars_in_json_strings(stripped)
-            if escaped != stripped:
-                try:
-                    obj = json.loads(escaped)
-                    logger.debug("Parsed JSON after escaping control chars in strings")
-                    stripped = escaped
-                    parse_exc = None
-                except json.JSONDecodeError as exc2:
-                    parse_exc = exc2
-            if obj is None and parse_exc is not None:
-                exc = parse_exc
-                allow_inject = (
-                    stage == "stage1"
-                    and not getattr(self._validation, "disable_truncation_repair", True)
-                )
-                repaired = _try_repair_json_syntax(
-                    stripped, stage, allow_tail_inject=allow_inject
-                )
-                if repaired is not None:
-                    try:
-                        obj = json.loads(repaired)
-                        logger.warning(
-                            "Repaired truncated %s JSON (%d -> %d chars)",
-                            stage,
-                            len(stripped),
-                            len(repaired),
-                        )
-                    except json.JSONDecodeError:
-                        repaired = None
-                if repaired is None:
-                    pos = f"{exc.lineno}:{exc.colno}"
-                    return ValidationError(
-                        category="a",
-                        stage=stage,
-                        raw_text=raw_text,
-                        parse_position=pos,
-                        message=f"JSON syntax error at {pos}: {exc.msg}",
-                    )
+            pos = f"{exc.lineno}:{exc.colno}"
+            return ValidationError(
+                category="a",
+                stage=stage,
+                raw_text=raw_text,
+                parse_position=pos,
+                message=f"JSON syntax error at {pos}: {exc.msg}",
+            )
 
         if not isinstance(obj, dict):
             return ValidationError(
@@ -588,26 +308,75 @@ class JsonValidator:
                 message="Top-level JSON value is not an object",
             )
 
+        if stage == "stage1" and paired_baseline_stage1 is not None:
+            unexpected = sorted(str(key) for key in obj if key != "vpa_context")
+            if unexpected:
+                return ValidationError(
+                    category="c",
+                    stage=stage,
+                    raw_text=raw_text,
+                    invalid_fields=[f"paired_vpa_output:{key}" for key in unexpected],
+                    message="Paired VPA Stage 1 may output only vpa_context",
+                )
+            from pa_agent.ai.vpa_sanitizer import strip_vpa_fields
+
+            baseline = strip_vpa_fields(copy.deepcopy(paired_baseline_stage1))
+            if "vpa_context" in obj:
+                baseline["vpa_context"] = copy.deepcopy(obj["vpa_context"])
+            obj = baseline
+
+        if stage == "stage2" and paired_baseline_stage2 is not None:
+            allowed = {"vpa_impact", "decision", "decision_trace", "terminal"}
+            unexpected = sorted(str(key) for key in obj if key not in allowed)
+            if unexpected:
+                return ValidationError(
+                    category="c",
+                    stage=stage,
+                    raw_text=raw_text,
+                    invalid_fields=[
+                        f"paired_vpa_stage2_output:{key}" for key in unexpected
+                    ],
+                    message=(
+                        "Paired VPA Stage 2 may output only vpa_impact and optional "
+                        "decision/decision_trace/terminal overrides"
+                    ),
+                )
+            from pa_agent.ai.vpa_sanitizer import strip_vpa_fields
+
+            baseline = strip_vpa_fields(copy.deepcopy(paired_baseline_stage2))
+            # Execution policy is applied after model validation. Historical
+            # records may still carry this runtime annotation; it is never part
+            # of the frozen model-output schema used by the paired VPA arm.
+            baseline.pop("confidence_threshold", None)
+            for key in allowed:
+                if key in obj:
+                    baseline[key] = copy.deepcopy(obj[key])
+            obj = baseline
+
+        pre_normalized_obj = copy.deepcopy(obj)
         obj = self.normalize_parsed(
             stage,
             obj,
-            decision_stance=decision_stance,
             kline_frame=kline_frame,
-            stage1_json=stage1_json,
             incremental_new_bar_count=incremental_new_bar_count,
             incremental_previous_stage1=incremental_previous_stage1,
-            skip_next_bar=False if stage == "stage2" else skip_next_bar,
-            previous_record=previous_record,
-            structure_flip_cooldown_bars=structure_flip_cooldown_bars,
+            skip_next_bar=skip_next_bar,
         )
-        norm_mode = getattr(self._validation, "normalization_mode", "strict")
+        normalization_events = self._contract_normalization_events(
+            stage,
+            pre_normalized_obj,
+            obj,
+        )
+        if self._vpa_enabled() and stage == "stage1":
+            from pa_agent.ai.vpa_sanitizer import materialize_vpa_observation_ranges
 
+            obj = materialize_vpa_observation_ranges(obj, vpa_evidence_catalog)
         # ── Schema validation (b and c) ───────────────────────────────────────
         try:
             import jsonschema  # type: ignore[import]
         except ImportError:
             logger.warning("jsonschema not installed; skipping schema validation")
-            return Ok(obj=obj)
+            return Ok(obj=obj, normalization_events=normalization_events)
 
         errors = list(jsonschema.Draft7Validator(schema).iter_errors(obj))
 
@@ -626,53 +395,51 @@ class JsonValidator:
                 if "enum" in err.schema:
                     allowed[str(path)] = err.schema["enum"]
 
+        if (
+            stage == "stage2"
+            and not skip_next_bar
+            and not isinstance(obj.get("next_bar_prediction"), dict)
+        ):
+            missing.append("next_bar_prediction")
+
+        if self._vpa_enabled():
+            for msg in self._check_vpa_contract(
+                stage,
+                obj,
+                stage1_json=stage1_json,
+                vpa_evidence_catalog=vpa_evidence_catalog,
+            ):
+                invalid.append(f"vpa:{msg}")
+            if stage == "stage2" and paired_baseline_stage2 is not None:
+                for msg in self._check_paired_vpa_stage2_contract(
+                    obj,
+                    paired_baseline_stage2,
+                ):
+                    invalid.append(f"vpa_pair:{msg}")
+
         # ── Explicit cross-field checks ───────────────────────────────────────
         if stage == "stage1":
-            from pa_agent.ai.coherence_checks import auto_fix_bar_by_bar_types
+            from pa_agent.ai.decision_tree import validate_gate_result_consistency
+            from pa_agent.ai.coherence_checks import (
+                validate_incremental_stage1_coherence,
+                validate_stage1_coherence,
+            )
 
-            # Auto-correct contradicting bar_type values before validation so
-            # minor model slips (writing trend_bull when program says trend_bear)
-            # don't cause the whole analysis to fail.
-            for msg in auto_fix_bar_by_bar_types(obj, kline_frame=kline_frame):
-                import logging as _logging
-                _logging.getLogger(__name__).info("stage1 %s", msg)
+            for msg in validate_gate_result_consistency(obj):
+                invalid.append(f"gate:{msg}")
+            for msg in validate_stage1_coherence(obj, kline_frame=kline_frame):
+                invalid.append(f"s1:{msg}")
+            from pa_agent.ai.higher_timeframe import validate_higher_timeframe_output
 
-            if getattr(self._validation, "stage1_coherence_checks", False):
-                from pa_agent.ai.decision_tree import validate_gate_result_consistency
-                from pa_agent.ai.coherence_checks import (
-                    validate_incremental_stage1_coherence,
-                    validate_stage1_coherence,
-                )
-
-                for msg in validate_gate_result_consistency(obj):
-                    invalid.append(f"gate:{msg}")
-                for msg in validate_stage1_coherence(
+            for msg in validate_higher_timeframe_output(obj, htf_context):
+                invalid.append(f"s1:{msg}")
+            if incremental_new_bar_count > 0:
+                for msg in validate_incremental_stage1_coherence(
                     obj,
-                    kline_frame=kline_frame,
-                    strict_bar_features=getattr(
-                        self._validation, "strict_bar_by_bar_features", False
-                    ),
+                    new_bar_count=incremental_new_bar_count,
+                    previous_stage1=incremental_previous_stage1,
                 ):
                     invalid.append(f"s1:{msg}")
-                if incremental_new_bar_count > 0:
-                    for msg in validate_incremental_stage1_coherence(
-                        obj,
-                        new_bar_count=incremental_new_bar_count,
-                        previous_stage1=incremental_previous_stage1,
-                    ):
-                        invalid.append(f"s1:{msg}")
-            if getattr(self._validation, "trace_semantic_checks", False):
-                from pa_agent.ai.trace_semantic_checks import validate_trace_semantics
-
-                gate_trace = obj.get("gate_trace")
-                if isinstance(gate_trace, list):
-                    for msg in validate_trace_semantics(
-                        gate_trace,
-                        path_prefix="gate_trace",
-                        stage="stage1",
-                        gate_result=str(obj.get("gate_result", "")),
-                    ):
-                        invalid.append(f"trace_semantic:{msg}")
 
         if stage == "stage2":
             no_order_err = self._check_no_order_invariant(obj)
@@ -691,7 +458,6 @@ class JsonValidator:
             for msg in self._check_signal_chain(
                 obj,
                 kline_frame,
-                lenient=norm_mode == "lenient",
             ):
                 invalid.append(f"signal_chain:{msg}")
 
@@ -701,53 +467,37 @@ class JsonValidator:
             for msg in self._check_next_cycle_prediction(obj):
                 invalid.append(msg)
 
-            for msg in self._check_trade_metrics(
-                obj,
-                decision_stance=decision_stance,
-                kline_frame=kline_frame,
-            ):
+            for msg in self._check_trade_metrics(obj):
                 invalid.append(f"metrics:{msg}")
 
-            if getattr(self._validation, "stage2_coherence_checks", False):
-                from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
-                from pa_agent.ai.coherence_checks import validate_stage2_coherence
+            from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
+            from pa_agent.ai.coherence_checks import validate_stage2_coherence
 
-                for msg in validate_stage2_trace_consistency(obj):
-                    invalid.append(f"trace:{msg}")
-                if isinstance(stage1_json, dict):
-                    for msg in validate_stage2_coherence(
-                        obj, stage1_json, kline_frame=kline_frame
-                    ):
-                        invalid.append(f"s2:{msg}")
-            if getattr(self._validation, "trace_semantic_checks", False):
-                from pa_agent.ai.trace_semantic_checks import (
-                    validate_stage2_order_trace_semantics,
-                    validate_trace_semantics,
-                )
-
-                decision_trace = obj.get("decision_trace")
-                if isinstance(decision_trace, list):
-                    for msg in validate_trace_semantics(
-                        decision_trace,
-                        path_prefix="decision_trace",
-                        stage="stage2",
-                    ):
-                        invalid.append(f"trace_semantic:{msg}")
-                for msg in validate_stage2_order_trace_semantics(obj):
-                    invalid.append(f"trace_semantic:{msg}")
+            for msg in validate_stage2_trace_consistency(obj):
+                invalid.append(f"trace:{msg}")
+            for msg in validate_stage2_coherence(
+                obj,
+                stage1_json if isinstance(stage1_json, dict) else {},
+                kline_frame=kline_frame,
+            ):
+                invalid.append(f"s2:{msg}")
 
         if not errors and not missing and not invalid:
-            return Ok(obj=obj)
+            return Ok(obj=obj, normalization_events=normalization_events)
 
         # Determine category: b if only missing fields, c otherwise
-        if invalid or (missing and errors[0].validator not in ("required",)):
+        if invalid or (missing and errors and errors[0].validator not in ("required",)):
             category: Literal["b", "c"] = "c"
         elif missing:
             category = "b"
         else:
             category = "c"
 
-        first_message = errors[0].message[:120] if errors else (invalid[0] if invalid else "custom validation failed")
+        first_message = errors[0].message[:120] if errors else (
+            invalid[0] if invalid else (
+                f"missing field {missing[0]}" if missing else "custom validation failed"
+            )
+        )
         return ValidationError(
             category=category,
             stage=stage,
@@ -757,6 +507,499 @@ class JsonValidator:
             allowed_values=allowed,
             message=f"{len(errors)} schema error(s): {first_message}",
         )
+
+    @staticmethod
+    def _contract_normalization_events(
+        stage: str,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Audit exact syntax aliases accepted at the model boundary."""
+        paths: list[str] = []
+        if stage == "stage1":
+            before_bars = before.get("bar_by_bar_summary")
+            after_bars = after.get("bar_by_bar_summary")
+            if isinstance(before_bars, list) and isinstance(after_bars, list):
+                for index in range(min(len(before_bars), len(after_bars))):
+                    paths.append(f"bar_by_bar_summary.{index}.context_effect")
+            paths.append("vpa_context.next_confirmation.state")
+
+        events: list[dict[str, Any]] = []
+        for path in paths:
+            old_value = JsonValidator._path_value(before, path)
+            new_value = JsonValidator._path_value(after, path)
+            if old_value is not None and new_value is not None and old_value != new_value:
+                events.append(
+                    {
+                        "path": path,
+                        "before": old_value,
+                        "after": new_value,
+                    }
+                )
+        return events
+
+    @staticmethod
+    def _path_value(obj: dict[str, Any], path: str) -> Any:
+        value: Any = obj
+        for part in path.split("."):
+            if isinstance(value, list) and part.isdigit():
+                index = int(part)
+                if index >= len(value):
+                    return None
+                value = value[index]
+            elif isinstance(value, dict):
+                value = value.get(part)
+            else:
+                return None
+        return value
+
+    @staticmethod
+    def _check_vpa_contract(
+        stage: str,
+        obj: dict[str, Any],
+        *,
+        stage1_json: dict[str, Any] | None,
+        vpa_evidence_catalog: dict[str, Any] | None,
+    ) -> list[str]:
+        """Validate program-owned VPA evidence and prevent a second decision model."""
+        catalog = vpa_evidence_catalog if isinstance(vpa_evidence_catalog, dict) else {}
+        evidence = {
+            str(item.get("evidence_id")): item
+            for item in catalog.get("evidence", [])
+            if isinstance(item, dict) and item.get("evidence_id")
+        }
+        catalog_id = str(catalog.get("catalog_id") or "")
+        data_status = str(catalog.get("data_status") or "unavailable")
+        if stage == "stage1":
+            context = obj.get("vpa_context")
+            if not isinstance(context, dict):
+                return []
+            observations = [
+                observation
+                for observation in context.get("observations", [])
+                if isinstance(observation, dict)
+            ]
+            referenced_ids = [
+                str(evidence_id)
+                for observation in observations
+                for evidence_id in observation.get("evidence_ids", [])
+            ]
+            referenced = [evidence[value] for value in referenced_ids if value in evidence]
+            sources = {str(item.get("source", "")) for item in referenced}
+            relations = {
+                str(context.get("background_relation") or ""),
+                str(context.get("entry_timing_relation") or ""),
+            }
+            errors: list[str] = []
+            if not catalog_id:
+                errors.append("vpa_context missing program evidence catalog")
+            elif context.get("catalog_id") != catalog_id:
+                errors.append(
+                    "vpa_context.catalog_id does not match program evidence catalog"
+                )
+            errors.extend(
+                f"vpa_context.observations unknown evidence_id {value}"
+                for value in referenced_ids
+                if value not in evidence
+            )
+            if context.get("data_status") != data_status:
+                errors.append(
+                    "vpa_context.data_status does not match program evidence catalog"
+                )
+            if relations & {"supports", "challenges"} and not referenced_ids:
+                errors.append(
+                    "vpa_context supports/challenges relations require referenced evidence"
+                )
+            if relations & {"supports", "challenges"} and "volume" not in sources:
+                errors.append(
+                    "vpa_context supports/challenges relations require program volume evidence"
+                )
+            elif relations & {"supports", "challenges"} and not any(
+                evidence_has_relative_volume_comparison(item) for item in referenced
+            ):
+                errors.append(
+                    "vpa_context supports/challenges relations require relative-volume evidence"
+                )
+            if data_status == "unavailable" and relations != {"insufficient_data"}:
+                errors.append(
+                    "vpa_context unavailable program data requires insufficient_data "
+                    "for background and timing"
+                )
+            substantive = {
+                "effort_result",
+                "sequence_comparison",
+                "acceptance_rejection",
+                "entry_timing",
+            }
+            if data_status != "unavailable" and not any(
+                observation.get("finding_kind") in substantive
+                and any(
+                    evidence_has_relative_volume_comparison(
+                        evidence.get(str(evidence_id))
+                    )
+                    for evidence_id in observation.get("evidence_ids", [])
+                )
+                for observation in observations
+            ):
+                errors.append(
+                    "vpa_context available VPA context requires an independent "
+                    "price-volume finding"
+                )
+            if data_status != "unavailable":
+                for index, observation in enumerate(observations):
+                    observation_ids = [
+                        str(evidence_id)
+                        for evidence_id in observation.get("evidence_ids", [])
+                    ]
+                    if not observation_ids:
+                        errors.append(
+                            f"vpa_context.observations[{index}].evidence_ids requires "
+                            "evidence_ids when data is available"
+                        )
+                        continue
+                    raw_range = observation.get("bar_range")
+                    bounds = _vpa_bar_range_bounds(raw_range)
+                    if raw_range and bounds is None:
+                        errors.append(
+                            f"vpa_context.observations[{index}].bar_range is invalid: "
+                            f"{raw_range}"
+                        )
+                        continue
+                    if bounds is None:
+                        continue
+                    for evidence_id in observation_ids:
+                        evidence_bounds = _vpa_bar_range_bounds(
+                            (evidence.get(evidence_id) or {}).get("bar_range")
+                        )
+                        if evidence_bounds is not None and (
+                            evidence_bounds[0] < bounds[0] or evidence_bounds[1] > bounds[1]
+                        ):
+                            errors.append(
+                                f"vpa_context.observations[{index}].evidence_ids "
+                                f"evidence_id {evidence_id} is outside observation "
+                                f"bar_range {raw_range}"
+                            )
+                    interpretation = str(observation.get("interpretation") or "")
+                    for match in K_REFERENCE_RE.finditer(interpretation):
+                        referenced_bar = int(match.group(1))
+                        if referenced_bar < bounds[0] or referenced_bar > bounds[1]:
+                            errors.append(
+                                f"vpa_context.observations[{index}].interpretation "
+                                f"references K{referenced_bar} outside observation "
+                                f"bar_range {raw_range}"
+                            )
+            seasonality = catalog.get("comparators", {}).get("seasonality", {})
+            market_session = ""
+            raw_confirmation = context.get("next_confirmation")
+            confirmation_trigger = (
+                raw_confirmation.get("trigger")
+                if isinstance(raw_confirmation, dict)
+                else str(raw_confirmation or "")
+            )
+            if isinstance(seasonality, dict):
+                market_session = str(seasonality.get("market_session") or "")
+            from pa_agent.ai.factual_grounding import (
+                validate_future_confirmation_narrative,
+                validate_inference_only_narrative,
+                validate_vpa_comparator_narrative,
+            )
+
+            narratives = [
+                ("vpa_context.summary", context.get("summary")),
+                *[
+                    (
+                        f"vpa_context.observations[{index}].interpretation",
+                        item.get("interpretation"),
+                    )
+                    for index, item in enumerate(observations)
+                ],
+            ]
+            for path, text in narratives:
+                errors.extend(validate_inference_only_narrative(text, path=path))
+            confirmation_state = (
+                raw_confirmation.get("state")
+                if isinstance(raw_confirmation, dict)
+                else None
+            )
+            if confirmation_state == "pending_closed_bar":
+                errors.extend(
+                    validate_future_confirmation_narrative(
+                        confirmation_trigger,
+                        path="vpa_context.next_confirmation.trigger",
+                    )
+                )
+            else:
+                errors.extend(
+                    validate_inference_only_narrative(
+                        confirmation_trigger,
+                        path="vpa_context.next_confirmation.trigger",
+                    )
+                )
+            capabilities = catalog.get("capabilities") or {}
+            for path, text in narratives:
+                narrative = str(text or "")
+                if (
+                    market_session.lower() == "unclassified"
+                    and _VPA_UNCLASSIFIED_SESSION_RE.search(narrative)
+                ):
+                    errors.append(
+                        f"{path} session claim is unsupported when market_session "
+                        "is unclassified"
+                    )
+                if (
+                    not capabilities.get("actor_attribution", False)
+                    and _VPA_ACTOR_ATTRIBUTION_RE.search(narrative)
+                ):
+                    errors.append(
+                        f"{path} volume provenance cannot support actor attribution"
+                    )
+                if (
+                    capabilities.get("interpretation_ceiling")
+                    == "relative_activity_only"
+                    and _VPA_PROXY_CERTAINTY_RE.search(narrative)
+                ):
+                    errors.append(
+                        f"{path} proxy/unknown volume supports relative activity only, "
+                        "not active demand/supply"
+                    )
+            if _VPA_FORMING_BAR_RE.search(str(confirmation_trigger or "")):
+                errors.append(
+                    "vpa_context.next_confirmation.trigger must wait for a future closed bar"
+                )
+            for index, observation in enumerate(observations):
+                observation_ids = {
+                    str(evidence_id)
+                    for evidence_id in observation.get("evidence_ids", [])
+                }
+                errors.extend(
+                    validate_vpa_comparator_narrative(
+                        observation.get("interpretation"),
+                        evidence_items=(
+                            item
+                            for evidence_id, item in evidence.items()
+                            if evidence_id in observation_ids
+                        ),
+                        path=f"vpa_context.observations[{index}].interpretation",
+                    )
+                )
+            return errors
+
+        impact = obj.get("vpa_impact")
+        if not isinstance(impact, dict):
+            return []
+        context = stage1_json.get("vpa_context") if isinstance(stage1_json, dict) else None
+        stage1_ids = {
+            str(evidence_id)
+            for observation in (context or {}).get("observations", [])
+            if isinstance(observation, dict)
+            for evidence_id in observation.get("evidence_ids", [])
+        }
+        used = [str(value) for value in impact.get("evidence_used", [])]
+        errors = [
+            f"vpa_impact.evidence_used unknown evidence_id {value}"
+            for value in used
+            if value not in evidence
+        ]
+        errors.extend(
+            f"vpa_impact.evidence_used evidence_id {value} was not referenced by stage1"
+            for value in used
+            if value not in stage1_ids
+        )
+        background_relation = impact.get("background_relation")
+        timing_relation = impact.get("entry_timing_relation")
+        effect = impact.get("decision_effect")
+        if timing_relation in {"neutral", "insufficient_data"} and effect != "keep_brooks_baseline":
+            errors.append(
+                "vpa_impact.decision_effect neutral/insufficient_data timing must "
+                "keep_brooks_baseline"
+            )
+        if effect != "keep_brooks_baseline" and not used:
+            errors.append(
+                "vpa_impact.evidence_used non-baseline decision_effect requires evidence_used"
+            )
+        if effect != "keep_brooks_baseline" and used and not any(
+            evidence_has_relative_volume_comparison(evidence.get(value))
+            for value in used
+        ):
+            errors.append(
+                "vpa_impact.evidence_used non-baseline decision_effect requires "
+                "relative-volume evidence"
+            )
+        if (
+            data_status != "unavailable"
+            and (stage1_json or {}).get("gate_result") == "proceed"
+            and stage1_ids
+            and not used
+        ):
+            errors.append(
+                "vpa_impact.evidence_used VPA Stage 2 must cite evidence_used when "
+                "the PA gate proceeds"
+            )
+        if timing_relation == "supports" and effect != "keep_brooks_baseline":
+            errors.append(
+                "vpa_impact.decision_effect supportive entry-timing evidence must "
+                "keep the Brooks baseline"
+            )
+        if data_status == "unavailable" and (
+            background_relation != "insufficient_data"
+            or timing_relation != "insufficient_data"
+            or effect != "keep_brooks_baseline"
+        ):
+            errors.append(
+                "vpa_impact unavailable program data cannot alter Brooks baseline"
+            )
+        if isinstance(context, dict):
+            if background_relation != context.get("background_relation"):
+                errors.append(
+                    "vpa_impact.background_relation changed between VPA stages"
+                )
+            if timing_relation != context.get("entry_timing_relation"):
+                errors.append(
+                    "vpa_impact.entry_timing_relation changed between VPA stages"
+                )
+        from pa_agent.ai.factual_grounding import (
+            validate_inference_only_narrative,
+            validate_vpa_comparator_narrative,
+        )
+
+        errors.extend(
+            validate_inference_only_narrative(
+                impact.get("reason"),
+                path="vpa_impact.reason",
+            )
+        )
+        errors.extend(
+            validate_vpa_comparator_narrative(
+                impact.get("reason"),
+                evidence_items=(evidence[value] for value in used if value in evidence),
+                path="vpa_impact.reason",
+            )
+        )
+        capabilities = catalog.get("capabilities") or {}
+        reason = str(impact.get("reason") or "")
+        if not capabilities.get("actor_attribution", False) and _VPA_ACTOR_ATTRIBUTION_RE.search(
+            reason
+        ):
+            errors.append(
+                "vpa_impact.reason volume provenance cannot support actor attribution"
+            )
+        if (
+            capabilities.get("interpretation_ceiling") == "relative_activity_only"
+            and _VPA_PROXY_CERTAINTY_RE.search(reason)
+        ):
+            errors.append(
+                "vpa_impact.reason proxy/unknown volume supports relative activity only, "
+                "not active demand/supply"
+            )
+        return errors
+
+    @staticmethod
+    def _check_paired_vpa_stage2_contract(
+        obj: dict[str, Any],
+        baseline_stage2: dict[str, Any],
+    ) -> list[str]:
+        """Enforce frozen Brooks fields and prevent VPA-created trades."""
+        decision = obj.get("decision")
+        baseline_decision = baseline_stage2.get("decision")
+        if not isinstance(decision, dict) or not isinstance(baseline_decision, dict):
+            return ["paired Stage 2 requires both decision objects"]
+
+        errors: list[str] = []
+        for key in (
+            "diagnosis_confidence",
+            "diagnosis_confidence_reasoning",
+            "estimated_win_rate",
+            "estimated_win_rate_reasoning",
+        ):
+            if decision.get(key) != baseline_decision.get(key):
+                errors.append(f"decision.{key} must equal frozen Brooks baseline")
+
+        for key in (
+            "diagnosis_summary",
+            "bar_analysis",
+            "next_bar_prediction",
+            "next_cycle_prediction",
+        ):
+            if obj.get(key) != baseline_stage2.get(key):
+                errors.append(f"{key} must equal frozen Brooks baseline")
+
+        baseline_order = baseline_decision.get("order_type")
+        current_order = decision.get("order_type")
+        if baseline_order == "不下单" and current_order != "不下单":
+            errors.append("decision.order_type cannot create a trade from a no-order baseline")
+
+        impact = obj.get("vpa_impact")
+        effect = impact.get("decision_effect") if isinstance(impact, dict) else None
+        if effect == "keep_brooks_baseline":
+            if decision != baseline_decision:
+                errors.append(
+                    "decision must equal baseline when "
+                    "decision_effect=keep_brooks_baseline"
+                )
+            if obj.get("decision_trace") != baseline_stage2.get("decision_trace"):
+                errors.append(
+                    "decision_trace must equal baseline when "
+                    "decision_effect=keep_brooks_baseline"
+                )
+            if obj.get("terminal") != baseline_stage2.get("terminal"):
+                errors.append(
+                    "terminal must equal baseline when decision_effect=keep_brooks_baseline"
+                )
+        else:
+            effect_fields = (
+                "order_type",
+                "order_direction",
+                "entry_price",
+                "stop_loss_price",
+                "take_profit_price",
+                "take_profit_price_2",
+                "entry_rule",
+                "entry_basis_bar",
+                "entry_basis_extreme",
+                "trade_confidence",
+                "watch_points",
+                "risk_assessment",
+                "invalidation_condition",
+            )
+            if not any(
+                decision.get(key) != baseline_decision.get(key) for key in effect_fields
+            ):
+                errors.append(
+                    "non-baseline decision_effect must be applied to existing Stage 2 fields"
+                )
+        if effect == "lower_confidence":
+            try:
+                lowered = float(decision.get("trade_confidence")) < float(
+                    baseline_decision.get("trade_confidence")
+                )
+            except (TypeError, ValueError):
+                lowered = False
+            if not lowered:
+                errors.append(
+                    "decision_effect=lower_confidence requires a lower trade_confidence"
+                )
+        if effect in {"require_confirmation", "prefer_retest"}:
+            timing_fields = (
+                "order_type",
+                "entry_price",
+                "entry_rule",
+                "watch_points",
+                "invalidation_condition",
+            )
+            if not any(
+                decision.get(key) != baseline_decision.get(key)
+                for key in timing_fields
+            ):
+                errors.append(
+                    f"decision_effect={effect} must change entry timing fields"
+                )
+        if effect == "reject_current_attempt" and not (
+            baseline_order != "不下单" and current_order == "不下单"
+        ):
+            errors.append(
+                "decision_effect=reject_current_attempt requires an executable baseline and no-order result"
+            )
+        return errors
 
     @staticmethod
     def _check_no_order_invariant(obj: dict) -> dict | None:
@@ -838,9 +1081,6 @@ class JsonValidator:
     @staticmethod
     def _check_trade_metrics(
         obj: dict,
-        *,
-        decision_stance: str | None = None,
-        kline_frame: Any = None,
     ) -> list[str]:
         """Enforce RR and trader equation from entry/stop/target (not narrative distances)."""
         from pa_agent.util.trade_metrics import validate_order_trade_metrics
@@ -848,14 +1088,7 @@ class JsonValidator:
         decision = obj.get("decision", {})
         if not isinstance(decision, dict):
             return []
-        return validate_order_trade_metrics(
-            decision,
-            decision_stance=decision_stance,
-            kline_frame=kline_frame,
-            bar_analysis=obj.get("bar_analysis")
-            if isinstance(obj.get("bar_analysis"), dict)
-            else None,
-        )
+        return validate_order_trade_metrics(decision)
 
     @staticmethod
     def _check_breakout_price_extreme(obj: dict, kline_frame: Any = None) -> list[str]:
@@ -1004,7 +1237,6 @@ class JsonValidator:
         tied_winners = [k for k in order if probs[k] == max_value]
         direction = pred.get("direction")
         if direction not in tied_winners:
-            expected = tied_winners[0]
             errors.append(
                 f"next_bar_prediction.direction: expected one of {tied_winners} "
                 f"(argmax of probabilities), got {direction!r}"
@@ -1016,10 +1248,8 @@ class JsonValidator:
     def _check_signal_chain(
         obj: dict,
         kline_frame: Any = None,
-        *,
-        lenient: bool = False,
     ) -> list[str]:
-        """Require order decisions to ground §9 in signal/entry/follow-through facts."""
+        """Verify explicit bar references without judging setup quality."""
         decision = obj.get("decision", {})
         if not isinstance(decision, dict):
             return []
@@ -1044,50 +1274,18 @@ class JsonValidator:
         entry_seq = _parse_k_seq(entry_bar.get("bar"))
         strength = str(entry_bar.get("strength", "") or "").strip().lower()
         freshness = str(entry_bar.get("freshness", "fresh")).strip().lower()
-        quality = str(signal_bar.get("quality", "")).strip().lower()
-        pattern = str(signal_bar.get("pattern", "") or "").strip().lower()
         pending_entry = (
             strength == "not_triggered"
             or freshness == "pending"
             or entry_bar.get("bar") is None
         )
         order_type = decision.get("order_type")
-        planned_without_signal = (
-            pending_entry
-            and order_type in ("限价单", "突破单")
-            and quality == "invalid"
-            and pattern in ("", "none", "not_triggered", "pending")
-            and signal_bar.get("bar") is None
-        )
-        _planned_limit_boundary_patterns = (
-            "tr_boundary",
-            "breakout_pullback",
-            "h1",
-            "h2",
-            "l1",
-            "l2",
-            "wedge",
-            "mtr",
-        )
-        planned_limit_weak = (
-            pending_entry
-            and order_type == "限价单"
-            and quality == "weak"
-            and (
-                signal_bar.get("bar") is None
-                or pattern in ("", "none", *_planned_limit_boundary_patterns)
-            )
-        )
-        # §9.0P planned limit: invalid + boundary pattern + no closed signal bar.
-        planned_limit_invalid_boundary = (
-            pending_entry
-            and order_type == "限价单"
-            and quality == "invalid"
-            and pattern in _planned_limit_boundary_patterns
-            and signal_bar.get("bar") is None
-        )
-        planned_entry = (
-            planned_without_signal or planned_limit_weak or planned_limit_invalid_boundary
+        planned_entry = pending_entry and order_type in ("限价单", "突破单")
+        planned_limit = order_type == "限价单" and any(
+            isinstance(item, dict)
+            and str(item.get("node_id", "") or "").strip().lstrip("§") == "9.0P"
+            and str(item.get("answer", "") or "").strip() == "是"
+            for item in obj.get("decision_trace", [])
         )
         if sig_seq is None and not planned_entry:
             errors.append("bar_analysis.signal_bar.bar must be a K{n} reference")
@@ -1101,39 +1299,28 @@ class JsonValidator:
                 f"(expected signal K seq > entry K seq, got K{sig_seq} and K{entry_seq})"
             )
         if kline_frame is not None:
-            for label, seq in (("signal_bar", sig_seq), ("entry_bar", entry_seq)):
-                if seq is not None and _bar_by_seq(kline_frame, seq) is None:
-                    errors.append(f"bar_analysis.{label}.bar K{seq} not found in current K-line frame")
+            k1 = _bar_by_seq(kline_frame, 1)
+            if planned_limit and k1 is not None:
+                try:
+                    entry_price = float(decision.get("entry_price"))
+                    k1_close = float(k1.close)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    direction = decision.get("order_direction")
+                    if direction == "做多" and entry_price >= k1_close:
+                        errors.append(
+                            "§9.0P planned long limit requires entry_price < "
+                            f"K1.close ({entry_price:.6g} >= {k1_close:.6g})"
+                        )
+                    if direction == "做空" and entry_price <= k1_close:
+                        errors.append(
+                            "§9.0P planned short limit requires entry_price > "
+                            f"K1.close ({entry_price:.6g} <= {k1_close:.6g})"
+                        )
 
-        if (
-            not lenient
-            and quality in ("weak", "invalid")
-            and not planned_entry
-        ):
-            reasons = _all_stage2_reasons(obj)
-            if not any(token in reasons for token in _EXPLICIT_S9_TRADABLE_TOKENS):
-                errors.append(
-                    "weak/invalid signal_bar requires explicit §9 reasoning for why the setup remains tradable"
-                )
-
-        follow = entry_bar.get("follow_through")
-        no_follow = follow is False or str(follow).strip().lower() in ("false", "no", "failed")
-        trade_conf = decision.get("trade_confidence")
-        try:
-            trade_conf_num = int(trade_conf)
-        except (TypeError, ValueError):
-            trade_conf_num = 0
-        if freshness in ("stale", "invalid") and not (lenient and pending_entry):
+        if freshness in ("stale", "invalid"):
             errors.append("entry_bar.freshness stale/invalid cannot support a new order")
-        if (
-            not lenient
-            and no_follow
-            and not pending_entry
-            and trade_conf_num >= 50
-        ):
-            errors.append(
-                "entry_bar.follow_through=false/failed cannot support trade_confidence >= 50"
-            )
         return errors
 
 
@@ -1151,15 +1338,3 @@ def _bar_by_seq(kline_frame: Any, seq: int) -> Any | None:
         if getattr(bar, "seq", None) == seq:
             return bar
     return None
-
-
-def _all_stage2_reasons(obj: dict) -> str:
-    parts: list[str] = []
-    decision = obj.get("decision", {})
-    if isinstance(decision, dict):
-        for key in ("reasoning", "trade_confidence_reasoning", "risk_assessment"):
-            parts.append(str(decision.get(key, "") or ""))
-    for item in obj.get("decision_trace", []) or []:
-        if isinstance(item, dict):
-            parts.append(str(item.get("reason", "") or ""))
-    return "\n".join(parts)

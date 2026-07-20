@@ -1,0 +1,11 @@
+# Breakout, Failure and Retest VPA
+
+Apply only when PA identifies a breakout area, boundary test, failed breakout or retest. PA owns structure and order logic; VPA supplies additional volume-conditioned quality evidence.
+
+A breakout is not confirmed by its breakout bar. Evaluate later closed bars: hold beyond boundary, acceptable extension, return inside and fail, or a retest that cannot regain/lose the boundary. Distinguish "no later closed response yet" from "failed"; the former normally calls for `require_confirmation` or `prefer_retest`, not rejection.
+
+Modest volume is not automatic rejection; it may be orderly movement, quiet timing or delayed participation. High relative activity with poor result near a boundary is a candidate for two-sided trade, absorption or exhaustion, never proven reversal. Do not call ordinary RVOL a volume climax, and do not convert a wick into a liquidity-sweep claim without order-flow data.
+
+Avoid “liquidity sweep”; use “boundary breach and recovery candidate” absent independent liquidity data. For PA-valid retests compare effort/result with breakout leg and prior tests. Reduced activity and limited counter-trend progress can support continuation only after later response.
+
+`prefer_retest` can refine entry timing for an already-valid PA direction. Never create orders, change direction or replace PA prices with a VPA target.

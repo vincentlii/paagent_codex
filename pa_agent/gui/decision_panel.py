@@ -7,7 +7,6 @@ from typing import Any
 from pa_agent.util.trade_metrics import (
     compute_risk_reward,
     format_estimated_win_rate,
-    max_risk_reward_ratio,
     min_risk_reward_ratio,
     passes_trader_equation,
 )
@@ -33,20 +32,10 @@ _REASON_EDIT_CSS = (
     "font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif;"
 )
 
-_PREDICTION_UNPREDICTABLE_COLOR = "#8b949e"
-_PREDICTION_UNPREDICTABLE_LABEL = "不可预测"
-
 _MARKET_PHASE_ZH: dict[str, str] = {
     "stable": "稳定",
     "transitioning": "过渡",
 }
-
-_PREDICTION_DOMINANT_COLOR: dict[str, str] = {
-    "bullish": "#3fb950",
-    "bearish": "#f85149",
-    "neutral": "#e6b800",
-}
-
 
 def _format_market_phase(raw: str) -> str:
     key = (raw or "").strip().lower()
@@ -83,27 +72,126 @@ def _parse_score_100(value: object) -> int | None:
         return None
 
 
-def _format_prediction_probs_line(probs: dict) -> str:
-    bull = probs.get("bullish", "?")
-    bear = probs.get("bearish", "?")
-    neut = probs.get("neutral", "?")
-    return f"阳线的概率为{bull}%  ·  阴线的概率为{bear}%  ·  中性的概率为{neut}%"
+def _compact_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return ""
 
 
-def _dominant_prediction_direction(probs: dict) -> str | None:
-    """Return bullish/bearish/neutral for styling by highest probability."""
-    parsed: list[tuple[str, float]] = []
-    for key in ("bullish", "bearish", "neutral"):
-        raw = probs.get(key)
-        if raw is None or raw == "":
-            continue
-        try:
-            parsed.append((key, float(raw)))
-        except (TypeError, ValueError):
-            continue
-    if not parsed:
-        return None
-    return max(parsed, key=lambda item: item[1])[0]
+def _first_text(data: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        text = _compact_text(data.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _format_text_items(value: object, *, limit: int = 3) -> str:
+    if isinstance(value, list):
+        items = [_compact_text(item) for item in value]
+        items = [item for item in items if item]
+        return "；".join(items[:limit])
+    return _compact_text(value)
+
+
+def _format_vpa_summary(
+    vpa_context: object,
+    vpa_impact: object,
+    vpa_sidecar: object = None,
+) -> str:
+    lines: list[str] = []
+
+    if isinstance(vpa_context, dict):
+        status = _first_text(vpa_context, "data_status", "status")
+        relation_summary = " / ".join(
+            item
+            for item in (
+                f"background={_first_text(vpa_context, 'background_relation')}",
+                f"timing={_first_text(vpa_context, 'entry_timing_relation')}",
+            )
+            if not item.endswith("=")
+        )
+        summary = _first_text(vpa_context, "summary")
+        observations = _format_text_items(
+            [item.get("interpretation") for item in vpa_context.get("observations", []) if isinstance(item, dict)]
+            or vpa_context.get("key_observations")
+        )
+
+        head: list[str] = []
+        if status:
+            head.append(f"状态 {status}")
+        if relation_summary:
+            head.append(f"背景/时机 {relation_summary}")
+        if head:
+            lines.append("Stage1：" + " · ".join(head))
+        if summary:
+            lines.append(f"诊断：{summary}")
+        if observations:
+            lines.append(f"观察：{observations}")
+
+    if isinstance(vpa_impact, dict):
+        relation_summary = " / ".join(
+            item
+            for item in (
+                f"background={_first_text(vpa_impact, 'background_relation')}",
+                f"timing={_first_text(vpa_impact, 'entry_timing_relation')}",
+            )
+            if not item.endswith("=")
+        )
+        decision_effect = _first_text(vpa_impact, "decision_effect")
+        reason = _first_text(vpa_impact, "reason")
+        evidence = _format_text_items(vpa_impact.get("evidence_used"))
+
+        head = []
+        if relation_summary:
+            head.append(f"背景/时机 {relation_summary}")
+        if decision_effect:
+            head.append(f"决策影响 {decision_effect}")
+        if head:
+            lines.append("Stage2：" + " · ".join(head))
+        if evidence:
+            lines.append(f"证据：{evidence}")
+        if reason:
+            lines.append(f"融合理由：{reason}")
+
+    if isinstance(vpa_sidecar, dict):
+        status = _first_text(vpa_sidecar, "status")
+        pair_id = _first_text(vpa_sidecar, "pair_id")
+        raw_measurements = vpa_sidecar.get("evidence_catalog") or vpa_sidecar.get("measurements")
+        measurements = dict(raw_measurements) if isinstance(raw_measurements, dict) else raw_measurements
+        if isinstance(measurements, dict) and "data_status" in measurements:
+            measurements["status"] = measurements["data_status"]
+        if isinstance(measurements, dict):
+            provenance = measurements.get("provenance") or {}
+            lines.append(
+                "数据："
+                f"{provenance.get('source', 'unknown')}/"
+                f"{provenance.get('venue') or 'unknown'} · "
+                f"{provenance.get('volume_kind', 'unknown')} · {measurements.get('status', 'unknown')}"
+            )
+        if status or pair_id:
+            lines.append(f"A/B：{status or 'unknown'}" + (f" · {pair_id}" if pair_id else ""))
+        if status == "failed":
+            arm = vpa_sidecar.get("vpa_arm")
+            exception = arm.get("exception") if isinstance(arm, dict) else None
+            if isinstance(exception, dict):
+                stage = _first_text(exception, "stage") or "unknown"
+                category = _first_text(exception, "category") or "unknown"
+                message = _first_text(exception, "message")
+                detail = f"VPA arm 失败：{stage}/{category}"
+                if message:
+                    detail += f" · {message[:180]}"
+                lines.append(detail)
+        comparison = vpa_sidecar.get("comparison")
+        observed = comparison.get("observed_effect") if isinstance(comparison, dict) else None
+        if isinstance(observed, dict) and observed.get("classification"):
+            lines.append(f"A/B实测差异：{observed['classification']}")
+
+    return "\n".join(lines)
 
 
 class DecisionPanel(QWidget):
@@ -159,6 +247,14 @@ class DecisionPanel(QWidget):
             )
             diag_row_layout.addWidget(lbl, stretch=1)
         layout.addWidget(diag_row)
+
+        self._htf_label = QLabel()
+        self._htf_label.setWordWrap(True)
+        self._htf_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self._htf_label.setStyleSheet(_REASON_FONT_CSS)
+        layout.addWidget(self._htf_label)
 
         # ── 市场判断置信度（来自 Stage 2 diagnosis_confidence）───────────
         self._diag_conf_title = QLabel("市场判断置信度")
@@ -276,6 +372,33 @@ class DecisionPanel(QWidget):
         self._trade_reasoning_label.setStyleSheet(_REASON_FONT_CSS)
         layout.addWidget(self._trade_reasoning_label)
 
+        self._vpa_group = QFrame()
+        self._vpa_group.setObjectName("vpaSummaryGroup")
+        self._vpa_group.setStyleSheet(
+            "QFrame#vpaSummaryGroup {"
+            "  background-color: #161b22;"
+            "  border: 1px solid #30363d;"
+            "  border-radius: 8px;"
+            "}"
+        )
+        vpa_layout = QVBoxLayout(self._vpa_group)
+        vpa_layout.setContentsMargins(10, 8, 10, 8)
+        vpa_layout.setSpacing(6)
+
+        self._vpa_title = QLabel("VPA 辅助分析")
+        self._vpa_title.setStyleSheet("font-weight: bold; color: #79c0ff;")
+        vpa_layout.addWidget(self._vpa_title)
+
+        self._vpa_summary_label = QLabel()
+        self._vpa_summary_label.setWordWrap(True)
+        self._vpa_summary_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self._vpa_summary_label.setStyleSheet(_REASON_FONT_CSS)
+        vpa_layout.addWidget(self._vpa_summary_label)
+
+        layout.addWidget(self._vpa_group)
+
         reasoning_title = QLabel("分析理由")
         reasoning_title.setStyleSheet("font-weight: bold; color: #a371f7; margin-top: 6px;")
         layout.addWidget(reasoning_title)
@@ -302,16 +425,10 @@ class DecisionPanel(QWidget):
 
     def _apply_market_diagnosis(
         self,
-        diagnosis_summary: dict | None,
-        stage1_diagnosis: dict | None = None,
+        stage1_diagnosis: dict | None,
     ) -> None:
-        """Fill trend / cycle / phase from stage2 summary, fallback to stage1."""
-        src: dict = {}
-        if diagnosis_summary:
-            src.update(diagnosis_summary)
-        if stage1_diagnosis:
-            for k, v in stage1_diagnosis.items():
-                src.setdefault(k, v)
+        """Fill trend, cycle, and phase from the single Stage 1 diagnosis."""
+        src = stage1_diagnosis if isinstance(stage1_diagnosis, dict) else {}
 
         direction = str(src.get("direction", "") or "")
         cycle_position = str(src.get("cycle_position", "") or "")
@@ -344,6 +461,10 @@ class DecisionPanel(QWidget):
             self._phase_label.setText("阶段：—")
             self._apply_diag_chip_style(self._phase_label, color="#6e7681")
             self._phase_label.setVisible(True)
+
+        htf_context = str(src.get("htf_context", "") or "").strip()
+        self._htf_label.setText(f"高周期背景：{htf_context}" if htf_context else "")
+        self._htf_label.setVisible(bool(htf_context))
 
     def _apply_diagnosis_confidence(
         self,
@@ -418,32 +539,36 @@ class DecisionPanel(QWidget):
         self._rr_inline_label.setVisible(False)
         self._win_rate_inline_label.setVisible(False)
 
+    def _apply_vpa_summary(
+        self,
+        stage1_diagnosis: dict | None,
+        decision: dict,
+    ) -> None:
+        vpa_context = (
+            stage1_diagnosis.get("vpa_context")
+            if isinstance(stage1_diagnosis, dict)
+            else None
+        )
+        if not isinstance(vpa_context, dict):
+            vpa_context = decision.get("vpa_context") if isinstance(decision, dict) else None
+        vpa_impact = decision.get("vpa_impact") if isinstance(decision, dict) else None
+        sidecar = decision.get("vpa_sidecar") if isinstance(decision, dict) else None
+        summary = _format_vpa_summary(vpa_context, vpa_impact, sidecar)
+        self._vpa_summary_label.setText(summary)
+        self._vpa_group.setVisible(bool(summary))
+
     # ── Public API ────────────────────────────────────────────────────────
 
     def set_decision(
         self,
         decision: dict,
         *,
-        diagnosis_summary: dict | None = None,
         stage1_diagnosis: dict | None = None,
-        decision_stance: str | None = None,
-        confidence_threshold: int | None = None,
     ) -> None:
-        self._apply_market_diagnosis(diagnosis_summary, stage1_diagnosis)
+        self._apply_market_diagnosis(stage1_diagnosis)
 
         order_type = decision.get("order_type", _NO_ORDER)
         reasoning = decision.get("reasoning", decision.get("brief_reasoning", ""))
-        # Confidence gate: suppress order display when confidence < threshold
-        if confidence_threshold is not None and confidence_threshold > 0 and order_type != _NO_ORDER:
-            raw_conf = decision.get("trade_confidence")
-            try:
-                conf_val = int(float(str(raw_conf).strip())) if raw_conf is not None and raw_conf != "" else -1
-            except (ValueError, TypeError):
-                conf_val = -1
-            if conf_val < confidence_threshold:
-                order_type = _NO_ORDER
-                prefix = "有入场机会，但置信度未通过"
-                reasoning = f"{prefix}\n\n{reasoning}" if reasoning else prefix
         diag_conf = decision.get("diagnosis_confidence", None)
         diag_conf_reasoning = decision.get("diagnosis_confidence_reasoning", None)
         trade_conf = decision.get("trade_confidence", None)
@@ -507,11 +632,9 @@ class DecisionPanel(QWidget):
                     win_pct is not None
                     and passes_trader_equation(win_pct, risk, reward)
                 )
-                min_rr = min_risk_reward_ratio(decision_stance)
-                max_rr = max_risk_reward_ratio()
+                min_rr = min_risk_reward_ratio()
                 metrics_ok = (
                     ratio >= min_rr
-                    and (max_rr is None or ratio <= max_rr)
                     and (eq_ok if win_pct is not None else True)
                 )
                 eq_note = ""
@@ -544,6 +667,7 @@ class DecisionPanel(QWidget):
                 no_order=False,
             )
 
+        self._apply_vpa_summary(stage1_diagnosis, decision)
         self._reasoning_edit.setPlainText(str(reasoning) if reasoning else "")
 
     def clear(self) -> None:
@@ -554,6 +678,8 @@ class DecisionPanel(QWidget):
         self._phase_label.setText("阶段：—")
         self._apply_diag_chip_style(self._phase_label, color="#6e7681")
         self._phase_label.setVisible(True)
+        self._htf_label.clear()
+        self._htf_label.setVisible(False)
 
         self._diag_conf_bar.setValue(0)
         self._diag_conf_title.setVisible(False)
@@ -572,5 +698,7 @@ class DecisionPanel(QWidget):
         self._trade_prices_row.setVisible(False)
         self._trade_conf_inline_label.setVisible(False)
         self._trade_reasoning_label.setVisible(False)
+        self._vpa_summary_label.clear()
+        self._vpa_group.setVisible(False)
 
         self._reasoning_edit.clear()

@@ -162,7 +162,7 @@ def main() -> int:
     else:
         from pa_agent.ai.json_validator import JsonValidator
 
-        validator = JsonValidator(settings.validation)
+        validator = JsonValidator(settings)
     event_bus = EventBus()
 
     with tempfile.TemporaryDirectory(prefix="pa_agent_smoke_") as tmp:

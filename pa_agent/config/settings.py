@@ -6,7 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DecisionStance = Literal["conservative", "balanced", "aggressive", "extreme_aggressive"]
 DataSourceKind = Literal["mt5", "tradingview", "akshare", "eastmoney", "tushare"]
-NormalizationMode = Literal["strict", "lenient"]
+VpaMode = Literal["off", "shadow", "soft"]
+MIN_ANALYSIS_BARS = 20
 
 
 class AIProviderSettings(BaseModel):
@@ -32,21 +33,18 @@ class PromptSettings(BaseModel):
     experience_max_chars_per_entry: int = Field(default=400, ge=100, le=4000)
     #: Inject pattern判定表 + 速查 brief into Stage 1 user prompt (reduces missed tags).
     stage1_inject_pattern_briefs: bool = True
+    #: New VPA mode. ``shadow`` keeps the original PA result official and records a paired VPA run.
+    vpa_mode: VpaMode | None = None
+    #: Shadow protocol: full independent prompts by default; sidecar is a marginal diagnostic.
+    vpa_shadow_design: Literal["full_prompt_ab", "marginal_sidecar"] = "full_prompt_ab"
+    #: Legacy switch retained for existing settings files. New writes set ``vpa_mode``.
+    vpa_enabled: bool = False
 
 
 class ValidationSettings(BaseModel):
     """Post-LLM validation behaviour."""
     model_config = ConfigDict(extra="ignore")
 
-    normalization_mode: NormalizationMode = "lenient"
-    #: Stage-1 cross-field checks (gate trace, bar_by_bar, pattern tags). Off by default.
-    stage1_coherence_checks: bool = False
-    #: Stage-2 trace / diagnosis cross-checks (not order safety). Off by default.
-    stage2_coherence_checks: bool = False
-    trace_semantic_checks: bool = False
-    strict_bar_by_bar_features: bool = False
-    #: Allow Stage 1 truncated JSON tail repair before failing syntax validation.
-    disable_truncation_repair: bool = False
     #: Re-call API with structured feedback when validation fails (format errors).
     retry_enabled: bool = True
     retry_max: int = Field(default=3, ge=0, le=5)
@@ -59,15 +57,20 @@ class GeneralSettings(BaseModel):
     """UI and data-feed general settings."""
     model_config = ConfigDict(extra="ignore")
 
-    analysis_bar_count: int = Field(default=100, ge=2, le=5000)
+    analysis_bar_count: int = Field(default=100, ge=MIN_ANALYSIS_BARS, le=5000)
+    #: One optional slower chart for structural background; current timeframe remains authoritative.
+    higher_timeframe_enabled: bool = True
+    #: Empty = universal default mapping; a supported timeframe explicitly overrides it.
+    higher_timeframe_override: str = ""
+    higher_timeframe_bar_count: int = Field(default=60, ge=20, le=300)
     refresh_interval_ms: int = 1000
     context_warning_threshold_pct: float = 80.0
-    last_data_source: DataSourceKind = "mt5"
+    last_data_source: DataSourceKind = "tradingview"
     #: A-share K-line adjust for East Money / Baostock (qfq=前复权)
     kline_adjust: Literal["qfq", "hfq", "none"] = "qfq"
     #: TradingView 交易所；空字符串 =（自动）依次探测预设列表
     last_tradingview_exchange: str = ""
-    last_symbol: str = "XAUUSDm"
+    last_symbol: str = "XAUUSD"
     last_timeframe: str = "15m"
     decision_flow_auto_play: bool = True
     decision_flow_play_seconds: int = 50
@@ -88,12 +91,12 @@ class GeneralSettings(BaseModel):
     keep_analysis: bool = False
     #: 重试后取消持续跟踪分析：校验失败触发重试后自动关闭 keep_analysis
     cancel_keep_analysis_on_retry: bool = False
-    #: 交易决策置信度门槛：仅当 trade_confidence >= 此值时，才视为有下单机会（弹窗警报并提供决策详情）
+    #: 程序执行门槛：低于阈值的模型订单在持久化前转为不下单并留下审计 trace。
     decision_confidence_threshold: int = Field(default=40, ge=0, le=100)
+    #: Closed-OHLC counterfactual review horizon. It never represents a live fill.
+    counterfactual_horizon_bars: int = Field(default=20, ge=1, le=500)
     #: 开启下根K线预期功能；关闭时不向模型请求该预测，节省 token
     enable_next_bar_prediction: bool = False
-    #: 同一结构位 entry 相差≤3跳时，禁止反向新方案的冷却 K 线根数（已收盘）
-    structure_flip_cooldown_bars: int = Field(default=3, ge=1, le=50)
 
     @field_validator("last_data_source", mode="before")
     @classmethod

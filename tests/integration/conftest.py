@@ -23,6 +23,15 @@ SAMPLE_DECISION_TRACE = [
         "bar_range": "K5-K3",
     },
     {
+        "node_id": "9.0",
+        "section": "信号棒",
+        "question": "信号棒是否已经收盘且质量足够？",
+        "answer": "是",
+        "reason": "K2 已收盘且与当前多头背景一致。",
+        "skipped": False,
+        "bar_range": "K2",
+    },
+    {
         "node_id": "9.1",
         "section": "\u4fe1\u53f7\u68d2",
         "question": "\u6700\u65b0K\u7ebf\u662f\u5426\u4e3a\u5408\u683c\u4fe1\u53f7\u68d2\uff1f",
@@ -76,29 +85,59 @@ SAMPLE_DECISION_TRACE = [
         "skipped": False,
         "bar_range": "K3-K1",
     },
+    {
+        "node_id": "14",
+        "section": "禁止行为扫描",
+        "question": "是否触犯任一禁止行为？",
+        "answer": "否",
+        "reason": "未触犯逆势、追高潮、区间中部交易或交易者方程禁令。",
+        "skipped": False,
+        "bar_range": "K20-K1",
+    },
 ]
 
 SAMPLE_BAR_BY_BAR_SUMMARY = make_bar_by_bar_summary(5)
 
 VALID_STAGE1 = {
     "cycle_position": "normal_channel",
+    "alternative_cycle_position": None,
     "direction": "bullish",
     "diagnosis_confidence": 75,
+    "spike_stage": None,
+    "climax_risk": "none",
     "market_phase": "stable",
+    "transition_risk": None,
     "detected_patterns": [],
     "key_signals": ["signal1"],
     "htf_context": "bullish trend",
     "entry_setup": "buy on pullback",
-    "strategy_files_needed": ["\u4e0a\u6da8\u901a\u9053\u5206\u6790\u8bc6\u522b.txt"],
+    "support_levels": ["2030"],
+    "resistance_levels": ["2050"],
+    "risk_warning": "test fixture",
+    "bar_analysis": {
+        "always_in": "long",
+        "last_closed_bar": "K1",
+        "bar_type": "trend_bull",
+        "signal_bar": {
+            "bar": "K2",
+            "quality": "strong",
+            "pattern": "H1",
+            "reason": "test fixture",
+        },
+        "entry_setup_type": "pullback",
+        "follow_through": True,
+    },
     "bar_by_bar_summary": SAMPLE_BAR_BY_BAR_SUMMARY,
+    "pa_evidence": {
+        "fact_refs": ["PA.WINDOW.K5", "PA.BAR.K1", "PA.BAR.K2"],
+        "theory_rule_ids": ["BROOKS.CHANNEL.CONTEXT"],
+        "spike_analysis": None,
+    },
     "gate_trace": SAMPLE_GATE_TRACE,
     "gate_result": "proceed",
 }
 
 SAMPLE_BAR_ANALYSIS = {
-    "always_in": "long",
-    "last_closed_bar": "K1",
-    "bar_type": "trend_bull",
     "signal_bar": {
         "bar": "K2",
         "quality": "strong",
@@ -119,13 +158,13 @@ VALID_STAGE2 = {
     "decision": {
         "order_direction": "\u505a\u591a",
         "order_type": "\u7a81\u7834\u5355",
-        "entry_price": 2010.5,
-        "take_profit_price": 2050.0,
-        "take_profit_price_2": 2090.0,
-        "stop_loss_price": 1995.0,
+        "entry_price": 2050.0,
+        "take_profit_price": 2080.0,
+        "take_profit_price_2": 2110.0,
+        "stop_loss_price": 2030.0,
         "entry_basis_bar": "K2",
         "entry_basis_extreme": "high",
-        "entry_rule": "long breakout above K2 high by 1 tick",
+        "entry_rule": "long breakout above K2 high",
         "reasoning": "Strong bullish signal",
         "diagnosis_confidence": 75,
         "diagnosis_confidence_reasoning": "stage1 diagnosis consistent",
@@ -136,12 +175,7 @@ VALID_STAGE2 = {
         "key_factors": ["factor1"],
         "watch_points": ["watch1"],
         "risk_assessment": "low risk",
-        "invalidation_condition": "break below 1980",
-    },
-    "diagnosis_summary": {
-        "cycle_position": "normal_channel",
-        "direction": "bullish",
-        "key_signals": ["signal1"],
+        "invalidation_condition": "break below 2030",
     },
     "bar_analysis": SAMPLE_BAR_ANALYSIS,
     "decision_trace": SAMPLE_DECISION_TRACE,
@@ -149,6 +183,30 @@ VALID_STAGE2 = {
         "node_id": "11.2",
         "outcome": "trade",
         "label": "10.3 equation pass, breakout long",
+    },
+    "next_bar_prediction": {
+        "direction": "bullish",
+        "probabilities": {"bullish": 60, "bearish": 20, "neutral": 20},
+        "reasoning": "test fixture",
+        "unpredictable": False,
+        "features_used": ["stage1_diagnosis", "kline_features"],
+    },
+    "next_cycle_prediction": {
+        "cycle": "normal_channel",
+        "direction": "bullish",
+        "probabilities": {
+            "spike": 5,
+            "micro_channel": 5,
+            "tight_channel": 5,
+            "normal_channel": 50,
+            "broad_channel": 10,
+            "trending_tr": 10,
+            "trading_range": 10,
+            "extreme_tr": 5,
+        },
+        "reasoning": "test fixture",
+        "unpredictable": False,
+        "features_used": ["stage1_diagnosis", "stage2_decision"],
     },
 }
 
@@ -182,7 +240,7 @@ def make_frame() -> KlineFrame:
             low=1990.0 + (n - 1 - i) * 2.0,
             close=2005.0 + (n - 1 - i) * 2.0,   # close rises: K20=close~2005, K1=close~2043
             volume=100.0,
-            closed=(i > 0),
+            closed=True,
         )
         for i in range(n)
     )

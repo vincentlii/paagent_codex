@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from pa_agent.ai.prompt_assembler import PromptAssembler
+from pa_agent.ai.prompt_assembler import PromptAssembler, VPA_KNOWLEDGE_MODULES
+from pa_agent.config.settings import PromptSettings
 from pa_agent.data.base import KlineBar, KlineFrame, IndicatorBundle
 
 
@@ -74,6 +76,16 @@ def assembler(tmp_path: Path) -> PromptAssembler:
         "文件28-双重顶底与微型结构.txt",
     ]:
         (tmp_path / fname).write_text(f"[CONTENT OF {fname}]", encoding="utf-8")
+    for module, filename in VPA_KNOWLEDGE_MODULES.items():
+        path = tmp_path / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = (
+            "# Wyckoff VPA Core\nMUST output top-level vpa_context and vpa_impact; "
+            "use insufficient_data and keep_brooks_baseline when evidence is unavailable."
+            if module == "core"
+            else f"# VPA module {module}"
+        )
+        path.write_text(content, encoding="utf-8")
     return PromptAssembler(prompt_dir=tmp_path)
 
 
@@ -109,10 +121,26 @@ def test_stage1_user_prompt_contains_required_fields(assembler: PromptAssembler)
     assert "XAUUSD" in user
     assert "1h" in user
     assert "序号" in user
-    assert "K线几何特征" in user
-    assert "程序结构辅助特征" in user
-    assert "doji" in user
+    assert "程序可复算 K线事实" in user
+    assert "程序可复算市场事实" in user
+    assert "不提供 `bar_type` 结论" in user
     assert "更高时间框架" not in user
+
+
+def test_pa_stage1_prompt_is_price_only_and_uses_fact_catalog(
+    assembler: PromptAssembler,
+) -> None:
+    user = assembler.build_stage1(_make_frame())[1]["content"]
+
+    assert "ANALYSIS_FACT_CATALOG" in user
+    assert "PA.WINDOW.K5" in user
+    assert "逐棒 reason 不得手写 OHLC、EMA、ATR" in user
+    assert "htf_context 只引用 HTF.H# 并解释背景" in user
+    assert "成交量" not in user
+    assert "| volume" not in user.lower()
+    assert "| 1000" not in user
+    assert "只引用 fact ID，不复制 canonical_value 的 key=value" in user
+    assert "不复写阳线/阴线根数" in user
 
 
 def test_stage2_user_prompt_includes_gate_trace(assembler: PromptAssembler):
@@ -201,30 +229,105 @@ def test_stage1_output_reminder_present(assembler: PromptAssembler):
     assert "detected_patterns" in user
     assert "gate_trace" in user
     assert "gate_result" in user
+    assert "K1 自己的 high/low" in user
+    assert "bar_range 是审计覆盖范围" in user
 
 
-def test_stage1_original_mode_aligns_with_program_prefill(assembler: PromptAssembler):
-    """Original mode uses the same gate rules as optimized (no duplicate AI gate nodes)."""
+def test_stage1_original_mode_keeps_llm_owned_gate_semantics(assembler: PromptAssembler):
+    """Original mode does not restore program-owned market judges."""
     frame = _make_frame()
     messages = assembler.build_stage1(frame, analysis_mode="original")
     user = messages[1]["content"]
 
     assert "原始分析过程闸门硬规则" not in user
-    assert "§1.1/§2.3/§2.4 由程序判定，AI 不输出" in user
-    assert "中间节点 reason 可省略" in user
+    assert "七个阶段一语义节点均由你输出" in user
+    assert "程序只校验格式、引用范围与内部一致性" in user
+    assert "每个未跳过节点 reason 必填" in user
 
 
-def test_stage1_optimized_mode_keeps_program_prefill_hint(assembler: PromptAssembler):
-    """Optimized mode keeps the deterministic prefill path and no hard-rule block."""
+def test_paired_vpa_context_loads_modules_from_frozen_brooks_baseline(
+    assembler: PromptAssembler,
+) -> None:
+    vpa_assembler = assembler.clone_with_prompt_settings(
+        PromptSettings(vpa_mode="shadow")
+    )
+    baseline = {
+        "cycle_position": "spike",
+        "alternative_cycle_position": "trending_tr",
+        "direction": "bearish",
+        "spike_stage": "ending",
+        "climax_risk": "warning",
+        "detected_patterns": ["breakout_test"],
+        "gate_result": "proceed",
+    }
+
+    messages = vpa_assembler.build_paired_vpa_context(_make_frame(25), baseline)
+    prompt = "\n".join(message["content"] for message in messages)
+
+    assert "Loaded modules: core, trend_pullback, breakout_retest, trading_range_events, climax_absorption_exhaustion" in prompt
+    assert "PAIRED_VPA_CONTEXT_TASK" in prompt
+    assert "不要输出 `bar_range`" in prompt
+
+
+def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:
+    core = (
+        Path(__file__).resolve().parents[2]
+        / "prompt_engineering"
+        / "wyckoff_vpa"
+        / "core.txt"
+    ).read_text(encoding="utf-8")
+
+    assert "`data_status`" in core
+    assert "`background_relation`" in core
+    assert "`entry_timing_relation`" in core
+    assert "`finding_kind`" in core
+    assert "with exactly: `alignment`" not in core
+
+
+def test_stage1_prompt_injects_canonical_brooks_theory_rule_catalog(
+    assembler: PromptAssembler,
+) -> None:
+    prompt = assembler.build_stage1(_make_frame(25))[1]["content"]
+
+    assert "PA_THEORY_RULE_CATALOG" in prompt
+    assert "BROOKS.CYCLE.SPIKE_TO_CHANNEL" in prompt
+    assert "BROOKS.TRADER_EQUATION" in prompt
+
+
+def test_paired_vpa_context_receives_frozen_pa_evidence(
+    assembler: PromptAssembler,
+) -> None:
+    enabled = assembler.clone_with_prompt_settings(PromptSettings(vpa_mode="shadow"))
+    baseline = {
+        "cycle_position": "normal_channel",
+        "direction": "bullish",
+        "gate_result": "proceed",
+        "pa_evidence": {
+            "fact_refs": ["PA.WINDOW.K5"],
+            "theory_rule_ids": ["BROOKS.TREND.FOLLOW_THROUGH"],
+            "spike_analysis": None,
+        },
+    }
+
+    prompt = "\n".join(
+        message["content"]
+        for message in enabled.build_paired_vpa_context(_make_frame(25), baseline)
+    )
+
+    assert '"pa_evidence"' in prompt
+    assert "PA.WINDOW.K5" in prompt
+
+
+def test_stage1_optimized_mode_keeps_model_owned_gate(assembler: PromptAssembler):
+    """Optimized mode still leaves the semantic gate to the model."""
     frame = _make_frame()
     messages = assembler.build_stage1(frame, analysis_mode="optimized")
     user = messages[1]["content"]
 
     # Hard-rule block must NOT appear in optimized mode
     assert "原始分析过程闸门硬规则" not in user
-    # The prefill hint may or may not appear (depends on indicators being computable),
-    # but either way the block should not be forced.
-    # The standard reminder should still be present.
+    assert "程序预填" not in user
+    assert "程序投票" not in user
     assert "gate_result" in user
 
 
@@ -239,8 +342,8 @@ def test_stage2_output_contract_present(assembler: PromptAssembler):
     assert "entry_basis_bar" in user
     assert "突破单 entry_price 硬规则" in user
     assert "§9 逐K信号链与新鲜度硬规则" in user
-    assert "K线几何特征" in user
-    assert "EMA缺口数" in user
+    assert "程序可复算 K线事实" in user
+    assert "不得替代背景解释或交易者方程" in user
     assert "decision_trace" in user
     assert "terminal" in user
 
@@ -376,15 +479,15 @@ def test_stage2_prompt_includes_balanced_stance_guidance(assembler: PromptAssemb
     user = messages[1]["content"]
     assert "交易倾向" in user
     assert "均衡" in user
-    assert "次优但可执行" in user
+    assert "证据完整但不完美" in user
 
 
 def test_stage2_prompt_conservative_omits_balanced_only_hints(assembler: PromptAssembler):
     frame = _make_frame()
     messages = assembler.build_stage2(frame, {}, [], [], decision_stance="conservative")
     user = messages[1]["content"]
-    assert "当前系统默认" in user
-    assert "次优但可执行" not in user
+    assert "证据均较清晰" in user
+    assert "证据完整但不完美" not in user
 
 
 def test_incremental_stage1_prompt_includes_previous_record_and_new_bars(
@@ -427,7 +530,7 @@ def test_incremental_stage1_prompt_includes_previous_record_and_new_bars(
     # 4-message continuation structure: system, user(prev S1), assistant(prev S1 reply), user(incremental)
     assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
     # Message [1] is previous full Stage 1 user prompt, refreshed with market features
-    assert "程序结构辅助特征" in messages[1]["content"]
+    assert "程序可复算市场事实" in messages[1]["content"]
     assert messages[1]["content"].startswith(prev_user.split("\n", 1)[0])
     # Message [2] is normalized bare JSON from validated stage1_diagnosis
     assert messages[2]["content"].startswith("{")
@@ -452,8 +555,8 @@ def test_incremental_stage1_prompt_includes_previous_record_and_new_bars(
     assert "当前完整 K线几何特征" not in incremental_user
     # But new K-line data is present
     assert "新增 K线数据" in incremental_user
-    assert "完整窗口计算" in incremental_user
-    assert "程序结构辅助特征以本消息为准" in incremental_user
+    assert "完整" in incremental_user and "窗口计算" in incremental_user
+    assert "新增程序事实" in incremental_user
 
 
 def test_incremental_stage1_normalizes_fenced_previous_response(
@@ -586,7 +689,7 @@ def test_stage1_prompt_has_kline_indicator_disclaimer(assembler: PromptAssembler
     messages = assembler.build_stage1(frame)
     user = messages[1]["content"]
     assert "指标非全历史延续" in user
-    assert "勿逐点对比" in user
+    assert "不输出 bar_type、趋势或 Setup" in user
 
 
 def test_stage2_prompt_has_kline_indicator_disclaimer(assembler: PromptAssembler) -> None:
@@ -602,9 +705,9 @@ def test_render_kline_feature_table_limit_uses_full_window_header(
     """Incremental «新增» feature table: header notes full-window computation."""
     frame = _make_frame(5)
     table = assembler._render_kline_feature_table(frame, limit=2)
-    assert "完整窗口计算" in table
+    assert "最近 2 根已收盘 K 线" in table
     assert "勿逐点对比" in table
-    assert table.count("序号 | 类型") == 1
+    assert table.count("序号 | 阳阴事实") == 1
     assert "K2" in table or " 2 " in table
 
 
@@ -692,6 +795,246 @@ def test_no_previous_prediction_no_summary(assembler: PromptAssembler):
     messages = assembler.build_stage2(frame, {}, [], [])
     user = messages[1]["content"]
     assert "上一轮下一根K线预测" not in user
+
+
+def test_vpa_disabled_by_default_keeps_prompts_out_of_vpa_path(
+    assembler: PromptAssembler,
+) -> None:
+    frame = _make_frame(25)
+    stage1_user = assembler.build_stage1(frame)[1]["content"]
+    stage2_user = assembler.build_stage2(
+        frame,
+        {
+            "cycle_position": "normal_channel",
+            "direction": "bullish",
+            "gate_result": "proceed",
+            "vpa_context": {"summary": "old"},
+        },
+        [],
+        [],
+    )[1]["content"]
+
+    combined = stage1_user + stage2_user
+    assert "Wyckoff" not in combined
+    assert "VPA" not in combined
+    assert "VPA_PROGRAM_EVIDENCE_CATALOG" not in combined
+    assert "vpa_context" not in combined
+    assert "vpa_impact" not in combined
+
+
+def test_vpa_enabled_injects_rule_and_measurement_blocks(
+    assembler: PromptAssembler,
+) -> None:
+    frame = _make_frame(25)
+    enabled = PromptAssembler(
+        prompt_dir=assembler._prompt_dir,
+        prompt_settings=PromptSettings(vpa_enabled=True),
+    )
+
+    stage1_user = enabled.build_stage1(frame)[1]["content"]
+    stage2_user = enabled.build_stage2(
+        frame,
+        {
+            "cycle_position": "normal_channel",
+            "direction": "bullish",
+            "gate_result": "proceed",
+            "vpa_context": {"summary": "volume facts only"},
+        },
+        [],
+        [],
+    )[1]["content"]
+
+    assert "Wyckoff VPA Core" in stage1_user
+    assert "MUST output top-level vpa_context" in stage1_user
+    assert "keep_brooks_baseline" in stage1_user
+    assert "vpa_context" in stage1_user
+    assert "VPA_PROGRAM_EVIDENCE_CATALOG" in stage1_user
+    assert "Wyckoff VPA Core" in stage2_user
+    assert "MUST output top-level vpa_context" in stage2_user
+    assert "vpa_impact" in stage2_user
+    assert "keep_brooks_baseline" in stage2_user
+    assert "vpa_context" in stage2_user
+    assert "VPA_PROGRAM_EVIDENCE_CATALOG" in stage2_user
+
+
+def test_full_vpa_stage1_prompt_matches_schema_and_grounding_contract(
+) -> None:
+    prompt_dir = Path(__file__).resolve().parents[2] / "prompt_engineering"
+    enabled = PromptAssembler(
+        prompt_dir=prompt_dir,
+        prompt_settings=PromptSettings(vpa_mode="shadow"),
+    )
+
+    prompt = enabled.build_stage1(_make_frame(25))[1]["content"]
+    output_contract = prompt.split("请严格按照以下 JSON 格式输出诊断结果", 1)[1]
+
+    assert "weakened_bull" not in prompt
+    assert "weakened_bear" not in prompt
+    assert '"state": "pending_closed_bar|not_applicable"' in prompt
+    assert '"vpa_context": {' in output_contract
+    assert "reason 可引用程序表中已提供的数值" not in prompt
+    assert "下一根已收盘 K 线" in prompt
+    assert "K# 高点/低点" in prompt
+    assert "opposite directions" in prompt
+    assert "顶层 `vpa_context` 必填" in prompt[-1000:]
+
+    stage1 = {
+        "cycle_position": "normal_channel",
+        "direction": "bullish",
+        "gate_result": "proceed",
+        "vpa_context": {
+            "catalog_id": "catalog",
+            "data_status": "limited",
+            "summary": "Source quality limits interpretation.",
+            "observations": [],
+            "background_relation": "neutral",
+            "entry_timing_relation": "neutral",
+            "next_confirmation": {
+                "state": "pending_closed_bar",
+                "trigger": "等待下一根已收盘 K 线。",
+                "requires_closed_bar": True,
+            },
+        },
+    }
+    stage2_prompt = enabled.build_stage2(
+        _make_frame(25),
+        stage1,
+        [],
+        [],
+    )[1]["content"]
+    stage2_contract = stage2_prompt.split(
+        "请严格按照以下 JSON 格式输出决策结果",
+        1,
+    )[1]
+
+    assert '"vpa_impact": {' in stage2_contract
+    assert "顶层 `vpa_impact` 必填" in stage2_prompt[-1200:]
+
+
+def test_vpa_enabled_prefix_chain_reuses_stage1_evidence_catalog(
+    assembler: PromptAssembler,
+) -> None:
+    frame = _make_frame(25)
+    enabled = PromptAssembler(
+        prompt_dir=assembler._prompt_dir,
+        prompt_settings=PromptSettings(vpa_enabled=True),
+    )
+    stage1_messages = enabled.build_stage1(frame)
+    messages = enabled.build_stage2_continuation(
+        frame=frame,
+        stage1_messages=stage1_messages,
+        stage1_reply_content='{"cycle_position":"normal_channel","direction":"bullish"}',
+        stage1_json={
+            "cycle_position": "normal_channel",
+            "direction": "bullish",
+            "gate_result": "proceed",
+            "vpa_context": {"summary": "volume facts only"},
+        },
+        strategy_files=[],
+        experience_entries=[],
+        use_prefix_chain=True,
+    )
+
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert "VPA_PROGRAM_EVIDENCE_CATALOG" in messages[1]["content"]
+    assert "VPA_PROGRAM_EVIDENCE_CATALOG" not in messages[3]["content"]
+    assert "Wyckoff VPA Core" not in messages[3]["content"]
+    assert '"vpa_context"' not in messages[3]["content"]
+    assert "vpa_impact" in messages[3]["content"]
+
+
+def test_higher_timeframe_context_is_stage1_background_and_not_repeated_in_prefix_stage2(
+    assembler: PromptAssembler,
+) -> None:
+    frame = _make_frame(25)
+    context = {
+        "status": "available",
+        "timeframe": "4h",
+        "current_timeframe": "1h",
+        "frame": _make_frame(20),
+    }
+    stage1_messages = assembler.build_stage1(frame, htf_context=context)
+    messages = assembler.build_stage2_continuation(
+        frame=frame,
+        stage1_messages=stage1_messages,
+        stage1_reply_content='{"cycle_position":"normal_channel","direction":"bullish"}',
+        stage1_json={
+            "cycle_position": "normal_channel",
+            "direction": "bullish",
+            "gate_result": "proceed",
+        },
+        strategy_files=[],
+        experience_entries=[],
+        htf_context=context,
+        use_prefix_chain=True,
+    )
+
+    assert "更高周期背景" in messages[1]["content"]
+    assert "非独立硬 Gate" in messages[1]["content"]
+    assert "更高周期背景" not in messages[3]["content"]
+
+
+def test_vpa_evidence_catalog_reuses_same_frozen_snapshot(
+    assembler: PromptAssembler,
+) -> None:
+    enabled = PromptAssembler(
+        prompt_dir=assembler._prompt_dir,
+        prompt_settings=PromptSettings(vpa_enabled=True),
+    )
+    first = enabled.build_stage1(_make_frame(25))[1]["content"]
+    second = enabled.build_stage1(
+        replace(_make_frame(25), snapshot_ts_local_ms=1_700_000_000_001)
+    )[1]["content"]
+
+    first_id = next(line for line in first.splitlines() if line.startswith("catalog_id:"))
+    second_id = next(line for line in second.splitlines() if line.startswith("catalog_id:"))
+    assert first_id == second_id
+
+
+def test_vpa_disabled_incremental_prompt_strips_previous_vpa_fields(
+    assembler: PromptAssembler,
+) -> None:
+    from pa_agent.records.schema import AnalysisRecord, RecordMeta
+
+    frame = _make_frame(25)
+    full_s1_messages = assembler.build_stage1(frame)
+    previous = AnalysisRecord(
+        meta=RecordMeta(
+            timestamp_local_iso="2026-01-01T00:00:00.000",
+            timestamp_local_ms=1,
+            symbol="XAUUSD",
+            timeframe="1h",
+            bar_count=25,
+            ai_provider={},
+        ),
+        kline_data=[],
+        htf_text="",
+        stage1_messages=full_s1_messages,
+        stage1_response={"content": '{"cycle_position":"normal_channel"}'},
+        stage1_diagnosis={
+            "cycle_position": "normal_channel",
+            "vpa_context": {"summary": "old"},
+        },
+        stage2_messages=[],
+        stage2_response=None,
+        stage2_decision={
+            "vpa_impact": {
+                "background_relation": "neutral",
+                "entry_timing_relation": "neutral",
+            }
+        },
+        strategy_files_used=[],
+        experience_loaded=[],
+        exception=None,
+        usage_total={},
+    )
+
+    messages = assembler.build_incremental_stage1(frame, previous, 2)
+    incremental_user = messages[3]["content"]
+    assert "Wyckoff" not in incremental_user
+    assert "VPA" not in incremental_user
+    assert "vpa_context" not in incremental_user
+    assert "vpa_impact" not in incremental_user
 
 
 def test_unpredictable_previous_prediction_renders_note(assembler: PromptAssembler):

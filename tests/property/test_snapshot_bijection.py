@@ -52,12 +52,19 @@ def test_analysis_frame_seq_bijection(n: int, extra: int) -> None:
     extra=st.integers(min_value=0, max_value=20),
 )
 @h_settings(max_examples=200)
-def test_live_frame_forming_bar_is_seq1(n: int, extra: int) -> None:
-    """build_live_frame keeps forming bar at seq=1 when present at index 0."""
+def test_live_frame_forming_bar_is_seq0(n: int, extra: int) -> None:
+    """build_live_frame keeps the current forming bar at the reserved seq=0."""
     raw = _bars_with_forming(n, extra)
-    frame = build_live_frame(raw, n, symbol="TEST", timeframe="1h")
+    forming_open_ms = int(raw[0].ts_open * 1000)
+    frame = build_live_frame(
+        raw,
+        n,
+        symbol="TEST",
+        timeframe="1h",
+        now_ms=forming_open_ms + 30 * 60 * 1000,
+    )
     assert frame is not None
-    assert frame.bars[0].seq == 1
+    assert frame.bars[0].seq == 0
     assert frame.bars[0].closed is False
 
 

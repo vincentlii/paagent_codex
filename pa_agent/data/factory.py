@@ -1,7 +1,7 @@
 """Construct :class:`DataSource` implementations by kind id."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pa_agent.data.base import DataSource
 from pa_agent.data.market_defaults import (
@@ -21,8 +21,8 @@ DataSourceKind = Literal[
 
 # UI-visible sources only — ``eastmoney`` is config/programmatic, not listed here.
 DATA_SOURCE_CHOICES: tuple[tuple[DataSourceKind, str], ...] = (
-    ("mt5", "MT5"),
     ("tradingview", "TradingView"),
+    ("mt5", "MT5"),
 )
 
 _HIDDEN_KINDS: frozenset[DataSourceKind] = frozenset(
@@ -49,7 +49,7 @@ def normalize_data_source_kind(kind: str | None) -> DataSourceKind:
     supported = {k for k, _ in DATA_SOURCE_CHOICES} | _HIDDEN_KINDS
     if kind in supported:
         return kind  # type: ignore[return-value]
-    return "mt5"
+    return "tradingview"
 
 
 def data_source_label(kind: str | None) -> str:
@@ -67,6 +67,35 @@ def data_source_label(kind: str | None) -> str:
     if normalized == "yfinance":
         return "YFinance"
     return "MT5"
+
+
+def volume_metadata_for_source(kind: str | None, source: object | None = None) -> dict[str, Any]:
+    """Return only provider-known volume provenance for VPA measurement.
+
+    TradingView volume semantics vary by resolved venue and instrument, so it
+    deliberately remains ``unknown``.  MT5 exposes tick volume unless a future
+    adapter explicitly records real exchange volume.
+    """
+    normalized = normalize_data_source_kind(kind)
+    metadata = {
+        "source": normalized,
+        "venue": "",
+        "volume_kind": "unknown",
+        "volume_quality": "unknown",
+        "timezone_basis": "UTC",
+    }
+    if normalized == "mt5":
+        metadata.update(volume_kind="tick", volume_quality="proxy")
+    elif normalized == "tradingview":
+        # Auto-probe may resolve a venue different from the user request.  Keep
+        # both concepts separate: provenance needs the resolved venue, while
+        # ``exchange`` remains the requested subscription setting.
+        metadata["venue"] = str(
+            getattr(source, "resolved_exchange", "")
+            or getattr(source, "exchange", "")
+            or ""
+        ).upper()
+    return metadata
 
 
 def default_symbol_for_kind(kind: str | None) -> str:

@@ -1,0 +1,13 @@
+# Trend and Pullback VPA
+
+Apply only inside a PA-established trend, channel, micro-channel or trending range. Compare current push/pullback against prior comparable legs: distance, spread, closes, relative activity, overlap and later follow-through. A weakening counter-trend pullback can support continuation; a weakening with-trend impulse challenges continuation. Neither observation proves reversal by itself.
+
+A pullback with reduced activity and limited adverse progress can support continuation only when location, closes and later response agree. Compare a pullback with a comparable prior pullback or push, not simply with the immediately previous candle. When the catalog offers an adjacent sequence comparison, first decide whether the two windows are actually comparable; it is raw context, not a pre-labelled leg.
+
+“Reduced” must name its comparison concept through evidence IDs: below an exceptional predecessor is different from below the causal baseline. A response that remains elevated versus baseline and produces wide opposite-direction result must not be downgraded to weak participation solely because the preceding climax candidate had still greater volume.
+
+Greater effort with diminishing counter-trend result can be absorption, exhaustion, two-sided trade or normal late-channel pause; retain alternatives. Trends can continue on modest activity, so do not demand rising volume. Conversely, a strong-looking trend bar on reduced activity may still be accepted if later closes and location support it; it is not automatically weak.
+
+Use “low-effort pullback”, “weak rally” or “reduced participation” before LPS/LPSY. LPS/LPSY needs a real reaccumulation/redistribution range and later test, not every trend pullback.
+
+`require_confirmation` fits unresolved pullback response. `prefer_retest` fits a PA-valid breakout/pullback with weak immediate participation. `lower_confidence` requires independent volume evidence. `reject_current_attempt` needs independent conflict plus a PA-consistent failure of the current attempt; it never rejects the larger setup or creates the opposite trade.

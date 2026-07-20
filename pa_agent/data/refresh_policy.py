@@ -1,9 +1,11 @@
 """Refresh interval, cache TTL, and zombie-loop timing for data sources."""
 from __future__ import annotations
 
-HTTP_POLL_SOURCES: frozenset[str] = frozenset({"eastmoney", "akshare"})
+HTTP_POLL_SOURCES: frozenset[str] = frozenset({"eastmoney", "akshare", "tushare"})
+LIVE_SOCKET_SOURCES: frozenset[str] = frozenset({"tradingview"})
 
 HTTP_MIN_REFRESH_MS = 2500
+LIVE_SOCKET_MIN_REFRESH_MS = 3000
 HTTP_SNAPSHOT_CACHE_TTL_S = 8.0
 HTTP_SNAPSHOT_CACHE_TTL_1D_S = 12.0
 HTTP_ZOMBIE_JOIN_MS = 15_000
@@ -20,10 +22,12 @@ def effective_refresh_interval_ms(
     *,
     timeframe: str = "",
 ) -> int:
-    """Clamp user refresh interval for slow HTTP/Baostock sources."""
+    """Clamp sources whose snapshots create a network request per refresh."""
     ms = max(500, int(user_ms or 1000))
     if kind in HTTP_POLL_SOURCES:
         ms = max(ms, HTTP_MIN_REFRESH_MS)
+    if kind in LIVE_SOCKET_SOURCES:
+        ms = max(ms, LIVE_SOCKET_MIN_REFRESH_MS)
     if kind in HTTP_POLL_SOURCES and timeframe == "1d":
         ms = max(ms, 3000)
     return ms

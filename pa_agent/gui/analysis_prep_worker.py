@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -16,6 +16,7 @@ class AnalysisPrepResult:
     previous_record: Any | None
     incremental_new_bar_count: int | None
     incremental_detail: str | None
+    htf_context: dict[str, Any] = field(default_factory=dict)
 
 
 class AnalysisPrepWorker(QThread):
@@ -34,6 +35,12 @@ class AnalysisPrepWorker(QThread):
         now_ms: int,
         force_incremental: bool,
         incremental_threshold: int,
+        data_metadata: dict[str, Any] | None = None,
+        higher_timeframe_enabled: bool = True,
+        higher_timeframe_override: str = "",
+        higher_timeframe_bar_count: int = 60,
+        data_source: Any = None,
+        data_source_kind: str = "tradingview",
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
@@ -44,6 +51,12 @@ class AnalysisPrepWorker(QThread):
         self._now_ms = now_ms
         self._force_incremental = force_incremental
         self._incremental_threshold = incremental_threshold
+        self._data_metadata = dict(data_metadata or {})
+        self._higher_timeframe_enabled = bool(higher_timeframe_enabled)
+        self._higher_timeframe_override = str(higher_timeframe_override or "")
+        self._higher_timeframe_bar_count = int(higher_timeframe_bar_count)
+        self._data_source = data_source
+        self._data_source_kind = data_source_kind
 
     def run(self) -> None:
         try:
@@ -60,10 +73,29 @@ class AnalysisPrepWorker(QThread):
                 self._symbol,
                 self._timeframe,
                 now_ms=self._now_ms,
+                data_metadata=self._data_metadata,
             )
             if frame is None:
                 self.failed.emit("数据不足，无法构建分析快照")
                 return
+
+            from pa_agent.data.higher_timeframe import (
+                disabled_higher_timeframe_context,
+                fetch_higher_timeframe_context,
+            )
+
+            if self._higher_timeframe_enabled:
+                htf_context = fetch_higher_timeframe_context(
+                    source=self._data_source,
+                    source_kind=self._data_source_kind,
+                    symbol=self._symbol,
+                    current_timeframe=self._timeframe,
+                    bar_count=self._higher_timeframe_bar_count,
+                    override=self._higher_timeframe_override,
+                    now_ms=self._now_ms,
+                )
+            else:
+                htf_context = disabled_higher_timeframe_context(self._timeframe)
 
             previous = None
             incremental_new_bar_count: int | None = None
@@ -106,6 +138,7 @@ class AnalysisPrepWorker(QThread):
                     previous_record=previous,
                     incremental_new_bar_count=incremental_new_bar_count,
                     incremental_detail=incremental_detail,
+                    htf_context=htf_context,
                 )
             )
         except Exception as exc:  # noqa: BLE001

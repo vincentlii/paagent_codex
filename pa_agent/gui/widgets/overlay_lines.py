@@ -47,7 +47,6 @@ class OverlayLines:
         sl: float,
         *,
         tp2: float | None = None,
-        continuity: bool = False,
     ) -> None:
         """Draw (or redraw) horizontal price lines.
 
@@ -57,14 +56,13 @@ class OverlayLines:
         self.clear_lines(plot)
         self._plot = plot
 
-        wait_suffix = " (延续)" if continuity else ""
         specs: list[tuple[float, QColor, str]] = [
-            (entry, _COLOR_ENTRY, f"Entry{wait_suffix}"),
-            (tp, _COLOR_TP, f"TP1{wait_suffix}"),
-            (sl, _COLOR_SL, f"SL{wait_suffix}"),
+            (entry, _COLOR_ENTRY, "Entry"),
+            (tp, _COLOR_TP, "TP1"),
+            (sl, _COLOR_SL, "SL"),
         ]
         if tp2 is not None:
-            specs.insert(2, (tp2, _COLOR_TP2, f"TP2{wait_suffix}"))
+            specs.insert(2, (tp2, _COLOR_TP2, "TP2"))
 
         for price, color, label_text in specs:
             line = pg.InfiniteLine(

@@ -7,11 +7,13 @@ symbol/timeframe switch can abort an in-flight request.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-from pa_agent.data.tradingview import TradingViewSource
+from pa_agent.data.tradingview import TradingViewSource, _row_ts_ms
 
 
 def _make_source_with_mock_tv() -> tuple[TradingViewSource, MagicMock]:
@@ -91,3 +93,23 @@ def test_subscribe_rejects_unknown_timeframe() -> None:
     src, _tv = _make_source_with_mock_tv()
     with pytest.raises(ValueError):
         src.subscribe("XAUUSD", "7m")
+
+
+def test_tvdatafeed_naive_local_datetime_is_converted_to_utc(monkeypatch) -> None:
+    converted = datetime(2024, 6, 15, 12, 30, tzinfo=timezone.utc)
+    calls: list[datetime] = []
+
+    def fake_local_to_utc(value: datetime) -> datetime:
+        calls.append(value)
+        return converted
+
+    monkeypatch.setattr(
+        "pa_agent.data.tradingview.naive_local_to_utc",
+        fake_local_to_utc,
+        raising=False,
+    )
+
+    result = _row_ts_ms(SimpleNamespace(datetime=datetime(2024, 6, 15, 20, 30)))
+
+    assert calls == [datetime(2024, 6, 15, 20, 30)]
+    assert result == 1_718_454_600_000

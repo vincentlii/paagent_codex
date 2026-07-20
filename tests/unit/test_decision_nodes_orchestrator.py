@@ -74,9 +74,9 @@ def _make_orchestrator():
 
 
 @pytest.mark.parametrize("frame_factory,expected_check", [
-    (_insufficient_frame_19bars, "bar_count_lt_20"),
-    (_insufficient_frame_empty, "bars_empty_or_bad_ohlc"),
-    (_insufficient_frame_all_nan, "indicators_all_nan"),
+    (_insufficient_frame_19bars, "bar_count_insufficient"),
+    (_insufficient_frame_empty, "bars_empty"),
+    (_insufficient_frame_all_nan, "latest_indicators_invalid"),
 ])
 def test_insufficient_data_zero_ai_calls(frame_factory, expected_check):
     """Property 1b: insufficient data → zero AI calls, record.exception.type == insufficient_data."""

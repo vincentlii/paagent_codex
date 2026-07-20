@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from pa_agent.util.threading import CancelToken
 
-from pa_agent.config.settings import AIProviderSettings
-from pa_agent.util.mask_secret import mask_secret
 from pa_agent.ai.mimo_compat import (
     ReasoningCache,
     is_mimo_provider,
@@ -20,6 +18,8 @@ from pa_agent.ai.mimo_compat import (
     response_message_dict,
     store_reasoning_from_response,
 )
+from pa_agent.config.settings import AIProviderSettings
+from pa_agent.util.mask_secret import mask_secret
 
 try:
     from openai import OpenAI as _OpenAI  # type: ignore[import]
@@ -223,6 +223,12 @@ def _adaptive_output_effort(reasoning_effort: str | None) -> str:
     return _EFFORT_TO_ADAPTIVE_OUTPUT.get(key, "medium")
 
 
+def _deepseek_reasoning_effort(reasoning_effort: str | None) -> str:
+    """Map configured effort to the high/max values accepted by DeepSeek V4."""
+    key = (reasoning_effort or "high").strip().lower()
+    return "max" if key in {"max", "xhigh"} else "high"
+
+
 # Sent to OpenAI-compatible gateways; upstream may clamp below these values.
 _PRACTICAL_UNLIMITED_MAX_TOKENS = 524288
 # Anthropic-style thinking requires budget_tokens < max_tokens.
@@ -322,20 +328,15 @@ def _resolve_thinking_params(
     model = settings.model or ""
 
     if _is_deepseek_native(settings.base_url) or _is_deepseek_model(model):
-        # DeepSeek v4+ requires thinking.type=adaptive + output_config.effort;
-        # the old "enabled"/"disabled" values are no longer accepted.
-        # Also covers DeepSeek models proxied through non-native gateways (e.g. QClaw).
+        # The OpenAI-compatible endpoint uses enabled/disabled plus the
+        # top-level reasoning_effort. output_config.effort belongs to the
+        # Anthropic-compatible format and must not be mixed into this client.
         if _thinking:
             extra_body: dict[str, Any] = {
-                "thinking": {"type": "adaptive"},
-                "output_config": {"effort": _adaptive_output_effort(_effort)},
+                "thinking": {"type": "enabled"},
             }
-            return extra_body, _effort or "medium"
-        else:
-            extra_body = {
-                "thinking": {"type": "disabled"},
-            }
-            return extra_body, None
+            return extra_body, _deepseek_reasoning_effort(_effort)
+        return {"thinking": {"type": "disabled"}}, None
 
     if _is_minimax(settings.base_url):
         # MiniMax (api.minimax.io):
@@ -415,6 +416,10 @@ class DeepSeekClient:
     def update_provider(self, settings: AIProviderSettings) -> None:
         """Replace in-memory provider settings (e.g. after QClaw auto-fallback)."""
         self._settings = settings
+
+    def clone_with_provider(self, settings: AIProviderSettings) -> DeepSeekClient:
+        """Create an isolated client for a paired experiment arm."""
+        return DeepSeekClient(settings, logger_=self._log)
 
     def chat(
         self,

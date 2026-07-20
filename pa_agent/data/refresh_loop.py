@@ -2,18 +2,19 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import TYPE_CHECKING
 
-from pa_agent.data.base import DataSource, DataSourceTransientError, KlineBar
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
+
+from pa_agent.data.base import DataSource, DataSourceTransientError
 from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
 
 if TYPE_CHECKING:
     from pa_agent.util.threading import CancelToken
 
 logger = logging.getLogger(__name__)
-
-from PyQt6.QtCore import QThread, pyqtSignal, QObject
 
 
 class RefreshLoop(QThread):
@@ -50,6 +51,14 @@ class RefreshLoop(QThread):
         self._consecutive_failures = 0
         self._failure_threshold_s = 5.0
         self._in_flight = False  # guard against overlapping fetches
+        self._paused = threading.Event()
+
+    def set_paused(self, paused: bool) -> None:
+        """Stop initiating new snapshot requests while a frozen analysis runs."""
+        if paused:
+            self._paused.set()
+        else:
+            self._paused.clear()
 
     def run(self) -> None:  # noqa: C901
         """Main loop — runs on the worker thread."""
@@ -59,6 +68,10 @@ class RefreshLoop(QThread):
             if self._cancel_token is not None and self._cancel_token.is_set():
                 logger.debug("RefreshLoop cancelled")
                 break
+
+            if self._paused.is_set():
+                time.sleep(0.1)
+                continue
 
             # Skip this tick if a previous fetch is still in flight.
             # This prevents overlapping WebSocket connections that trigger

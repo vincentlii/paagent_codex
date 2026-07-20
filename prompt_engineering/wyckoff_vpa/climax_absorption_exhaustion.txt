@@ -1,0 +1,11 @@
+# Climax, Absorption and Exhaustion Reference
+
+Apply only near a PA-marked extended leg, climax risk, ending spike or clear boundary stress. It is a risk module, not a reversal predictor.
+
+Buying/Selling Climax requires more than “higher recent volume”: prior extension, local distribution-tail activity, effort/result tension or final expansion, then later Automatic Reaction, behavior change or test. Ordinary RVOL/percentiles are not extreme; cite program evidence IDs without copying their numbers. No fixed RVOL, percentile, ATR or bar-count threshold defines a climax across assets.
+
+High activity with narrow spread or poor progress can be absorption, exhaustion, two-sided matching or normal congestion. It does not reveal participant identity. Absorption means an opposition hypothesis while price holds location; exhaustion means prior pressure loses capacity and later fails to continue. Both remain hypotheses until later direction and acceptance resolve them. A single high-activity bar at the end of a move is only a candidate, especially with tick/proxy/unknown volume.
+
+After a possible selling climax, a wide bullish response closing near its high can be an Automatic Rally candidate even when its volume is below the climax bar, especially if activity remains elevated versus its own causal baseline. Symmetrically, a wide bearish response can follow a buying climax. Never translate “lower than the extreme predecessor” into “low effort” without checking baseline-relative activity, price result, location and subsequent acceptance. Retain at least one competing explanation until later closed bars resolve the response.
+
+Allowed consequence: caution about the current Entry Attempt through later confirmation, retest preference or lower confidence when independent volume evidence exists. Never use this as a standalone reversal order signal or modify numeric estimated win rate.

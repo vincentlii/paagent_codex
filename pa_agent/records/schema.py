@@ -5,8 +5,9 @@ alarm payloads, validation errors, and experience entries.
 """
 
 from typing import Optional
+from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RecordMeta(BaseModel):
@@ -16,6 +17,7 @@ class RecordMeta(BaseModel):
 
     timestamp_local_iso: str  # Local time ISO string, used for filename
     timestamp_local_ms: int   # Local time in milliseconds
+    run_id: str = Field(default_factory=lambda: uuid4().hex)
     symbol: str
     timeframe: str
     bar_count: int
@@ -28,9 +30,11 @@ class AnalysisRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: int = 2
     meta: RecordMeta
     kline_data: list[dict]              # Same data as sent to AI
     htf_text: str
+    htf_context: Optional[dict] = None  # Compact HTF provenance; full block stays in htf_text
     stage1_messages: list[dict]
     stage1_response: Optional[dict]     # Raw response (includes reasoning_content)
     stage1_diagnosis: Optional[dict]
@@ -41,6 +45,9 @@ class AnalysisRecord(BaseModel):
     experience_loaded: list[dict]
     exception: Optional[dict]           # If error occurred: category + debug info
     usage_total: dict                   # Cumulative usage for audit
+    validation_audit: list[dict] = Field(default_factory=list)
+    call_attempts: list[dict] = Field(default_factory=list)
+    vpa_sidecar: Optional[dict] = None  # Paired VPA arm and comparison; absent in off mode records
 
 
 class FollowupTurn(BaseModel):

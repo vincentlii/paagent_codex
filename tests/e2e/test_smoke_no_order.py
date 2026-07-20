@@ -11,7 +11,8 @@ import pytest
 import pyqtgraph as pg
 
 from pa_agent.app_context import AppContext
-from tests.fixtures.kline_bars import make_newest_first_bars
+from pa_agent.config.settings import Settings
+from tests.fixtures.kline_bars import make_bullish_analysis_bars
 from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.router import route_strategy_files
 
@@ -44,7 +45,8 @@ def _make_ctx(tmp_path):
 
     pending_writer = MagicMock()
 
-    ctx = AppContext()
+    ctx = AppContext(settings=Settings())
+    ctx.settings.provider.api_key = "sk-e2e-test"
     ctx.client = mock_client
     ctx.assembler = mock_assembler
     ctx.router = route_strategy_files
@@ -67,8 +69,8 @@ def test_no_order_shows_no_trade_conclusion(qtbot, tmp_path):
     qtbot.addWidget(window)
     window.show()
 
-    window._ctx.settings.general.analysis_bar_count = 5
-    window._last_frame_ready_bars = make_newest_first_bars(9, with_forming=True)
+    window._ctx.settings.general.analysis_bar_count = 20
+    window._last_frame_ready_bars = make_bullish_analysis_bars(24, with_forming=True)
     window._on_submit_analysis()
 
     # Poll until the analysis is no longer in progress
@@ -83,12 +85,14 @@ def test_no_order_shows_no_trade_conclusion(qtbot, tmp_path):
         f"Expected 不下单 conclusion, got: {conclusion_text!r}"
     )
 
-    # Chart should have no InfiniteLine items (no entry/TP/SL lines)
+    # The order overlay must be empty. Stage-1 support/resistance lines belong
+    # to a separate layer and remain useful even when the decision is no-order.
     chart = window._chart_widget
-    infinite_lines = [
-        item for item in chart.items()
+    order_lines = [
+        item for item in chart._overlay._items
         if isinstance(item, pg.InfiniteLine)
     ]
-    assert len(infinite_lines) == 0, (
-        f"Expected no InfiniteLine items for 不下单, found {len(infinite_lines)}"
+    assert order_lines == [], (
+        f"Expected no order overlay lines for 不下单, found {len(order_lines)}"
     )
+    assert chart._sr_items, "Stage-1 support/resistance context should remain visible"

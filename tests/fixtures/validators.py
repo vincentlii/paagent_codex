@@ -6,15 +6,8 @@ from pa_agent.config.settings import ValidationSettings
 
 
 def schema_test_validator() -> JsonValidator:
-    """Lenient normalization + no trace semantics (schema/coherence focus)."""
-    return JsonValidator(
-        ValidationSettings(
-            normalization_mode="lenient",
-            trace_semantic_checks=False,
-            strict_bar_by_bar_features=False,
-            disable_truncation_repair=False,
-        )
-    )
+    """Production validation used by schema/coherence tests."""
+    return JsonValidator(ValidationSettings())
 
 
 def strict_test_validator() -> JsonValidator:

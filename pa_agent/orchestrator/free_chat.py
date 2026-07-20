@@ -7,8 +7,8 @@ Design reference: design.md §B.17
 """
 from __future__ import annotations
 
-import logging
 import json
+import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
@@ -191,66 +191,6 @@ class FreeChatSession:
                 ),
             }
         )
-
-        # [2] Assistant — synthesise a reliable recall summary from the *parsed*
-        # stage2_decision (program-validated JSON), NOT from stage2_response.content
-        # (the raw model output which may contain hallucinated descriptions such as
-        # wrong bar types or non-existent wick characteristics).
-        #
-        # Using the raw response content is dangerous: the model treats whatever it
-        # previously said as ground truth, so any hallucination in the original reply
-        # (e.g. "K1 has a long upper wick") gets recycled verbatim in follow-up turns.
-        # The parsed stage2_decision has already been validated and normalised by the
-        # program, so it is the authoritative source for follow-up context.
-        s2_decision = getattr(base_record, "stage2_decision", None) or {}
-        kline_data = getattr(base_record, "kline_data", None) or []
-        # Build a concise, factual assistant recall message from validated fields only.
-        recall_parts: list[str] = []
-        decision = s2_decision.get("decision") or {}
-        order_type = decision.get("order_type", "不下单")
-        order_dir = decision.get("order_direction")
-        reasoning = decision.get("reasoning", "")
-        watch_points = decision.get("watch_points") or []
-        bar_analysis = s2_decision.get("bar_analysis") or {}
-        # ── K1 factual description (derived directly from kline_data, not from
-        #    the model's potentially erroneous prose) ──────────────────────────
-        k1_desc = ""
-        if kline_data:
-            k1 = kline_data[0]  # seq=1, newest closed bar
-            k1_open = k1.get("open", 0)
-            k1_high = k1.get("high", 0)
-            k1_low = k1.get("low", 0)
-            k1_close = k1.get("close", 0)
-            k1_vol = k1.get("volume", 0)
-            upper_wick = round(k1_high - max(k1_open, k1_close), 3)
-            lower_wick = round(min(k1_open, k1_close) - k1_low, 3)
-            body = round(abs(k1_close - k1_open), 3)
-            full_range = round(k1_high - k1_low, 3)
-            body_ratio = round(body / full_range, 2) if full_range > 0 else 0
-            direction_zh = "阴线" if k1_close < k1_open else ("阳线" if k1_close > k1_open else "平盘")
-            k1_bar_type = bar_analysis.get("bar_type", "")
-            k1_desc = (
-                f"K1（最新已收盘）：{direction_zh}，开={k1_open}，高={k1_high}，"
-                f"低={k1_low}，收={k1_close}，量={k1_vol}；"
-                f"实体={body}（占比{body_ratio:.0%}），上影={upper_wick}，下影={lower_wick}；"
-                f"程序分类：{k1_bar_type}。"
-            )
-        recall_parts.append(f"【上次决策结果】{order_type}" + (f"（{order_dir}）" if order_dir else ""))
-        if k1_desc:
-            recall_parts.append(f"【K1数据·程序计算】{k1_desc}")
-        if reasoning:
-            # Truncate to avoid token bloat; the key facts are already in k1_desc
-            recall_parts.append(f"【决策推理摘要】{reasoning[:600]}" + ("…" if len(reasoning) > 600 else ""))
-        if watch_points:
-            recall_parts.append("【关注点】" + "；".join(watch_points[:3]))
-        recall_content = "\n".join(recall_parts)
-        if recall_content.strip():
-            prefix.append(
-                {
-                    "role": "assistant",
-                    "content": recall_content,
-                }
-            )
 
         return prefix
 

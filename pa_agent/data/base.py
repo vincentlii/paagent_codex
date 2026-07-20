@@ -1,10 +1,9 @@
 """Core data types and DataSource abstract base class."""
 from __future__ import annotations
 
-import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Any
 
 
 # ── KlineBar ──────────────────────────────────────────────────────────────────
@@ -25,27 +24,19 @@ class KlineBar:
 
 
 def normalize_kline_bar(bar: KlineBar) -> KlineBar:
-    """Ensure canonical ``ts_open`` (ms), ``high >= low``, and ``low <= close <= high``."""
+    """Normalize timestamp units without changing provider OHLC facts."""
     from pa_agent.data.datetime_ts import ts_open_to_ms
 
     ts_ms = ts_open_to_ms(bar.ts_open)
-    high = max(bar.high, bar.low)
-    low = min(bar.high, bar.low)
-    close = max(low, min(high, bar.close))
-    if (
-        high == bar.high
-        and low == bar.low
-        and close == bar.close
-        and ts_ms == bar.ts_open
-    ):
+    if ts_ms == bar.ts_open:
         return bar
     return KlineBar(
         seq=bar.seq,
         ts_open=ts_ms,
         open=bar.open,
-        high=high,
-        low=low,
-        close=close,
+        high=bar.high,
+        low=bar.low,
+        close=bar.close,
         volume=bar.volume,
         amount=getattr(bar, "amount", 0.0),
         pct_chg=getattr(bar, "pct_chg", None),
@@ -68,7 +59,7 @@ class IndicatorBundle:
 class KlineFrame:
     """Immutable snapshot of N bars plus computed indicators.
 
-    bars[0] is the newest bar (seq=1, closed=False).
+    bars[0] is the newest closed bar (seq=1, closed=True).
     bars[-1] is the oldest bar (seq=N, closed=True).
     snapshot_ts_local_ms is the local machine time when the snapshot was taken.
     """
@@ -77,6 +68,9 @@ class KlineFrame:
     bars: tuple[KlineBar, ...]
     indicators: IndicatorBundle
     snapshot_ts_local_ms: int   # milliseconds since epoch, local time
+    # Source facts are optional because historical records and tests predate VPA.
+    # Values must come from the data provider, never be inferred by the LLM.
+    data_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ── DataSource ABC ────────────────────────────────────────────────────────────
@@ -125,3 +119,20 @@ class DataSource(ABC):
 
         Raises DataSourceTransientError on recoverable network issues.
         """
+
+    def fetch_snapshot_for(
+        self,
+        symbol: str,
+        timeframe: str,
+        n: int,
+    ) -> list[KlineBar]:
+        """Fetch an isolated symbol/timeframe snapshot without changing subscription.
+
+        Active chart subscriptions must remain stable while background context is
+        fetched.  Providers that can safely do this override the method; the
+        default keeps legacy adapters compatible and degrades the optional HTF
+        feature instead of mutating their live subscription.
+        """
+        raise DataSourceTransientError(
+            f"{type(self).__name__} does not support isolated timeframe snapshots"
+        )
