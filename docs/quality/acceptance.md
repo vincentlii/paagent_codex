@@ -9,6 +9,8 @@
 3. 同一 Snapshot Bundle 的主周期与高周期来源身份漂移为 0。
 4. 非法订单被接受、失败被记录为成功、运行记录静默损坏均为 0。
 5. VPA `off` 模式中的 VPA Prompt、测量、Schema 与历史字段泄漏为 0。
+6. 普通 PA Stage 1/Stage 2 的 VPA 内容泄漏为 0；Joint 输出订单、价格、胜率或 PA trace 的权限越界为 0。
+7. 自由文本 regex 质量发现触发 validation retry 或阻断 PA-only 正式结果的次数为 0。
 
 ## 结构与鲁棒性
 
@@ -21,6 +23,7 @@
 
 - PA-only 无重试 Prompt 的 p95 token 不超过迁移前匹配基线的 60%。
 - Soft 总 token 不超过同 Snapshot PA-only 的 1.35 倍。
+- Prompt 压缩不得删除 Background、八态频谱、Always In、Setup、竞争假设、HTF、Gate 或核心 VPA 证据域。
 - 20 个资产并发排队时无丢失、重复、跨资产身份污染或重复数据库记录。
 - GUI 连续 1000 次取消、切换品种与关闭，不发生 `QThread` 生命周期崩溃。
 
@@ -42,4 +45,3 @@
 3. `git diff --check` 通过。
 4. 清理缓存、临时日志与一次性回放产物。
 5. 单独提交，提交信息标明 Phase。
-

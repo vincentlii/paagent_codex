@@ -111,9 +111,6 @@ def build_retry_feedback(
     max_attempts: int,
     frame: Any = None,
     previous_raw: str | None = None,
-    paired_vpa_context: bool = False,
-    paired_vpa_stage2: bool = False,
-    full_prompt_vpa: bool = False,
 ) -> str:
     """Compose a concise retry user turn."""
     category = str(getattr(err, "category", "c") or "c")
@@ -172,18 +169,7 @@ def build_retry_feedback(
 
     lines.append("")
     lines.append("**禁止为通过校验而修改：**")
-    forbidden = (
-        ("冻结的 PA baseline 全部字段；本次仍只输出顶层 `vpa_context`",)
-        if paired_vpa_context
-        else (
-            "冻结的 Brooks diagnosis、bar_analysis、prediction 与 estimated_win_rate；"
-            "本次只输出 VPA Stage 2 差量",
-        )
-        if paired_vpa_stage2
-        else _FORBIDDEN_STAGE1
-        if stage == "stage1"
-        else _FORBIDDEN_STAGE2
-    )
+    forbidden = _FORBIDDEN_STAGE1 if stage == "stage1" else _FORBIDDEN_STAGE2
     for item in forbidden:
         lines.append(f"- {item}")
 
@@ -256,39 +242,8 @@ def build_retry_feedback(
             "**禁止**写 support/resistance/continuation 或 detected_patterns 中的形态名。"
         )
 
-    if paired_vpa_context and any(
-        "numeric market facts" in inv or "unbounded new-high/new-low" in inv
-        for inv in invalid
-    ):
-        lines.append("")
-        lines.append("**VPA 事实引用提示：**")
-        lines.append(
-            "- 删除 summary / interpretation / next_confirmation 中手工复写的行情数字与无窗口极值词；"
-            "保留 evidence_ids、K 线编号和上下文解释。bar_range 由程序生成，不要输出。"
-        )
-
     invalid_text = "\n".join(str(item) for item in invalid)
-    if stage == "stage1" and (paired_vpa_context or full_prompt_vpa):
-        lines.append("")
-        lines.append("**VPA next_confirmation 契约：**")
-        lines.append(
-            "- `state` 只能逐字使用 `pending_closed_bar` / `not_applicable`；"
-            "需要等待确认时使用 `pending_closed_bar`，禁止写 waiting/pending。"
-        )
-        lines.append(
-            "- `pending_closed_bar` 的 trigger 必须明确写“下一根已收盘 K 线”，"
-            "并把 acceptance/rejection 锚定到已命名结构，例如 `K1 高点`、"
-            "`K1 低点`、区间边界、支撑位或阻力位；禁止裸写“创新高/创新低”。"
-        )
-        lines.append(
-            "- 若 trigger 提到未来成交量维持、放大或收缩，必须写明相对因果基线、"
-            "前一根已收盘棒或其他可复算比较器；不得写无比较对象的量能条件。"
-        )
-    if (
-        stage == "stage1"
-        and not paired_vpa_context
-        and "numeric market facts" in invalid_text
-    ):
+    if stage == "stage1" and "numeric market facts" in invalid_text:
         lines.append("")
         lines.append("**PA program-fact citation:**")
         lines.append(
@@ -312,30 +267,6 @@ def build_retry_feedback(
             "只说明它对当前周期的背景约束，不得用 HTF 直接改写当前周期方向或 Gate。"
         )
 
-    if (
-        "relative-volume language without an explicit comparator" in invalid_text
-        or "conflicts with program relation" in invalid_text
-    ):
-        lines.append("")
-        lines.append("**VPA 比较器提示：**")
-        lines.append(
-            "- 不要孤立写“缩量/放量/高量/低量”。逐句注明程序证据采用的比较器："
-            "causal/rolling baseline、previous bar 或 seasonality-adjusted same slot；"
-            "方向必须与该 K 线 evidence facts 完全一致。"
-        )
-
-    if (
-        "relative activity only" in invalid_text
-        or "cannot support actor attribution" in invalid_text
-    ):
-        lines.append("")
-        lines.append("**VPA provenance limit：**")
-        lines.append(
-            "- unknown/tick/proxy volume 只能描述同源相对活跃度及其价格结果；"
-            "将“多头全力推动/空头主动打压/机构吸收”改写为不归因参与者身份或意图的"
-            " effort/result 解释，并保留不确定性。"
-        )
-
     if "EMA slope" in invalid_text:
         lines.append("")
         lines.append("**EMA 事实提示：**")
@@ -350,15 +281,6 @@ def build_retry_feedback(
         lines.append(
             "- 快照小数位只是显示精度。若输入没有交易场所确认的 tick size，"
             "必须写“真实 tick size 未确认，执行前校验”，不得声称已精确放置 1 tick。"
-        )
-
-    if "must change entry timing fields" in invalid_text:
-        lines.append("")
-        lines.append("**VPA 时机影响提示：**")
-        lines.append(
-            "- `require_confirmation` / `prefer_retest` 必须真实改变当前 Entry Attempt 的"
-            " entry_rule、entry_price、watch_points 或 risk_assessment；"
-            "若不改变时机，请改用与实际影响一致的 decision_effect。"
         )
 
     if stage == "stage1" and any(
@@ -416,22 +338,11 @@ def build_retry_feedback(
             )
 
     lines.append("")
-    if paired_vpa_context:
-        lines.append(
-            "请在 assistant 正文 `content` 重新输出完整的 "
-            "`{\"vpa_context\": {...}}` 裸 JSON；不要输出任何 PA baseline 字段或 markdown 围栏。"
-        )
-    elif paired_vpa_stage2:
-        lines.append(
-            "请重新输出 VPA Stage 2 差量裸 JSON：必须含 `vpa_impact`；只有需要改变当前尝试时才额外输出"
-            "完整 `decision`、`decision_trace`、`terminal`。不要输出冻结字段或 markdown 围栏。"
-        )
-    else:
-        lines.append(
-            "请根据以上说明，在 assistant 正文 `content` 输出**完整**阶段"
-            f"{'一' if stage == 'stage1' else '二'}裸 JSON（不要 markdown 围栏）。"
-            "交易结论须与 K 线分析一致，不得仅为修字段而反转方向。"
-        )
+    lines.append(
+        "请根据以上说明，在 assistant 正文 `content` 输出**完整**阶段"
+        f"{'一' if stage == 'stage1' else '二'}裸 JSON（不要 markdown 围栏）。"
+        "交易结论须与 K 线分析一致，不得仅为修字段而反转方向。"
+    )
 
     if category == "d":
         if not (previous_raw or "").strip():

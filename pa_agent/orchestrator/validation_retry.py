@@ -111,24 +111,7 @@ def validate_with_retry(
         )
         result = validator.validate(stage, content, **validate_kwargs)
 
-        paired_vpa_context = bool(
-            stage == "stage1" and validate_kwargs.get("paired_baseline_stage1") is not None
-        )
-        paired_vpa_stage2 = bool(
-            stage == "stage2" and validate_kwargs.get("paired_baseline_stage2") is not None
-        )
-        full_prompt_vpa = bool(
-            stage == "stage1"
-            and validate_kwargs.get("vpa_evidence_catalog") is not None
-            and validate_kwargs.get("paired_baseline_stage1") is None
-        )
-        paired_vpa_delta = paired_vpa_context or paired_vpa_stage2
         retry_cap = max_attempts
-        if paired_vpa_delta:
-            retry_cap = min(
-                retry_cap,
-                int(getattr(validation_settings, "retry_max_semantic", 1) or 1),
-            )
         if isinstance(result, Ok):
             for warning in result.warnings:
                 validation_events.append(
@@ -160,7 +143,7 @@ def validate_with_retry(
                         "normalization": dict(normalization),
                     }
                 )
-            if attempt > 0 and previous_obj is not None and not paired_vpa_delta:
+            if attempt > 0 and previous_obj is not None:
                 before_norm = validator.normalize_parsed(
                     stage,
                     previous_obj,
@@ -281,9 +264,6 @@ def validate_with_retry(
             max_attempts=effective_max_attempts,
             frame=validate_kwargs.get("kline_frame"),
             previous_raw=previous_raw,
-            paired_vpa_context=paired_vpa_context,
-            paired_vpa_stage2=paired_vpa_stage2,
-            full_prompt_vpa=full_prompt_vpa,
         )
         event["retry_feedback"] = feedback
         audit_messages = append_assistant_turn(

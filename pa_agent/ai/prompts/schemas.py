@@ -225,117 +225,6 @@ _PA_EVIDENCE: dict = {
     "additionalProperties": False,
 }
 
-_VPA_CONTEXT: dict = {
-    "type": ["object", "null"],
-    "required": [
-        "catalog_id",
-        "data_status",
-        "summary",
-        "observations",
-        "background_relation",
-        "entry_timing_relation",
-        "next_confirmation",
-    ],
-    "properties": {
-        "catalog_id": {"type": "string", "minLength": 1},
-        "data_status": {
-            "type": "string",
-            "enum": ["available", "limited", "unavailable"],
-        },
-        "summary": {"type": "string", "minLength": 1},
-        "observations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": [
-                    "bar_range",
-                    "evidence_ids",
-                    "finding_kind",
-                    "interpretation",
-                ],
-                "properties": {
-                    "bar_range": {"type": "string", "minLength": 1},
-                    "evidence_ids": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "finding_kind": {
-                        "type": "string",
-                        "enum": [
-                            "background",
-                            "effort_result",
-                            "sequence_comparison",
-                            "acceptance_rejection",
-                            "entry_timing",
-                        ],
-                    },
-                    "interpretation": {"type": "string", "minLength": 1},
-                },
-                "additionalProperties": False,
-            },
-        },
-        "background_relation": {
-            "type": "string",
-            "enum": ["supports", "neutral", "challenges", "insufficient_data"],
-        },
-        "entry_timing_relation": {
-            "type": "string",
-            "enum": ["supports", "neutral", "challenges", "insufficient_data"],
-        },
-        "next_confirmation": {
-            "type": "object",
-            "required": ["state", "trigger", "requires_closed_bar"],
-            "properties": {
-                "state": {
-                    "type": "string",
-                    "enum": ["pending_closed_bar", "not_applicable"],
-                },
-                "trigger": {"type": "string", "minLength": 1},
-                "requires_closed_bar": {"const": True},
-            },
-            "additionalProperties": False,
-        },
-    },
-    "additionalProperties": False,
-}
-
-_VPA_IMPACT: dict = {
-    "type": ["object", "null"],
-    "required": [
-        "background_relation",
-        "entry_timing_relation",
-        "evidence_used",
-        "decision_effect",
-        "reason",
-    ],
-    "properties": {
-        "background_relation": {
-            "type": "string",
-            "enum": ["supports", "neutral", "challenges", "insufficient_data"],
-        },
-        "entry_timing_relation": {
-            "type": "string",
-            "enum": ["supports", "neutral", "challenges", "insufficient_data"],
-        },
-        "evidence_used": {
-            "type": "array",
-            "items": {"type": "string", "minLength": 1},
-        },
-        "decision_effect": {
-            "type": "string",
-            "enum": [
-                "keep_brooks_baseline",
-                "require_confirmation",
-                "prefer_retest",
-                "lower_confidence",
-                "reject_current_attempt",
-            ],
-        },
-        "reason": {"type": "string", "minLength": 1},
-    },
-    "additionalProperties": False,
-}
-
 # ── Stage 1 schema ────────────────────────────────────────────────────────────
 
 STAGE1_SCHEMA: dict = {
@@ -433,7 +322,6 @@ STAGE1_SCHEMA: dict = {
             },
             "additionalProperties": False,
         },
-        "vpa_context": _VPA_CONTEXT,
     },
     "allOf": [
         # spike only requires spike_stage (micro_channel may keep spike_stage null)
@@ -752,7 +640,6 @@ STAGE2_SCHEMA: dict = {
         "gate_shortcircuited": {"type": "boolean"},
         "next_bar_prediction": _NEXT_BAR_PREDICTION,
         "next_cycle_prediction": _NEXT_CYCLE_PREDICTION,
-        "vpa_impact": _VPA_IMPACT,
     },
     "additionalProperties": False,
 }

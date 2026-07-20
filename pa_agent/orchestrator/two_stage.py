@@ -540,8 +540,8 @@ def _build_empty_record(
         render_higher_timeframe_context,
         serialize_higher_timeframe_context,
     )
-    from pa_agent.data.snapshot_bundle import compact_snapshot_context
     from pa_agent.config.vpa import resolve_vpa_mode
+    from pa_agent.data.snapshot_bundle import compact_snapshot_context
 
     requested_mode = resolve_vpa_mode(
         getattr(settings, "prompt", None) if settings is not None else None
@@ -2257,6 +2257,7 @@ class TwoStageOrchestrator:
                         f"PA gate_result={gate_result}; VPA cannot bypass the PA gate."
                     ),
                 },
+                "decision_patch": {},
                 "stage2_decision": copy.deepcopy(baseline_stage2),
             }
             return finish(
@@ -2270,7 +2271,6 @@ class TwoStageOrchestrator:
             )
 
         joint_messages = role_assembler.build_joint_decision(
-            baseline_runner.initial_stage2_messages(),
             baseline_stage2,
             hypotheses_dict,
             vpa_report_obj,

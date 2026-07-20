@@ -50,7 +50,6 @@ def test_stage1_normalizer_materializes_multi_window_trace_coverage() -> None:
 def test_stage1_vpa_off_has_zero_field_leakage() -> None:
     out = normalize_stage1(
         {"vpa_context": {"summary": "old"}, "wyckoff_phase": "candidate"},
-        vpa_enabled=False,
     )
 
     assert out == {}

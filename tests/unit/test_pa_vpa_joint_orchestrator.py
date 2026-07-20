@@ -20,12 +20,6 @@ from tests.integration.conftest import (
 )
 
 
-def _stage2_without_optional_prediction() -> dict:
-    result = copy.deepcopy(VALID_STAGE2)
-    result.pop("next_bar_prediction", None)
-    return result
-
-
 def _vpa_report(*, relation: str = "challenges") -> dict:
     catalog = build_vpa_evidence_catalog(make_frame())
     return {
@@ -63,11 +57,6 @@ def _vpa_report(*, relation: str = "challenges") -> dict:
 
 
 def _joint_lower_confidence() -> dict:
-    stage2 = _stage2_without_optional_prediction()
-    stage2["decision"]["trade_confidence"] = 60
-    stage2["decision"]["trade_confidence_reasoning"] = (
-        "VPA timing evidence lowers confidence without changing PA."
-    )
     return {
         "joint_arbitration": {
             "selected_candidate_id": "pa-setup-1",
@@ -75,7 +64,12 @@ def _joint_lower_confidence() -> dict:
             "evidence_used": ["vpa-e001"],
             "reason": "VPA challenges immediate timing for the PA candidate.",
         },
-        "stage2_decision": stage2,
+        "decision_patch": {
+            "trade_confidence": 60,
+            "trade_confidence_reasoning": (
+                "VPA timing evidence lowers confidence without changing PA."
+            ),
+        },
     }
 
 
@@ -206,7 +200,7 @@ def test_vpa_failure_degrades_to_pa_only_without_failing_analysis() -> None:
 
 def test_joint_failure_degrades_to_pa_only_without_losing_vpa_report() -> None:
     invalid_joint = _joint_lower_confidence()
-    invalid_joint["stage2_decision"]["decision"]["estimated_win_rate"] = 99
+    invalid_joint["decision_patch"]["estimated_win_rate"] = 99
     orchestrator, _client, writer = _orchestrator(
         "soft",
         vpa_replies=[make_reply(_vpa_report())],
@@ -230,6 +224,36 @@ def test_joint_failure_degrades_to_pa_only_without_losing_vpa_report() -> None:
     assert record.vpa_evidence is not None
     assert record.joint_decision is None
     assert writer.save_full.call_count == 1
+
+
+def test_vpa_prose_warning_is_audited_without_retry_or_degradation() -> None:
+    report = _vpa_report()
+    report["vpa_report"]["observations"][0]["interpretation"] = (
+        "Institutional buyers absorbed supply at K1."
+    )
+    orchestrator, _client, writer = _orchestrator(
+        "soft",
+        vpa_replies=[make_reply(report)],
+        joint_replies=[make_reply(_joint_lower_confidence())],
+    )
+
+    record = orchestrator.submit(
+        make_frame(),
+        CancelToken(),
+        lambda _event: None,
+    )
+
+    assert record.exception is None
+    assert record.run_outcome["status"] == "completed_with_warnings"
+    assert record.run_outcome["official_path"] == "joint"
+    assert len(record.call_attempts) == 4
+    assert any(
+        item.get("arm") == "vpa_evidence"
+        and item.get("category") == "warning"
+        and "actor attribution" in str(item.get("message"))
+        for item in record.validation_audit
+    )
+    writer.save_full.assert_called_once()
 
 
 def test_pa_contract_failure_preserves_unavailable_provider_outcome() -> None:

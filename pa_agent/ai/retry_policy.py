@@ -15,12 +15,6 @@ _FORMAT_PREFIXES: tuple[str, ...] = (
     "next_bar_prediction",
     "next_cycle_prediction",
     "decision.reasoning",
-    "vpa_context",
-    "vpa_impact",
-    "vpa:",
-    "paired_vpa_output:",
-    "paired_vpa_stage2_output:",
-    "vpa_pair:",
 )
 
 # Semantic errors that must not be hidden by a formatting retry.

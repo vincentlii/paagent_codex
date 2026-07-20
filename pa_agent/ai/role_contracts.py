@@ -7,14 +7,11 @@ joint arbiter may only act on an existing PA candidate.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
-from pa_agent.ai.prompts.schemas import STAGE2_SCHEMA
 
 Relation = Literal["supports", "neutral", "challenges", "insufficient_data"]
 DecisionEffect = Literal[
@@ -235,16 +232,42 @@ class JointArbitration(BaseModel):
     selected_candidate_id: str | None
     decision_effect: DecisionEffect
     evidence_used: list[str]
-    reason: str
+    reason: str = Field(min_length=1, max_length=240)
+
+
+class JointDecisionPatch(BaseModel):
+    """Allowed semantic changes to the frozen PA-only decision.
+
+    The arbiter does not copy Stage 2 or perform arithmetic.  It may only
+    provide the small set of timing/confidence fields that VPA is allowed to
+    affect.  The program materializes these fields onto the validated PA
+    baseline and applies no-order invariants deterministically.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trade_confidence: int | None = Field(default=None, ge=0, le=100)
+    trade_confidence_reasoning: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=280,
+    )
+    watch_points: list[str] | None = None
+    risk_assessment: str | None = Field(default=None, min_length=1, max_length=500)
+    invalidation_condition: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+    )
 
 
 class JointDecisionProposal(BaseModel):
-    """Joint arbitration metadata plus a normal validated Stage 2 decision."""
+    """Joint arbitration metadata plus a bounded Stage 2 decision patch."""
 
     model_config = ConfigDict(extra="forbid")
 
     joint_arbitration: JointArbitration
-    stage2_decision: dict[str, Any]
+    decision_patch: JointDecisionPatch
 
 
 class RunOutcome(BaseModel):
@@ -280,19 +303,4 @@ VPA_EVIDENCE_SCHEMA: dict[str, Any] = {
 if _VPA_MODEL_DEFS:
     VPA_EVIDENCE_SCHEMA["$defs"] = _VPA_MODEL_DEFS
 
-_JOINT_STAGE2_SCHEMA = copy.deepcopy(STAGE2_SCHEMA)
-_JOINT_STAGE2_SCHEMA["properties"].pop("vpa_impact", None)
-_JOINT_ARBITRATION_SCHEMA = JointArbitration.model_json_schema()
-_JOINT_ARBITRATION_DEFS = _JOINT_ARBITRATION_SCHEMA.pop("$defs", {})
-
-JOINT_DECISION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "required": ["joint_arbitration", "stage2_decision"],
-    "properties": {
-        "joint_arbitration": _JOINT_ARBITRATION_SCHEMA,
-        "stage2_decision": _JOINT_STAGE2_SCHEMA,
-    },
-    "additionalProperties": False,
-}
-if _JOINT_ARBITRATION_DEFS:
-    JOINT_DECISION_SCHEMA["$defs"] = _JOINT_ARBITRATION_DEFS
+JOINT_DECISION_SCHEMA: dict[str, Any] = JointDecisionProposal.model_json_schema()

@@ -4,10 +4,16 @@ Apply only inside a PA-established trend, channel, micro-channel or trending ran
 
 A pullback with reduced activity and limited adverse progress can support continuation only when location, closes and later response agree. Compare a pullback with a comparable prior pullback or push, not simply with the immediately previous candle. When the catalog offers an adjacent sequence comparison, first decide whether the two windows are actually comparable; it is raw context, not a pre-labelled leg.
 
+For a bullish PA background, compare whether selling activity, downside progress, spread and closes weaken into support/EMA/channel structure, then whether buyers regain acceptance. For a bearish PA background, apply the exact mirror logic to a rally into resistance. Increasing counter-trend effort with increasing adverse result challenges the current attempt; increasing effort with shrinking adverse result remains ambiguous between absorption, two-sided trade and a late pause.
+
 “Reduced” must name its comparison concept through evidence IDs: below an exceptional predecessor is different from below the causal baseline. A response that remains elevated versus baseline and produces wide opposite-direction result must not be downgraded to weak participation solely because the preceding climax candidate had still greater volume.
 
 Greater effort with diminishing counter-trend result can be absorption, exhaustion, two-sided trade or normal late-channel pause; retain alternatives. Trends can continue on modest activity, so do not demand rising volume. Conversely, a strong-looking trend bar on reduced activity may still be accepted if later closes and location support it; it is not automatically weak.
 
 Use “low-effort pullback”, “weak rally” or “reduced participation” before LPS/LPSY. LPS/LPSY needs a real reaccumulation/redistribution range and later test, not every trend pullback.
+
+PA owns H1/H2, L1/L2, signal-bar quality and structural invalidation. VPA may explain why a second entry, a completed test or a later closed-bar response is preferable, but it cannot promote a label-only H2/L2 into a trade. A high-activity signal bar whose price result and close do not support its direction is a timing warning; a modest-activity signal bar at good location can still be valid if later price accepts it.
+
+At an extended channel end, weakening with-trend pushes challenge continuation timing more than weakening counter-trend pullbacks do. Keep these comparisons separate. Wedge, MTR and final-flag semantics remain PA diagnoses; VPA exhaustion evidence can support "do not chase" but never legalize a counter-trend order.
 
 `require_confirmation` fits unresolved pullback response. `prefer_retest` fits a PA-valid breakout/pullback with weak immediate participation. `lower_confidence` requires independent volume evidence. `reject_current_attempt` needs independent conflict plus a PA-consistent failure of the current attempt; it never rejects the larger setup or creates the opposite trade.

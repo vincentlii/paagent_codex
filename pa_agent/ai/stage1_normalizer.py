@@ -33,24 +33,15 @@ _CONTEXT_EFFECT_ALIASES = {
     "weakened_bull": "weakens_bull",
     "weakened_bear": "weakens_bear",
 }
-_VPA_CONFIRMATION_STATE_ALIASES = {
-    "waiting": "pending_closed_bar",
-    "pending": "pending_closed_bar",
-}
-
-
 def normalize_stage1(
     obj: dict[str, Any],
     *,
     kline_frame: Any = None,
     incremental_new_bar_count: int = 0,
     incremental_previous_stage1: dict[str, Any] | None = None,
-    vpa_enabled: bool = False,
 ) -> dict[str, Any]:
     """Return a copy with deterministic notation and audit-metadata changes."""
-    out = copy.deepcopy(obj)
-    if not vpa_enabled:
-        out = strip_vpa_fields(out)
+    out = strip_vpa_fields(copy.deepcopy(obj))
 
     if isinstance(out.get("detected_patterns"), list):
         out["detected_patterns"] = normalize_detected_patterns(
@@ -76,17 +67,6 @@ def _normalize_closed_enum_aliases(out: dict[str, Any]) -> None:
             value = item.get("context_effect")
             if isinstance(value, str) and value in _CONTEXT_EFFECT_ALIASES:
                 item["context_effect"] = _CONTEXT_EFFECT_ALIASES[value]
-
-    context = out.get("vpa_context")
-    if not isinstance(context, dict):
-        return
-    confirmation = context.get("next_confirmation")
-    if not isinstance(confirmation, dict):
-        return
-    state = confirmation.get("state")
-    if isinstance(state, str) and state in _VPA_CONFIRMATION_STATE_ALIASES:
-        confirmation["state"] = _VPA_CONFIRMATION_STATE_ALIASES[state]
-
 
 def _attach_incremental_facts(
     out: dict[str, Any],

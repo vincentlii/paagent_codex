@@ -9,18 +9,18 @@ import math
 from pathlib import Path
 from typing import Any
 
-from pa_agent.ai.fact_catalog import build_analysis_fact_catalog, render_pa_fact_catalog
 from pa_agent.ai.decision_stance import build_decision_stance_guidance, normalize_stance
+from pa_agent.ai.fact_catalog import build_analysis_fact_catalog, render_pa_fact_catalog
 from pa_agent.ai.higher_timeframe import render_higher_timeframe_context
-from pa_agent.ai.pattern_routing import (
-    STAGE1_DETECTED_PATTERNS_GUIDE,
-    STAGE1_PATTERN_BRIEFS_BLOCK,
-)
 from pa_agent.ai.kline_features import bar_candle_direction_label, compute_kline_geometry_features
 from pa_agent.ai.market_features import (
     inject_market_features_section,
 )
 from pa_agent.ai.pa_theory import render_pa_theory_rule_catalog
+from pa_agent.ai.pattern_routing import (
+    STAGE1_DETECTED_PATTERNS_GUIDE,
+    STAGE1_PATTERN_BRIEFS_BLOCK,
+)
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog, render_vpa_measurements
 from pa_agent.ai.vpa_sanitizer import (
     strip_vpa_fields,
@@ -41,36 +41,6 @@ VPA_KNOWLEDGE_MODULES = {
     "trading_range_events": "wyckoff_vpa/trading_range_events.txt",
     "climax_absorption_exhaustion": "wyckoff_vpa/climax_absorption_exhaustion.txt",
 }
-
-_VPA_STAGE2_OUTPUT_REMINDER_V4 = """
-## VPA_STAGE2_DELTA_CONTRACT_V4
-
-阶段一已经给出经校验的 `vpa_context`。本阶段只输出 `vpa_impact`，裁决 VPA 对当前 Entry Attempt 的信息增量，不重做 PA：
-- 必须输出 `background_relation`、`entry_timing_relation`、`evidence_used`、`decision_effect`、`reason`。
-- 背景得到支持不等于当前时机得到支持；两者必须分别判断。
-- `entry_timing_relation=neutral|insufficient_data|supports` 时保持 Brooks baseline；只有 `challenges` 可要求确认、偏好回测、降低现有置信度或拒绝当前尝试。
-- 不得修改 `estimated_win_rate`、PA direction、Stage 1 gate 或创建原 baseline 不存在的订单。
-- 只能引用 Stage 1 已引用的 evidence ID；解释不得复写行情数字，不得推断参与者身份、主动买卖方或机构意图。
-- PA gate 为 `proceed` 且 VPA 数据可用时，即使保持 baseline，`evidence_used` 也必须列出本次裁决实际使用的至少一个 Stage 1 evidence ID。
-- Volume/RVOL 的解释只写在 `vpa_impact.reason`；`decision`、`decision_trace`、`bar_analysis` 与预测字段保持 PA price-only，只写 VPA 造成的时机/风险后果和 evidence ID，避免重复计权。
-""".strip()
-
-_PAIRED_VPA_CONTEXT_SYSTEM_V4 = """
-你是 PA Agent 的 Wyckoff VPA 证据分析器。PA baseline 已由独立调用完成并冻结。
-
-你的职责是解释程序提供的量价证据，并分别判断：
-1. VPA 对 PA 背景假设的关系；
-2. VPA 对当前 Entry Attempt 时机的关系。
-
-硬约束：
-- PA defines. VPA informs. LLM arbitrates. VPA 不是 Brooks Setup 的审批器或第二套路由。
-- Evidence first, label last；先写背景、位置、Effort vs Result、序列比较与已收盘 K 线的 acceptance/rejection，再谨慎使用事件标签。
-- 只输出一个 JSON object，不复述或修改 PA baseline。
-- 只使用目录中的 evidence ID。解释字段不得复写 OHLC、Volume、RVOL、ATR、百分比或价位数字。
-- provenance capability 是推断上限。OHLCV 不支持参与者身份、主动买卖方或机构意图归因；unknown/tick/proxy 只支持同源相对活跃度比较。
-- 下一步确认只能等待未来已收盘 K 线，不得引用 K0、形成中或未收盘 K 线。
-- “收盘靠近本棒高点/低点”只描述单根 K 线内部位置，不等于跨窗口创新高/新低；使用极值事件语言时必须写清比较窗口并引用证据。
-""".strip()
 
 _VPA_EVIDENCE_ANALYST_SYSTEM = """
 你是 PA Agent 的独立 Wyckoff VPA 证据分析员。
@@ -94,9 +64,9 @@ PA defines. VPA informs. You arbitrate the current Entry Attempt.
 职责边界：
 - PA 假设、方向、Gate、Brooks Setup 和候选集合已经冻结；只能选择、延后或拒绝现有 PA candidate，不得创造新 Setup、逆转方向或绕过 Gate。
 - VPA 是独立证据维度，不是机械 Gate。你要判断其信息增量，而不是复述 PA 或 VPA。
-- `estimated_win_rate` 与 `diagnosis_confidence` 已冻结，禁止修改。VPA 只可影响当前时机、`trade_confidence`、`watch_points`、`risk_assessment`、触发条件或拒绝当前尝试。
+- `estimated_win_rate` 与 `diagnosis_confidence` 已冻结，禁止重估。VPA 只可影响当前时机、`trade_confidence`、`watch_points`、`risk_assessment`、触发条件或拒绝当前尝试。
 - `neutral` / `insufficient_data` 必须保持 PA baseline。PA baseline 为不下单时，VPA 不得创造订单。
-- 所有价格与订单仍须满足原 Stage 2 Schema、交易者方程、结构止损和执行安全规则。
+- 只输出允许的 `decision_patch`，不得复制价格、订单方向、止损、目标、PA trace 或预测。程序会把补丁合并到已校验 baseline，并再次执行 Stage 2 Schema、交易者方程与安全校验。
 - 只输出一个 JSON object，不输出 Markdown 或额外说明。
 """.strip()
 
@@ -186,7 +156,7 @@ _OPENCLAW_AGENT_NO_TOOLS_RULE = """
 **禁止调用任何工具**，包括但不限于：`exec`、运行 Python/shell、读/写/编辑文件、浏览器、联网搜索、在 `~/.qclaw/workspace` 写中间 `.md`/`.json` 等。
 
 - K 线表、EMA/ATR、几何特征、阶段一诊断（若有）**已全部在用户消息中给出**；禁止再拉数据或读盘。
-- 风险点数、盈亏比、交易者方程、胜率估算等**一律在思考过程或 JSON 字段内心算**；禁止为 `risk=stop-entry` 之类简单算术启动解释器。
+- 你负责提出结构入场、失效位、目标与 PA 胜率先验，不调用工具。风险点数、盈亏比与交易者方程由程序在输出后复算；不得为了让方程通过而改写结构价格或胜率。
 - **唯一交付物**：assistant 正文 `content` 中的裸 JSON（阶段一或阶段二 schema）。不得在磁盘上留档后再回复。
 
 违反会导致分析极慢、工具刷屏，且程序无法解析你的输出。
@@ -240,26 +210,11 @@ _MARKET_FEATURES_AUTHORITY_NOTE = (
     "这些事实不包含趋势、形态、Setup 或交易结论。\n\n"
 )
 
-_VPA_STAGE2_SCHEMA_MARKER = "__VPA_STAGE2_SCHEMA_EXAMPLE__"
-_VPA_STAGE2_SCHEMA_EXAMPLE = """\
-  "vpa_impact": {
-    "background_relation": "supports|neutral|challenges|insufficient_data",
-    "entry_timing_relation": "supports|neutral|challenges|insufficient_data",
-    "evidence_used": ["vpa-e001"],
-    "decision_effect": "keep_brooks_baseline|require_confirmation|prefer_retest|lower_confidence|reject_current_attempt",
-    "reason": "仅说明 VPA 对当前 Entry Attempt 的信息增量，并引用已使用的 evidence ID"
-  },
-"""
-_VPA_STAGE2_TAIL_REMINDER = (
-    "VPA 已开启：顶层 `vpa_impact` 必填，且必须含 background_relation、"
-    "entry_timing_relation、evidence_used、decision_effect、reason。"
-    "VPA 不得修改 estimated_win_rate、阶段一方向或 Gate，也不得创建 Brooks baseline 不存在的交易。"
-)
-
 _STAGE2_TAIL_REMINDER = (
     "【最后一步·必做】思考结束后，立即在 assistant 正文 `content` 输出完整阶段二裸 JSON"
     "（含 decision、decision_trace、terminal）。思考用简体中文并尽量简洁；`content` 不得为空。"
-    "禁止调用 exec/Python/写文件等工具；算术在 JSON 推理字段内完成。\n"
+    "禁止调用 exec/Python/写文件等工具。你负责提出结构三价与 PA 胜率先验；"
+    "程序会复算风险收益与交易者方程，数值冲突时以程序结果为准。\n"
     "若 token 紧张，优先保证 `content` 有 JSON，可缩短思考。\n"
     "⚠️ 禁止在 content 中只写思考过程或分隔符（如 ---输出JSON---）而不附 JSON——"
     "这会导致校验直接失败。哪怕只输出最小骨架 {\"decision\":{\"order_type\":\"不下单\",...}} 也比没有强。\n\n"
@@ -281,34 +236,6 @@ _STAGE2_TAIL_REMINDER = (
 ).strip()
 
 # ── Hardcoded output format reminders ─────────────────────────────────────────
-
-_VPA_STAGE1_SCHEMA_MARKER = "__VPA_STAGE1_SCHEMA_EXAMPLE__"
-_VPA_STAGE1_SCHEMA_EXAMPLE = """\
-  "vpa_context": {
-    "catalog_id": "逐字复制程序 catalog_id",
-    "data_status": "available|limited|unavailable",
-    "summary": "数据质量、量价上下文与不确定性；不复写数值",
-    "observations": [
-      {
-        "evidence_ids": ["vpa-e001"],
-        "finding_kind": "background|effort_result|sequence_comparison|acceptance_rejection|entry_timing",
-        "interpretation": "基于 evidence ID 的上下文解释；不复写数值"
-      }
-    ],
-    "background_relation": "supports|neutral|challenges|insufficient_data",
-    "entry_timing_relation": "supports|neutral|challenges|insufficient_data",
-    "next_confirmation": {
-      "state": "pending_closed_bar|not_applicable",
-      "trigger": "下一根已收盘 K 线对明确结构锚点的 acceptance/rejection",
-      "requires_closed_bar": true
-    }
-  },
-"""
-_VPA_STAGE1_TAIL_REMINDER = (
-    "VPA 已开启：顶层 `vpa_context` 必填；逐字使用程序 catalog_id/data_status，"
-    "observation 只输出 evidence_ids/finding_kind/interpretation，禁止输出 bar_range；"
-    "next_confirmation.state 只能是 pending_closed_bar/not_applicable。"
-)
 
 _STAGE1_OUTPUT_REMINDER = """
 请严格按照以下 JSON 格式输出诊断结果,不要输出任何其他内容。
@@ -362,7 +289,6 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
     "theory_rule_ids": ["BROOKS.CYCLE.SPIKE_TO_CHANNEL"],
     "spike_analysis": null
   },
-__VPA_STAGE1_SCHEMA_EXAMPLE__
   "gate_trace": [
     {
       "node_id": "1.2",
@@ -511,7 +437,6 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
       "type": "H2|L2|MTR|wedge|tr_boundary|trendline|none（is_second_entry=false 时必须填 none，禁止 null）"
     }
   },
-__VPA_STAGE2_SCHEMA_EXAMPLE__
   "decision_trace": [
     {
       "node_id": "4.1",
@@ -715,33 +640,25 @@ estimated_win_rate_reasoning：必须简要说明依据（如“宽通道顺势 
 
 def _stage1_output_reminder_for_mode(
     analysis_mode: str = "original",
-    *,
-    include_vpa: bool = False,
 ) -> str:
     """Return Stage 1 output rules (same for original and optimized).
 
     Data preflight handles §1.1; the LLM owns all seven semantic gate nodes.
     """
     _ = analysis_mode  # reserved for future mode-specific tweaks
-    vpa_schema = _VPA_STAGE1_SCHEMA_EXAMPLE if include_vpa else ""
-    return _STAGE1_OUTPUT_REMINDER.replace(_VPA_STAGE1_SCHEMA_MARKER, vpa_schema)
+    return _STAGE1_OUTPUT_REMINDER
 
 
-def _stage1_tail_reminder(*, include_vpa: bool) -> str:
-    if not include_vpa:
-        return _STAGE1_TAIL_REMINDER
-    return f"{_STAGE1_TAIL_REMINDER}\n{_VPA_STAGE1_TAIL_REMINDER}"
+def _stage1_tail_reminder() -> str:
+    return _STAGE1_TAIL_REMINDER
 
 
-def _stage2_output_contract(*, include_vpa: bool) -> str:
-    vpa_schema = _VPA_STAGE2_SCHEMA_EXAMPLE if include_vpa else ""
-    return _STAGE2_OUTPUT_CONTRACT.replace(_VPA_STAGE2_SCHEMA_MARKER, vpa_schema)
+def _stage2_output_contract() -> str:
+    return _STAGE2_OUTPUT_CONTRACT
 
 
-def _stage2_tail_reminder(*, include_vpa: bool) -> str:
-    if not include_vpa:
-        return _STAGE2_TAIL_REMINDER
-    return f"{_STAGE2_TAIL_REMINDER}\n{_VPA_STAGE2_TAIL_REMINDER}"
+def _stage2_tail_reminder() -> str:
+    return _STAGE2_TAIL_REMINDER
 
 
 _NEXT_BAR_PREDICTION_INSTRUCTION = """\
@@ -839,17 +756,21 @@ spike | micro_channel | tight_channel | normal_channel | broad_channel | trendin
 7. 此预测**不**进入交易者方程、**不**改变 decision 中任意字段，仅作辅助参考。
 """.strip()
 
-# txt files merged into each stage prompt (order preserved)
+# Prompt files exposed to UI/debug helpers.  The decision tree is sliced by
+# semantic section at assembly time instead of being injected in full twice.
 COMMON_SYSTEM_STAGE1_TXT_FILES: tuple[str, ...] = (
     "提示词大纲_人设与思维方式.txt",
-    "二元决策.txt",           # unified with Stage 2 for prefix caching; §0–§2 gate subset is included
 )
 COMMON_SYSTEM_STAGE2_TXT_FILES: tuple[str, ...] = (
     "提示词大纲_人设与思维方式.txt",
-    "二元决策.txt",
 )
-# Back-compat alias for UI helpers that list “common” files (Stage 2 full tree).
+# Back-compat alias for UI helpers that list common static files.
 COMMON_SYSTEM_PROMPT_TXT_FILES: tuple[str, ...] = COMMON_SYSTEM_STAGE2_TXT_FILES
+
+_DECISION_TREE_STAGE2_HEADING = "## 9. 入场信号二元检查"
+_DECISION_TREE_STAGE1_HEADING = "## 1. 是否可以决策"
+_DIAGNOSIS_SIGNAL_LAYER_HEADING = "## 第三层：逐K信号确认"
+_DETAILED_GEOMETRY_BAR_LIMIT = 10
 
 # Process-wide system prompt cache: DeepSeek KV hits need byte-identical prefixes
 # across PromptAssembler instances that share the same prompt directory.
@@ -920,7 +841,11 @@ def _fmt_feature(value: float | None) -> str:
 
 def stage1_prompt_txt_files() -> list[str]:
     """Return ordered .txt filenames injected in the Stage 1 prompt."""
-    return [*COMMON_SYSTEM_STAGE1_TXT_FILES, *STAGE1_TASK_PROMPT_TXT_FILES]
+    return [
+        *COMMON_SYSTEM_STAGE1_TXT_FILES,
+        "二元决策.txt",
+        *STAGE1_TASK_PROMPT_TXT_FILES,
+    ]
 
 
 def _directional_channel_files(direction: str) -> list[str]:
@@ -975,6 +900,7 @@ def stage2_prompt_txt_files(
     """Return all .txt files relevant to Stage 2 (system common + user task), for UI/debug."""
     return [
         *COMMON_SYSTEM_STAGE2_TXT_FILES,
+        "二元决策.txt",
         *stage2_user_task_txt_files(
             strategy_files,
             direction=direction,
@@ -1100,21 +1026,15 @@ class PromptAssembler:
             logger.warning("render_vpa_measurements failed: %s", exc)
             return ""
 
-    def _vpa_stage2_output_reminder(self) -> str:
-        if not self._vpa_enabled():
-            return ""
-        return wrap_vpa_prompt_block(_VPA_STAGE2_OUTPUT_REMINDER_V4)
-
     def _record_context(self, value: Any) -> Any:
-        if self._vpa_enabled():
-            return value or {}
+        """Return legacy-record context without obsolete embedded VPA fields."""
         return strip_vpa_fields(value or {})
 
     # ── Process-level system-prompt cache ────────────────────────────────────
     # DeepSeek KV Cache hits require the *prefix* of consecutive requests to
     # be byte-identical.  System prompts are fully static (persona + txt files)
     # and never change during a session, so we cache them at the process level.
-    # Stage 1 and Stage 2 share one system blob so S1→S2 prefix matches.
+    # Stage 1 and Stage 2 share one static system blob so S1→S2 prefix matches.
 
     @functools.cached_property
     def _shared_system_prompt(self) -> str:
@@ -1139,7 +1059,7 @@ class PromptAssembler:
         return self._shared_system_prompt
 
     def _build_shared_system_prompt_inner(self) -> str:
-        """Persona + full binary decision tree (both stages)."""
+        """Build the static persona and transport contract shared by both stages."""
         system_parts = [
             _LANGUAGE_ZH_RULE,
             _PA_TERMINOLOGY_ZH,
@@ -1163,6 +1083,51 @@ class PromptAssembler:
             content = f"[ERROR: could not load {filename}]"
         self._txt_cache[filename] = content
         return content
+
+    def _load_before_heading(self, filename: str, heading: str) -> str:
+        """Load the part before a stable Markdown heading.
+
+        Custom prompt packs without the heading keep their complete content;
+        this preserves compatibility while the bundled pack gets deterministic
+        context slicing.
+        """
+        content = self._load(filename)
+        marker = f"\n{heading}"
+        index = content.find(marker)
+        return content if index < 0 else content[:index].rstrip()
+
+    def _decision_tree_stage1(self) -> str:
+        """Return global principles and the PA framework/setup sections 0-8."""
+        return self._load_before_heading(
+            "二元决策.txt",
+            _DECISION_TREE_STAGE2_HEADING,
+        )
+
+    def _decision_tree_stage2(self, *, include_global: bool) -> str:
+        """Return execution sections 9-15, plus global principles if standalone."""
+        content = self._load("二元决策.txt")
+        marker = f"\n{_DECISION_TREE_STAGE2_HEADING}"
+        index = content.find(marker)
+        if index < 0:
+            return content
+        execution = content[index + 1 :].lstrip()
+        if not include_global:
+            return execution
+        stage1_marker = f"\n{_DECISION_TREE_STAGE1_HEADING}"
+        stage1_index = content.find(stage1_marker)
+        global_principles = (
+            content[:stage1_index].rstrip()
+            if stage1_index >= 0
+            else content[:index].rstrip()
+        )
+        return f"{global_principles}\n\n{execution}"
+
+    def _market_diagnosis_framework(self) -> str:
+        """Return the cycle/background layers; signal theory is loaded separately."""
+        return self._load_before_heading(
+            "市场诊断框架.txt",
+            _DIAGNOSIS_SIGNAL_LAYER_HEADING,
+        )
 
     # ── K-line table rendering ────────────────────────────────────────────────
 
@@ -1368,201 +1333,69 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
 
     def build_joint_decision(
         self,
-        baseline_messages: list[dict[str, Any]],
         baseline_stage2: dict[str, Any],
         pa_hypotheses: dict[str, Any],
         vpa_report: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """Reuse the PA-only Stage 2 prefix and append a focused joint task."""
-        if not baseline_messages:
-            raise ValueError("joint arbiter requires PA-only Stage 2 messages")
-        messages = [copy.deepcopy(message) for message in baseline_messages]
-        while messages and messages[-1].get("role") == "assistant":
-            messages.pop()
-        user_index = next(
-            (
-                index
-                for index in range(len(messages) - 1, -1, -1)
-                if messages[index].get("role") == "user"
-            ),
-            None,
-        )
-        if user_index is None:
-            raise ValueError("PA-only Stage 2 messages contain no user turn")
-        addon = (
-            "\n\n---\n\n## JOINT_DECISION_ARBITRATION_TASK\n\n"
-            "上方是完整、仍然有效的 PA-only Stage 2 请求。现在只增加经过"
-            "校验的 PA 候选、VPA 证据报告和 PA-only baseline，由你裁决当前"
-            " Entry Attempt。不要重做 PA 或重新计算程序事实。\n\n"
+        """Build a focused arbitration call over validated role outputs.
+
+        The joint role does not receive the original K-line tables or full PA
+        theory again.  Its task is comparison, not a third market analysis.
+        """
+        baseline_context = {
+            key: copy.deepcopy(baseline_stage2.get(key))
+            for key in (
+                "decision",
+                "bar_analysis",
+                "decision_trace",
+                "terminal",
+            )
+            if key in baseline_stage2
+        }
+        user_content = (
+            "## JOINT_DECISION_ARBITRATION_TASK\n\n"
+            "以下 PA 候选、PA-only 决策和 VPA 报告均已通过程序校验并冻结。"
+            "只裁决 VPA 是否给当前 Entry Attempt 带来真实信息增量；不要重做"
+            " PA、重算价格或复制完整 Stage 2。\n\n"
             "### PA_HYPOTHESES_AND_CANDIDATES\n\n"
             f"```json\n{json.dumps(pa_hypotheses, ensure_ascii=False, indent=2)}\n```\n\n"
             "### VALIDATED_VPA_REPORT\n\n"
             f"```json\n{json.dumps(vpa_report, ensure_ascii=False, indent=2)}\n```\n\n"
             "### FROZEN_PA_ONLY_STAGE2_BASELINE\n\n"
-            f"```json\n{json.dumps(baseline_stage2, ensure_ascii=False, indent=2)}\n```\n\n"
+            f"```json\n{json.dumps(baseline_context, ensure_ascii=False, indent=2)}\n```\n\n"
             """输出且只输出：
 {
   "joint_arbitration": {
-    "selected_candidate_id": "现有 PA candidate_id；不执行时可为 null",
+    "selected_candidate_id": "当前被裁决的 PA candidate_id；PA 本来不下单时可为 null",
     "decision_effect": "keep_brooks_baseline | require_confirmation | prefer_retest | lower_confidence | reject_current_attempt",
     "evidence_used": ["仅引用 validated VPA report 已使用的 evidence ID"],
-    "reason": "VPA 对当前 Entry Attempt 的信息增量及裁决理由"
+    "reason": "VPA 对当前 Entry Attempt 的信息增量、竞争解释及裁决理由，不复写数字"
   },
-  "stage2_decision": {
-    "...": "完整 Stage 2 JSON，字段与原 Schema 完全一致"
+  "decision_patch": {
+    "trade_confidence": null,
+    "trade_confidence_reasoning": null,
+    "watch_points": null,
+    "risk_assessment": null,
+    "invalidation_condition": null
   }
 }
 
-`keep_brooks_baseline` 时 `stage2_decision` 必须逐字段等于 baseline。
-非 baseline effect 必须落实到现有 timing、trigger、trade_confidence、
-watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
-禁止提高主观胜率、修改 PA 方向/Gate/Setup，或从不下单 baseline 创造交易。
+规则：
+- `keep_brooks_baseline` 时 `decision_patch` 输出空对象 `{}`；中性或证据不足必须保持 baseline。
+- `lower_confidence` 必须给出严格低于 baseline 的 `trade_confidence`；不得为了形式随意降分。
+- `require_confirmation`、`prefer_retest`、`reject_current_attempt` 至少给出一个可执行的
+  `watch_points` 或 `invalidation_condition`。程序会确定性地把当前尝试转为不下单；
+  不要复制或改写订单价格、方向、止损、目标、胜率、PA trace 或预测。
+- VPA 可以支持背景但不支持立即入场；必须分别判断背景与 timing。
+- 非 baseline effect 必须引用 VPA report 中真实使用且含相对量比较的 evidence ID。
+- 禁止提高 `trade_confidence`，禁止修改 `estimated_win_rate`、`diagnosis_confidence`、
+  PA direction/Gate/Setup，禁止从 PA 不下单 baseline 创造交易。
 """
         )
-        messages[user_index]["content"] = (
-            str(messages[user_index].get("content") or "") + addon
-        )
-        if messages and messages[0].get("role") == "system":
-            messages[0]["content"] = (
-                _JOINT_ARBITER_SYSTEM
-                + "\n\n---\n\n"
-                + str(messages[0].get("content") or "")
-            )
-        return messages
-
-    def build_paired_vpa_context(
-        self,
-        frame: KlineFrame,
-        baseline_stage1: dict[str, Any],
-        *,
-        htf_context: dict[str, Any] | None = None,
-    ) -> list[dict]:
-        """Build the focused VPA sidecar call for a frozen paired baseline."""
-        if not self._vpa_enabled():
-            raise ValueError("paired VPA context requires VPA to be enabled")
-        baseline_keys = (
-            "cycle_position",
-            "alternative_cycle_position",
-            "direction",
-            "diagnosis_confidence",
-            "spike_stage",
-            "climax_risk",
-            "market_phase",
-            "transition_risk",
-            "detected_patterns",
-            "key_signals",
-            "htf_context",
-            "entry_setup",
-            "support_levels",
-            "resistance_levels",
-            "risk_warning",
-            "bar_analysis",
-            "bar_by_bar_summary",
-            "pa_evidence",
-            "gate_result",
-        )
-        frozen_baseline = {
-            key: baseline_stage1[key]
-            for key in baseline_keys
-            if key in baseline_stage1
-        }
-        knowledge = self._load_vpa_rule_prompt(stage1_json=baseline_stage1)
-        measurements = self._render_vpa_measurements_block(frame)
-        market_facts = self._render_simple_market_features_block(frame)
-        higher_timeframe = render_higher_timeframe_context(htf_context)
-        user_content = (
-            "## PAIRED_VPA_CONTEXT_TASK\n\n"
-            "以下 PA baseline 已校验并冻结。不得重新输出或修改其中任何字段。\n\n"
-            f"```json\n{json.dumps(frozen_baseline, ensure_ascii=False, indent=2)}\n```\n\n"
-            + (f"{higher_timeframe}\n\n" if higher_timeframe else "")
-            + (f"{market_facts}\n\n" if market_facts else "")
-            + (f"{knowledge}\n\n" if knowledge else "")
-            + (f"{measurements}\n\n" if measurements else "")
-            + """输出且只输出：
-{
-  "vpa_context": {
-    "catalog_id": "逐字复制程序 catalog_id",
-    "data_status": "逐字复制程序 data_status",
-    "summary": "仅写数据质量、核心上下文解释与不确定性，不复写数字",
-    "observations": [
-      {
-        "evidence_ids": ["仅使用目录中的 ID"],
-        "finding_kind": "background | effort_result | sequence_comparison | acceptance_rejection | entry_timing",
-        "interpretation": "只写上下文推断与竞争解释，不复写数字"
-      }
-    ],
-    "background_relation": "supports | neutral | challenges | insufficient_data",
-    "entry_timing_relation": "supports | neutral | challenges | insufficient_data",
-    "next_confirmation": {
-      "state": "pending_closed_bar|not_applicable",
-      "trigger": "未来已收盘 K 线需要验证的 acceptance/rejection",
-      "requires_closed_bar": true
-    }
-  }
-}
-
-不要输出 `bar_range`，程序会从 evidence IDs 唯一生成；不要输出任何其他顶层字段。
-数据可用时至少给出一项真正的 effort/result、序列比较、acceptance/rejection 或 timing 发现，不能只复述 PA。"""
-        )
         return [
-            {"role": "system", "content": _PAIRED_VPA_CONTEXT_SYSTEM_V4},
+            {"role": "system", "content": _JOINT_ARBITER_SYSTEM},
             {"role": "user", "content": user_content},
         ]
-
-    def build_paired_vpa_stage2(
-        self,
-        baseline_messages: list[dict[str, Any]],
-        baseline_stage2: dict[str, Any],
-        frame: KlineFrame,
-        stage1_json: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """Append VPA evidence to the exact baseline Stage-2 request prefix."""
-        if not baseline_messages:
-            raise ValueError("paired VPA Stage 2 requires baseline messages")
-        messages = [dict(message) for message in baseline_messages]
-        while messages and messages[-1].get("role") == "assistant":
-            messages.pop()
-        user_index = next(
-            (
-                index
-                for index in range(len(messages) - 1, -1, -1)
-                if messages[index].get("role") == "user"
-            ),
-            None,
-        )
-        if user_index is None:
-            raise ValueError("paired baseline Stage 2 has no user message")
-        context = stage1_json.get("vpa_context")
-        if not isinstance(context, dict):
-            raise ValueError("paired VPA Stage 2 requires validated vpa_context")
-        knowledge = self._load_vpa_rule_prompt(stage1_json=stage1_json)
-        measurements = self._render_vpa_measurements_block(frame)
-        addon = (
-            "\n\n---\n\n## PAIRED_VPA_DECISION_ADDENDUM\n\n"
-            "上方内容是 A 组原始 Brooks Stage 2 请求，保持完全有效。现在仅增加以下 VPA sidecar；"
-            "由你融合裁决当前 Entry Attempt 的时机与可信度，VPA 不是独立 Gate。\n\n"
-            + (f"{knowledge}\n\n" if knowledge else "")
-            + (f"{measurements}\n\n" if measurements else "")
-            + "## 已校验 vpa_context\n\n"
-            + f"```json\n{json.dumps(context, ensure_ascii=False, indent=2)}\n```\n\n"
-            + "## 冻结的 Brooks Stage 2 baseline\n\n"
-            + f"```json\n{json.dumps(baseline_stage2, ensure_ascii=False, indent=2)}\n```\n\n"
-            + f"{self._vpa_stage2_output_reminder()}\n\n"
-            "以上 baseline 已通过程序校验。你现在输出差量 JSON：必须输出 `vpa_impact`。"
-            "若 decision_effect=keep_brooks_baseline，只输出 `vpa_impact`；若确需改变当前尝试，"
-            "再额外输出完整的 `decision`、`decision_trace`、`terminal` 三项，程序会把它们合并到 baseline 后"
-            "执行原 Stage 2 Schema、交易者方程与安全校验。不得输出 diagnosis_summary、bar_analysis 或预测字段。"
-            "`vpa_impact.reason` 只引用 Stage 1 已用 evidence ID，"
-            "不得复写行情数字。VPA 不得修改 `estimated_win_rate`；其影响只能落入现有 trade_confidence、"
-            "watch_points、risk_assessment、entry timing 与最终 order decision。若 baseline 为不下单，"
-            "VPA 不得创造交易；若 decision_effect=keep_brooks_baseline，行为字段必须逐项保持 baseline。"
-            "先区分 PA 背景是否得到支持与当前 Entry Attempt 是否已到时机：背景支持并不自动等于立即执行。"
-            "require_confirmation / prefer_retest 必须实际改写 entry_rule、entry_price、watch_points、"
-            "invalidation_condition 或 order_type 中至少一个时机字段，不能只改置信度。"
-            "禁止裸写高量、低量、放量或缩量；若必须描述相对量能，须明确对应 evidence 中的比较器。"
-        )
-        messages[user_index]["content"] = str(messages[user_index].get("content") or "") + addon
-        return messages
 
     def _normalize_prev_stage1_assistant_for_incremental(
         self,
@@ -1574,8 +1407,7 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
 
         diag = getattr(previous_record, "stage1_diagnosis", None) or {}
         if isinstance(diag, dict) and diag:
-            if not self._vpa_enabled():
-                diag = strip_vpa_fields(diag)
+            diag = strip_vpa_fields(diag)
             return json.dumps(diag, ensure_ascii=False, indent=2)
 
         formatted = format_model_json_for_context(raw_content)
@@ -1653,8 +1485,7 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
         )
 
         prev_user_content = self._inject_market_features_block(prev_user_content, frame)
-        if not self._vpa_enabled():
-            prev_user_content = strip_vpa_prompt_sections(prev_user_content)
+        prev_user_content = strip_vpa_prompt_sections(prev_user_content)
 
         prev_reasoning = ""
         if isinstance(prev_s1_response, dict):
@@ -1712,22 +1543,22 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
         """Build the Stage 1 task turn; stage-specific rules stay out of system."""
         pattern_block = self._stage1_pattern_supplement()
         stage1_parts = [
-            *(self._load(name) for name in STAGE1_TASK_PROMPT_TXT_FILES),
+            self._decision_tree_stage1(),
+            self._market_diagnosis_framework(),
+            self._load("文件16-K线信号识别.txt"),
             *([pattern_block] if pattern_block else []),
             _PA_FACTUAL_CLAIM_RULE,
             _PA_EVIDENCE_OUTPUT_RULE,
             render_pa_theory_rule_catalog(),
-            self._load_vpa_rule_prompt(),
-            _stage1_output_reminder_for_mode(
-                analysis_mode,
-                include_vpa=self._vpa_enabled(),
-            ),
+            _stage1_output_reminder_for_mode(analysis_mode),
         ]
         stage1_context = "\n\n---\n\n".join(p for p in stage1_parts if p)
         kline_table = self._render_kline_table(frame)
-        feature_table = self._render_kline_feature_table(frame)
+        feature_table = self._render_kline_feature_table(
+            frame,
+            limit=min(_DETAILED_GEOMETRY_BAR_LIMIT, len(frame.bars)),
+        )
         simple_features_block = self._render_simple_market_features_block(frame)
-        vpa_measurements_block = self._render_vpa_measurements_block(frame)
         higher_timeframe_block = render_higher_timeframe_context(htf_context)
         n_bars = len(frame.bars)
         if n_bars > 40:
@@ -1769,9 +1600,8 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
             "基于当前 N 根已收盘 K 线，指标非全历史延续)\n\n"
             f"{feature_table}\n\n"
             + (f"{simple_features_block}\n\n" if simple_features_block else "")
-            + (f"{vpa_measurements_block}\n\n" if vpa_measurements_block else "")
             + f"请根据以上数据，严格输出阶段一 JSON 诊断结果。\n\n"
-            f"{_stage1_tail_reminder(include_vpa=self._vpa_enabled())}"
+            f"{_stage1_tail_reminder()}"
         )
 
     def _build_incremental_stage1_user_prompt(
@@ -1786,16 +1616,14 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
         """Build a Stage 1 update turn using the last completed analysis."""
         pattern_block = self._stage1_pattern_supplement()
         stage1_parts = [
-            *(self._load(name) for name in STAGE1_TASK_PROMPT_TXT_FILES),
+            self._decision_tree_stage1(),
+            self._market_diagnosis_framework(),
+            self._load("文件16-K线信号识别.txt"),
             *([pattern_block] if pattern_block else []),
             _PA_FACTUAL_CLAIM_RULE,
             _PA_EVIDENCE_OUTPUT_RULE,
             render_pa_theory_rule_catalog(),
-            self._load_vpa_rule_prompt(),
-            _stage1_output_reminder_for_mode(
-                analysis_mode,
-                include_vpa=self._vpa_enabled(),
-            ),
+            _stage1_output_reminder_for_mode(analysis_mode),
         ]
         stage1_context = "\n\n---\n\n".join(p for p in stage1_parts if p)
         n_bars = len(frame.bars)
@@ -1803,9 +1631,11 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
         new_kline_table = self._render_kline_table(frame, limit=new_count)
         new_feature_table = self._render_kline_feature_table(frame, limit=new_count)
         full_kline_table = self._render_kline_table(frame)
-        full_feature_table = self._render_kline_feature_table(frame)
+        full_feature_table = self._render_kline_feature_table(
+            frame,
+            limit=min(_DETAILED_GEOMETRY_BAR_LIMIT, n_bars),
+        )
         simple_features_block = self._render_simple_market_features_block(frame)
-        vpa_measurements_block = self._render_vpa_measurements_block(frame)
         higher_timeframe_block = render_higher_timeframe_context(htf_context)
         previous_summary = {
             "meta": previous_record.meta.model_dump(),
@@ -1850,9 +1680,8 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
             f"{full_feature_table}\n\n"
             + (f"{higher_timeframe_block}\n" if higher_timeframe_block else "")
             + (f"{simple_features_block}\n\n" if simple_features_block else "")
-            + (f"{vpa_measurements_block}\n\n" if vpa_measurements_block else "")
             + "请基于上一轮结论、新增K线和当前完整K线，严格输出更新后的阶段一 JSON 诊断结果。\n\n"
-            f"{_stage1_tail_reminder(include_vpa=self._vpa_enabled())}"
+            f"{_stage1_tail_reminder()}"
         )
 
     def _build_incremental_stage1_continuation_user_prompt(
@@ -1872,8 +1701,6 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
         simple_features_block = self._render_simple_market_features_block(frame)
         if simple_features_block:
             simple_features_block = _MARKET_FEATURES_AUTHORITY_NOTE + simple_features_block
-        vpa_rule_prompt = self._load_vpa_rule_prompt()
-        vpa_measurements_block = self._render_vpa_measurements_block(frame)
         higher_timeframe_block = render_higher_timeframe_context(htf_context)
         n_bars = len(frame.bars)
         new_count = max(0, min(new_bar_count, n_bars))
@@ -1925,11 +1752,9 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
             f"## 新增程序事实(共{new_count}根；数值与前棒精确关系按完整{n_bars}根窗口计算)\n\n"
             f"{new_feature_table}\n\n"
             + (f"{higher_timeframe_block}\n" if higher_timeframe_block else "")
-            + (f"{vpa_rule_prompt}\n\n" if vpa_rule_prompt else "")
             + (f"{simple_features_block}\n\n" if simple_features_block else "")
-            + (f"{vpa_measurements_block}\n\n" if vpa_measurements_block else "")
             + "请基于上方完整K线数据、上一轮结论和新增K线，严格输出更新后的阶段一 JSON 诊断结果。\n\n"
-            f"{_stage1_tail_reminder(include_vpa=self._vpa_enabled())}"
+            f"{_stage1_tail_reminder()}"
         )
 
     # ── Stage 2 ───────────────────────────────────────────────────────────────
@@ -1953,7 +1778,6 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
             experience_entries=experience_entries,
             decision_stance=decision_stance,
             enable_next_bar_prediction=False,
-            omit_vpa_core=False,
             htf_context=htf_context,
         )
         return [
@@ -1971,8 +1795,7 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
             s2 = previous_record.get("stage2_decision")
         if not isinstance(s2, dict):
             return ""
-        if not self._vpa_enabled():
-            s2 = strip_vpa_fields(s2)
+        s2 = strip_vpa_fields(s2)
         pred = s2.get("next_bar_prediction")
         if not isinstance(pred, dict):
             return ""
@@ -2005,8 +1828,7 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
         from pa_agent.ai.json_validator import format_model_json_for_context
 
         if isinstance(stage1_json, dict) and stage1_json:
-            if not self._vpa_enabled():
-                stage1_json = strip_vpa_fields(stage1_json)
+            stage1_json = strip_vpa_fields(stage1_json)
             return json.dumps(stage1_json, ensure_ascii=False, indent=2)
         formatted = format_model_json_for_context(stage1_reply_content)
         if formatted:
@@ -2052,7 +1874,6 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
             previous_record=previous_record,
             enable_next_bar_prediction=enable_next_bar_prediction,
             omit_kline_block=chain_after_s1,
-            omit_vpa_core=chain_after_s1,
             htf_context=htf_context,
             omit_htf_context=chain_after_s1,
         )
@@ -2086,7 +1907,6 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
         previous_record: Any | None = None,
         enable_next_bar_prediction: bool = False,
         omit_kline_block: bool = False,
-        omit_vpa_core: bool = False,
         htf_context: dict[str, Any] | None = None,
         omit_htf_context: bool = False,
     ) -> str:
@@ -2105,14 +1925,10 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
         continuity_block = render_continuity_prompt_block(continuity_ctx)
         transition_block = self._render_transition_guidance(stage1_json)
         stage2_parts = [
+            self._decision_tree_stage2(include_global=not omit_kline_block),
             stance_block,
             continuity_block,
             transition_block,
-            self._load_vpa_rule_prompt(
-                stage1_json=stage1_json,
-                include_core=not omit_vpa_core,
-            ),
-            self._vpa_stage2_output_reminder() if omit_vpa_core else "",
             *(
                 self._load(name)
                 for name in stage2_user_task_txt_files(
@@ -2138,9 +1954,7 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
                     max_chars_per_entry=max_chars,
                 )
             )
-        stage2_parts.append(
-            _stage2_output_contract(include_vpa=self._vpa_enabled())
-        )
+        stage2_parts.append(_stage2_output_contract())
         if enable_next_bar_prediction:
             stage2_parts.append(_NEXT_BAR_PREDICTION_INSTRUCTION)
         else:
@@ -2157,14 +1971,10 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
         breakout_tick_hint = format_breakout_price_hint(frame)
         # Prefix-chain Stage 2 already retains the exact catalog from Stage 1.
         # Repeating it would spend tokens without adding a new factual observation.
-        vpa_measurements_block = "" if omit_kline_block else self._render_vpa_measurements_block(frame)
         higher_timeframe_block = "" if omit_htf_context else render_higher_timeframe_context(htf_context)
         prev_pred_block = self._render_previous_prediction(previous_record)
         compact_s1 = json.dumps(
-            self._compact_stage1_for_stage2(
-                stage1_json,
-                include_vpa_context=not omit_vpa_core,
-            ),
+            self._compact_stage1_for_stage2(stage1_json),
             ensure_ascii=False,
             indent=2,
         )
@@ -2183,13 +1993,14 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
                     + simple_features_block
                     + "\n\n"
                 )
-            if vpa_measurements_block:
-                kline_block += f"{vpa_measurements_block}\n\n"
             if breakout_tick_hint:
                 kline_block += f"{breakout_tick_hint}\n\n"
         else:
             kline_table = self._render_kline_table(frame)
-            feature_table = self._render_kline_feature_table(frame)
+            feature_table = self._render_kline_feature_table(
+                frame,
+                limit=min(_DETAILED_GEOMETRY_BAR_LIMIT, n_bars),
+            )
             simple_features_block = self._render_simple_market_features_block(frame)
             kline_block = (
                 f"## K线数据(共{n_bars}根，含阳阴列；各节点 bar_range 由你据实填写)\n\n"
@@ -2200,8 +2011,6 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
             )
             if simple_features_block:
                 kline_block += f"{simple_features_block}\n\n"
-            if vpa_measurements_block:
-                kline_block += f"{vpa_measurements_block}\n\n"
             if breakout_tick_hint:
                 kline_block += f"{breakout_tick_hint}\n\n"
 
@@ -2224,10 +2033,10 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
             + (f"{higher_timeframe_block}\n" if higher_timeframe_block else "")
             + f"{kline_block}"
             f"{prev_pred_block + chr(10) if prev_pred_block else ''}"
-            f"请根据以上诊断和K线数据,按《二元决策.txt》§3–§11、§14 输出 JSON 决策结果"
+            f"请根据以上诊断和K线数据,按《二元决策.txt》§9–§11、§14 输出 JSON 决策结果"
             f"(含 decision_trace 与 terminal)。\n"
             f"注意:如果判断不下单,entry_price、take_profit_price、take_profit_price_2、stop_loss_price、order_direction 必须全部为 null。\n\n"
-            f"{_stage2_tail_reminder(include_vpa=self._vpa_enabled())}"
+            f"{_stage2_tail_reminder()}"
         )
 
     def stage2_system_prompt_only(
@@ -2241,8 +2050,6 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
     def _compact_stage1_for_stage2(
         self,
         stage1_json: dict,
-        *,
-        include_vpa_context: bool = True,
     ) -> dict:
         """Subset of Stage 1 fields needed for Stage 2 (reduces prompt noise)."""
         keys = (
@@ -2267,10 +2074,7 @@ watch_points、risk_assessment 或拒绝当前尝试，不能只改措辞。
             "gate_trace",
             "gate_result",
         )
-        compact = {k: stage1_json[k] for k in keys if k in stage1_json}
-        if include_vpa_context and self._vpa_enabled() and "vpa_context" in stage1_json:
-            compact["vpa_context"] = stage1_json["vpa_context"]
-        return compact
+        return {k: stage1_json[k] for k in keys if k in stage1_json}
 
     @staticmethod
     def _render_transition_guidance(stage1_json: dict) -> str:

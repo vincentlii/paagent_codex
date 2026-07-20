@@ -18,11 +18,13 @@
 2. `VpaEvidenceReport`：VPA Analyst 针对每个 PA hypothesis 给出支持、挑战、中性或信息不足，
    且只能引用程序 evidence catalog。
 3. `JointDecisionProposal`：Joint Arbiter 在既有 PA candidate 内决定保持、等待确认、优先回测、
-   降低置信度或拒绝本次 Entry Attempt。
+   降低置信度或拒绝本次 Entry Attempt，并只输出有界 `decision_patch`。程序把合法补丁应用到
+   冻结 PA baseline 后重新执行完整 Stage 2 校验。
 
 PA-only Stage 2 先形成冻结 baseline。VPA 和 Joint 各允许一次定向结构修复；失败时 Soft 明确
-退化为 PA-only，Shadow 继续以 PA-only 为正式结果。Joint 不得创建 PA 没有的交易、翻转方向、
-修改 `estimated_win_rate` 或绕过 Stage 1 Gate。置信度执行阈值只在正式结果确定后应用一次。
+退化为 PA-only，Shadow 继续以 PA-only 为正式结果。Joint 不得复制或修改订单三价、创建 PA
+没有的交易、翻转方向、修改 `estimated_win_rate` 或绕过 Stage 1 Gate。置信度执行阈值只在
+正式结果确定后应用一次。
 
 生产 Shadow/Soft 不属于 A/B。完整 A/A/B/B 由独立实验器在离线或抽样环境执行，记录 Prompt、
 Snapshot、Provider、顺序和组内随机波动。

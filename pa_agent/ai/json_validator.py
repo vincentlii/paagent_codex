@@ -16,44 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pa_agent.ai.kline_references import K_REFERENCE_RE, parse_k_bar_range_bounds
-from pa_agent.ai.vpa_measurements import evidence_has_relative_volume_comparison
-
 logger = logging.getLogger(__name__)
-
-_VPA_UNCLASSIFIED_SESSION_RE = re.compile(
-    r"\b(?:asia|asian|london|new\s*york|tokyo|sydney)\b|亚洲|伦敦|纽约|东京|悉尼",
-    re.IGNORECASE,
-)
-_VPA_ACTOR_ATTRIBUTION_RE = re.compile(
-    r"\binstitution(?:al)?\b|\bsmart\s+money\b|\bactive\s+(?:buyer|seller)s?\b|"
-    r"\baggress(?:ive|or)\s+(?:buying|selling|side)\b|\bbuyer[- ]initiated\b|"
-    r"\bseller[- ]initiated\b|\u673a\u6784|\u4e3b\u529b|\u806a\u660e\u94b1|"
-    r"\u4e3b\u52a8\u4e70\u76d8|\u4e3b\u52a8\u5356\u76d8|\u4e70\u65b9\u4e3b\u52a8|\u5356\u65b9\u4e3b\u52a8",
-    re.IGNORECASE,
-)
-_VPA_PROXY_CERTAINTY_RE = re.compile(
-    r"\bactive\s+demand\b|\bactive\s+supply\b|\bdemand\s+participation\b|"
-    r"\bsupply\s+participation\b|"
-    r"\b(?:bulls?|bears?)\s+(?:fully|aggressively|actively)\s+"
-    r"(?:push(?:ed|ing)?|buy(?:ing)?|sell(?:ing)?|press(?:ed|ing)?)\b|"
-    r"\u9700\u6c42\u6d3b\u8dc3|\u4f9b\u7ed9\u6d3b\u8dc3|"
-    r"\u4e70\u65b9\u79ef\u6781\u53c2\u4e0e|\u5356\u65b9\u79ef\u6781\u53c2\u4e0e|"
-    r"(?:\u591a\u5934|\u7a7a\u5934).{0,4}?"
-    r"(?:\u5168\u529b|\u4e3b\u52a8|\u79ef\u6781).{0,4}?"
-    r"(?:\u63a8\u52a8|\u8fdb\u653b|\u6253\u538b|\u629b\u552e|\u4e70\u5165|\u5356\u51fa)",
-    re.IGNORECASE,
-)
-_VPA_FORMING_BAR_RE = re.compile(
-    r"\bforming\s+bar\b|\bunclosed\s+bar\b|"
-    r"(?<![A-Za-z0-9_])K\s*0(?![A-Za-z0-9_.])|\u672a\u6536\u76d8|\u672a\u95ed\u5408",
-    re.IGNORECASE,
-)
-
-
-def _vpa_bar_range_bounds(value: object) -> tuple[int, int] | None:
-    """Return inclusive K-line bounds for a simple VPA observation range."""
-    return parse_k_bar_range_bounds(value)
 
 # ── Result types ──────────────────────────────────────────────────────────────
 
@@ -192,13 +155,10 @@ class JsonValidator:
         from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
         from pa_agent.config.settings import ValidationSettings
 
-        self._prompt_settings: Any | None = None
         if validation is None:
             self._validation = ValidationSettings()
         elif hasattr(validation, "validation"):
             self._validation = validation.validation
-            prompt = getattr(validation, "prompt", None)
-            self._prompt_settings = prompt
         else:
             self._validation = validation
 
@@ -206,15 +166,6 @@ class JsonValidator:
             "stage1": copy.deepcopy(STAGE1_SCHEMA),
             "stage2": copy.deepcopy(STAGE2_SCHEMA),
         }
-        if self._vpa_enabled():
-            for stage, field_name in (
-                ("stage1", "vpa_context"),
-                ("stage2", "vpa_impact"),
-            ):
-                required = self._schemas[stage]["required"]
-                if field_name not in required:
-                    required.append(field_name)
-                self._schemas[stage]["properties"][field_name]["type"] = "object"
 
     def schema_for(
         self,
@@ -222,11 +173,6 @@ class JsonValidator:
     ) -> dict[str, Any]:
         """Return an isolated schema for provider capability negotiation."""
         return copy.deepcopy(self._schemas[stage])
-
-    def _vpa_enabled(self) -> bool:
-        from pa_agent.config.vpa import vpa_is_enabled
-
-        return vpa_is_enabled(self._prompt_settings)
 
     def normalize_parsed(
         self,
@@ -249,7 +195,6 @@ class JsonValidator:
                 incremental_previous_stage1=incremental_previous_stage1
                 if incremental_new_bar_count > 0
                 else None,
-                vpa_enabled=self._vpa_enabled(),
             )
         from pa_agent.ai.stage2_normalizer import normalize_stage2
 
@@ -257,7 +202,6 @@ class JsonValidator:
             obj,
             kline_frame=kline_frame,
             skip_next_bar=skip_next_bar,
-            vpa_enabled=self._vpa_enabled(),
         )
 
     def validate(
@@ -267,12 +211,9 @@ class JsonValidator:
         *,
         kline_frame: Any = None,
         stage1_json: dict[str, Any] | None = None,
-        vpa_evidence_catalog: dict[str, Any] | None = None,
         incremental_new_bar_count: int = 0,
         incremental_previous_stage1: dict[str, Any] | None = None,
         skip_next_bar: bool = False,
-        paired_baseline_stage1: dict[str, Any] | None = None,
-        paired_baseline_stage2: dict[str, Any] | None = None,
         htf_context: dict[str, Any] | None = None,
     ) -> Result:
         """Validate *raw_text* against the schema for *stage*.
@@ -325,51 +266,6 @@ class JsonValidator:
                 message="Top-level JSON value is not an object",
             )
 
-        if stage == "stage1" and paired_baseline_stage1 is not None:
-            unexpected = sorted(str(key) for key in obj if key != "vpa_context")
-            if unexpected:
-                return ValidationError(
-                    category="c",
-                    stage=stage,
-                    raw_text=raw_text,
-                    invalid_fields=[f"paired_vpa_output:{key}" for key in unexpected],
-                    message="Paired VPA Stage 1 may output only vpa_context",
-                )
-            from pa_agent.ai.vpa_sanitizer import strip_vpa_fields
-
-            baseline = strip_vpa_fields(copy.deepcopy(paired_baseline_stage1))
-            if "vpa_context" in obj:
-                baseline["vpa_context"] = copy.deepcopy(obj["vpa_context"])
-            obj = baseline
-
-        if stage == "stage2" and paired_baseline_stage2 is not None:
-            allowed = {"vpa_impact", "decision", "decision_trace", "terminal"}
-            unexpected = sorted(str(key) for key in obj if key not in allowed)
-            if unexpected:
-                return ValidationError(
-                    category="c",
-                    stage=stage,
-                    raw_text=raw_text,
-                    invalid_fields=[
-                        f"paired_vpa_stage2_output:{key}" for key in unexpected
-                    ],
-                    message=(
-                        "Paired VPA Stage 2 may output only vpa_impact and optional "
-                        "decision/decision_trace/terminal overrides"
-                    ),
-                )
-            from pa_agent.ai.vpa_sanitizer import strip_vpa_fields
-
-            baseline = strip_vpa_fields(copy.deepcopy(paired_baseline_stage2))
-            # Execution policy is applied after model validation. Historical
-            # records may still carry this runtime annotation; it is never part
-            # of the frozen model-output schema used by the paired VPA arm.
-            baseline.pop("confidence_threshold", None)
-            for key in allowed:
-                if key in obj:
-                    baseline[key] = copy.deepcopy(obj[key])
-            obj = baseline
-
         pre_normalized_obj = copy.deepcopy(obj)
         obj = self.normalize_parsed(
             stage,
@@ -384,10 +280,6 @@ class JsonValidator:
             pre_normalized_obj,
             obj,
         )
-        if self._vpa_enabled() and stage == "stage1":
-            from pa_agent.ai.vpa_sanitizer import materialize_vpa_observation_ranges
-
-            obj = materialize_vpa_observation_ranges(obj, vpa_evidence_catalog)
         # ── Schema validation (b and c) ───────────────────────────────────────
         try:
             import jsonschema  # type: ignore[import]
@@ -424,28 +316,13 @@ class JsonValidator:
         ):
             missing.append("next_bar_prediction")
 
-        if self._vpa_enabled():
-            for msg in self._check_vpa_hard_contract(
-                stage,
-                obj,
-                stage1_json=stage1_json,
-                vpa_evidence_catalog=vpa_evidence_catalog,
-            ):
-                invalid.append(f"vpa:{msg}")
-            if stage == "stage2" and paired_baseline_stage2 is not None:
-                for msg in self._check_paired_vpa_stage2_contract(
-                    obj,
-                    paired_baseline_stage2,
-                ):
-                    invalid.append(f"vpa_pair:{msg}")
-
         # ── Explicit cross-field checks ───────────────────────────────────────
         if stage == "stage1":
-            from pa_agent.ai.decision_tree import validate_gate_result_consistency
             from pa_agent.ai.coherence_checks import (
                 validate_incremental_stage1_coherence,
                 validate_stage1_coherence,
             )
+            from pa_agent.ai.decision_tree import validate_gate_result_consistency
 
             for msg in validate_gate_result_consistency(obj):
                 invalid.append(f"gate:{msg}")
@@ -492,8 +369,8 @@ class JsonValidator:
             for msg in self._check_trade_metrics(obj):
                 invalid.append(f"metrics:{msg}")
 
-            from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
             from pa_agent.ai.coherence_checks import validate_stage2_coherence
+            from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
 
             for msg in validate_stage2_trace_consistency(obj):
                 invalid.append(f"trace:{msg}")
@@ -509,7 +386,6 @@ class JsonValidator:
             obj,
             kline_frame=kline_frame,
             stage1_json=stage1_json,
-            vpa_evidence_catalog=vpa_evidence_catalog,
             htf_context=htf_context,
         )
         if not errors and not missing and not invalid:
@@ -549,7 +425,6 @@ class JsonValidator:
         *,
         kline_frame: Any,
         stage1_json: dict[str, Any] | None,
-        vpa_evidence_catalog: dict[str, Any] | None,
         htf_context: dict[str, Any] | None,
     ) -> list[ValidationWarning]:
         messages: list[tuple[str, str]] = []
@@ -580,16 +455,6 @@ class JsonValidator:
                     kline_frame=kline_frame,
                 )
             )
-        if self._vpa_enabled():
-            messages.extend(
-                ("vpa_quality", message)
-                for message in self._check_vpa_quality_warnings(
-                    stage,
-                    obj,
-                    stage1_json=stage1_json,
-                    vpa_evidence_catalog=vpa_evidence_catalog,
-                )
-            )
         return [
             ValidationWarning(stage=stage, code=code, message=message)
             for code, message in messages
@@ -609,7 +474,6 @@ class JsonValidator:
             if isinstance(before_bars, list) and isinstance(after_bars, list):
                 for index in range(min(len(before_bars), len(after_bars))):
                     paths.append(f"bar_by_bar_summary.{index}.context_effect")
-            paths.append("vpa_context.next_confirmation.state")
 
         events: list[dict[str, Any]] = []
         for path in paths:
@@ -639,521 +503,6 @@ class JsonValidator:
             else:
                 return None
         return value
-
-    @staticmethod
-    def _check_vpa_hard_contract(
-        stage: str,
-        obj: dict[str, Any],
-        *,
-        stage1_json: dict[str, Any] | None,
-        vpa_evidence_catalog: dict[str, Any] | None,
-    ) -> list[str]:
-        """Validate program-owned VPA evidence and prevent a second decision model."""
-        catalog = vpa_evidence_catalog if isinstance(vpa_evidence_catalog, dict) else {}
-        evidence = {
-            str(item.get("evidence_id")): item
-            for item in catalog.get("evidence", [])
-            if isinstance(item, dict) and item.get("evidence_id")
-        }
-        catalog_id = str(catalog.get("catalog_id") or "")
-        data_status = str(catalog.get("data_status") or "unavailable")
-        if stage == "stage1":
-            context = obj.get("vpa_context")
-            if not isinstance(context, dict):
-                return []
-            observations = [
-                observation
-                for observation in context.get("observations", [])
-                if isinstance(observation, dict)
-            ]
-            referenced_ids = [
-                str(evidence_id)
-                for observation in observations
-                for evidence_id in observation.get("evidence_ids", [])
-            ]
-            referenced = [evidence[value] for value in referenced_ids if value in evidence]
-            sources = {str(item.get("source", "")) for item in referenced}
-            relations = {
-                str(context.get("background_relation") or ""),
-                str(context.get("entry_timing_relation") or ""),
-            }
-            errors: list[str] = []
-            if not catalog_id:
-                errors.append("vpa_context missing program evidence catalog")
-            elif context.get("catalog_id") != catalog_id:
-                errors.append(
-                    "vpa_context.catalog_id does not match program evidence catalog"
-                )
-            errors.extend(
-                f"vpa_context.observations unknown evidence_id {value}"
-                for value in referenced_ids
-                if value not in evidence
-            )
-            if context.get("data_status") != data_status:
-                errors.append(
-                    "vpa_context.data_status does not match program evidence catalog"
-                )
-            if relations & {"supports", "challenges"} and not referenced_ids:
-                errors.append(
-                    "vpa_context supports/challenges relations require referenced evidence"
-                )
-            if relations & {"supports", "challenges"} and "volume" not in sources:
-                errors.append(
-                    "vpa_context supports/challenges relations require program volume evidence"
-                )
-            elif relations & {"supports", "challenges"} and not any(
-                evidence_has_relative_volume_comparison(item) for item in referenced
-            ):
-                errors.append(
-                    "vpa_context supports/challenges relations require relative-volume evidence"
-                )
-            if data_status == "unavailable" and relations != {"insufficient_data"}:
-                errors.append(
-                    "vpa_context unavailable program data requires insufficient_data "
-                    "for background and timing"
-                )
-            if data_status != "unavailable":
-                for index, observation in enumerate(observations):
-                    observation_ids = [
-                        str(evidence_id)
-                        for evidence_id in observation.get("evidence_ids", [])
-                    ]
-                    if not observation_ids:
-                        errors.append(
-                            f"vpa_context.observations[{index}].evidence_ids requires "
-                            "evidence_ids when data is available"
-                        )
-                        continue
-                    raw_range = observation.get("bar_range")
-                    bounds = _vpa_bar_range_bounds(raw_range)
-                    if raw_range and bounds is None:
-                        errors.append(
-                            f"vpa_context.observations[{index}].bar_range is invalid: "
-                            f"{raw_range}"
-                        )
-                        continue
-                    if bounds is None:
-                        continue
-                    for evidence_id in observation_ids:
-                        evidence_bounds = _vpa_bar_range_bounds(
-                            (evidence.get(evidence_id) or {}).get("bar_range")
-                        )
-                        if evidence_bounds is not None and (
-                            evidence_bounds[0] < bounds[0] or evidence_bounds[1] > bounds[1]
-                        ):
-                            errors.append(
-                                f"vpa_context.observations[{index}].evidence_ids "
-                                f"evidence_id {evidence_id} is outside observation "
-                                f"bar_range {raw_range}"
-                            )
-                    interpretation = str(observation.get("interpretation") or "")
-                    for match in K_REFERENCE_RE.finditer(interpretation):
-                        referenced_bar = int(match.group(1))
-                        if referenced_bar < bounds[0] or referenced_bar > bounds[1]:
-                            errors.append(
-                                f"vpa_context.observations[{index}].interpretation "
-                                f"references K{referenced_bar} outside observation "
-                                f"bar_range {raw_range}"
-                            )
-            return errors
-
-        impact = obj.get("vpa_impact")
-        if not isinstance(impact, dict):
-            return []
-        context = stage1_json.get("vpa_context") if isinstance(stage1_json, dict) else None
-        stage1_ids = {
-            str(evidence_id)
-            for observation in (context or {}).get("observations", [])
-            if isinstance(observation, dict)
-            for evidence_id in observation.get("evidence_ids", [])
-        }
-        used = [str(value) for value in impact.get("evidence_used", [])]
-        errors = [
-            f"vpa_impact.evidence_used unknown evidence_id {value}"
-            for value in used
-            if value not in evidence
-        ]
-        errors.extend(
-            f"vpa_impact.evidence_used evidence_id {value} was not referenced by stage1"
-            for value in used
-            if value not in stage1_ids
-        )
-        background_relation = impact.get("background_relation")
-        timing_relation = impact.get("entry_timing_relation")
-        effect = impact.get("decision_effect")
-        if timing_relation in {"neutral", "insufficient_data"} and effect != "keep_brooks_baseline":
-            errors.append(
-                "vpa_impact.decision_effect neutral/insufficient_data timing must "
-                "keep_brooks_baseline"
-            )
-        if effect != "keep_brooks_baseline" and not used:
-            errors.append(
-                "vpa_impact.evidence_used non-baseline decision_effect requires evidence_used"
-            )
-        if effect != "keep_brooks_baseline" and used and not any(
-            evidence_has_relative_volume_comparison(evidence.get(value))
-            for value in used
-        ):
-            errors.append(
-                "vpa_impact.evidence_used non-baseline decision_effect requires "
-                "relative-volume evidence"
-            )
-        if data_status == "unavailable" and (
-            background_relation != "insufficient_data"
-            or timing_relation != "insufficient_data"
-            or effect != "keep_brooks_baseline"
-        ):
-            errors.append(
-                "vpa_impact unavailable program data cannot alter Brooks baseline"
-            )
-        if isinstance(context, dict):
-            if background_relation != context.get("background_relation"):
-                errors.append(
-                    "vpa_impact.background_relation changed between VPA stages"
-                )
-            if timing_relation != context.get("entry_timing_relation"):
-                errors.append(
-                    "vpa_impact.entry_timing_relation changed between VPA stages"
-                )
-        return errors
-
-    @staticmethod
-    def _check_vpa_contract(
-        stage: str,
-        obj: dict[str, Any],
-        *,
-        stage1_json: dict[str, Any] | None,
-        vpa_evidence_catalog: dict[str, Any] | None,
-    ) -> list[str]:
-        """Return all VPA findings for focused rule tests and diagnostics."""
-        return [
-            *JsonValidator._check_vpa_hard_contract(
-                stage,
-                obj,
-                stage1_json=stage1_json,
-                vpa_evidence_catalog=vpa_evidence_catalog,
-            ),
-            *JsonValidator._check_vpa_quality_warnings(
-                stage,
-                obj,
-                stage1_json=stage1_json,
-                vpa_evidence_catalog=vpa_evidence_catalog,
-            ),
-        ]
-
-    @staticmethod
-    def _check_vpa_quality_warnings(
-        stage: str,
-        obj: dict[str, Any],
-        *,
-        stage1_json: dict[str, Any] | None,
-        vpa_evidence_catalog: dict[str, Any] | None,
-    ) -> list[str]:
-        """Collect prose-level VPA findings that are not safe hard-reject signals."""
-        catalog = (
-            vpa_evidence_catalog
-            if isinstance(vpa_evidence_catalog, dict)
-            else {}
-        )
-        evidence = {
-            str(item.get("evidence_id")): item
-            for item in catalog.get("evidence", [])
-            if isinstance(item, dict) and item.get("evidence_id")
-        }
-        data_status = str(catalog.get("data_status") or "unavailable")
-        capabilities = catalog.get("capabilities") or {}
-        warnings: list[str] = []
-
-        from pa_agent.ai.factual_grounding import (
-            validate_future_confirmation_narrative,
-            validate_inference_only_narrative,
-            validate_vpa_comparator_narrative,
-        )
-
-        if stage == "stage1":
-            context = obj.get("vpa_context")
-            if not isinstance(context, dict):
-                return []
-            observations = [
-                item
-                for item in context.get("observations", [])
-                if isinstance(item, dict)
-            ]
-            substantive = {
-                "effort_result",
-                "sequence_comparison",
-                "acceptance_rejection",
-                "entry_timing",
-            }
-            if data_status != "unavailable" and not any(
-                observation.get("finding_kind") in substantive
-                and any(
-                    evidence_has_relative_volume_comparison(
-                        evidence.get(str(evidence_id))
-                    )
-                    for evidence_id in observation.get("evidence_ids", [])
-                )
-                for observation in observations
-            ):
-                warnings.append(
-                    "available VPA context requires an independent price-volume finding"
-                )
-
-            raw_confirmation = context.get("next_confirmation")
-            confirmation_trigger = (
-                raw_confirmation.get("trigger")
-                if isinstance(raw_confirmation, dict)
-                else str(raw_confirmation or "")
-            )
-            narratives = [
-                ("vpa_context.summary", context.get("summary")),
-                *[
-                    (
-                        f"vpa_context.observations[{index}].interpretation",
-                        item.get("interpretation"),
-                    )
-                    for index, item in enumerate(observations)
-                ],
-            ]
-            for path, text in narratives:
-                warnings.extend(validate_inference_only_narrative(text, path=path))
-            confirmation_state = (
-                raw_confirmation.get("state")
-                if isinstance(raw_confirmation, dict)
-                else None
-            )
-            if confirmation_state == "pending_closed_bar":
-                warnings.extend(
-                    validate_future_confirmation_narrative(
-                        confirmation_trigger,
-                        path="vpa_context.next_confirmation.trigger",
-                    )
-                )
-            else:
-                warnings.extend(
-                    validate_inference_only_narrative(
-                        confirmation_trigger,
-                        path="vpa_context.next_confirmation.trigger",
-                    )
-                )
-
-            seasonality = catalog.get("comparators", {}).get("seasonality", {})
-            market_session = (
-                str(seasonality.get("market_session") or "")
-                if isinstance(seasonality, dict)
-                else ""
-            )
-            for path, text in narratives:
-                narrative = str(text or "")
-                if (
-                    market_session.lower() == "unclassified"
-                    and _VPA_UNCLASSIFIED_SESSION_RE.search(narrative)
-                ):
-                    warnings.append(
-                        f"{path} contains an unsupported named-session claim"
-                    )
-                if (
-                    not capabilities.get("actor_attribution", False)
-                    and _VPA_ACTOR_ATTRIBUTION_RE.search(narrative)
-                ):
-                    warnings.append(
-                        f"{path} volume provenance cannot support actor attribution"
-                    )
-                if (
-                    capabilities.get("interpretation_ceiling")
-                    == "relative_activity_only"
-                    and _VPA_PROXY_CERTAINTY_RE.search(narrative)
-                ):
-                    warnings.append(
-                        f"{path} proxy/unknown volume supports relative activity only, "
-                        "not active demand/supply"
-                    )
-            if _VPA_FORMING_BAR_RE.search(str(confirmation_trigger or "")):
-                warnings.append(
-                    "vpa_context.next_confirmation.trigger must wait for a future closed bar"
-                )
-            for index, observation in enumerate(observations):
-                observation_ids = {
-                    str(evidence_id)
-                    for evidence_id in observation.get("evidence_ids", [])
-                }
-                warnings.extend(
-                    validate_vpa_comparator_narrative(
-                        observation.get("interpretation"),
-                        evidence_items=(
-                            item
-                            for evidence_id, item in evidence.items()
-                            if evidence_id in observation_ids
-                        ),
-                        path=f"vpa_context.observations[{index}].interpretation",
-                    )
-                )
-            return warnings
-
-        impact = obj.get("vpa_impact")
-        if not isinstance(impact, dict):
-            return []
-        context = (
-            stage1_json.get("vpa_context")
-            if isinstance(stage1_json, dict)
-            else None
-        )
-        stage1_ids = {
-            str(evidence_id)
-            for observation in (context or {}).get("observations", [])
-            if isinstance(observation, dict)
-            for evidence_id in observation.get("evidence_ids", [])
-        }
-        used = [str(value) for value in impact.get("evidence_used", [])]
-        if (
-            data_status != "unavailable"
-            and (stage1_json or {}).get("gate_result") == "proceed"
-            and stage1_ids
-            and not used
-        ):
-            warnings.append(
-                "VPA Stage 2 must cite evidence_used when the PA gate proceeds"
-            )
-        warnings.extend(
-            validate_inference_only_narrative(
-                impact.get("reason"),
-                path="vpa_impact.reason",
-            )
-        )
-        warnings.extend(
-            validate_vpa_comparator_narrative(
-                impact.get("reason"),
-                evidence_items=(
-                    evidence[value] for value in used if value in evidence
-                ),
-                path="vpa_impact.reason",
-            )
-        )
-        reason = str(impact.get("reason") or "")
-        if (
-            not capabilities.get("actor_attribution", False)
-            and _VPA_ACTOR_ATTRIBUTION_RE.search(reason)
-        ):
-            warnings.append(
-                "vpa_impact.reason volume provenance cannot support actor attribution"
-            )
-        if (
-            capabilities.get("interpretation_ceiling") == "relative_activity_only"
-            and _VPA_PROXY_CERTAINTY_RE.search(reason)
-        ):
-            warnings.append(
-                "vpa_impact.reason proxy/unknown volume supports relative activity only, "
-                "not active demand/supply"
-            )
-        return warnings
-
-    @staticmethod
-    def _check_paired_vpa_stage2_contract(
-        obj: dict[str, Any],
-        baseline_stage2: dict[str, Any],
-    ) -> list[str]:
-        """Enforce frozen Brooks fields and prevent VPA-created trades."""
-        decision = obj.get("decision")
-        baseline_decision = baseline_stage2.get("decision")
-        if not isinstance(decision, dict) or not isinstance(baseline_decision, dict):
-            return ["paired Stage 2 requires both decision objects"]
-
-        errors: list[str] = []
-        for key in (
-            "diagnosis_confidence",
-            "diagnosis_confidence_reasoning",
-            "estimated_win_rate",
-            "estimated_win_rate_reasoning",
-        ):
-            if decision.get(key) != baseline_decision.get(key):
-                errors.append(f"decision.{key} must equal frozen Brooks baseline")
-
-        for key in (
-            "diagnosis_summary",
-            "bar_analysis",
-            "next_bar_prediction",
-            "next_cycle_prediction",
-        ):
-            if obj.get(key) != baseline_stage2.get(key):
-                errors.append(f"{key} must equal frozen Brooks baseline")
-
-        baseline_order = baseline_decision.get("order_type")
-        current_order = decision.get("order_type")
-        if baseline_order == "不下单" and current_order != "不下单":
-            errors.append("decision.order_type cannot create a trade from a no-order baseline")
-
-        impact = obj.get("vpa_impact")
-        effect = impact.get("decision_effect") if isinstance(impact, dict) else None
-        if effect == "keep_brooks_baseline":
-            if decision != baseline_decision:
-                errors.append(
-                    "decision must equal baseline when "
-                    "decision_effect=keep_brooks_baseline"
-                )
-            if obj.get("decision_trace") != baseline_stage2.get("decision_trace"):
-                errors.append(
-                    "decision_trace must equal baseline when "
-                    "decision_effect=keep_brooks_baseline"
-                )
-            if obj.get("terminal") != baseline_stage2.get("terminal"):
-                errors.append(
-                    "terminal must equal baseline when decision_effect=keep_brooks_baseline"
-                )
-        else:
-            effect_fields = (
-                "order_type",
-                "order_direction",
-                "entry_price",
-                "stop_loss_price",
-                "take_profit_price",
-                "take_profit_price_2",
-                "entry_rule",
-                "entry_basis_bar",
-                "entry_basis_extreme",
-                "trade_confidence",
-                "watch_points",
-                "risk_assessment",
-                "invalidation_condition",
-            )
-            if not any(
-                decision.get(key) != baseline_decision.get(key) for key in effect_fields
-            ):
-                errors.append(
-                    "non-baseline decision_effect must be applied to existing Stage 2 fields"
-                )
-        if effect == "lower_confidence":
-            try:
-                lowered = float(decision.get("trade_confidence")) < float(
-                    baseline_decision.get("trade_confidence")
-                )
-            except (TypeError, ValueError):
-                lowered = False
-            if not lowered:
-                errors.append(
-                    "decision_effect=lower_confidence requires a lower trade_confidence"
-                )
-        if effect in {"require_confirmation", "prefer_retest"}:
-            timing_fields = (
-                "order_type",
-                "entry_price",
-                "entry_rule",
-                "watch_points",
-                "invalidation_condition",
-            )
-            if not any(
-                decision.get(key) != baseline_decision.get(key)
-                for key in timing_fields
-            ):
-                errors.append(
-                    f"decision_effect={effect} must change entry timing fields"
-                )
-        if effect == "reject_current_attempt" and not (
-            baseline_order != "不下单" and current_order == "不下单"
-        ):
-            errors.append(
-                "decision_effect=reject_current_attempt requires an executable baseline and no-order result"
-            )
-        return errors
 
     @staticmethod
     def _check_no_order_invariant(obj: dict) -> dict | None:

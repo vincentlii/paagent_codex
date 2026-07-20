@@ -22,7 +22,7 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
 - `VpaEvidenceReport`：VPA 分析者针对 PA 假设给出的支持、挑战或信息不足结论；
   它不能创建 Setup、翻转方向或修改胜率。
 - `JointDecisionProposal`：联合裁决者在既有 PA 候选中选择当前 Entry Attempt、
-  时机或等待条件。
+  时机或等待条件，并只携带可影响时机/置信度的有界补丁。
 - `ComputedTradeMetrics`：程序根据候选价格计算的止损距离、目标距离、成本和盈亏比。
 - `ExecutionPolicyResult`：程序对订单合法性、风险边界与运行模式的最终约束结果。
 - `RunOutcome`：`completed`、`completed_with_warnings`、`degraded_pa_only`、
@@ -41,10 +41,11 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 ## 分析顺序
 
 1. 程序解析一次数据源身份并冻结主周期、高周期和成交量事实。
-2. PA Framework Analyst 产生主假设与替代假设，不下最终订单。
-3. VPA Evidence Analyst 独立检查量价证据，对 PA 假设支持、挑战或声明信息不足。
-4. Joint Decision Arbiter 综合两份结构化报告，在既有 PA 候选内决定时机。
-5. 程序计算交易指标并执行安全约束，随后持久化完整审计链。
+2. PA Framework Analyst 产生市场框架；程序封装主假设、替代假设与 Setup candidates。
+3. PA-only Arbiter 形成并冻结不含 VPA 的 Stage 2 baseline。
+4. VPA Evidence Analyst 独立检查量价证据，对 PA 假设支持、挑战或声明信息不足。
+5. Joint Decision Arbiter 只输出有界补丁，在既有 PA candidate 内决定时机。
+6. 程序把合法补丁应用到 baseline，复算交易指标并执行安全约束，随后持久化完整审计链。
 
 这是一条信息依赖链，不代表 VPA 从属于 PA，也不允许形成第二套 Strategy Router。
 
@@ -72,4 +73,3 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 - 同一分析内主周期与高周期的数据源身份一致。
 - 任何失败都不接受非法订单、不静默损坏记录、不导致未处理崩溃。
 - 历史回放、人工标签和真实成交结果必须分开存储，不互相冒充。
-

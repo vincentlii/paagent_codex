@@ -4,8 +4,19 @@ Apply only near a PA-marked extended leg, climax risk, ending spike or clear bou
 
 Buying/Selling Climax requires more than “higher recent volume”: prior extension, local distribution-tail activity, effort/result tension or final expansion, then later Automatic Reaction, behavior change or test. Ordinary RVOL/percentiles are not extreme; cite program evidence IDs without copying their numbers. No fixed RVOL, percentile, ATR or bar-count threshold defines a climax across assets.
 
+Separate four hypotheses that are often collapsed into one label:
+
+- Climax: unusually urgent late-stage effort/result that may mark a temporary culmination.
+- Stopping action: price ceases making efficient progress and produces a material opposite response.
+- Absorption: repeated effort is met by opposing interest while location holds; direction is unresolved until the range breaks and is accepted.
+- Exhaustion: the prior side loses capacity to continue; this still does not prove that the opposite side has taken control.
+
+Stopping Volume near a low/high is only a candidate. It needs a later response and test; continued same-direction expansion accepted beyond the area invalidates it. Absorption needs repeated interaction or later resolution, not one high-activity narrow bar. Exhaustion needs failed continuation or behavior change, not merely smaller volume.
+
 High activity with narrow spread or poor progress can be absorption, exhaustion, two-sided matching or normal congestion. It does not reveal participant identity. Absorption means an opposition hypothesis while price holds location; exhaustion means prior pressure loses capacity and later fails to continue. Both remain hypotheses until later direction and acceptance resolve them. A single high-activity bar at the end of a move is only a candidate, especially with tick/proxy/unknown volume.
 
 After a possible selling climax, a wide bullish response closing near its high can be an Automatic Rally candidate even when its volume is below the climax bar, especially if activity remains elevated versus its own causal baseline. Symmetrically, a wide bearish response can follow a buying climax. Never translate “lower than the extreme predecessor” into “low effort” without checking baseline-relative activity, price result, location and subsequent acceptance. Retain at least one competing explanation until later closed bars resolve the response.
+
+At a trend end, ask whether subsequent closed bars confirm a pause, two-legged correction, range formation or actual reversal chain. Brooks trendline break/test and Always-In semantics remain the framework. VPA can challenge chasing the current attempt, but it cannot turn potential stopping action into an opposite order.
 
 Allowed consequence: caution about the current Entry Attempt through later confirmation, retest preference or lower confidence when independent volume evidence exists. Never use this as a standalone reversal order signal or modify numeric estimated win rate.

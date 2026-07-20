@@ -70,7 +70,8 @@ VPA 或 Joint 失败不会使 PA 分析伪装失败；记录明确标记 `degrad
 
 ### `soft`
 
-执行与 `shadow` 相同的三角色链路，但 `JointDecisionProposal.stage2_decision` 是正式结果。
+执行与 `shadow` 相同的三角色链路。程序把合法 `JointDecisionProposal.decision_patch` 应用到
+冻结 PA baseline 并重跑 Stage 2 校验，生成的 materialized decision 是正式结果。
 VPA 或 Joint 在一次定向修复后仍失败时，正式结果退化为 PA-only，并标记
 `degraded_pa_only`。用户置信度阈值只对最终正式结果应用一次。
 
@@ -155,7 +156,12 @@ PA 链先固化为 `PaHypothesisSet`：
 `JointDecisionProposal` 只保存：
 
 - `joint_arbitration`：selected PA candidate、`evidence_used`、`decision_effect`、`reason`
-- `stage2_decision`：沿用正常 Stage 2 Schema 的完整候选结果
+- `decision_patch`：仅允许 `trade_confidence`、`trade_confidence_reasoning`、`watch_points`、
+  `risk_assessment`、`invalidation_condition`
+
+Joint 模型不复制完整 Stage 2。Validator 在冻结 PA baseline 上确定性应用补丁；需要等待确认、
+偏好回测或拒绝当前尝试时，程序统一清空订单三价并形成合法 no-order 结果。materialized
+`stage2_decision` 是程序派生的运行/审计结果，不是 Joint 模型协议字段。
 
 `vpa_context` / `vpa_impact` 仅作为 records 与旧 GUI 的兼容摘要，不再是模型角色之间的正式
 输入输出契约。VPA 关闭时不构建 catalog、不派生 VPA Schema，也不向 PA Prompt 注入任何
@@ -175,14 +181,21 @@ VPA 不得：
 - 仅依赖 PA 已有价格结构，伪装成独立 VPA 支持或冲突。
 
 Joint 可以影响现有 `trade_confidence`、`watch_points`、`risk_assessment`、entry timing 和
-trigger requirement。Shadow 的正式结果仍使用 PA-only baseline；Soft 才使用 Joint。
+trigger requirement。`keep_brooks_baseline` 必须为空补丁；中性或证据不足不得改 baseline。
+Shadow 的正式结果仍使用 PA-only baseline；Soft 才使用 materialized Joint 结果。
 
 Validator 只判断事实与权限，不判断某个 Spring、Absorption 或 Exhaustion 解释是否专业上唯一正确。
+
+正式 Role Validator 只把无歧义契约设为 hard error：未知 evidence ID、目录身份不一致、
+结构化关系缺少相对量证据、越权改变 PA baseline、明确引用 K0，或 `K#` 超出所引 evidence/
+冻结闭盘窗口。数字转抄、自由文本比较措辞、命名时段、参与者归因和 VPA 信息增量不足均为
+可审计 warning，不触发重试或中断分析；这些 regex 发现不能升级成隐性交易 Gate。VPA/Joint
+角色即使最终 hard failure，也只能降级为已验证 PA-only，不得使整次 PA 分析失败。
 
 ## 8. PA grounding 与高周期
 
 - `ANALYSIS_FACT_CATALOG` 提供可复算的价格事实；`pa_evidence.fact_refs` 和 `theory_rule_ids` 使 PA 判断可追溯。
-- `PA.BAR.K# close_zone` 只做单棒几何四分位报告；Prompt 仅展开 K1-K8 的详细 `PA.BAR`，更长背景继续由完整 K 线表和 `PA.WINDOW` 提供，避免重复注入 100 行同类几何事实。
+- `PA.BAR.K# close_zone` 只做单棒几何四分位报告；Prompt 仅展开 K1-K10 的详细几何，更长背景继续由完整 K 线表和 `PA.WINDOW` 提供，避免重复注入整窗同类事实。
 - `PA.PAIR.K#.K#` 的比较方向固定为 newer bar 相对 older bar，字段使用 `newer_high_vs_older_high`、`newer_low_vs_older_low`、`newer_close_vs_older_close`。不得保留 `high_relation` 等缺少主客体的旧别名。
 - PA 的 K 线阴阳、inside/outside、窗口数量、EMA 方向和程序差值必须与目录一致；精确阳阴棒数量与连续段只留在 `PA.WINDOW`，LLM 只引用 fact ID 后做定性解释。
 - `bar_by_bar_summary[].reason`、signal reason、`gate_trace[].reason` 与 `htf_context` 是推断字段，不得手工复写 OHLC、EMA、ATR、比率、百分比、阳阴棒数量、价位数字或 `canonical_value` 的 key=value。模型引用 `PA.*` / `HTF.H#` 后只解释 Brooks 背景与时机。

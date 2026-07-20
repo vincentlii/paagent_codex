@@ -52,7 +52,7 @@ def test_stage2_vpa_off_strips_vpa_without_touching_order() -> None:
         "wyckoff_signal": "spring",
     }
 
-    out = normalize_stage2(raw, vpa_enabled=False)
+    out = normalize_stage2(raw)
 
     assert out["decision"] == raw["decision"]
     assert "vpa_impact" not in out

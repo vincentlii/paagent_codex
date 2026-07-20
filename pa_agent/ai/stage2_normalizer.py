@@ -18,12 +18,9 @@ def normalize_stage2(
     *,
     kline_frame: Any = None,
     skip_next_bar: bool = False,
-    vpa_enabled: bool = False,
 ) -> dict[str, Any]:
     """Return a copy with notation-only changes and feature-flag filtering."""
-    out = copy.deepcopy(obj)
-    if not vpa_enabled:
-        out = strip_vpa_fields(out)
+    out = strip_vpa_fields(copy.deepcopy(obj))
     normalize_stage2_traces(out, default_max_seq=_max_bar_seq(kline_frame))
     if skip_next_bar:
         out.pop("next_bar_prediction", None)

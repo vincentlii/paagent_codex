@@ -61,26 +61,25 @@ def strip_vpa_prompt_sections(text: str) -> str:
     return _VPA_PROMPT_RE.sub("\n", text)
 
 
-def materialize_vpa_observation_ranges(
-    stage1_obj: dict[str, Any],
+def materialize_vpa_report_observation_ranges(
+    report_obj: dict[str, Any],
     evidence_catalog: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Project observation ranges from cited immutable evidence IDs.
+    """Project report observation ranges from cited immutable evidence IDs.
 
     ``bar_range`` is reproducible citation metadata, so the program owns it.
     Unknown IDs remain untouched and are rejected by the contract validator.
     """
-    out = copy.deepcopy(stage1_obj)
-    context = out.get("vpa_context")
+    out = copy.deepcopy(report_obj)
     catalog = evidence_catalog if isinstance(evidence_catalog, dict) else {}
-    if not isinstance(context, dict):
+    if not isinstance(out, dict):
         return out
     evidence = {
         str(item.get("evidence_id")): item
         for item in catalog.get("evidence", [])
         if isinstance(item, dict) and item.get("evidence_id")
     }
-    for observation in context.get("observations", []):
+    for observation in out.get("observations", []):
         if not isinstance(observation, dict):
             continue
         bounds = [

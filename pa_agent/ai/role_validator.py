@@ -12,6 +12,14 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
+from pa_agent.ai.factual_grounding import (
+    validate_future_confirmation_narrative,
+    validate_inference_only_narrative,
+    validate_k_reference_bounds,
+    validate_vpa_capability_narrative,
+    validate_vpa_comparator_narrative,
+    validate_vpa_k_references,
+)
 from pa_agent.ai.json_validator import (
     JsonValidator,
     Ok,
@@ -27,27 +35,11 @@ from pa_agent.ai.role_contracts import (
     VpaEvidenceReport,
 )
 from pa_agent.ai.vpa_measurements import evidence_has_relative_volume_comparison
-from pa_agent.ai.vpa_sanitizer import materialize_vpa_observation_ranges
+from pa_agent.ai.vpa_sanitizer import materialize_vpa_report_observation_ranges
 from pa_agent.config.settings import ValidationSettings
 
 _EXECUTABLE_ORDER_TYPES = frozenset(
     {"限价单", "突破单", "市价单", "limit", "breakout", "market"}
-)
-_TIMING_FIELDS = frozenset(
-    {
-        "order_type",
-        "entry_price",
-        "entry_basis_bar",
-        "entry_basis_extreme",
-        "entry_rule",
-        "trade_confidence",
-        "trade_confidence_reasoning",
-        "reasoning",
-        "key_factors",
-        "watch_points",
-        "risk_assessment",
-        "invalidation_condition",
-    }
 )
 
 
@@ -88,6 +80,210 @@ def _schema_errors(schema: dict[str, Any], obj: dict[str, Any]) -> list[str]:
         path = ".".join(str(item) for item in error.absolute_path) or "<root>"
         result.append(f"{path}: {error.message}")
     return result
+
+
+def _vpa_capability_context(
+    catalog: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    capabilities = catalog.get("capabilities")
+    capabilities = capabilities if isinstance(capabilities, dict) else {}
+    comparators = catalog.get("comparators")
+    comparators = comparators if isinstance(comparators, dict) else {}
+    seasonality = comparators.get("seasonality")
+    seasonality = seasonality if isinstance(seasonality, dict) else {}
+    market_session = str(seasonality.get("market_session") or "unclassified")
+    return capabilities, market_session
+
+
+def _validate_vpa_report_grounding(
+    report: VpaEvidenceReport,
+    *,
+    evidence_items: dict[str, dict[str, Any]],
+    catalog: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Validate only reproducible narrative facts and capability boundaries."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    capabilities, market_session = _vpa_capability_context(catalog)
+
+    def validate_inference(
+        text: object,
+        *,
+        path: str,
+        cited_ids: set[str],
+        check_k_references: bool,
+    ) -> None:
+        cited = [
+            evidence_items[evidence_id]
+            for evidence_id in sorted(cited_ids)
+            if evidence_id in evidence_items
+        ]
+        warnings.extend(validate_inference_only_narrative(text, path=path))
+        warnings.extend(
+            validate_vpa_capability_narrative(
+                text,
+                path=path,
+                capabilities=capabilities,
+                market_session=market_session,
+            )
+        )
+        warnings.extend(
+            validate_vpa_comparator_narrative(
+                text,
+                evidence_items=cited,
+                path=path,
+            )
+        )
+        if check_k_references:
+            errors.extend(
+                validate_vpa_k_references(
+                    text,
+                    evidence_items=cited,
+                    path=path,
+                )
+            )
+
+    validate_inference(
+        report.summary,
+        path="vpa_report.summary",
+        cited_ids=report.evidence_ids,
+        check_k_references=True,
+    )
+    for index, observation in enumerate(report.observations):
+        validate_inference(
+            observation.interpretation,
+            path=f"vpa_report.observations[{index}].interpretation",
+            cited_ids=set(observation.evidence_ids),
+            check_k_references=True,
+        )
+    for index, assessment in enumerate(report.hypothesis_assessments):
+        validate_inference(
+            assessment.reason,
+            path=f"vpa_report.hypothesis_assessments[{index}].reason",
+            cited_ids=set(assessment.evidence_ids),
+            check_k_references=True,
+        )
+
+    confirmation = report.next_confirmation
+    confirmation_path = "vpa_report.next_confirmation.trigger"
+    if confirmation.state == "pending_closed_bar":
+        confirmation_findings = validate_future_confirmation_narrative(
+            confirmation.trigger,
+            path=confirmation_path,
+        )
+        errors.extend(
+            item for item in confirmation_findings if "must not use K0" in item
+        )
+        warnings.extend(
+            item for item in confirmation_findings if "must not use K0" not in item
+        )
+    else:
+        warnings.extend(
+            validate_inference_only_narrative(
+                confirmation.trigger,
+                path=confirmation_path,
+            )
+        )
+    warnings.extend(
+        validate_vpa_capability_narrative(
+            confirmation.trigger,
+            path=confirmation_path,
+            capabilities=capabilities,
+            market_session=market_session,
+        )
+    )
+    errors.extend(
+        validate_vpa_k_references(
+            confirmation.trigger,
+            evidence_items=evidence_items.values(),
+            path=confirmation_path,
+        )
+    )
+
+    substantive = {
+        "effort_result",
+        "sequence_comparison",
+        "acceptance_rejection",
+        "entry_timing",
+    }
+    if report.data_status != "unavailable" and not any(
+        observation.finding_kind in substantive
+        and any(
+            evidence_has_relative_volume_comparison(
+                evidence_items.get(evidence_id)
+            )
+            for evidence_id in observation.evidence_ids
+        )
+        for observation in report.observations
+    ):
+        warnings.append(
+            "available VPA report has no independent price-volume finding"
+        )
+    return errors, warnings
+
+
+def _validate_joint_narratives(
+    arbitration: JointArbitration,
+    *,
+    patch: dict[str, Any],
+    evidence_items: list[dict[str, Any]],
+    catalog: dict[str, Any],
+    maximum_bar_seq: int | None,
+) -> tuple[list[str], list[str]]:
+    """Ground the joint role's prose without interpreting its trade judgment."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    capabilities, market_session = _vpa_capability_context(catalog)
+
+    def validate_common(text: object, *, path: str) -> None:
+        warnings.extend(validate_inference_only_narrative(text, path=path))
+        warnings.extend(
+            validate_vpa_capability_narrative(
+                text,
+                path=path,
+                capabilities=capabilities,
+                market_session=market_session,
+            )
+        )
+        errors.extend(
+            validate_k_reference_bounds(
+                text,
+                maximum=maximum_bar_seq,
+                path=path,
+            )
+        )
+
+    validate_common(arbitration.reason, path="joint_arbitration.reason")
+    warnings.extend(
+        validate_vpa_comparator_narrative(
+            arbitration.reason,
+            evidence_items=evidence_items,
+            path="joint_arbitration.reason",
+        )
+    )
+    for field in (
+        "trade_confidence_reasoning",
+        "risk_assessment",
+        "invalidation_condition",
+    ):
+        value = patch.get(field)
+        if value:
+            path = f"decision_patch.{field}"
+            validate_common(value, path=path)
+            if field != "invalidation_condition":
+                warnings.extend(
+                    validate_vpa_comparator_narrative(
+                        value,
+                        evidence_items=evidence_items,
+                        path=path,
+                    )
+                )
+    for index, watch_point in enumerate(patch.get("watch_points") or []):
+        validate_common(
+            watch_point,
+            path=f"decision_patch.watch_points[{index}]",
+        )
+    return errors, warnings
 
 
 def validate_vpa_evidence(
@@ -168,11 +364,10 @@ def validate_vpa_evidence(
             + ", ".join(sorted(pa_hypotheses.hypothesis_ids))
         )
     if isinstance(report_obj, dict):
-        materialized = materialize_vpa_observation_ranges(
-            {"vpa_context": report_obj},
+        report_obj = materialize_vpa_report_observation_ranges(
+            report_obj,
             catalog,
         )
-        report_obj = materialized.get("vpa_context")
         outer = {"vpa_report": report_obj}
 
     errors = [
@@ -257,6 +452,13 @@ def validate_vpa_evidence(
             )
 
     warnings: list[str] = []
+    grounding_errors, grounding_warnings = _validate_vpa_report_grounding(
+        report,
+        evidence_items=evidence_items,
+        catalog=catalog,
+    )
+    errors.extend(grounding_errors)
+    warnings.extend(grounding_warnings)
     if not report.observations and report.data_status != "unavailable":
         warnings.append("usable VPA data produced no contextual observations")
     if (
@@ -284,7 +486,14 @@ def validate_joint_decision(
     kline_frame: Any,
     skip_next_bar: bool,
 ) -> RoleValidationResult:
-    """Validate that joint arbitration stays inside PA and VPA authority."""
+    """Validate and materialize a bounded joint decision patch.
+
+    PA's validated Stage 2 result remains the source of prices, direction,
+    setup, trader-equation inputs, and predictions.  The joint arbiter emits
+    only its semantic effect and a small patch; this function deterministically
+    applies no-order invariants when the arbiter delays or rejects the current
+    attempt.
+    """
     outer, parse_errors = _parse_json_object(raw_text)
     if outer is None:
         return RoleValidationResult(None, tuple(parse_errors))
@@ -304,63 +513,41 @@ def validate_joint_decision(
             ),
         )
 
-    stage2 = envelope.stage2_decision
-    validator = JsonValidator(ValidationSettings())
-    stage2_result = validator.validate(
-        "stage2",
-        json.dumps(stage2, ensure_ascii=False),
-        kline_frame=kline_frame,
-        stage1_json=stage1,
-        skip_next_bar=skip_next_bar,
-    )
-    warnings: list[str] = []
-    if isinstance(stage2_result, ValidationError):
-        errors.extend(
-            [
-                stage2_result.message,
-                *[f"missing:{item}" for item in stage2_result.missing_fields],
-                *[f"invalid:{item}" for item in stage2_result.invalid_fields],
-            ]
+    normalizations: list[dict[str, Any]] = []
+    raw_patch = envelope.decision_patch.model_dump(exclude_unset=True)
+    patch = {key: value for key, value in raw_patch.items() if value is not None}
+    if patch != raw_patch:
+        normalizations.append(
+            {
+                "path": "decision_patch",
+                "before": raw_patch,
+                "after": patch,
+                "reason": "explicit null is equivalent to an omitted optional patch field",
+            }
         )
-    else:
-        assert isinstance(stage2_result, Ok)
-        stage2 = stage2_result.obj
-        outer["stage2_decision"] = stage2
-        warnings.extend(item.message for item in stage2_result.warnings)
 
-    baseline_decision = baseline_stage2.get("decision")
-    joint_decision = stage2.get("decision")
-    if not isinstance(baseline_decision, dict) or not isinstance(joint_decision, dict):
-        errors.append("baseline and joint decisions must both be objects")
-        return RoleValidationResult(None, tuple(errors), tuple(warnings))
+    baseline_clean = copy.deepcopy(baseline_stage2)
+    baseline_clean.pop("confidence_threshold", None)
+    baseline_decision = baseline_clean.get("decision")
+    if not isinstance(baseline_decision, dict):
+        return RoleValidationResult(
+            None,
+            ("baseline Stage 2 decision must be an object",),
+        )
 
     baseline_order = str(baseline_decision.get("order_type") or "")
-    joint_order = str(joint_decision.get("order_type") or "")
     baseline_executable = baseline_order in _EXECUTABLE_ORDER_TYPES
-    joint_executable = joint_order in _EXECUTABLE_ORDER_TYPES
-    if not baseline_executable and joint_executable:
-        errors.append("joint arbiter cannot create a trade from a PA no-order baseline")
-    if joint_decision.get("diagnosis_confidence") != baseline_decision.get(
-        "diagnosis_confidence"
-    ):
-        errors.append("joint arbiter cannot change diagnosis_confidence")
-    if joint_decision.get("estimated_win_rate") != baseline_decision.get(
-        "estimated_win_rate"
-    ):
-        errors.append("joint arbiter cannot change estimated_win_rate")
-    if (
-        baseline_executable
-        and joint_executable
-        and joint_decision.get("order_direction")
-        != baseline_decision.get("order_direction")
-    ):
-        errors.append("joint arbiter cannot reverse the PA order direction")
+    effect = arbitration.decision_effect
+
+    warnings: list[str] = []
 
     if arbitration.selected_candidate_id is not None:
         if arbitration.selected_candidate_id not in pa_hypotheses.candidate_ids:
             errors.append("joint_arbitration selected an unknown PA candidate")
-    elif joint_executable:
-        errors.append("an executable joint decision requires selected_candidate_id")
+    elif baseline_executable:
+        errors.append(
+            "an executable PA baseline requires selected_candidate_id, even when delayed"
+        )
 
     used = set(arbitration.evidence_used)
     if not used.issubset(vpa_report.evidence_ids):
@@ -374,7 +561,22 @@ def validate_joint_decision(
         evidence_has_relative_volume_comparison(evidence_items.get(item))
         for item in used
     )
-    effect = arbitration.decision_effect
+    joint_grounding_errors, joint_grounding_warnings = _validate_joint_narratives(
+        arbitration,
+        patch=patch,
+        evidence_items=[
+            evidence_items[evidence_id]
+            for evidence_id in sorted(used)
+            if evidence_id in evidence_items
+        ],
+        catalog=catalog,
+        maximum_bar_seq=max(
+            (int(bar.seq) for bar in getattr(kline_frame, "bars", ())),
+            default=None,
+        ),
+    )
+    errors.extend(joint_grounding_errors)
+    warnings.extend(joint_grounding_warnings)
     if effect != "keep_brooks_baseline" and not used:
         errors.append("a non-baseline decision_effect requires VPA evidence")
     if effect != "keep_brooks_baseline" and not relative_used:
@@ -391,59 +593,129 @@ def validate_joint_decision(
     if not baseline_executable and effect != "keep_brooks_baseline":
         errors.append("VPA cannot alter a PA no-order baseline")
 
-    baseline_clean = copy.deepcopy(baseline_stage2)
-    baseline_clean.pop("confidence_threshold", None)
     if effect == "keep_brooks_baseline":
-        if stage2 != baseline_clean:
+        if patch:
+            errors.append("keep_brooks_baseline requires an empty decision_patch")
+    elif effect == "lower_confidence":
+        try:
+            lowered = int(patch.get("trade_confidence"))
+            baseline_confidence = int(baseline_decision.get("trade_confidence"))
+        except (TypeError, ValueError):
+            lowered = baseline_confidence = -1
+        if lowered < 0 or lowered >= baseline_confidence:
             errors.append(
-                "keep_brooks_baseline requires an unchanged Stage 2 decision"
+                "lower_confidence requires decision_patch.trade_confidence "
+                "to be strictly lower than the PA baseline"
             )
-    else:
-        if stage2 == baseline_clean:
-            errors.append("non-baseline decision_effect did not change timing")
-        changed_decision_fields = {
-            key
-            for key in set(baseline_decision) | set(joint_decision)
-            if baseline_decision.get(key) != joint_decision.get(key)
-        }
-        forbidden_changes = changed_decision_fields - _TIMING_FIELDS
-        if forbidden_changes:
-            errors.append(
-                "joint arbiter changed non-timing decision fields: "
-                + ", ".join(sorted(forbidden_changes))
-            )
-        if effect == "lower_confidence":
-            try:
-                lowered = int(joint_decision.get("trade_confidence"))
-                baseline_confidence = int(
-                    baseline_decision.get("trade_confidence")
-                )
-            except (TypeError, ValueError):
-                lowered = baseline_confidence = -1
-            if lowered < 0 or lowered >= baseline_confidence:
-                errors.append(
-                    "lower_confidence requires a strictly lower trade_confidence"
-                )
-        if effect == "reject_current_attempt" and joint_executable:
-            errors.append("reject_current_attempt requires a no-order decision")
-        if effect in {"require_confirmation", "prefer_retest"} and not (
-            changed_decision_fields
-            & {
-                "order_type",
-                "entry_price",
-                "entry_basis_bar",
-                "entry_basis_extreme",
-                "entry_rule",
-                "watch_points",
-                "invalidation_condition",
+    elif effect in {
+        "require_confirmation",
+        "prefer_retest",
+        "reject_current_attempt",
+    } and not patch.get("watch_points") and not patch.get(
+        "invalidation_condition"
+    ):
+        errors.append(
+            f"{effect} requires an actionable watch point or invalidation condition"
+        )
+
+    if errors:
+        return RoleValidationResult(
+            None,
+            tuple(errors),
+            tuple(warnings),
+            tuple(normalizations),
+        )
+
+    stage2 = copy.deepcopy(baseline_clean)
+    joint_decision = stage2["decision"]
+    for key, value in patch.items():
+        joint_decision[key] = copy.deepcopy(value)
+
+    if effect != "keep_brooks_baseline":
+        overlay_reason = (
+            "PA baseline remains the frozen analytical path; Joint PA/VPA "
+            f"overlay: {arbitration.reason}"
+        )
+        joint_decision["reasoning"] = overlay_reason
+        if not patch.get("trade_confidence_reasoning"):
+            joint_decision["trade_confidence_reasoning"] = overlay_reason
+        if not patch.get("risk_assessment"):
+            joint_decision["risk_assessment"] = overlay_reason
+
+    if effect in {
+        "require_confirmation",
+        "prefer_retest",
+        "reject_current_attempt",
+    }:
+        joint_decision.update(
+            {
+                "order_direction": None,
+                "order_type": "不下单",
+                "entry_price": None,
+                "entry_basis_bar": None,
+                "entry_basis_extreme": None,
+                "entry_rule": None,
+                "take_profit_price": None,
+                "take_profit_price_2": None,
+                "stop_loss_price": None,
+                "estimated_win_rate": None,
+                "estimated_win_rate_reasoning": None,
             }
-        ):
-            errors.append(
-                f"{effect} must change a trigger, entry, or watch condition"
+        )
+        terminal = stage2.get("terminal")
+        if isinstance(terminal, dict):
+            terminal["outcome"] = (
+                "reject" if effect == "reject_current_attempt" else "wait"
             )
+            terminal["label"] = {
+                "require_confirmation": "PA基线已完成: 联合裁决要求下一根已收盘K线确认",
+                "prefer_retest": "PA基线已完成: 联合裁决偏好等待回测",
+                "reject_current_attempt": "PA基线已完成: 联合裁决拒绝当前入场尝试",
+            }[effect]
+
+    validator = JsonValidator(ValidationSettings())
+    stage2_result = validator.validate(
+        "stage2",
+        json.dumps(stage2, ensure_ascii=False),
+        kline_frame=kline_frame,
+        stage1_json=stage1,
+        skip_next_bar=skip_next_bar,
+    )
+    if isinstance(stage2_result, ValidationError):
+        errors.extend(
+            [
+                stage2_result.message,
+                *[f"missing:{item}" for item in stage2_result.missing_fields],
+                *[f"invalid:{item}" for item in stage2_result.invalid_fields],
+            ]
+        )
+    else:
+        assert isinstance(stage2_result, Ok)
+        stage2 = stage2_result.obj
+        warnings.extend(item.message for item in stage2_result.warnings)
+
+    if errors:
+        return RoleValidationResult(
+            None,
+            tuple(errors),
+            tuple(warnings),
+            tuple(normalizations),
+        )
+
+    outer["decision_patch"] = patch
+    outer["stage2_decision"] = stage2
+    normalizations.append(
+        {
+            "path": "stage2_decision",
+            "before": "frozen_pa_baseline",
+            "after": f"materialized:{effect}",
+            "reason": "program-applied bounded joint decision patch",
+        }
+    )
 
     return RoleValidationResult(
-        outer if not errors else None,
-        tuple(errors),
+        outer,
+        (),
         tuple(warnings),
+        tuple(normalizations),
     )

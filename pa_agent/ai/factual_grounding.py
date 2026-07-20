@@ -206,6 +206,56 @@ _FUTURE_STRUCTURE_ANCHOR_RE = re.compile(
     re.IGNORECASE,
 )
 
+_VPA_UNCLASSIFIED_SESSION_RE = re.compile(
+    r"\b(?:asia|asian|london|new\s+york|tokyo|sydney)\b|"
+    r"\u4e9a\u6d32|\u4f26\u6566|\u7ebd\u7ea6|\u4e1c\u4eac|\u6089\u5c3c",
+    re.IGNORECASE,
+)
+_VPA_ACTOR_ATTRIBUTION_RE = re.compile(
+    r"\binstitution(?:al)?\b|\bsmart\s+money\b|\bactive\s+(?:buyer|seller)s?\b|"
+    r"\baggress(?:ive|or)\s+(?:buying|selling|side)\b|\bbuyer[- ]initiated\b|"
+    r"\bseller[- ]initiated\b|\u673a\u6784|\u4e3b\u529b|\u806a\u660e\u94b1|"
+    r"\u4e3b\u52a8\u4e70\u76d8|\u4e3b\u52a8\u5356\u76d8|\u4e70\u65b9\u4e3b\u52a8|"
+    r"\u5356\u65b9\u4e3b\u52a8",
+    re.IGNORECASE,
+)
+_VPA_PROXY_CERTAINTY_RE = re.compile(
+    r"\bactive\s+demand\b|\bactive\s+supply\b|\bdemand\s+participation\b|"
+    r"\bsupply\s+participation\b|"
+    r"\b(?:bulls?|bears?)\s+(?:fully|aggressively|actively)\s+"
+    r"(?:push(?:ed|ing)?|buy(?:ing)?|sell(?:ing)?|press(?:ed|ing)?)\b|"
+    r"\u9700\u6c42\u6d3b\u8dc3|\u4f9b\u7ed9\u6d3b\u8dc3|"
+    r"\u4e70\u65b9\u79ef\u6781\u53c2\u4e0e|\u5356\u65b9\u79ef\u6781\u53c2\u4e0e|"
+    r"(?:\u591a\u5934|\u7a7a\u5934).{0,4}?"
+    r"(?:\u5168\u529b|\u4e3b\u52a8|\u79ef\u6781).{0,4}?"
+    r"(?:\u63a8\u52a8|\u8fdb\u653b|\u6253\u538b|\u629b\u552e|\u4e70\u5165|\u5356\u51fa)",
+    re.IGNORECASE,
+)
+_VPA_FORMING_BAR_RE = re.compile(
+    r"\bforming\s+bar\b|\bunclosed\s+bar\b|"
+    r"(?<![A-Za-z0-9_])K\s*0(?![A-Za-z0-9_.])|"
+    r"\u672a\u6536\u76d8|\u672a\u95ed\u5408",
+    re.IGNORECASE,
+)
+_VPA_CAPABILITY_NEGATION_BEFORE_RE = re.compile(
+    r"(?:\b(?:no\s+(?:evidence\s+(?:of|for)|basis\s+to)|"
+    r"not(?!\s+only\b)|cannot|can't|could\s+not|does\s+not|do\s+not|"
+    r"without|unable\s+to|insufficient\s+to)\b.{0,40}|"
+    r"(?:\u65e0\u6cd5|\u4e0d\u80fd|\u4e0d\u53ef|\u4e0d\u5e94|\u5e76\u975e|"
+    r"\u6ca1\u6709|\u672a\u80fd|\u4e0d\u8db3\u4ee5|\u4e0d\u652f\u6301|"
+    r"\u4e0d\u5f97).{0,20})$",
+    re.IGNORECASE,
+)
+_VPA_CAPABILITY_NEGATION_AFTER_RE = re.compile(
+    r"^.{0,28}\b(?:cannot|can't|could\s+not|is\s+not|are\s+not|"
+    r"cannot\s+be|can't\s+be|is\s+unknown|are\s+unknown|"
+    r"is\s+unobservable|are\s+unobservable)\b|"
+    r"^.{0,16}(?:\u65e0\u6cd5|\u4e0d\u80fd|\u4e0d\u53ef|\u5e76\u975e|"
+    r"\u672a\u77e5|\u65e0\u6cd5\u786e\u8ba4|\u4e0d\u53ef\u786e\u8ba4)",
+    re.IGNORECASE,
+)
+_VPA_CLAUSE_SPLIT_RE = re.compile(r"[\u3002\uFF01\uFF1F!?;\uFF1B\n]+|\.\s+")
+
 _RELATION_CLAIMS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
     (
         "causal baseline",
@@ -340,6 +390,8 @@ def validate_future_confirmation_narrative(text: object, *, path: str) -> list[s
         )
     if not _FUTURE_CLOSED_BAR_RE.search(value):
         errors.append(f"{path} must describe a future closed bar")
+    if _VPA_FORMING_BAR_RE.search(value):
+        errors.append(f"{path} must not use K0, a forming bar, or an unclosed bar")
     extreme_claims = window_extreme_claim_kinds(value)
     extreme_claims.update(negated_window_extreme_claim_kinds(value))
     if extreme_claims and not _FUTURE_STRUCTURE_ANCHOR_RE.search(value):
@@ -355,6 +407,114 @@ def validate_future_confirmation_narrative(text: object, *, path: str) -> list[s
             f"{path} uses relative-volume language without an explicit comparator"
         )
     return errors
+
+
+def validate_vpa_capability_narrative(
+    text: object,
+    *,
+    path: str,
+    capabilities: dict[str, Any],
+    market_session: str,
+) -> list[str]:
+    """Reject positive claims that exceed the catalog's data capabilities.
+
+    A clause that explicitly says an attribution cannot be made is a valid
+    limitation statement, not an attribution. This keeps the guard focused on
+    claims rather than vocabulary alone.
+    """
+    value = str(text or "").strip()
+    if not value:
+        return []
+
+    def has_positive_claim(clause: str, pattern: re.Pattern[str]) -> bool:
+        for match in pattern.finditer(clause):
+            before = clause[max(0, match.start() - 60) : match.start()]
+            after = clause[match.end() : match.end() + 60]
+            if _VPA_CAPABILITY_NEGATION_BEFORE_RE.search(before):
+                continue
+            if _VPA_CAPABILITY_NEGATION_AFTER_RE.search(after):
+                continue
+            return True
+        return False
+
+    errors: list[str] = []
+    for clause in _VPA_CLAUSE_SPLIT_RE.split(value):
+        clause = clause.strip()
+        if not clause:
+            continue
+        if (
+            market_session.strip().lower() == "unclassified"
+            and has_positive_claim(clause, _VPA_UNCLASSIFIED_SESSION_RE)
+        ):
+            errors.append(f"{path} contains an unsupported named-session claim")
+        if (
+            not capabilities.get("actor_attribution", False)
+            and has_positive_claim(clause, _VPA_ACTOR_ATTRIBUTION_RE)
+        ):
+            errors.append(
+                f"{path} volume provenance cannot support actor attribution"
+            )
+        if (
+            capabilities.get("interpretation_ceiling")
+            == "relative_activity_only"
+            and has_positive_claim(clause, _VPA_PROXY_CERTAINTY_RE)
+        ):
+            errors.append(
+                f"{path} proxy/unknown volume supports relative activity only, "
+                "not active demand/supply"
+            )
+    return errors
+
+
+def validate_vpa_k_references(
+    text: object,
+    *,
+    evidence_items: Iterable[dict[str, Any]],
+    path: str,
+) -> list[str]:
+    """Require every explicit K reference to be covered by cited evidence."""
+    value = str(text or "").strip()
+    if not value:
+        return []
+    allowed: set[int] = set()
+    for item in evidence_items:
+        if not isinstance(item, dict):
+            continue
+        bounds = parse_k_bar_range_bounds(item.get("bar_range"))
+        if bounds is not None:
+            allowed.update(range(bounds[0], bounds[1] + 1))
+    return [
+        f"{path} references K{seq} outside its cited evidence ranges"
+        for seq in sorted(
+            {
+                int(match.group(1))
+                for match in K_REFERENCE_RE.finditer(value)
+                if int(match.group(1)) not in allowed
+            }
+        )
+    ]
+
+
+def validate_k_reference_bounds(
+    text: object,
+    *,
+    maximum: int | None,
+    path: str,
+) -> list[str]:
+    """Reject explicit K references outside a frozen frame's closed bars."""
+    if maximum is None:
+        return []
+    value = str(text or "")
+    return [
+        f"{path} references K{seq}, but the frozen frame contains K1-K{maximum}"
+        for seq in sorted(
+            {
+                int(match.group(1))
+                for match in K_REFERENCE_RE.finditer(value)
+                if not 1 <= int(match.group(1)) <= maximum
+            }
+        )
+    ]
 
 
 def validate_pa_inference_only_narrative(text: object, *, path: str) -> list[str]:

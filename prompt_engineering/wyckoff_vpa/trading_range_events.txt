@@ -4,9 +4,30 @@ Apply only when PA identifies `trading_range`, `trending_tr` or a credible range
 
 Use candidates first. A structural event needs range location, boundary interaction, relevant volume-price facts and a later closed-bar response. Event and confirmation bars differ. A range midpoint, short lookback high/low, or isolated wick is not enough to establish a true boundary event.
 
+Read a possible range campaign as a sequence, not a retrospective label collection:
+
+- Preliminary Support/Supply (PS/PSY): the first meaningful evidence that the prior trend is no longer moving easily. It does not prove a range or reversal.
+- Selling/Buying Climax (SC/BC): potential stopping action after extension. It needs an Automatic Rally/Reaction and later testing before it can anchor a range interpretation.
+- Automatic Rally/Reaction: the first material response after a climax candidate; together with the prior extreme it may help define provisional boundaries. Spell out Automatic Rally or Automatic Reaction because `AR` is ambiguous.
+- Secondary Test (ST): a later revisit of the climax area. Compare result and relative activity with the candidate climax; acceptance beyond the extreme invalidates the stopping interpretation.
+- Spring/Shakeout or UT/UTAD: a later boundary excursion and recovery/rejection candidate. It is optional, not a required phase-C event.
+- SOS/SOW: meaningful escape/result plus later acceptance, not merely a wide bar.
+- LPS/LPSY or Backup/Test: a subsequent test after range resolution. This often offers cleaner entry-timing evidence than the first escape.
+
 - Spring: downside boundary breach, recovery into range, then later upside acceptance. No fixed penetration percentage.
 - UT/UTAD: upside breach, failure back into range, then later downside acceptance. Write Automatic Rally/Reaction, never naked “AR”.
 - SOS/SOW: range escape plus meaningful later acceptance/rejection, not one large bar.
 - LPS/LPSY: later test after confirmed range resolution, not the first pullback.
+
+For each event candidate record the four professional questions internally:
+
+1. Background: was there a prior trend or established range long enough to make the event meaningful?
+2. Location: did the event interact with a credible boundary or prior event area?
+3. Effort/Result: which catalog comparator supports the relative-activity claim, and what price result followed?
+4. Resolution: which later closed bars confirmed, failed or left the event unresolved?
+
+Invalidation examples are symmetric: a Spring candidate that is accepted below the range is not a Spring; a UT/UTAD candidate accepted above is not bearish resolution; SOS/SOW that immediately returns without later acceptance remains a failed attempt; LPS/LPSY that breaks back through the resolved range loses its timing role.
+
+No Supply/Test requires reduced relative activity and limited downside result in a supportive bullish location, followed by upward response. No Demand requires the mirror conditions in a weak/bearish location, followed by downward response. Below an exceptional predecessor is not enough: the candidate must be low relative to an appropriate causal comparator or otherwise be described only as reduced versus that predecessor.
 
 No Demand, No Supply, Test, Shakeout and Upthrust are VSA bar/sequence descriptions, not guaranteed classic events. They need appropriate background and later confirmation. Without context, source quality or follow-through, state facts and remain neutral. Cause/effect may describe potential but PA Agent does not use Point-and-Figure projections. Do not assign a Wyckoff phase sequence merely because several familiar labels can be attached after the fact.
