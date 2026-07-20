@@ -60,6 +60,8 @@ class AnalysisPrepWorker(QThread):
         self._data_source_kind = data_source_kind
 
     def run(self) -> None:
+        if self.isInterruptionRequested():
+            return
         try:
             from pa_agent.data.snapshot import build_display_frame
             from pa_agent.records.analysis_history import (
@@ -76,6 +78,8 @@ class AnalysisPrepWorker(QThread):
                 now_ms=self._now_ms,
                 data_metadata=self._data_metadata,
             )
+            if self.isInterruptionRequested():
+                return
             if frame is None:
                 self.failed.emit("数据不足，无法构建分析快照")
                 return
@@ -102,6 +106,8 @@ class AnalysisPrepWorker(QThread):
                 )
             else:
                 htf_context = disabled_higher_timeframe_context(self._timeframe)
+            if self.isInterruptionRequested():
+                return
 
             from pa_agent.data.snapshot_bundle import build_snapshot_bundle
 
@@ -111,6 +117,8 @@ class AnalysisPrepWorker(QThread):
                 expected_identity=self._data_metadata,
                 captured_at_ms=self._now_ms,
             )
+            if self.isInterruptionRequested():
+                return
             if not snapshot_bundle.data_quality.ok:
                 self.failed.emit(snapshot_bundle.data_quality.reason)
                 return
@@ -150,6 +158,8 @@ class AnalysisPrepWorker(QThread):
                         elif not self._force_incremental:
                             previous = None
 
+            if self.isInterruptionRequested():
+                return
             self.ready.emit(
                 AnalysisPrepResult(
                     frame=frame,
@@ -162,4 +172,5 @@ class AnalysisPrepWorker(QThread):
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Analysis prep failed: %s", exc)
-            self.failed.emit(str(exc))
+            if not self.isInterruptionRequested():
+                self.failed.emit(str(exc))

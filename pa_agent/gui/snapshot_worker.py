@@ -26,9 +26,13 @@ class SnapshotFetchWorker(QThread):
         self._n_bars = n_bars
 
     def run(self) -> None:
+        if self.isInterruptionRequested():
+            return
         try:
             bars = self._source.latest_snapshot(self._n_bars)
-            self.bars_ready.emit(bars)
+            if not self.isInterruptionRequested():
+                self.bars_ready.emit(bars)
         except Exception as exc:  # noqa: BLE001
             logger.warning("SnapshotFetchWorker failed: %s", exc)
-            self.failed.emit(str(exc))
+            if not self.isInterruptionRequested():
+                self.failed.emit(str(exc))

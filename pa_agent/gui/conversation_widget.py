@@ -84,7 +84,7 @@ class _TurnRecord:
 
 
 class _ChatWorker(QThread):
-    finished = pyqtSignal(str, str)
+    reply_ready = pyqtSignal(str, str)
     error = pyqtSignal(str)
     reasoning_token = pyqtSignal(str)
     content_token = pyqtSignal(str)
@@ -109,7 +109,8 @@ class _ChatWorker(QThread):
                 on_reasoning_token=lambda chunk: self.reasoning_token.emit(chunk),
                 on_content_token=lambda chunk: self.content_token.emit(chunk),
             )
-            self.finished.emit(reply.content, reply.reasoning_content or "")
+            if not self.isInterruptionRequested():
+                self.reply_ready.emit(reply.content, reply.reasoning_content or "")
         except Exception as exc:  # noqa: BLE001
             logger.error("ChatWorker error: %s", exc, exc_info=True)
             self.error.emit(str(exc))
@@ -585,10 +586,9 @@ class ConversationWidget(QWidget):
         self._worker.content_token.connect(
             lambda c: self._append_to_turn(self._chat_turn, content=c)
         )
-        self._worker.finished.connect(self._on_reply_received)
+        self._worker.reply_ready.connect(self._on_reply_received)
         self._worker.error.connect(self._on_reply_error)
-        self._worker.finished.connect(lambda *_: self._on_worker_done())
-        self._worker.error.connect(lambda *_: self._on_worker_done())
+        self._worker.finished.connect(self._on_worker_done)
         self._worker.start()
 
     def _on_stop(self) -> None:

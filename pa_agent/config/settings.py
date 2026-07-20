@@ -1,8 +1,10 @@
 """Pydantic settings models for PA Agent."""
+
 from __future__ import annotations
+
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DecisionStance = Literal["conservative", "balanced", "aggressive", "extreme_aggressive"]
 DataSourceKind = Literal["mt5", "tradingview", "akshare", "eastmoney", "tushare"]
@@ -12,6 +14,7 @@ MIN_ANALYSIS_BARS = 20
 
 class AIProviderSettings(BaseModel):
     """AI provider connection and behaviour settings."""
+
     model_config = ConfigDict(extra="ignore")
 
     model: str = "deepseek-v4-flash"
@@ -31,6 +34,7 @@ class AIProviderSettings(BaseModel):
 
 class PromptSettings(BaseModel):
     """Prompt assembly tuning (accuracy-oriented defaults)."""
+
     model_config = ConfigDict(extra="ignore")
 
     #: When True, Stage 2 loads every strategy .txt (legacy/test behaviour).
@@ -47,6 +51,7 @@ class PromptSettings(BaseModel):
 
 class ValidationSettings(BaseModel):
     """Post-LLM validation behaviour."""
+
     model_config = ConfigDict(extra="ignore")
 
     #: Re-call API with structured feedback when validation fails (format errors).
@@ -59,6 +64,7 @@ class ValidationSettings(BaseModel):
 
 class GeneralSettings(BaseModel):
     """UI and data-feed general settings."""
+
     model_config = ConfigDict(extra="ignore")
 
     analysis_bar_count: int = Field(default=100, ge=MIN_ANALYSIS_BARS, le=5000)
@@ -123,6 +129,24 @@ class GeneralSettings(BaseModel):
         return v
 
 
+class MonitoringSettings(BaseModel):
+    """Bounded multi-asset analysis scheduling settings."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    max_concurrency: int = Field(default=2, ge=1, le=20)
+    max_pending_jobs: int = Field(default=100, ge=1, le=10_000)
+    max_pending_per_asset: int = Field(default=2, ge=1, le=100)
+    dedupe_history: int = Field(default=10_000, ge=1, le=1_000_000)
+
+    @model_validator(mode="after")
+    def _queue_covers_workers(self) -> MonitoringSettings:
+        if self.max_pending_jobs < self.max_concurrency:
+            raise ValueError("max_pending_jobs must be at least max_concurrency")
+        return self
+
+
 _FEISHU_CONFIG_KEYS = (
     "enabled",
     "webhook_url",
@@ -135,6 +159,7 @@ _FEISHU_CONFIG_KEYS = (
 
 class FeishuSettings(BaseModel):
     """Feishu bot notification settings (persisted in settings.json)."""
+
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = True
@@ -148,6 +173,7 @@ class FeishuSettings(BaseModel):
 
 class TushareSettings(BaseModel):
     """Tushare Pro data source settings (persisted in ignored settings.json)."""
+
     model_config = ConfigDict(extra="ignore")
 
     token: str = ""
@@ -155,6 +181,7 @@ class TushareSettings(BaseModel):
 
 class PushPlusSettings(BaseModel):
     """PushPlus notification settings (settings.json only; no GUI)."""
+
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = False
@@ -163,12 +190,14 @@ class PushPlusSettings(BaseModel):
 
 class Settings(BaseModel):
     """Root settings object persisted to config/settings.json."""
+
     model_config = ConfigDict(extra="ignore")
 
     provider: AIProviderSettings = Field(default_factory=AIProviderSettings)
     general: GeneralSettings = Field(default_factory=GeneralSettings)
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     validation: ValidationSettings = Field(default_factory=ValidationSettings)
+    monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
     pushplus: PushPlusSettings = Field(default_factory=PushPlusSettings)
     tushare: TushareSettings = Field(default_factory=TushareSettings)

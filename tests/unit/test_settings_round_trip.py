@@ -1,4 +1,5 @@
 """Unit tests for settings load/save round-trip (task 2.4)."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,13 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from pa_agent.config.settings import GeneralSettings, Settings, load_settings, save_settings
+from pa_agent.config.settings import (
+    GeneralSettings,
+    MonitoringSettings,
+    Settings,
+    load_settings,
+    save_settings,
+)
 
 
 def test_defaults(tmp_path):
@@ -26,12 +33,20 @@ def test_defaults(tmp_path):
     assert s.general.decision_flow_auto_play is True
     assert s.general.auto_resume_chart_after_analysis is False
     assert s.general.counterfactual_horizon_bars == 20
+    assert s.monitoring.enabled is False
+    assert s.monitoring.max_concurrency == 2
+    assert s.monitoring.max_pending_jobs == 100
     assert p.exists(), "defaults should be written to disk"
 
 
 def test_analysis_bar_count_cannot_be_below_preflight_minimum():
     with pytest.raises(ValidationError):
         GeneralSettings(analysis_bar_count=19)
+
+
+def test_monitoring_queue_must_cover_worker_concurrency():
+    with pytest.raises(ValidationError):
+        MonitoringSettings(max_concurrency=4, max_pending_jobs=3)
 
 
 def test_round_trip(tmp_path):

@@ -34,7 +34,7 @@ _STYLE_RED = "QProgressBar#tokenProgress::chunk { background-color: #cc0000; }"
 
 
 class _ChatWorker(QThread):
-    finished = pyqtSignal(str, str, float)  # content, reasoning, cache_hit_pct
+    reply_ready = pyqtSignal(str, str, float)  # content, reasoning, cache_hit_pct
     error = pyqtSignal(str)
     reasoning_token = pyqtSignal(str)
     content_token = pyqtSignal(str)
@@ -60,7 +60,8 @@ class _ChatWorker(QThread):
                 on_content_token=lambda c: self.content_token.emit(c),
             )
             hit_pct = round(reply.usage.cache_hit_rate * 100, 1) if reply.usage else 0.0
-            self.finished.emit(reply.content, reply.reasoning_content or "", hit_pct)
+            if not self.isInterruptionRequested():
+                self.reply_ready.emit(reply.content, reply.reasoning_content or "", hit_pct)
         except Exception as exc:  # noqa: BLE001
             logger.error("ChatWorker error: %s", exc, exc_info=True)
             self.error.emit(str(exc))
@@ -609,10 +610,9 @@ class AIStreamPanel(QWidget):
         self._worker.content_token.connect(
             lambda chunk: self._append_stream_text_for_stage("chat", chunk, kind="content")
         )
-        self._worker.finished.connect(self._on_reply_done)
+        self._worker.reply_ready.connect(self._on_reply_done)
         self._worker.error.connect(self._on_reply_error)
-        self._worker.finished.connect(lambda *_: self._on_worker_done())
-        self._worker.error.connect(lambda *_: self._on_worker_done())
+        self._worker.finished.connect(self._on_worker_done)
         self._worker.start()
 
     def _on_reply_done(self, content: str, reasoning: str, cache_hit_pct: float) -> None:
@@ -656,3 +656,24 @@ class AIStreamPanel(QWidget):
         )
         self._input_edit.setEnabled(True)
         self._worker = None
+
+    def retire_worker(self, lifecycle_manager) -> bool:
+        """Detach an in-flight chat worker before its owning window closes."""
+        if self._cancel_token is not None:
+            self._cancel_token.set()
+        worker = self._worker
+        self._worker = None
+        if worker is None:
+            return False
+        for signal_name in (
+            "reply_ready",
+            "error",
+            "reasoning_token",
+            "content_token",
+            "finished",
+        ):
+            try:
+                getattr(worker, signal_name).disconnect()
+            except (TypeError, RuntimeError):
+                pass
+        return lifecycle_manager.retire(worker, wait_ms=0)

@@ -1,7 +1,7 @@
 # AGENTS
 
 - 回应与生成文件优先使用中文；代码、API、错误信息、产品名保留英文。
-- 修改 PA / Wyckoff VPA 融合链路前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0005`。
+- 修改 PA / Wyckoff VPA 融合链路或运行时前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0006`。
 - 每个实现 Phase 必须按 `docs/quality/acceptance.md` 完成测试、临时文件清理和独立提交；机器阈值以 `config/quality_contract.toml` 为准。
 - VPA 必须保持开关化：以 `resolve_vpa_mode(...) == "off"` 为准，VPA prompt、测量块及历史 `vpa_*` / `wyckoff_*` 字段不得进入原 PA 链路。
 - 程序只拥有可确定、可复算、无歧义的事实测量、Schema、引用范围、订单数学和执行安全；趋势、周期、Setup、位置、信号质量及 Wyckoff 解释属于 LLM。
@@ -16,6 +16,8 @@
 - PA/VPA 增量只能用离线 `pa_vpa_aabb_v1` 四臂协议估计：模型调用前登记 A1/A2/B1/B2，使用同一冻结输入、四个独立客户端及 ABBA/BAAB 顺序，并同时报告 ITT、per-protocol、A/A 与 B/B 分歧。生产 Shadow/Soft 不得自称 A/B；每条 record 的反事实只回放自己的正式订单。market order、同 K 入场与出场、同 K 同触止损与目标、突破跳空越价必须保留为 unsupported/ambiguous。同 timestamp OHLC 冲突时拒绝历史，原始快照滚出窗口时停止推进，不得猜测成交路径。
 - A/A/B/B 统计以 `market_snapshot_hash` 为独立样本，以 `cohort_id` 隔离 Provider/settings/源码/Prompt 版本；重复臂、重跑和同一行情的跨版本复核不得重复计样，质量门禁不得混合 cohort。
 - 自动回放目标周期由 `general.counterfactual_horizon_bars` 配置，但单条记录不得超过 `analysis_bar_count - 1`；分析最少需要 20 根已收盘 K 线。
+- 多资产队列只能接收已冻结 Snapshot；同资产必须 FIFO 单飞、全局并发与 pending 数必须有界。每个任务使用独立 client/orchestrator，任务身份必须绑定 source、venue、symbol、timeframe、snapshot 与 cohort，禁止静默丢弃或复用 GUI 的共享 client。
+- 业务结果信号不得覆盖 Qt 原生 `QThread.finished()`。运行中的线程必须保持强引用；窗口关闭时若仍有线程，只能协作取消并延迟销毁，禁止 `terminate()` 或对运行线程调用 `deleteLater()`。
 - 冻结快照分析期间必须暂停网络刷新；Shadow/Soft 的 PA baseline 与 Joint 判断都发生在置信度执行策略之前，执行策略只对正式结果应用一次。
 - DeepSeek 原生 OpenAI-compatible 请求使用 `extra_body.thinking.type` 与顶层 `reasoning_effort`；不得混入 Anthropic `output_config.effort` 语义。
 - 非瑣碎改动至少回归原 PA、VPA off、VPA Shadow/Soft 三角色链、HTF、订单数学及 records/audit 链路；测试后清理临时目录。

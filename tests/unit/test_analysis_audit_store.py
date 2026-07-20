@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from pa_agent.records.audit_store import AnalysisAuditStore
@@ -153,6 +154,28 @@ def _record(
             }
         ],
     )
+
+
+def test_concurrent_asset_records_are_indexed_once(tmp_path) -> None:
+    db_path = tmp_path / "audit.sqlite3"
+    store = AnalysisAuditStore(db_path)
+    records = [_record(run_id=f"run-concurrent-{index}") for index in range(20)]
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(
+            executor.map(
+                lambda record: store.record_analysis(
+                    record,
+                    record_path=tmp_path / f"{record.meta.run_id}.json",
+                ),
+                records,
+            )
+        )
+
+    assert all(result.ok for result in results)
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0]
+    assert count == 20
 
 
 def test_audit_store_indexes_official_run_and_manual_outcome(tmp_path: Path) -> None:

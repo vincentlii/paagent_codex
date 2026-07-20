@@ -301,3 +301,16 @@ git diff --check
 - [DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)
 
 外部理论只用于定义概念和证据边界，不直接导出固定阈值、胜率或交易结论。
+
+## 13. 多资产运行与性能边界
+
+多资产不会改变 PA/VPA 权限链。每个品种先独立冻结主周期、HTF 与 VPA catalog，再把不可变输入
+交给有界调度器。调度器不生成 Setup、不解释量价，也不因为队列压力修改交易结论。
+
+同一品种/周期严格 FIFO 单飞；不同资产按 `monitoring.max_concurrency` 并行。每个任务创建独立
+client、assembler、validator 与 orchestrator，禁止跨资产共享模型调用状态。任务以 source、venue、
+symbol、timeframe、snapshot 和 cohort 去重，满载时明确返回拒绝原因，不用“保留最新”覆盖旧快照。
+
+运行性能分成 queue latency 与 execution latency。前者反映容量和 Provider 配额，后者反映实际模型
+及持久化耗时；两者与终态写入 `monitoring_jobs`，并用 `run_id` 关联完整分析记录。调度层成功只代表
+输入被准确处理一次，不代表 PA/VPA 判断正确或策略盈利。
