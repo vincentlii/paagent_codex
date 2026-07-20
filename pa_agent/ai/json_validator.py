@@ -62,6 +62,16 @@ class Ok:
     """Successful validation result."""
     obj: dict[str, Any]
     normalization_events: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list["ValidationWarning"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ValidationWarning:
+    """A non-safety quality finding that must not trigger a model retry."""
+
+    stage: str
+    code: str
+    message: str
 
 
 @dataclass
@@ -205,6 +215,13 @@ class JsonValidator:
                 if field_name not in required:
                     required.append(field_name)
                 self._schemas[stage]["properties"][field_name]["type"] = "object"
+
+    def schema_for(
+        self,
+        stage: Literal["stage1", "stage2"],
+    ) -> dict[str, Any]:
+        """Return an isolated schema for provider capability negotiation."""
+        return copy.deepcopy(self._schemas[stage])
 
     def _vpa_enabled(self) -> bool:
         from pa_agent.config.vpa import vpa_is_enabled
@@ -375,8 +392,13 @@ class JsonValidator:
         try:
             import jsonschema  # type: ignore[import]
         except ImportError:
-            logger.warning("jsonschema not installed; skipping schema validation")
-            return Ok(obj=obj, normalization_events=normalization_events)
+            return ValidationError(
+                category="c",
+                stage=stage,
+                raw_text=raw_text,
+                invalid_fields=["validator_dependency:jsonschema"],
+                message="Required validator dependency jsonschema is not installed",
+            )
 
         errors = list(jsonschema.Draft7Validator(schema).iter_errors(obj))
 
@@ -403,7 +425,7 @@ class JsonValidator:
             missing.append("next_bar_prediction")
 
         if self._vpa_enabled():
-            for msg in self._check_vpa_contract(
+            for msg in self._check_vpa_hard_contract(
                 stage,
                 obj,
                 stage1_json=stage1_json,
@@ -482,8 +504,20 @@ class JsonValidator:
             ):
                 invalid.append(f"s2:{msg}")
 
+        warnings = self._collect_quality_warnings(
+            stage,
+            obj,
+            kline_frame=kline_frame,
+            stage1_json=stage1_json,
+            vpa_evidence_catalog=vpa_evidence_catalog,
+            htf_context=htf_context,
+        )
         if not errors and not missing and not invalid:
-            return Ok(obj=obj, normalization_events=normalization_events)
+            return Ok(
+                obj=obj,
+                normalization_events=normalization_events,
+                warnings=warnings,
+            )
 
         # Determine category: b if only missing fields, c otherwise
         if invalid or (missing and errors and errors[0].validator not in ("required",)):
@@ -507,6 +541,59 @@ class JsonValidator:
             allowed_values=allowed,
             message=f"{len(errors)} schema error(s): {first_message}",
         )
+
+    def _collect_quality_warnings(
+        self,
+        stage: Literal["stage1", "stage2"],
+        obj: dict[str, Any],
+        *,
+        kline_frame: Any,
+        stage1_json: dict[str, Any] | None,
+        vpa_evidence_catalog: dict[str, Any] | None,
+        htf_context: dict[str, Any] | None,
+    ) -> list[ValidationWarning]:
+        messages: list[tuple[str, str]] = []
+        if stage == "stage1":
+            from pa_agent.ai.coherence_checks import collect_stage1_quality_warnings
+            from pa_agent.ai.higher_timeframe import (
+                collect_higher_timeframe_warnings,
+            )
+
+            messages.extend(
+                ("stage1_quality", message)
+                for message in collect_stage1_quality_warnings(
+                    obj,
+                    kline_frame=kline_frame,
+                )
+            )
+            messages.extend(
+                ("htf_citation", message)
+                for message in collect_higher_timeframe_warnings(obj, htf_context)
+            )
+        else:
+            from pa_agent.ai.coherence_checks import collect_stage2_quality_warnings
+
+            messages.extend(
+                ("stage2_quality", message)
+                for message in collect_stage2_quality_warnings(
+                    obj,
+                    kline_frame=kline_frame,
+                )
+            )
+        if self._vpa_enabled():
+            messages.extend(
+                ("vpa_quality", message)
+                for message in self._check_vpa_quality_warnings(
+                    stage,
+                    obj,
+                    stage1_json=stage1_json,
+                    vpa_evidence_catalog=vpa_evidence_catalog,
+                )
+            )
+        return [
+            ValidationWarning(stage=stage, code=code, message=message)
+            for code, message in messages
+        ]
 
     @staticmethod
     def _contract_normalization_events(
@@ -554,7 +641,7 @@ class JsonValidator:
         return value
 
     @staticmethod
-    def _check_vpa_contract(
+    def _check_vpa_hard_contract(
         stage: str,
         obj: dict[str, Any],
         *,
@@ -625,26 +712,6 @@ class JsonValidator:
                     "vpa_context unavailable program data requires insufficient_data "
                     "for background and timing"
                 )
-            substantive = {
-                "effort_result",
-                "sequence_comparison",
-                "acceptance_rejection",
-                "entry_timing",
-            }
-            if data_status != "unavailable" and not any(
-                observation.get("finding_kind") in substantive
-                and any(
-                    evidence_has_relative_volume_comparison(
-                        evidence.get(str(evidence_id))
-                    )
-                    for evidence_id in observation.get("evidence_ids", [])
-                )
-                for observation in observations
-            ):
-                errors.append(
-                    "vpa_context available VPA context requires an independent "
-                    "price-volume finding"
-                )
             if data_status != "unavailable":
                 for index, observation in enumerate(observations):
                     observation_ids = [
@@ -688,100 +755,6 @@ class JsonValidator:
                                 f"references K{referenced_bar} outside observation "
                                 f"bar_range {raw_range}"
                             )
-            seasonality = catalog.get("comparators", {}).get("seasonality", {})
-            market_session = ""
-            raw_confirmation = context.get("next_confirmation")
-            confirmation_trigger = (
-                raw_confirmation.get("trigger")
-                if isinstance(raw_confirmation, dict)
-                else str(raw_confirmation or "")
-            )
-            if isinstance(seasonality, dict):
-                market_session = str(seasonality.get("market_session") or "")
-            from pa_agent.ai.factual_grounding import (
-                validate_future_confirmation_narrative,
-                validate_inference_only_narrative,
-                validate_vpa_comparator_narrative,
-            )
-
-            narratives = [
-                ("vpa_context.summary", context.get("summary")),
-                *[
-                    (
-                        f"vpa_context.observations[{index}].interpretation",
-                        item.get("interpretation"),
-                    )
-                    for index, item in enumerate(observations)
-                ],
-            ]
-            for path, text in narratives:
-                errors.extend(validate_inference_only_narrative(text, path=path))
-            confirmation_state = (
-                raw_confirmation.get("state")
-                if isinstance(raw_confirmation, dict)
-                else None
-            )
-            if confirmation_state == "pending_closed_bar":
-                errors.extend(
-                    validate_future_confirmation_narrative(
-                        confirmation_trigger,
-                        path="vpa_context.next_confirmation.trigger",
-                    )
-                )
-            else:
-                errors.extend(
-                    validate_inference_only_narrative(
-                        confirmation_trigger,
-                        path="vpa_context.next_confirmation.trigger",
-                    )
-                )
-            capabilities = catalog.get("capabilities") or {}
-            for path, text in narratives:
-                narrative = str(text or "")
-                if (
-                    market_session.lower() == "unclassified"
-                    and _VPA_UNCLASSIFIED_SESSION_RE.search(narrative)
-                ):
-                    errors.append(
-                        f"{path} session claim is unsupported when market_session "
-                        "is unclassified"
-                    )
-                if (
-                    not capabilities.get("actor_attribution", False)
-                    and _VPA_ACTOR_ATTRIBUTION_RE.search(narrative)
-                ):
-                    errors.append(
-                        f"{path} volume provenance cannot support actor attribution"
-                    )
-                if (
-                    capabilities.get("interpretation_ceiling")
-                    == "relative_activity_only"
-                    and _VPA_PROXY_CERTAINTY_RE.search(narrative)
-                ):
-                    errors.append(
-                        f"{path} proxy/unknown volume supports relative activity only, "
-                        "not active demand/supply"
-                    )
-            if _VPA_FORMING_BAR_RE.search(str(confirmation_trigger or "")):
-                errors.append(
-                    "vpa_context.next_confirmation.trigger must wait for a future closed bar"
-                )
-            for index, observation in enumerate(observations):
-                observation_ids = {
-                    str(evidence_id)
-                    for evidence_id in observation.get("evidence_ids", [])
-                }
-                errors.extend(
-                    validate_vpa_comparator_narrative(
-                        observation.get("interpretation"),
-                        evidence_items=(
-                            item
-                            for evidence_id, item in evidence.items()
-                            if evidence_id in observation_ids
-                        ),
-                        path=f"vpa_context.observations[{index}].interpretation",
-                    )
-                )
             return errors
 
         impact = obj.get("vpa_impact")
@@ -825,21 +798,6 @@ class JsonValidator:
                 "vpa_impact.evidence_used non-baseline decision_effect requires "
                 "relative-volume evidence"
             )
-        if (
-            data_status != "unavailable"
-            and (stage1_json or {}).get("gate_result") == "proceed"
-            and stage1_ids
-            and not used
-        ):
-            errors.append(
-                "vpa_impact.evidence_used VPA Stage 2 must cite evidence_used when "
-                "the PA gate proceeds"
-            )
-        if timing_relation == "supports" and effect != "keep_brooks_baseline":
-            errors.append(
-                "vpa_impact.decision_effect supportive entry-timing evidence must "
-                "keep the Brooks baseline"
-            )
         if data_status == "unavailable" and (
             background_relation != "insufficient_data"
             or timing_relation != "insufficient_data"
@@ -857,41 +815,237 @@ class JsonValidator:
                 errors.append(
                     "vpa_impact.entry_timing_relation changed between VPA stages"
                 )
+        return errors
+
+    @staticmethod
+    def _check_vpa_contract(
+        stage: str,
+        obj: dict[str, Any],
+        *,
+        stage1_json: dict[str, Any] | None,
+        vpa_evidence_catalog: dict[str, Any] | None,
+    ) -> list[str]:
+        """Return all VPA findings for focused rule tests and diagnostics."""
+        return [
+            *JsonValidator._check_vpa_hard_contract(
+                stage,
+                obj,
+                stage1_json=stage1_json,
+                vpa_evidence_catalog=vpa_evidence_catalog,
+            ),
+            *JsonValidator._check_vpa_quality_warnings(
+                stage,
+                obj,
+                stage1_json=stage1_json,
+                vpa_evidence_catalog=vpa_evidence_catalog,
+            ),
+        ]
+
+    @staticmethod
+    def _check_vpa_quality_warnings(
+        stage: str,
+        obj: dict[str, Any],
+        *,
+        stage1_json: dict[str, Any] | None,
+        vpa_evidence_catalog: dict[str, Any] | None,
+    ) -> list[str]:
+        """Collect prose-level VPA findings that are not safe hard-reject signals."""
+        catalog = (
+            vpa_evidence_catalog
+            if isinstance(vpa_evidence_catalog, dict)
+            else {}
+        )
+        evidence = {
+            str(item.get("evidence_id")): item
+            for item in catalog.get("evidence", [])
+            if isinstance(item, dict) and item.get("evidence_id")
+        }
+        data_status = str(catalog.get("data_status") or "unavailable")
+        capabilities = catalog.get("capabilities") or {}
+        warnings: list[str] = []
+
         from pa_agent.ai.factual_grounding import (
+            validate_future_confirmation_narrative,
             validate_inference_only_narrative,
             validate_vpa_comparator_narrative,
         )
 
-        errors.extend(
+        if stage == "stage1":
+            context = obj.get("vpa_context")
+            if not isinstance(context, dict):
+                return []
+            observations = [
+                item
+                for item in context.get("observations", [])
+                if isinstance(item, dict)
+            ]
+            substantive = {
+                "effort_result",
+                "sequence_comparison",
+                "acceptance_rejection",
+                "entry_timing",
+            }
+            if data_status != "unavailable" and not any(
+                observation.get("finding_kind") in substantive
+                and any(
+                    evidence_has_relative_volume_comparison(
+                        evidence.get(str(evidence_id))
+                    )
+                    for evidence_id in observation.get("evidence_ids", [])
+                )
+                for observation in observations
+            ):
+                warnings.append(
+                    "available VPA context requires an independent price-volume finding"
+                )
+
+            raw_confirmation = context.get("next_confirmation")
+            confirmation_trigger = (
+                raw_confirmation.get("trigger")
+                if isinstance(raw_confirmation, dict)
+                else str(raw_confirmation or "")
+            )
+            narratives = [
+                ("vpa_context.summary", context.get("summary")),
+                *[
+                    (
+                        f"vpa_context.observations[{index}].interpretation",
+                        item.get("interpretation"),
+                    )
+                    for index, item in enumerate(observations)
+                ],
+            ]
+            for path, text in narratives:
+                warnings.extend(validate_inference_only_narrative(text, path=path))
+            confirmation_state = (
+                raw_confirmation.get("state")
+                if isinstance(raw_confirmation, dict)
+                else None
+            )
+            if confirmation_state == "pending_closed_bar":
+                warnings.extend(
+                    validate_future_confirmation_narrative(
+                        confirmation_trigger,
+                        path="vpa_context.next_confirmation.trigger",
+                    )
+                )
+            else:
+                warnings.extend(
+                    validate_inference_only_narrative(
+                        confirmation_trigger,
+                        path="vpa_context.next_confirmation.trigger",
+                    )
+                )
+
+            seasonality = catalog.get("comparators", {}).get("seasonality", {})
+            market_session = (
+                str(seasonality.get("market_session") or "")
+                if isinstance(seasonality, dict)
+                else ""
+            )
+            for path, text in narratives:
+                narrative = str(text or "")
+                if (
+                    market_session.lower() == "unclassified"
+                    and _VPA_UNCLASSIFIED_SESSION_RE.search(narrative)
+                ):
+                    warnings.append(
+                        f"{path} contains an unsupported named-session claim"
+                    )
+                if (
+                    not capabilities.get("actor_attribution", False)
+                    and _VPA_ACTOR_ATTRIBUTION_RE.search(narrative)
+                ):
+                    warnings.append(
+                        f"{path} volume provenance cannot support actor attribution"
+                    )
+                if (
+                    capabilities.get("interpretation_ceiling")
+                    == "relative_activity_only"
+                    and _VPA_PROXY_CERTAINTY_RE.search(narrative)
+                ):
+                    warnings.append(
+                        f"{path} proxy/unknown volume supports relative activity only, "
+                        "not active demand/supply"
+                    )
+            if _VPA_FORMING_BAR_RE.search(str(confirmation_trigger or "")):
+                warnings.append(
+                    "vpa_context.next_confirmation.trigger must wait for a future closed bar"
+                )
+            for index, observation in enumerate(observations):
+                observation_ids = {
+                    str(evidence_id)
+                    for evidence_id in observation.get("evidence_ids", [])
+                }
+                warnings.extend(
+                    validate_vpa_comparator_narrative(
+                        observation.get("interpretation"),
+                        evidence_items=(
+                            item
+                            for evidence_id, item in evidence.items()
+                            if evidence_id in observation_ids
+                        ),
+                        path=f"vpa_context.observations[{index}].interpretation",
+                    )
+                )
+            return warnings
+
+        impact = obj.get("vpa_impact")
+        if not isinstance(impact, dict):
+            return []
+        context = (
+            stage1_json.get("vpa_context")
+            if isinstance(stage1_json, dict)
+            else None
+        )
+        stage1_ids = {
+            str(evidence_id)
+            for observation in (context or {}).get("observations", [])
+            if isinstance(observation, dict)
+            for evidence_id in observation.get("evidence_ids", [])
+        }
+        used = [str(value) for value in impact.get("evidence_used", [])]
+        if (
+            data_status != "unavailable"
+            and (stage1_json or {}).get("gate_result") == "proceed"
+            and stage1_ids
+            and not used
+        ):
+            warnings.append(
+                "VPA Stage 2 must cite evidence_used when the PA gate proceeds"
+            )
+        warnings.extend(
             validate_inference_only_narrative(
                 impact.get("reason"),
                 path="vpa_impact.reason",
             )
         )
-        errors.extend(
+        warnings.extend(
             validate_vpa_comparator_narrative(
                 impact.get("reason"),
-                evidence_items=(evidence[value] for value in used if value in evidence),
+                evidence_items=(
+                    evidence[value] for value in used if value in evidence
+                ),
                 path="vpa_impact.reason",
             )
         )
-        capabilities = catalog.get("capabilities") or {}
         reason = str(impact.get("reason") or "")
-        if not capabilities.get("actor_attribution", False) and _VPA_ACTOR_ATTRIBUTION_RE.search(
-            reason
+        if (
+            not capabilities.get("actor_attribution", False)
+            and _VPA_ACTOR_ATTRIBUTION_RE.search(reason)
         ):
-            errors.append(
+            warnings.append(
                 "vpa_impact.reason volume provenance cannot support actor attribution"
             )
         if (
             capabilities.get("interpretation_ceiling") == "relative_activity_only"
             and _VPA_PROXY_CERTAINTY_RE.search(reason)
         ):
-            errors.append(
+            warnings.append(
                 "vpa_impact.reason proxy/unknown volume supports relative activity only, "
                 "not active demand/supply"
             )
-        return errors
+        return warnings
 
     @staticmethod
     def _check_paired_vpa_stage2_contract(

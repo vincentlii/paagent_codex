@@ -350,7 +350,7 @@ def test_full_prompt_vpa_mode_is_inferred_from_validation_catalog() -> None:
     ]
 
 
-def test_full_prompt_vpa_retry_repairs_contract_without_changing_pa_thesis() -> None:
+def test_full_prompt_vpa_warning_preserves_pa_thesis_without_retry() -> None:
     settings = Settings(
         prompt=PromptSettings(vpa_mode="shadow"),
         validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
@@ -429,19 +429,21 @@ def test_full_prompt_vpa_retry_repairs_contract_without_changing_pa_thesis() -> 
     )
 
     assert isinstance(result.result, Ok)
-    assert result.attempts == 2
+    assert result.attempts == 1
     assert result.cheat_detected is False
     assert result.result.obj["direction"] == VALID_STAGE1["direction"]
     assert (
         result.result.obj["vpa_context"]["next_confirmation"]["state"]
         == "pending_closed_bar"
     )
-    feedback = retry_messages[0][-1]["content"]
-    assert "explicit K-line or structure anchor" in feedback
-    assert "VPA provenance limit" in feedback
+    assert retry_messages == []
+    assert any(
+        event["category"] == "warning"
+        for event in result.validation_events or []
+    )
 
 
-def test_paired_vpa_numeric_hallucination_retries_without_mutating_baseline() -> None:
+def test_paired_vpa_numeric_hallucination_warns_without_mutating_baseline() -> None:
     settings = Settings(
         prompt=PromptSettings(vpa_mode="shadow"),
         validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
@@ -514,15 +516,18 @@ def test_paired_vpa_numeric_hallucination_retries_without_mutating_baseline() ->
     )
 
     assert isinstance(result.result, Ok)
-    assert result.attempts == 2
+    assert result.attempts == 1
     assert result.cheat_detected is False
     assert result.result.obj["direction"] == VALID_STAGE1["direction"]
     assert result.result.obj["vpa_context"]["observations"][0]["bar_range"] == "K1"
-    assert "只输出顶层 `vpa_context`" in retry_messages[0][-1]["content"]
-    assert "第 1/1 次重试" in retry_messages[0][-1]["content"]
+    assert retry_messages == []
+    assert any(
+        event["category"] == "warning"
+        for event in result.validation_events or []
+    )
 
 
-def test_retry_keeps_audit_transcript_but_returns_clean_canonical_request() -> None:
+def test_warning_keeps_audit_transcript_and_clean_canonical_request() -> None:
     settings = Settings(
         prompt=PromptSettings(vpa_mode="shadow"),
         validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
@@ -596,14 +601,12 @@ def test_retry_keeps_audit_transcript_but_returns_clean_canonical_request() -> N
         "system",
         "user",
         "assistant",
-        "user",
-        "assistant",
     ]
     assert "8500" not in str(result.canonical_messages)
     assert "8500" in str(result.audit_messages)
 
 
-def test_retry_request_redacts_invalid_leaf_instead_of_replaying_it() -> None:
+def test_narrative_warning_does_not_trigger_a_repair_call() -> None:
     settings = Settings(
         prompt=PromptSettings(vpa_mode="off"),
         validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
@@ -632,10 +635,12 @@ def test_retry_request_redacts_invalid_leaf_instead_of_replaying_it() -> None:
     )
 
     assert isinstance(result.result, Ok)
-    retry_assistant = retry_messages[0][-2]["content"]
-    assert invalid_reason not in retry_assistant
-    assert "__REWRITE_REQUIRED__" in retry_assistant
+    assert retry_messages == []
     assert invalid_reason in str(result.audit_messages)
+    assert any(
+        event["category"] == "warning"
+        for event in result.validation_events or []
+    )
 
 
 def test_vpa_contract_error_redacts_the_sidecar_transaction_boundary() -> None:

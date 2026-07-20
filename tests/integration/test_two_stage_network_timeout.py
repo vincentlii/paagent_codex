@@ -4,14 +4,16 @@ Task 11.9
 """
 from __future__ import annotations
 
+import copy
 from unittest.mock import MagicMock
 
 import openai
 
-from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.router import route_strategy_files
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
+from tests.fixtures.validators import schema_test_validator
+from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_reply
 
 
 def test_httpx_read_error_stage1(frame, pending_writer, assembler, exp_reader):
@@ -45,7 +47,7 @@ def test_httpx_read_error_stage1(frame, pending_writer, assembler, exp_reader):
 
     assert OrchestratorEvent.Stage1Failed in events
     pending_writer.save_partial.assert_called_once()
-    assert pending_writer.save_partial.call_args[0][1] == "network_error"
+    assert pending_writer.save_partial.call_args[0][1] == "provider_error"
 
 
 def test_network_timeout_stage1(frame, pending_writer, assembler, exp_reader):
@@ -79,8 +81,105 @@ def test_network_timeout_stage1(frame, pending_writer, assembler, exp_reader):
     # Stage2 must never start
     assert OrchestratorEvent.Stage2Started not in events
 
-    # save_partial called with reason "network_error"
+    # Provider transport failures use the same typed persistence reason.
     pending_writer.save_partial.assert_called_once()
     call_args = pending_writer.save_partial.call_args
     reason = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("reason", "")
-    assert reason == "network_error"
+    assert reason == "provider_error"
+
+
+def _status_error(status_code: int) -> openai.APIStatusError:
+    return openai.APIStatusError(
+        "request failed",
+        response=MagicMock(status_code=status_code, headers={}),
+        body=None,
+    )
+
+
+def test_non_retryable_stage1_request_error_is_persisted_once(
+    frame,
+    pending_writer,
+    assembler,
+    exp_reader,
+) -> None:
+    client = MagicMock()
+    client.stream_chat.side_effect = _status_error(401)
+    orchestrator = TwoStageOrchestrator(
+        client=client,
+        assembler=assembler,
+        router=route_strategy_files,
+        validator=schema_test_validator(),
+        pending_writer=pending_writer,
+        exp_reader=exp_reader,
+    )
+    events: list[OrchestratorEvent] = []
+
+    record = orchestrator.submit(frame, CancelToken(), events.append)
+
+    assert client.stream_chat.call_count == 1
+    assert record.exception["failure_kind"] == "authentication"
+    assert record.exception["status_code"] == 401
+    assert pending_writer.save_partial.call_args.args[1] == "provider_error"
+    assert OrchestratorEvent.Stage1Failed in events
+
+
+def test_stage1_validation_retry_provider_failure_does_not_escape(
+    frame,
+    pending_writer,
+    assembler,
+    exp_reader,
+) -> None:
+    invalid = copy.deepcopy(VALID_STAGE1)
+    invalid.pop("cycle_position")
+    client = MagicMock()
+    client.stream_chat.side_effect = [make_reply(invalid), _status_error(422)]
+    orchestrator = TwoStageOrchestrator(
+        client=client,
+        assembler=assembler,
+        router=route_strategy_files,
+        validator=schema_test_validator(),
+        pending_writer=pending_writer,
+        exp_reader=exp_reader,
+    )
+    events: list[OrchestratorEvent] = []
+
+    record = orchestrator.submit(frame, CancelToken(), events.append)
+
+    assert client.stream_chat.call_count == 2
+    assert record.exception["phase"] == "validation_retry"
+    assert record.exception["failure_kind"] == "invalid_request"
+    assert pending_writer.save_partial.call_args.args[1] == "provider_error"
+    assert OrchestratorEvent.Stage1Failed in events
+
+
+def test_stage2_validation_retry_provider_failure_does_not_escape(
+    frame,
+    pending_writer,
+    assembler,
+    exp_reader,
+) -> None:
+    invalid = copy.deepcopy(VALID_STAGE2)
+    invalid.pop("decision")
+    client = MagicMock()
+    client.stream_chat.side_effect = [
+        make_reply(copy.deepcopy(VALID_STAGE1)),
+        make_reply(invalid),
+        _status_error(400),
+    ]
+    orchestrator = TwoStageOrchestrator(
+        client=client,
+        assembler=assembler,
+        router=route_strategy_files,
+        validator=schema_test_validator(),
+        pending_writer=pending_writer,
+        exp_reader=exp_reader,
+    )
+    events: list[OrchestratorEvent] = []
+
+    record = orchestrator.submit(frame, CancelToken(), events.append)
+
+    assert client.stream_chat.call_count == 3
+    assert record.exception["phase"] == "validation_retry"
+    assert record.exception["failure_kind"] == "invalid_request"
+    assert pending_writer.save_partial.call_args.args[1] == "provider_error"
+    assert OrchestratorEvent.Stage2Failed in events

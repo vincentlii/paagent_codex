@@ -21,6 +21,12 @@ class AIProviderSettings(BaseModel):
     thinking: bool = True
     reasoning_effort: Literal["low", "medium", "high", "max"] = "high"
     context_window: int = 2_000_000
+    structured_output_mode: Literal[
+        "auto",
+        "json_schema",
+        "json_object",
+        "text",
+    ] = "auto"
 
 
 class PromptSettings(BaseModel):

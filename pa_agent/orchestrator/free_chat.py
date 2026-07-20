@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from pa_agent.records.pending_writer import PendingWriter
 
 from pa_agent.ai.deepseek_client import AIReply
+from pa_agent.ai.model_call_runner import ModelCallRunner
+from pa_agent.ai.provider_failures import ModelCallFailure
 from pa_agent.records.schema import AnalysisRecord, FollowupTurn
 from pa_agent.util.threading import CancelToken
 from pa_agent.util.timefmt import now_local_ms
@@ -294,15 +296,30 @@ class FreeChatSession:
             raise CancelledError("FreeChatSession.send cancelled before API call")
 
         # ── 4. Call the API (streaming) ───────────────────────────────────────
+        provider = (
+            self._settings.provider
+            if self._settings is not None
+            else getattr(self._client, "_settings", None)
+        )
+        if provider is None:
+            from pa_agent.config.settings import AIProviderSettings
+
+            provider = AIProviderSettings(structured_output_mode="text")
         try:
-            reply = self._client.stream_chat(
+            reply = ModelCallRunner(self._client, provider).run_stream(
                 history_for_api,
+                stage="free_chat",
+                schema=None,
                 on_reasoning_token=on_reasoning_token,
                 on_content_token=on_content_token,
                 cancel_token=cancel_token,
+                thinking=bool(getattr(provider, "thinking", True)),
                 reasoning_effort=reasoning_effort,
-            )
-        except CancelledError:
+                structured_output=False,
+            ).reply
+        except ModelCallFailure as exc:
+            if exc.failure.kind != "cancelled":
+                raise
             # Persist a cancelled turn and re-raise
             cancelled_turn = FollowupTurn(
                 turn=turn_number,
@@ -319,7 +336,9 @@ class FreeChatSession:
                 cancelled=True,
             )
             self._pending_writer.append_followup(self._record_id, cancelled_turn)
-            raise
+            if isinstance(exc.original, CancelledError):
+                raise exc.original
+            raise CancelledError("FreeChatSession.send cancelled during API call") from exc
 
         # ── 5. Append to history_full (with reasoning preserved) ──────────────
         self._history_full.append({"role": "user", "content": user_text})

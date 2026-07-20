@@ -4,11 +4,12 @@ import copy
 import json
 
 from pa_agent.ai.higher_timeframe import (
+    collect_higher_timeframe_warnings,
     render_higher_timeframe_context,
     serialize_higher_timeframe_context,
     validate_higher_timeframe_output,
 )
-from pa_agent.ai.json_validator import JsonValidator, ValidationError
+from pa_agent.ai.json_validator import JsonValidator, Ok
 from pa_agent.config.settings import Settings
 from pa_agent.data.base import DataSource, KlineBar
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
@@ -153,7 +154,7 @@ def test_higher_timeframe_unavailable_never_blocks_current_timeframe_analysis() 
     assert "禁止编造 HTF" in render_higher_timeframe_context(context)
 
 
-def test_available_higher_timeframe_requires_an_h_bar_citation() -> None:
+def test_missing_higher_timeframe_citation_is_a_warning() -> None:
     context = fetch_higher_timeframe_context(
         source=_FakeSource(),
         source_kind="tradingview",
@@ -172,8 +173,8 @@ def test_available_higher_timeframe_requires_an_h_bar_citation() -> None:
         htf_context=context,
     )
 
-    assert isinstance(result, ValidationError)
-    assert any("HTF.H#" in field for field in result.invalid_fields)
+    assert isinstance(result, Ok)
+    assert any(warning.code == "htf_citation" for warning in result.warnings)
 
 
 def test_higher_timeframe_citations_use_an_unambiguous_namespace() -> None:
@@ -206,10 +207,8 @@ def test_higher_timeframe_citations_use_an_unambiguous_namespace() -> None:
     zero = {"htf_context": "HTF.H0 provides background."}
 
     assert validate_higher_timeframe_output(valid, context) == []
-    assert any(
-        "must cite" in error
-        for error in validate_higher_timeframe_output(brooks_only, context)
-    )
+    assert validate_higher_timeframe_output(brooks_only, context) == []
+    assert collect_higher_timeframe_warnings(brooks_only, context)
     assert any(
         "H21" in error
         for error in validate_higher_timeframe_output(outside, context)

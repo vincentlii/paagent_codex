@@ -435,3 +435,42 @@ def test_mimo_chat_patches_tool_call_messages_before_send() -> None:
 
     sent_messages = mock_openai.return_value.chat.completions.create.call_args.kwargs["messages"]
     assert sent_messages[1]["reasoning_content"] == ""
+
+
+def test_chat_forwards_response_format_and_reuses_sdk_client() -> None:
+    settings = _make_settings()
+    client = DeepSeekClient(settings)
+    mock_openai = MagicMock()
+    mock_openai.return_value.chat.completions.create.return_value = (
+        _make_mock_response()
+    )
+
+    with patch("pa_agent.ai.deepseek_client._OpenAI", mock_openai):
+        for _ in range(2):
+            client.chat(
+                [{"role": "user", "content": "return json"}],
+                response_format={"type": "json_object"},
+            )
+
+    assert mock_openai.call_count == 1
+    assert (
+        mock_openai.return_value.chat.completions.create.call_args.kwargs[
+            "response_format"
+        ]
+        == {"type": "json_object"}
+    )
+
+
+def test_stream_chat_does_not_hide_unrelated_create_failure() -> None:
+    settings = _make_settings()
+    client = DeepSeekClient(settings)
+    mock_openai = MagicMock()
+    mock_openai.return_value.chat.completions.create.side_effect = RuntimeError(
+        "upstream failed"
+    )
+
+    with patch("pa_agent.ai.deepseek_client._OpenAI", mock_openai):
+        with pytest.raises(RuntimeError, match="upstream failed"):
+            client.stream_chat([{"role": "user", "content": "hi"}])
+
+    assert mock_openai.return_value.chat.completions.create.call_count == 1

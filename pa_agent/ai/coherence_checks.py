@@ -169,11 +169,6 @@ def validate_stage1_coherence(
     summary = stage1.get("bar_by_bar_summary")
     if isinstance(summary, list):
         bar_count = _max_bar_seq(kline_frame)
-        expected = min(BAR_BY_BAR_TARGET_COUNT, bar_count) if bar_count else None
-        if expected is not None and len(summary) != expected:
-            errors.append(
-                f"bar_by_bar_summary 有 {len(summary)} 条，应为 {expected} 条"
-            )
         for index, item in enumerate(summary):
             if not isinstance(item, dict):
                 continue
@@ -181,8 +176,27 @@ def validate_stage1_coherence(
             if seq is None or (bar_count and not 1 <= seq <= bar_count):
                 errors.append(f"bar_by_bar_summary[{index}].bar 不在当前K线窗口")
     errors.extend(_validate_stage1_bar_geometry(stage1, kline_frame))
-    errors.extend(_validate_stage1_fact_language(stage1, kline_frame))
+    errors.extend(_validate_stage1_structured_facts(stage1, kline_frame))
     return errors
+
+
+def collect_stage1_quality_warnings(
+    stage1: dict[str, Any],
+    *,
+    kline_frame: Any = None,
+) -> list[str]:
+    """Return non-safety prose and completeness findings without rejecting output."""
+    warnings: list[str] = []
+    summary = stage1.get("bar_by_bar_summary")
+    if isinstance(summary, list):
+        bar_count = _max_bar_seq(kline_frame)
+        expected = min(BAR_BY_BAR_TARGET_COUNT, bar_count) if bar_count else None
+        if expected is not None and len(summary) != expected:
+            warnings.append(
+                f"bar_by_bar_summary has {len(summary)} items; preferred {expected}"
+            )
+    warnings.extend(_collect_stage1_narrative_warnings(stage1, kline_frame))
+    return warnings
 
 
 def validate_stage2_coherence(
@@ -210,15 +224,25 @@ def validate_stage2_coherence(
             errors.append(
                 "order_direction 与阶段一 direction 相反；同一快照必须回到阶段一重做方向诊断"
             )
+    errors.extend(_validate_stage2_bar_references(stage2, kline_frame))
+    return errors
+
+
+def collect_stage2_quality_warnings(
+    stage2: dict[str, Any],
+    *,
+    kline_frame: Any = None,
+) -> list[str]:
+    """Return prose-level PA grounding findings without blocking a safe decision."""
+    warnings: list[str] = []
     price_only_stage2 = {
         key: value for key, value in stage2.items() if key != "vpa_impact"
     }
     for path, text in _narrative_strings(price_only_stage2):
         if _PA_VOLUME_RE.search(text):
-            errors.append(f"{path} violates the PA price-only evidence contract")
-    errors.extend(_validate_stage2_bar_references(stage2, kline_frame))
-    errors.extend(_validate_tick_claims(stage2, kline_frame))
-    return errors
+            warnings.append(f"{path} violates the PA price-only evidence contract")
+    warnings.extend(_validate_tick_claims(stage2, kline_frame))
+    return warnings
 
 
 def _validate_stage2_bar_references(stage2: dict[str, Any], frame: Any) -> list[str]:
@@ -311,7 +335,10 @@ def _validate_stage1_bar_geometry(stage1: dict[str, Any], frame: Any) -> list[st
     return errors
 
 
-def _validate_stage1_fact_language(stage1: dict[str, Any], frame: Any) -> list[str]:
+def _collect_stage1_narrative_warnings(
+    stage1: dict[str, Any],
+    frame: Any,
+) -> list[str]:
     errors: list[str] = []
     evidence = stage1.get("pa_evidence")
     declared_fact_refs = (
@@ -392,10 +419,19 @@ def _validate_stage1_fact_language(stage1: dict[str, Any], frame: Any) -> list[s
         errors.extend(_validate_count_restatements(text, path=path))
         errors.extend(_validate_bar_break_claims(text, path=path, frame=frame))
         errors.extend(_validate_ema_claim(text, path=path, frame=frame))
+    errors.extend(_validate_tick_claims(stage1, frame))
+    return errors
+
+
+def _validate_stage1_structured_facts(
+    stage1: dict[str, Any],
+    frame: Any,
+) -> list[str]:
+    """Validate typed PA facts without interpreting free-form prose."""
+    errors: list[str] = []
     errors.extend(_validate_pa_evidence_contract(stage1, frame))
     errors.extend(_validate_structure_level_sides(stage1, frame))
     errors.extend(_validate_spike_transition_contract(stage1))
-    errors.extend(_validate_tick_claims(stage1, frame))
     return errors
 
 

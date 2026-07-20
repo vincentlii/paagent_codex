@@ -1,7 +1,7 @@
 """Cursor SDK-backed client for PA Agent.
 
-Implements the same interface as :class:`pa_agent.ai.deepseek_client.DeepSeekClient`
-for orchestrators: ``stream_chat()`` and ``update_provider()``.
+Implements the same streaming interface as
+:class:`pa_agent.ai.deepseek_client.DeepSeekClient`.
 """
 
 from __future__ import annotations
@@ -315,9 +315,6 @@ class CursorSdkClient:
     def __init__(self, settings: AIProviderSettings, logger_: logging.Logger | None = None) -> None:
         self._settings = settings
         self._log = logger_ or logger
-
-    def update_provider(self, settings: AIProviderSettings) -> None:
-        self._settings = settings
 
     def clone_with_provider(self, settings: AIProviderSettings) -> CursorSdkClient:
         """Create an isolated client for a paired experiment arm."""

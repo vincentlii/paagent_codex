@@ -93,7 +93,7 @@ def validate_higher_timeframe_output(
     stage1: dict[str, Any],
     context: dict[str, Any] | None,
 ) -> list[str]:
-    """Require an auditable HTF citation when a real HTF frame was injected."""
+    """Reject only citations that contradict the injected HTF frame."""
     if not isinstance(context, dict) or context.get("status") != "available":
         return []
     frame = context.get("frame")
@@ -102,15 +102,29 @@ def validate_higher_timeframe_output(
     text = str(stage1.get("htf_context") or "")
     references = extract_htf_reference_seqs(text)
     if not references:
-        return [
-            "htf_context must cite at least one injected HTF.H# bar when HTF is available"
-        ]
+        return []
     available = {int(bar.seq) for bar in frame.bars}
     invalid = sorted(references - available)
     if invalid:
         refs = ", ".join(f"HTF.H{value}" for value in invalid)
         return [f"htf_context cites bars outside the injected HTF frame: {refs}"]
     return []
+
+
+def collect_higher_timeframe_warnings(
+    stage1: dict[str, Any],
+    context: dict[str, Any] | None,
+) -> list[str]:
+    """Report an omitted HTF citation without rejecting otherwise legal output."""
+    if not isinstance(context, dict) or context.get("status") != "available":
+        return []
+    frame = context.get("frame")
+    if not isinstance(frame, KlineFrame) or not frame.bars:
+        return []
+    text = str(stage1.get("htf_context") or "")
+    if extract_htf_reference_seqs(text):
+        return []
+    return ["htf_context omitted an auditable HTF.H# citation"]
 
 
 def serialize_higher_timeframe_context(context: dict[str, Any] | None) -> dict[str, Any] | None:

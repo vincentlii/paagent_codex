@@ -4,11 +4,34 @@ import copy
 from dataclasses import replace
 
 from pa_agent.ai.coherence_checks import (
-    validate_stage1_coherence,
-    validate_stage2_coherence,
+    collect_stage1_quality_warnings,
+    collect_stage2_quality_warnings,
+    validate_stage1_coherence as _validate_stage1_hard,
+    validate_stage2_coherence as _validate_stage2_hard,
 )
 from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
 from tests.unit.test_analysis_fact_catalog import make_mixed_frame
+
+
+def validate_stage1_coherence(stage1: dict, *, kline_frame: object) -> list[str]:
+    """Return all hard and advisory findings for focused detector tests."""
+    return [
+        *_validate_stage1_hard(stage1, kline_frame=kline_frame),
+        *collect_stage1_quality_warnings(stage1, kline_frame=kline_frame),
+    ]
+
+
+def validate_stage2_coherence(
+    stage2: dict,
+    stage1: dict,
+    *,
+    kline_frame: object,
+) -> list[str]:
+    """Return all hard and advisory findings for focused detector tests."""
+    return [
+        *_validate_stage2_hard(stage2, stage1, kline_frame=kline_frame),
+        *collect_stage2_quality_warnings(stage2, kline_frame=kline_frame),
+    ]
 
 
 def test_valid_stage_outputs_are_internally_coherent() -> None:

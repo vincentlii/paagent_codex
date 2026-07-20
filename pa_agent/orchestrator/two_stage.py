@@ -26,7 +26,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 if TYPE_CHECKING:
     from pa_agent.ai.deepseek_client import DeepSeekClient
@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     from pa_agent.records.pending_writer import PendingWriter
 
 from pa_agent.ai.json_validator import Ok, ValidationError
+from pa_agent.ai.model_call_runner import ModelCallRunner
+from pa_agent.ai.provider_failures import ModelCallFailure
 from pa_agent.config.vpa import VPA_PAIR_IDENTITY_VERSION
 from pa_agent.data.base import KlineFrame
 from pa_agent.orchestrator.validation_retry import validate_with_retry
@@ -253,6 +255,13 @@ def _call_attempt_entry(
             }
         )
     latency_ms = getattr(reply, "latency_ms", None) if reply is not None else None
+    model_call_meta = (
+        getattr(reply, "_pa_model_call_meta", {})
+        if reply is not None
+        else {}
+    )
+    if not isinstance(model_call_meta, dict):
+        model_call_meta = {}
     return {
         "arm": arm,
         "stage": stage,
@@ -269,6 +278,14 @@ def _call_attempt_entry(
         "status": status,
         "validation_category": validation_category,
         "error_type": error_type,
+        "provider_id": model_call_meta.get("provider_id"),
+        "structured_output_mode": model_call_meta.get("structured_output_mode"),
+        "provider_fallback_used": bool(
+            model_call_meta.get("provider_fallback_used", False)
+        ),
+        "transport_attempts": copy.deepcopy(
+            model_call_meta.get("transport_attempts") or []
+        ),
         "created_at_ms": int(datetime.now().timestamp() * 1000),
     }
 
@@ -294,6 +311,12 @@ def _apply_validation_to_call_attempts(
         if 0 <= index < len(response_calls):
             if event.get("category") == "normalization":
                 response_calls[index]["normalization_applied"] = True
+                continue
+            if event.get("category") == "warning":
+                response_calls[index]["validation_warning_count"] = (
+                    int(response_calls[index].get("validation_warning_count") or 0)
+                    + 1
+                )
                 continue
             response_calls[index]["status"] = "validation_failed"
             response_calls[index]["validation_category"] = str(
@@ -957,6 +980,7 @@ class TwoStageOrchestrator:
         try:
             reply_s1 = self._stream_chat_resilient(
                 messages_s1,
+                stage="stage1",
                 on_reasoning_token=_on_s1_reasoning,
                 on_content_token=_on_s1_content,
                 cancel_token=cancel_token,
@@ -970,24 +994,22 @@ class TwoStageOrchestrator:
                     error_type=type(exc).__name__,
                 ),
             )
-        except Exception as exc:
-            if self._is_network_error(exc):
-                logger.warning("Stage 1 network error: %s", exc)
-                record = record.model_copy(
-                    update={
-                        "stage1_messages": messages_s1,
-                        "call_attempts": copy.deepcopy(call_attempts),
-                        "exception": {
-                            "type": "network_error",
-                            "stage": "stage1",
-                            "message": str(exc),
-                        },
-                    }
-                )
-                self._persist_partial(record, "network_error", on_event)
-                on_event(OrchestratorEvent.Stage1Failed)
+        except ModelCallFailure as exc:
+            if exc.failure.kind == "cancelled":
+                self._persist_partial(record, "user_cancelled", on_event)
+                on_event(OrchestratorEvent.Cancelled)
                 return record
-            raise
+            logger.warning("Stage 1 provider failure (%s): %s", exc.failure.kind, exc)
+            record = record.model_copy(
+                update={
+                    "stage1_messages": messages_s1,
+                    "call_attempts": copy.deepcopy(call_attempts),
+                    "exception": self._provider_failure_payload(exc, stage="stage1"),
+                }
+            )
+            self._persist_partial(record, "provider_error", on_event)
+            on_event(OrchestratorEvent.Stage1Failed)
+            return record
 
         _append_call("stage1", messages_s1, reply=reply_s1)
         record = record.model_copy(
@@ -1040,23 +1062,22 @@ class TwoStageOrchestrator:
             on_event(OrchestratorEvent.Stage1Retry)
             s1_streamed_reasoning = False
             s1_streamed_content = False
-            try:
-                r = self._client.stream_chat(
-                    msgs,
-                    on_reasoning_token=_on_s1_reasoning,
-                    on_content_token=_on_s1_content,
-                    cancel_token=cancel_token,
-                    thinking=_thinking,
-                    reasoning_effort=_effort,
-                )
-            except Exception as exc:
-                _append_call(
+            r = self._stream_chat_resilient(
+                msgs,
+                stage="stage1",
+                on_reasoning_token=_on_s1_reasoning,
+                on_content_token=_on_s1_content,
+                cancel_token=cancel_token,
+                thinking=_thinking,
+                reasoning_effort=_effort,
+                stage_label="Stage 1 repair",
+                on_attempt_error=lambda exc: _append_call(
                     "stage1",
                     msgs,
                     status="request_failed",
                     error_type=type(exc).__name__,
-                )
-                raise
+                ),
+            )
             if not s1_streamed_reasoning and r.reasoning_content:
                 _emit_buffered_stream(r.reasoning_content, on_stage1_reasoning)
             if not s1_streamed_content and r.content:
@@ -1065,23 +1086,48 @@ class TwoStageOrchestrator:
             _append_call("stage1", msgs, reply=r)
             return r
 
-        vr_s1 = validate_with_retry(
-            stage="stage1",
-            messages=messages_s1,
-            reply=reply_s1,
-            validator=self._validator,
-            validation_settings=self._validation_settings(),
-            validate_kwargs={
-                "kline_frame": frame,
-                "vpa_evidence_catalog": self._vpa_evidence_catalog,
-                "incremental_new_bar_count": int(incremental_new_bar_count or 0),
-                "incremental_previous_stage1": prev_s1,
-                "paired_baseline_stage1": self._paired_baseline_stage1,
-                "htf_context": htf_context,
-            },
-            call_api=_call_s1_retry,
-            provider_settings=getattr(self._settings, "provider", None),
-        )
+        try:
+            vr_s1 = validate_with_retry(
+                stage="stage1",
+                messages=messages_s1,
+                reply=reply_s1,
+                validator=self._validator,
+                validation_settings=self._validation_settings(),
+                validate_kwargs={
+                    "kline_frame": frame,
+                    "vpa_evidence_catalog": self._vpa_evidence_catalog,
+                    "incremental_new_bar_count": int(
+                        incremental_new_bar_count or 0
+                    ),
+                    "incremental_previous_stage1": prev_s1,
+                    "paired_baseline_stage1": self._paired_baseline_stage1,
+                    "htf_context": htf_context,
+                },
+                call_api=_call_s1_retry,
+                provider_settings=getattr(self._settings, "provider", None),
+            )
+        except ModelCallFailure as exc:
+            failure = self._provider_failure_payload(exc, stage="stage1")
+            failure["phase"] = "validation_retry"
+            record = record.model_copy(
+                update={
+                    "stage1_messages": messages_s1,
+                    "stage1_response": reply_s1.raw,
+                    "call_attempts": copy.deepcopy(call_attempts),
+                    "usage_total": _accumulate_usage(
+                        record.usage_total,
+                        reply_s1,
+                    ),
+                    "exception": failure,
+                }
+            )
+            if exc.failure.kind == "cancelled":
+                self._persist_partial(record, "user_cancelled", on_event)
+                on_event(OrchestratorEvent.Cancelled)
+            else:
+                self._persist_partial(record, "provider_error", on_event)
+                on_event(OrchestratorEvent.Stage1Failed)
+            return record
         messages_s1 = vr_s1.canonical_messages
         _apply_validation_to_call_attempts(
             call_attempts,
@@ -1317,6 +1363,7 @@ class TwoStageOrchestrator:
         try:
             reply_s2 = self._stream_chat_resilient(
                 messages_s2,
+                stage="stage2",
                 on_reasoning_token=_on_s2_reasoning,
                 on_content_token=_on_s2_content,
                 cancel_token=cancel_token,
@@ -1330,33 +1377,31 @@ class TwoStageOrchestrator:
                     error_type=type(exc).__name__,
                 ),
             )
-        except Exception as exc:
-            if self._is_network_error(exc):
-                logger.warning("Stage 2 network error: %s", exc)
-                record = record.model_copy(
-                    update={
-                        "stage1_messages": messages_s1,
-                        "stage1_response": reply_s1.raw,
-                        "stage1_diagnosis": stage1_json,
-                        "stage2_messages": messages_s2,
-                        "call_attempts": copy.deepcopy(call_attempts),
-                        "strategy_files_used": strategy_files,
-                        "experience_loaded": [
-                            e.model_dump() if hasattr(e, "model_dump") else dict(e)
-                            for e in experience_entries
-                        ],
-                        "usage_total": _accumulate_usage(record.usage_total, reply_s1),
-                        "exception": {
-                            "type": "network_error",
-                            "stage": "stage2",
-                            "message": str(exc),
-                        },
-                    }
-                )
-                self._persist_partial(record, "network_error", on_event)
-                on_event(OrchestratorEvent.Stage2Failed)
+        except ModelCallFailure as exc:
+            if exc.failure.kind == "cancelled":
+                self._persist_partial(record, "user_cancelled", on_event)
+                on_event(OrchestratorEvent.Cancelled)
                 return record
-            raise
+            logger.warning("Stage 2 provider failure (%s): %s", exc.failure.kind, exc)
+            record = record.model_copy(
+                update={
+                    "stage1_messages": messages_s1,
+                    "stage1_response": reply_s1.raw,
+                    "stage1_diagnosis": stage1_json,
+                    "stage2_messages": messages_s2,
+                    "call_attempts": copy.deepcopy(call_attempts),
+                    "strategy_files_used": strategy_files,
+                    "experience_loaded": [
+                        e.model_dump() if hasattr(e, "model_dump") else dict(e)
+                        for e in experience_entries
+                    ],
+                    "usage_total": _accumulate_usage(record.usage_total, reply_s1),
+                    "exception": self._provider_failure_payload(exc, stage="stage2"),
+                }
+            )
+            self._persist_partial(record, "provider_error", on_event)
+            on_event(OrchestratorEvent.Stage2Failed)
+            return record
 
         _append_call("stage2", messages_s2, reply=reply_s2)
         record = record.model_copy(
@@ -1416,23 +1461,22 @@ class TwoStageOrchestrator:
             on_event(OrchestratorEvent.Stage2Retry)
             s2_streamed_reasoning = False
             s2_streamed_content = False
-            try:
-                r = self._client.stream_chat(
-                    msgs,
-                    on_reasoning_token=_on_s2_reasoning,
-                    on_content_token=_on_s2_content,
-                    cancel_token=cancel_token,
-                    thinking=_thinking,
-                    reasoning_effort=_effort,
-                )
-            except Exception as exc:
-                _append_call(
+            r = self._stream_chat_resilient(
+                msgs,
+                stage="stage2",
+                on_reasoning_token=_on_s2_reasoning,
+                on_content_token=_on_s2_content,
+                cancel_token=cancel_token,
+                thinking=_thinking,
+                reasoning_effort=_effort,
+                stage_label="Stage 2 repair",
+                on_attempt_error=lambda exc: _append_call(
                     "stage2",
                     msgs,
                     status="request_failed",
                     error_type=type(exc).__name__,
-                )
-                raise
+                ),
+            )
             if not s2_streamed_reasoning and r.reasoning_content:
                 _emit_buffered_stream(r.reasoning_content, on_stage2_reasoning)
             if not s2_streamed_content and r.content:
@@ -1441,22 +1485,53 @@ class TwoStageOrchestrator:
             _append_call("stage2", msgs, reply=r)
             return r
 
-        vr_s2 = validate_with_retry(
-            stage="stage2",
-            messages=messages_s2,
-            reply=reply_s2,
-            validator=self._validator,
-            validation_settings=self._validation_settings(),
-            validate_kwargs={
-                "kline_frame": frame,
-                "stage1_json": stage1_for_stage2,
-                "skip_next_bar": not _enable_next_bar,
-                "vpa_evidence_catalog": self._vpa_evidence_catalog,
-                "paired_baseline_stage2": self._paired_baseline_stage2,
-            },
-            call_api=_call_s2_retry,
-            provider_settings=getattr(self._settings, "provider", None),
-        )
+        try:
+            vr_s2 = validate_with_retry(
+                stage="stage2",
+                messages=messages_s2,
+                reply=reply_s2,
+                validator=self._validator,
+                validation_settings=self._validation_settings(),
+                validate_kwargs={
+                    "kline_frame": frame,
+                    "stage1_json": stage1_for_stage2,
+                    "skip_next_bar": not _enable_next_bar,
+                    "vpa_evidence_catalog": self._vpa_evidence_catalog,
+                    "paired_baseline_stage2": self._paired_baseline_stage2,
+                },
+                call_api=_call_s2_retry,
+                provider_settings=getattr(self._settings, "provider", None),
+            )
+        except ModelCallFailure as exc:
+            failure = self._provider_failure_payload(exc, stage="stage2")
+            failure["phase"] = "validation_retry"
+            record = record.model_copy(
+                update={
+                    "stage1_messages": messages_s1,
+                    "stage1_response": reply_s1.raw,
+                    "stage1_diagnosis": stage1_json,
+                    "stage2_messages": messages_s2,
+                    "stage2_response": reply_s2.raw,
+                    "call_attempts": copy.deepcopy(call_attempts),
+                    "strategy_files_used": strategy_files,
+                    "experience_loaded": [
+                        e.model_dump() if hasattr(e, "model_dump") else dict(e)
+                        for e in experience_entries
+                    ],
+                    "usage_total": _accumulate_usage(
+                        _accumulate_usage(record.usage_total, reply_s1),
+                        reply_s2,
+                    ),
+                    "exception": failure,
+                }
+            )
+            if exc.failure.kind == "cancelled":
+                self._persist_partial(record, "user_cancelled", on_event)
+                on_event(OrchestratorEvent.Cancelled)
+            else:
+                self._persist_partial(record, "provider_error", on_event)
+                on_event(OrchestratorEvent.Stage2Failed)
+            return record
         messages_s2 = vr_s2.canonical_messages
         _apply_validation_to_call_attempts(
             call_attempts,
@@ -1948,6 +2023,7 @@ class TwoStageOrchestrator:
         self,
         messages: list[dict[str, Any]],
         *,
+        stage: Literal["stage1", "stage2"],
         on_reasoning_token: Callable[[str], None] | None,
         on_content_token: Callable[[str], None] | None,
         cancel_token: CancelToken,
@@ -1956,219 +2032,192 @@ class TwoStageOrchestrator:
         stage_label: str,
         on_attempt_error: Callable[[Exception], None] | None = None,
     ) -> Any:
-        """Call stream_chat; on connection error, switch to QClaw and retry once."""
+        """Run one typed, bounded model call with an optional ephemeral fallback."""
+        provider = (
+            self._settings.provider
+            if self._settings is not None
+            else getattr(self._client, "_settings", None)
+        )
+        if provider is None:
+            from pa_agent.config.settings import AIProviderSettings
+
+            provider = AIProviderSettings(structured_output_mode="text")
+        schema_for = getattr(self._validator, "schema_for", None)
+        schema = schema_for(stage) if callable(schema_for) else None
         original_model = (
             self._settings.provider.model if self._settings is not None else ""
         )
-        tried_qclaw = False
-        tried_cursor = False
-        tried_workbuddy = False
-        while True:
+        try:
+            result = ModelCallRunner(self._client, provider).run_stream(
+                messages,
+                stage=stage,
+                schema=schema,
+                on_reasoning_token=on_reasoning_token,
+                on_content_token=on_content_token,
+                cancel_token=cancel_token,
+                thinking=thinking,
+                reasoning_effort=reasoning_effort,
+                on_attempt_error=on_attempt_error,
+            )
+            self._annotate_model_reply(result, provider_fallback_used=False)
+            return result.reply
+        except ModelCallFailure as primary_failure:
+            if (
+                not primary_failure.failure.retryable
+                or not self._allow_provider_fallback
+            ):
+                raise
+            fallback = self._build_ephemeral_fallback(original_model)
+            if fallback is None:
+                raise
+            name, fallback_client, fallback_provider = fallback
+            logger.info(
+                "%s provider unavailable (%s); trying ephemeral %s fallback",
+                stage_label,
+                primary_failure.failure.kind,
+                name,
+            )
             try:
-                return self._client.stream_chat(
+                fallback_result = ModelCallRunner(
+                    fallback_client,
+                    fallback_provider,
+                ).run_stream(
                     messages,
+                    stage=stage,
+                    schema=schema,
                     on_reasoning_token=on_reasoning_token,
                     on_content_token=on_content_token,
                     cancel_token=cancel_token,
                     thinking=thinking,
                     reasoning_effort=reasoning_effort,
+                    on_attempt_error=on_attempt_error,
                 )
-            except Exception as exc:
-                if on_attempt_error is not None:
-                    on_attempt_error(exc)
-                if not self._is_network_error(exc):
-                    raise
-                if not self._allow_provider_fallback:
-                    raise
-                # Try WorkBuddy fallback first (if model is openclaw_wb),
-                # then QClaw fallback (if model is openclaw)
-                if not tried_workbuddy and self._try_workbuddy_fallback(
-                    original_model=original_model
-                ):
-                    tried_workbuddy = True
-                    logger.info(
-                        "%s network error (%s); applied WorkBuddy provider — retrying",
-                        stage_label,
-                        exc,
-                    )
-                elif not tried_cursor and self._try_cursor_fallback(
-                    original_model=original_model
-                ):
-                    tried_cursor = True
-                    logger.info(
-                        "%s network error (%s); applied Cursor provider — retrying",
-                        stage_label,
-                        exc,
-                    )
-                elif not tried_qclaw and self._try_qclaw_fallback(
-                    original_model=original_model
-                ):
-                    tried_qclaw = True
-                    logger.info(
-                        "%s network error (%s); applied QClaw provider — retrying",
-                        stage_label,
-                        exc,
-                    )
-                else:
-                    raise
+            except ModelCallFailure as fallback_failure:
+                combined_attempts = (
+                    *(
+                        {
+                            **dict(attempt),
+                            "provider_role": "primary",
+                        }
+                        for attempt in primary_failure.attempts
+                    ),
+                    *(
+                        {
+                            **dict(attempt),
+                            "provider_role": "fallback",
+                        }
+                        for attempt in fallback_failure.attempts
+                    ),
+                )
+                raise ModelCallFailure(
+                    fallback_failure.failure,
+                    original=fallback_failure.original,
+                    attempts=combined_attempts,
+                ) from fallback_failure
+            self._annotate_model_reply(
+                fallback_result,
+                provider_fallback_used=True,
+                prior_attempts=primary_failure.attempts,
+            )
+            return fallback_result.reply
 
-    def _try_qclaw_fallback(self, *, original_model: str = "") -> bool:
-        """Apply local QClaw provider (like settings Save with model=openclaw)."""
-        from pa_agent.ai.qclaw_connector import (
-            apply_qclaw_provider_to_settings,
-            is_openclaw_model,
+    @staticmethod
+    def _annotate_model_reply(
+        result: Any,
+        *,
+        provider_fallback_used: bool,
+        prior_attempts: tuple[dict, ...] = (),
+    ) -> None:
+        provider_id = str(result.capabilities.provider_id)
+        transport_attempts = [
+            {
+                **dict(attempt),
+                "provider_role": "primary",
+            }
+            for attempt in prior_attempts
+        ]
+        transport_attempts.extend(
+            {
+                **dict(attempt),
+                "provider_role": (
+                    "fallback" if provider_fallback_used else "primary"
+                ),
+                "provider_id": provider_id,
+            }
+            for attempt in result.attempts
         )
-        from pa_agent.config.paths import SETTINGS_JSON_PATH
-
-        if not is_openclaw_model(original_model):
-            return False
-        if self._settings is None:
-            return False
-
-        from pa_agent.config.settings import save_settings
-        from pa_agent.util.logging import update_api_key
-
-        err = apply_qclaw_provider_to_settings(self._settings)
-        if err:
-            logger.warning("QClaw auto-fallback unavailable: %s", err)
-            return False
-
-        self._client.update_provider(self._settings.provider)
         try:
-            save_settings(self._settings, SETTINGS_JSON_PATH)
-            update_api_key(self._settings.provider.api_key)
-        except Exception as save_exc:  # noqa: BLE001
-            logger.warning("QClaw fallback applied but settings save failed: %s", save_exc)
+            result.reply._pa_model_call_meta = {
+                "provider_id": provider_id,
+                "structured_output_mode": result.structured_output_mode,
+                "provider_fallback_used": provider_fallback_used,
+                "transport_attempts": transport_attempts,
+            }
+        except (AttributeError, TypeError):
+            logger.debug("Provider reply does not support call metadata annotation")
 
-        logger.info(
-            "QClaw auto-fallback: model=%s base_url=%s",
-            self._settings.provider.model,
-            self._settings.provider.base_url,
-        )
-        return True
+    def _build_ephemeral_fallback(
+        self,
+        original_model: str,
+    ) -> tuple[str, Any, Any] | None:
+        """Build a run-scoped fallback without mutating or saving user settings."""
+        if self._settings is None:
+            return None
+        candidate = self._settings.model_copy(deep=True)
+        name = ""
+        error: str | None = None
 
-    def _try_cursor_fallback(self, *, original_model: str = "") -> bool:
-        """Apply Cursor route via QClaw (like settings Save with model=openclaw_cs)."""
         from pa_agent.ai.cursor_connector import (
             apply_cursor_provider_to_settings,
             is_openclaw_cs_model,
         )
-        from pa_agent.config.paths import SETTINGS_JSON_PATH
-
-        if not is_openclaw_cs_model(original_model):
-            return False
-        if self._settings is None:
-            return False
-
-        from pa_agent.config.settings import save_settings
-        from pa_agent.util.logging import update_api_key
-
-        err = apply_cursor_provider_to_settings(
-            self._settings,
-            preferred_model=original_model,
+        from pa_agent.ai.qclaw_connector import (
+            apply_qclaw_provider_to_settings,
+            is_openclaw_model,
         )
-        if err:
-            logger.warning("Cursor auto-fallback unavailable: %s", err)
-            return False
-
-        self._client.update_provider(self._settings.provider)
-        try:
-            save_settings(self._settings, SETTINGS_JSON_PATH)
-            update_api_key(self._settings.provider.api_key)
-        except Exception as save_exc:  # noqa: BLE001
-            logger.warning("Cursor fallback applied but settings save failed: %s", save_exc)
-
-        logger.info(
-            "Cursor auto-fallback: model=%s base_url=%s",
-            self._settings.provider.model,
-            self._settings.provider.base_url,
-        )
-        return True
-
-    def _try_workbuddy_fallback(self, *, original_model: str = "") -> bool:
-        """Apply WorkBuddy provider (like settings Save with model=openclaw_wb)."""
         from pa_agent.ai.workbuddy_connector import (
             apply_workbuddy_provider_to_settings,
             is_openclaw_wb_model,
         )
-        from pa_agent.config.paths import SETTINGS_JSON_PATH
 
-        if not is_openclaw_wb_model(original_model):
-            return False
-        if self._settings is None:
-            return False
+        if is_openclaw_wb_model(original_model):
+            name = "WorkBuddy"
+            error = apply_workbuddy_provider_to_settings(candidate)
+        elif is_openclaw_cs_model(original_model):
+            name = "Cursor"
+            error = apply_cursor_provider_to_settings(
+                candidate,
+                preferred_model=original_model,
+            )
+        elif is_openclaw_model(original_model):
+            name = "QClaw"
+            error = apply_qclaw_provider_to_settings(candidate)
+        else:
+            return None
+        if error:
+            logger.warning("%s fallback unavailable: %s", name, error)
+            return None
 
-        from pa_agent.config.settings import save_settings
-        from pa_agent.util.logging import update_api_key
+        from pa_agent.ai.client_factory import create_ai_client
 
-        err = apply_workbuddy_provider_to_settings(self._settings)
-        if err:
-            logger.warning("WorkBuddy auto-fallback unavailable: %s", err)
-            return False
-
-        self._client.update_provider(self._settings.provider)
-        try:
-            save_settings(self._settings, SETTINGS_JSON_PATH)
-            update_api_key(self._settings.provider.api_key)
-        except Exception as save_exc:  # noqa: BLE001
-            logger.warning("WorkBuddy fallback applied but settings save failed: %s", save_exc)
-
-        logger.info(
-            "WorkBuddy auto-fallback: model=%s base_url=%s",
-            self._settings.provider.model,
-            self._settings.provider.base_url,
+        return (
+            name,
+            create_ai_client(candidate.provider, logger_=logger),
+            candidate.provider,
         )
-        return True
 
     @staticmethod
-    def _is_network_error(exc: Exception) -> bool:
-        """Return True if *exc* is a network/timeout error (SDK, httpx, or OS reset)."""
-        from pa_agent.ai.deepseek_client import CancelledError
-
-        if isinstance(exc, CancelledError):
-            return False
-
-        try:
-            import openai  # type: ignore[import]
-
-            if isinstance(
-                exc,
-                (
-                    openai.APITimeoutError,
-                    openai.APIConnectionError,
-                    openai.APIStatusError,
-                ),
-            ):
-                return True
-        except ImportError:
-            pass
-
-        try:
-            import httpx  # type: ignore[import]
-
-            if isinstance(
-                exc,
-                (
-                    httpx.ReadError,
-                    httpx.ConnectError,
-                    httpx.TimeoutException,
-                    httpx.RemoteProtocolError,
-                ),
-            ):
-                return True
-        except ImportError:
-            pass
-
-        if isinstance(exc, (ConnectionResetError, ConnectionAbortedError, TimeoutError)):
-            return True
-        if isinstance(exc, OSError) and getattr(exc, "winerror", None) in (
-            10054,  # WSAECONNRESET — remote host closed connection
-            10053,  # WSAECONNABORTED
-            10060,  # WSAETIMEDOUT
-        ):
-            return True
-
-        cause = exc.__cause__
-        if cause is not None and cause is not exc:
-            return TwoStageOrchestrator._is_network_error(cause)
-        return False
+    def _provider_failure_payload(
+        exc: ModelCallFailure,
+        *,
+        stage: str,
+    ) -> dict[str, Any]:
+        return {
+            "type": "provider_error",
+            "stage": stage,
+            "failure_kind": exc.failure.kind,
+            "status_code": exc.failure.status_code,
+            "retryable": exc.failure.retryable,
+            "message": str(exc),
+            "attempts": [dict(attempt) for attempt in exc.attempts],
+        }

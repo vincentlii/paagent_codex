@@ -124,6 +124,20 @@ def _is_openclaw_agent_model(model: str) -> bool:
     )
 
 
+def _stream_options_rejected(exc: BaseException) -> bool:
+    """Return True only for an explicit unsupported ``stream_options`` error."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if not isinstance(exc, TypeError) and status not in {400, 422}:
+        return False
+    message = str(exc).lower()
+    return "stream_options" in message or (
+        "include_usage" in message
+        and any(token in message for token in ("unsupported", "unknown", "invalid"))
+    )
+
+
 def supports_kv_prefix_chain(settings: AIProviderSettings | None) -> bool:
     """Whether Stage 2 may chain after Stage 1 messages for DeepSeek KV prefix cache.
 
@@ -412,14 +426,24 @@ class DeepSeekClient:
     def __init__(self, settings: AIProviderSettings, logger_: logging.Logger | None = None) -> None:
         self._settings = settings
         self._log = logger_ or logger
-
-    def update_provider(self, settings: AIProviderSettings) -> None:
-        """Replace in-memory provider settings (e.g. after QClaw auto-fallback)."""
-        self._settings = settings
+        self._sdk_client: Any | None = None
+        self._sdk_fingerprint: tuple[str, str] | None = None
 
     def clone_with_provider(self, settings: AIProviderSettings) -> DeepSeekClient:
         """Create an isolated client for a paired experiment arm."""
         return DeepSeekClient(settings, logger_=self._log)
+
+    def _openai_client(self) -> Any:
+        if _OpenAI is None:
+            raise RuntimeError("openai package is not installed") from _OPENAI_IMPORT_ERROR
+        fingerprint = (self._settings.base_url, self._settings.api_key)
+        if self._sdk_client is None or self._sdk_fingerprint != fingerprint:
+            self._sdk_client = _OpenAI(
+                base_url=self._settings.base_url,
+                api_key=self._settings.api_key,
+            )
+            self._sdk_fingerprint = fingerprint
+        return self._sdk_client
 
     def chat(
         self,
@@ -430,6 +454,7 @@ class DeepSeekClient:
         context_window: int | None = None,
         cancel_token: "CancelToken | None" = None,
         timeout_s: float = 600.0,
+        response_format: dict[str, Any] | None = None,
     ) -> AIReply:
         """Send *messages* to the DeepSeek API and return a structured reply.
 
@@ -465,13 +490,7 @@ class DeepSeekClient:
             len(api_messages),
         )
 
-        if _OpenAI is None:
-            raise RuntimeError("openai package is not installed") from _OPENAI_IMPORT_ERROR
-
-        client = _OpenAI(
-            base_url=self._settings.base_url,
-            api_key=self._settings.api_key,
-        )
+        client = self._openai_client()
 
         t0 = time.monotonic()
         create_kwargs: dict[str, Any] = {
@@ -484,6 +503,8 @@ class DeepSeekClient:
             create_kwargs["extra_body"] = extra_body
         if _effort is not None:
             create_kwargs["reasoning_effort"] = _effort
+        if response_format is not None:
+            create_kwargs["response_format"] = response_format
         # When thinking mode is OFF, set temperature=0 for maximum instruction-following
         # fidelity and JSON format compliance.  Thinking mode is incompatible with
         # temperature (DeepSeek/Anthropic spec), so we only inject it when safe.
@@ -587,6 +608,7 @@ class DeepSeekClient:
         reasoning_effort: str | None = None,
         cancel_token: "CancelToken | None" = None,
         timeout_s: float = 600.0,
+        response_format: dict[str, Any] | None = None,
     ) -> AIReply:
         """Stream *messages* to the DeepSeek API, calling callbacks per token.
 
@@ -639,13 +661,7 @@ class DeepSeekClient:
             len(api_messages),
         )
 
-        if _OpenAI is None:
-            raise RuntimeError("openai package is not installed") from _OPENAI_IMPORT_ERROR
-
-        client = _OpenAI(
-            base_url=self._settings.base_url,
-            api_key=self._settings.api_key,
-        )
+        client = self._openai_client()
 
         t0 = time.monotonic()
         reasoning_content = ""
@@ -673,12 +689,17 @@ class DeepSeekClient:
                 stream_kwargs["extra_body"] = extra_body
             if _effort is not None:
                 stream_kwargs["reasoning_effort"] = _effort
+            if response_format is not None:
+                stream_kwargs["response_format"] = response_format
 
             try:
                 stream = client.chat.completions.create(**stream_kwargs)
-            except Exception:
-                # Retry without stream_options if provider rejects it
-                self._log.debug("stream_options not supported; retrying without it")
+            except Exception as exc:
+                if not _stream_options_rejected(exc):
+                    raise
+                self._log.warning(
+                    "Provider rejected stream_options; retrying once without usage streaming"
+                )
                 stream_kwargs.pop("stream_options", None)
                 stream = client.chat.completions.create(**stream_kwargs)
 

@@ -174,7 +174,7 @@ def test_shadow_pair_uses_isolated_clients_and_keeps_sidecar_out_of_official_sta
 
     assert client.clone_with_provider.call_count == 2
     assert baseline_client.stream_chat.call_count == 2
-    assert vpa_client.stream_chat.call_count == 3
+    assert vpa_client.stream_chat.call_count == 2
     assert record.vpa_sidecar is not None
     assert record.vpa_sidecar["mode"] == "shadow"
     assert record.vpa_sidecar["configured_mode"] == configured_mode
@@ -189,7 +189,7 @@ def test_shadow_pair_uses_isolated_clients_and_keeps_sidecar_out_of_official_sta
     assert "PAIRED_VPA_CONTEXT_TASK" in vpa_stage1_prompt
     assert "trend_pullback" in vpa_stage1_prompt
     baseline_s2_messages = baseline_client.stream_chat.call_args_list[1].args[0]
-    vpa_s2_messages = vpa_client.stream_chat.call_args_list[2].args[0]
+    vpa_s2_messages = vpa_client.stream_chat.call_args_list[1].args[0]
     assert vpa_s2_messages[:-1] == baseline_s2_messages[:-1]
     assert vpa_s2_messages[-1]["content"].startswith(
         baseline_s2_messages[-1]["content"]
@@ -213,12 +213,13 @@ def test_shadow_pair_uses_isolated_clients_and_keeps_sidecar_out_of_official_sta
     ] == [
         ("baseline", "stage1", 1, "validated"),
         ("baseline", "stage2", 1, "validated"),
-        ("vpa", "stage1", 1, "validation_failed"),
-        ("vpa", "stage1", 2, "validated"),
+        ("vpa", "stage1", 1, "validated"),
         ("vpa", "stage2", 1, "validated"),
     ]
     assert len(record.validation_audit) == 1
     assert record.validation_audit[0]["arm"] == "vpa"
+    assert record.validation_audit[0]["category"] == "warning"
+    assert record.call_attempts[2]["validation_warning_count"] == 1
     assert record.vpa_sidecar["vpa_arm"]["validation_audit"] == record.validation_audit
     assert all(call["request_hash"] for call in record.call_attempts)
     assert all(call["response_hash"] for call in record.call_attempts)

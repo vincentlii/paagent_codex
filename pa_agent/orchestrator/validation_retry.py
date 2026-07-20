@@ -130,6 +130,20 @@ def validate_with_retry(
                 int(getattr(validation_settings, "retry_max_semantic", 1) or 1),
             )
         if isinstance(result, Ok):
+            for warning in result.warnings:
+                validation_events.append(
+                    {
+                        "attempt": attempt + 1,
+                        "category": "warning",
+                        "code": warning.code,
+                        "message": warning.message,
+                        "missing_fields": [],
+                        "invalid_fields": [],
+                        "allowed_values": {},
+                        "raw_text": content,
+                        "retry_feedback": None,
+                    }
+                )
             for normalization in result.normalization_events:
                 validation_events.append(
                     {
