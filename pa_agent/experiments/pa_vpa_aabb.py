@@ -25,6 +25,9 @@ from pa_agent.ai.vpa_measurements import (
 )
 from pa_agent.data.base import KlineFrame
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
+from pa_agent.quality.runtime_fingerprint import (
+    analysis_runtime_fingerprint as _shared_runtime_fingerprint,
+)
 from pa_agent.records.schema import AnalysisRecord
 
 AABB_PROTOCOL_VERSION = "pa_vpa_aabb_v1"
@@ -103,28 +106,7 @@ def _settings_fingerprint(settings: Any) -> str:
 @lru_cache(maxsize=4)
 def analysis_runtime_fingerprint(project_root: Path | None = None) -> str:
     """Hash analysis code and prompt assets without relying on Git metadata."""
-    root = Path(project_root) if project_root is not None else Path(__file__).resolve().parents[2]
-    candidates: list[Path] = []
-    for directory, suffixes in (
-        (root / "pa_agent", {".py"}),
-        (root / "prompt_engineering", {".json", ".md", ".txt"}),
-    ):
-        if not directory.is_dir():
-            continue
-        candidates.extend(
-            path
-            for path in directory.rglob("*")
-            if path.is_file() and path.suffix.lower() in suffixes
-        )
-    if not candidates:
-        raise ValueError("analysis runtime files are unavailable for fingerprinting")
-    digest = hashlib.sha256()
-    for path in sorted(candidates, key=lambda item: item.relative_to(root).as_posix()):
-        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
+    return _shared_runtime_fingerprint(project_root)
 
 
 def balanced_arm_sequence(frozen_input_hash: str) -> tuple[str, str, str, str]:

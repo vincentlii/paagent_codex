@@ -1566,7 +1566,6 @@ class MainWindow(QMainWindow):
 
         from pa_agent.ai.prompt_assembler import PromptAssembler
 
-        data_source = getattr(self._ctx, "data_source", None)
         chart = getattr(self, "_chart_widget", None)
         display_frame = None
         export_frame = None

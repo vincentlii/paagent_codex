@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+from pydantic import ValidationError as PydanticValidationError
 
 from pa_agent.config.settings import Settings, load_settings
 
@@ -50,7 +53,24 @@ def load_runtime_settings(
     systemd credential, then the existing local configuration value.
     """
     env = os.environ if environ is None else environ
-    settings = load_settings(Path(path))
+    settings_path = Path(path)
+    if settings_path.exists():
+        try:
+            raw = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+            raise RuntimeConfigurationError(
+                f"cannot load settings file {settings_path}: {exc}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise RuntimeConfigurationError(
+                f"settings file must contain a JSON object: {settings_path}"
+            )
+    try:
+        settings = load_settings(settings_path)
+    except (PydanticValidationError, OSError, TypeError, ValueError) as exc:
+        raise RuntimeConfigurationError(
+            f"invalid settings file {settings_path}: {exc}"
+        ) from exc
     source = "configuration" if settings.provider.api_key.strip() else "unset"
 
     direct_key = str(env.get("PA_AGENT_API_KEY") or "").strip()

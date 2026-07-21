@@ -82,3 +82,22 @@ def test_empty_explicit_secret_file_is_a_configuration_error(tmp_path) -> None:
             settings_path,
             environ={"PA_AGENT_API_KEY_FILE": str(key_file)},
         )
+
+
+def test_invalid_settings_schema_is_reported_as_runtime_configuration_error(tmp_path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        '{"provider": {"context_window": 0}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeConfigurationError, match="settings"):
+        load_runtime_settings(settings_path, environ={})
+
+
+def test_malformed_settings_json_is_reported_as_runtime_configuration_error(tmp_path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(RuntimeConfigurationError, match="settings"):
+        load_runtime_settings(settings_path, environ={})

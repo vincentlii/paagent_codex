@@ -350,3 +350,23 @@ def test_repeated_market_data_failures_use_exponential_backoff(tmp_path) -> None
     clock.monotonic_value = 192
     monitor.poll_once()
     assert source.fetches == 3
+
+
+def test_zero_new_bars_never_reuses_incremental_context(tmp_path, monkeypatch) -> None:
+    monitor, _source, _audit, _service, _clock = _monitor(tmp_path)
+    previous = SimpleNamespace()
+    monkeypatch.setattr(
+        "pa_agent.monitoring.headless.find_latest_successful_record",
+        lambda **_kwargs: previous,
+    )
+    monkeypatch.setattr(
+        "pa_agent.monitoring.headless.compute_incremental_bar_delta",
+        lambda *_args: SimpleNamespace(new_count=0),
+    )
+
+    found, new_count = monitor._incremental_context(
+        SimpleNamespace(symbol="XAUUSD", timeframe="1h")
+    )
+
+    assert found is None
+    assert new_count is None

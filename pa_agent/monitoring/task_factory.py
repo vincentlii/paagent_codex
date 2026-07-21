@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,26 @@ from pa_agent.data.base import KlineFrame
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.monitoring.analysis_runner import FrozenAnalysisPayload
 from pa_agent.monitoring.scheduler import AnalysisTask
+from pa_agent.quality.runtime_fingerprint import (
+    analysis_runtime_fingerprint as _analysis_runtime_fingerprint,
+)
+
+_ANALYSIS_GENERAL_FIELDS = (
+    "analysis_bar_count",
+    "higher_timeframe_enabled",
+    "higher_timeframe_override",
+    "higher_timeframe_bar_count",
+    "incremental_max_new_bars",
+    "decision_stance",
+    "decision_confidence_threshold",
+    "counterfactual_horizon_bars",
+    "enable_next_bar_prediction",
+)
+
+
+def analysis_runtime_fingerprint(*, project_root: Path, prompt_dir: Path) -> str:
+    """Compatibility export for production callers."""
+    return _analysis_runtime_fingerprint(project_root, prompt_dir=prompt_dir)
 
 
 def _stable_hash(value: Any) -> str:
@@ -50,6 +71,7 @@ def _frame_identity_payload(frame: KlineFrame) -> dict[str, Any]:
 def _snapshot_hash(
     frame: KlineFrame,
     htf_context: dict[str, Any] | None,
+    incremental_context: dict[str, Any] | None,
 ) -> str:
     higher_frame = None
     if isinstance(htf_context, dict) and htf_context.get("status") == "available":
@@ -65,8 +87,62 @@ def _snapshot_hash(
                 if higher_frame is not None
                 else None
             ),
+            "incremental_context": incremental_context,
         }
     )
+
+
+def _record_field(record: Any, name: str, default: Any = None) -> Any:
+    if isinstance(record, Mapping):
+        return record.get(name, default)
+    return getattr(record, name, default)
+
+
+def _plain_value(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        try:
+            return value.model_dump(mode="json")
+        except TypeError:
+            return value.model_dump()
+    if isinstance(value, Mapping):
+        return {str(key): _plain_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_value(item) for item in value]
+    return value
+
+
+def _incremental_identity_payload(
+    previous_record: Any | None,
+    new_bar_count: int | None,
+) -> dict[str, Any] | None:
+    if previous_record is None or new_bar_count is None or int(new_bar_count) <= 0:
+        return None
+    response = _record_field(previous_record, "stage1_response", {})
+    response_content = (
+        response.get("content") if isinstance(response, Mapping) else None
+    )
+    kline_data = _record_field(previous_record, "kline_data", [])
+    latest_bar = kline_data[0] if isinstance(kline_data, list) and kline_data else None
+    return {
+        "new_bar_count": int(new_bar_count),
+        "previous": {
+            "meta": _plain_value(_record_field(previous_record, "meta")),
+            "latest_bar": _plain_value(latest_bar),
+            "stage1_messages": _plain_value(
+                _record_field(previous_record, "stage1_messages", [])
+            ),
+            "stage1_response_content": response_content,
+            "stage1_diagnosis": _plain_value(
+                _record_field(previous_record, "stage1_diagnosis")
+            ),
+            "stage2_decision": _plain_value(
+                _record_field(previous_record, "stage2_decision")
+            ),
+            "strategy_files_used": _plain_value(
+                _record_field(previous_record, "strategy_files_used", [])
+            ),
+        },
+    }
 
 
 def _analysis_settings_payload(settings: Any) -> dict[str, Any]:
@@ -76,9 +152,14 @@ def _analysis_settings_payload(settings: Any) -> dict[str, Any]:
     prompt = settings.prompt.model_dump()
     prompt.pop("vpa_enabled", None)
     prompt["vpa_mode"] = resolve_vpa_mode(settings.prompt)
+    general = settings.general.model_dump()
     return {
         "provider": provider,
-        "general": settings.general.model_dump(),
+        "general": {
+            name: general[name]
+            for name in _ANALYSIS_GENERAL_FIELDS
+            if name in general
+        },
         "prompt": prompt,
         "validation": settings.validation.model_dump(),
     }
@@ -89,44 +170,11 @@ def analysis_cohort_id(settings: Any, analysis_fingerprint: str) -> str:
     runtime = _validated_digest(analysis_fingerprint, "analysis_fingerprint")
     return _stable_hash(
         {
-            "contract": "production_analysis_v1",
+            "contract": "production_analysis_v2",
             "settings": _analysis_settings_payload(settings),
             "analysis_fingerprint": runtime,
         }
     )
-
-
-def analysis_runtime_fingerprint(
-    *,
-    project_root: Path,
-    prompt_dir: Path,
-) -> str:
-    """Hash Python analysis code and prompt assets without Git metadata."""
-    root = Path(project_root).resolve()
-    prompts = Path(prompt_dir).resolve()
-    candidates: list[tuple[str, Path]] = []
-    source_root = root / "pa_agent"
-    if source_root.is_dir():
-        candidates.extend(
-            (f"pa_agent/{path.relative_to(source_root).as_posix()}", path)
-            for path in source_root.rglob("*.py")
-            if path.is_file()
-        )
-    if prompts.is_dir():
-        candidates.extend(
-            (f"prompt_engineering/{path.relative_to(prompts).as_posix()}", path)
-            for path in prompts.rglob("*")
-            if path.is_file() and path.suffix.lower() in {".json", ".md", ".txt"}
-        )
-    if not candidates:
-        raise ValueError("analysis runtime files are unavailable for fingerprinting")
-    digest = hashlib.sha256()
-    for relative, path in sorted(candidates, key=lambda item: item[0]):
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
 
 
 def create_frozen_analysis_task(
@@ -146,18 +194,36 @@ def create_frozen_analysis_task(
         raise TypeError("frame must be a KlineFrame")
     frozen_frame = copy.deepcopy(frame)
     frozen_htf = copy.deepcopy(htf_context)
+    incremental_count = (
+        int(incremental_new_bar_count)
+        if incremental_new_bar_count is not None
+        else None
+    )
+    if previous_record is None or incremental_count is None or incremental_count <= 0:
+        frozen_previous = None
+        incremental_count = None
+    else:
+        frozen_previous = copy.deepcopy(previous_record)
+    incremental_identity = _incremental_identity_payload(
+        frozen_previous,
+        incremental_count,
+    )
     payload = FrozenAnalysisPayload(
         frame=frozen_frame,
         htf_context=frozen_htf or {},
-        previous_record=copy.deepcopy(previous_record),
-        incremental_new_bar_count=incremental_new_bar_count,
+        previous_record=frozen_previous,
+        incremental_new_bar_count=incremental_count,
     )
     return AnalysisTask.create(
         source=source,
         venue=venue,
         symbol=frozen_frame.symbol,
         timeframe=frozen_frame.timeframe,
-        snapshot_hash=_snapshot_hash(frozen_frame, frozen_htf),
+        snapshot_hash=_snapshot_hash(
+            frozen_frame,
+            frozen_htf,
+            incremental_identity,
+        ),
         cohort_id=analysis_cohort_id(settings, analysis_fingerprint),
         payload=payload,
         created_at_ms=created_at_ms,

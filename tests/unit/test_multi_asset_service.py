@@ -297,3 +297,14 @@ def test_logical_analysis_failure_can_retry_and_success_is_restart_deduped(tmp_p
             (task.task_id,),
         ).fetchone()
     assert row == (3, "degraded_pa_only", 1)
+
+
+def test_scheduler_success_lookup_failure_is_fail_open_for_retry(tmp_path, monkeypatch) -> None:
+    store = SchedulerAuditStore(tmp_path / "monitoring.sqlite3")
+
+    def broken_connect():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "_connect", broken_connect)
+
+    assert store.was_successful("missing-task") is False

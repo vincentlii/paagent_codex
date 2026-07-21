@@ -59,7 +59,7 @@ Headless 会为每个配置资产独立拉取已收盘 K 线并自动调用 AI�
 
 核心安装包含数据、AI、校验和审计依赖；`[gui]` 才额外安装 PyQt6 与 pyqtgraph。
 
-> 若需运行测试（pytest）或代码格式化（ruff/black），额外安装：`pip install -e ".[dev]"`。
+> 若需运行包含 GUI 的完整测试（pytest）或代码格式化（ruff/black），额外安装：`pip install -e ".[gui,dev]"`。
 
 ---
 

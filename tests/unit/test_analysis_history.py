@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
+
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
 from pa_agent.records.analysis_history import (
     compute_incremental_bar_delta,
     count_new_bars_since_record,
+    find_latest_successful_record,
+    invalidate_latest_record_cache,
 )
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
 
@@ -41,6 +45,11 @@ def _record_with_latest(ts_open: float) -> AnalysisRecord:
         experience_loaded=[],
         exception=None,
         usage_total={},
+        run_outcome={
+            "status": "completed",
+            "official_path": "pa_only",
+            "requested_vpa_mode": "off",
+        },
     )
 
 
@@ -110,3 +119,50 @@ def test_compute_incremental_delta_two_new_bars():
     assert delta is not None
     assert delta.new_count == 2
     assert delta.new_bar_ts_opens == (3000.0, 2000.0)
+
+
+def test_latest_successful_record_skips_logically_failed_complete_payload(tmp_path):
+    successful = _record_with_latest(1000.0)
+    failed = _record_with_latest(2000.0).model_copy(
+        update={
+            "run_outcome": {
+                "status": "unavailable_provider",
+                "official_path": "none",
+                "requested_vpa_mode": "soft",
+            }
+        }
+    )
+    successful_path = tmp_path / "successful.json"
+    failed_path = tmp_path / "failed.json"
+    successful_path.write_text(successful.model_dump_json(), encoding="utf-8")
+    failed_path.write_text(failed.model_dump_json(), encoding="utf-8")
+    os.utime(successful_path, (100.0, 100.0))
+    os.utime(failed_path, (200.0, 200.0))
+    invalidate_latest_record_cache()
+
+    found = find_latest_successful_record(
+        symbol="XAUUSD",
+        timeframe="1h",
+        directory=tmp_path,
+    )
+
+    assert found is not None
+    assert found.kline_data[0]["ts_open"] == 1000.0
+
+
+def test_latest_successful_record_rejects_missing_explicit_run_outcome(tmp_path):
+    legacy = _record_with_latest(1000.0).model_copy(update={"run_outcome": {}})
+    (tmp_path / "legacy.json").write_text(
+        legacy.model_dump_json(),
+        encoding="utf-8",
+    )
+    invalidate_latest_record_cache()
+
+    assert (
+        find_latest_successful_record(
+            symbol="XAUUSD",
+            timeframe="1h",
+            directory=tmp_path,
+        )
+        is None
+    )

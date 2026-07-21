@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import logging
 
+from PyQt6.QtCore import QObject, pyqtSignal
+
 from pa_agent.ai.deepseek_client import AIUsage
 
 logger = logging.getLogger(__name__)
-
-from PyQt6.QtCore import QObject, pyqtSignal
-
 
 class SessionTokenLedger(QObject):
     """Accumulates token usage across API calls in a session.
@@ -28,10 +27,12 @@ class SessionTokenLedger(QObject):
         self,
         context_window: int = 1_000_000,
         warn_pct: float = 80.0,
-        parent: "QObject | None" = None,
+        parent: QObject | None = None,
     ) -> None:
+        if int(context_window) <= 0:
+            raise ValueError("context_window must be positive")
         super().__init__(parent)
-        self._context_window = context_window
+        self._context_window = int(context_window)
         self._warn_pct = warn_pct
         self._yellow_fired = False
         self._red_fired = False

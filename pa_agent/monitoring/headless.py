@@ -322,7 +322,7 @@ class HeadlessMonitor:
         if previous is None:
             return None, None
         delta = compute_incremental_bar_delta(frame, previous)
-        if delta is None or delta.new_count > threshold:
+        if delta is None or not 1 <= delta.new_count <= threshold:
             return None, None
         return previous, delta.new_count
 

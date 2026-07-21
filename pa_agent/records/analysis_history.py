@@ -6,11 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pa_agent.config.paths import RECORDS_PENDING_DIR
-from pa_agent.data.datetime_ts import format_epoch_for_display, ts_open_to_ms
 from pa_agent.data.base import KlineFrame
+from pa_agent.data.datetime_ts import format_epoch_for_display, ts_open_to_ms
 from pa_agent.records.schema import AnalysisRecord
 
 _TS_EPS_MS = 1.0  # milliseconds tolerance for bar open time matching
+_SUCCESSFUL_RUN_STATUSES = frozenset(
+    {"completed", "completed_with_warnings", "degraded_pa_only"}
+)
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,11 @@ def find_latest_successful_record(
         if record.meta.symbol != symbol or record.meta.timeframe != timeframe:
             continue
         if record.exception is not None:
+            continue
+        outcome = record.run_outcome if isinstance(record.run_outcome, dict) else {}
+        if str(outcome.get("status") or "") not in _SUCCESSFUL_RUN_STATUSES:
+            continue
+        if str(outcome.get("official_path") or "none") == "none":
             continue
         if not record.stage1_diagnosis or not record.stage2_decision:
             continue

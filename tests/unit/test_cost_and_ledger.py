@@ -57,3 +57,8 @@ def test_reset_clears_counters():
     ledger.reset()
     assert ledger.total_input == 0
     assert ledger.total_output == 0
+
+
+def test_ledger_rejects_non_positive_context_window():
+    with pytest.raises(ValueError, match="context_window"):
+        SessionTokenLedger(context_window=0)

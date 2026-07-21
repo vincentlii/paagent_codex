@@ -29,7 +29,7 @@ class AIProviderSettings(BaseModel):
     api_key_encrypted: str = ""
     thinking: bool = True
     reasoning_effort: Literal["low", "medium", "high", "max"] = "high"
-    context_window: int = 2_000_000
+    context_window: int = Field(default=2_000_000, ge=1)
     structured_output_mode: Literal[
         "auto",
         "json_schema",

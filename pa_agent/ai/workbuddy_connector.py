@@ -21,7 +21,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pa_agent.config.settings import AIProviderSettings
 
 logger = logging.getLogger(__name__)
 
@@ -180,10 +183,7 @@ def detect_workbuddy() -> bool:
         return True
 
     # Quaternary: known ~/.workbuddy paths
-    if _WORKBUDDY_CONFIG_DIR.exists():
-        return True
-
-    return False
+    return bool(_WORKBUDDY_CONFIG_DIR.exists())
 
 
 def _read_workbuddy_local_state() -> dict | None:
@@ -449,7 +449,7 @@ def workbuddy_provider_settings(
     thinking: bool = True,
     reasoning_effort: str = "high",
     context_window: int = 2_000_000,
-) -> "AIProviderSettings | None":
+) -> AIProviderSettings | None:
     """Return AIProviderSettings for WorkBuddy's model route."""
     from pa_agent.config.settings import AIProviderSettings
 
