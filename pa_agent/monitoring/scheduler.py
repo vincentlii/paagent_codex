@@ -223,6 +223,7 @@ class MultiAssetAnalysisScheduler:
         max_pending_per_asset: int = 2,
         dedupe_history: int = 10_000,
         on_completion: Callable[[JobCompletion], None] | None = None,
+        remember_completion: Callable[[JobCompletion], bool] | None = None,
     ) -> None:
         if not callable(handler):
             raise TypeError("handler must be callable")
@@ -240,6 +241,7 @@ class MultiAssetAnalysisScheduler:
         self._max_pending_per_asset = int(max_pending_per_asset)
         self._dedupe_history = int(dedupe_history)
         self._on_completion = on_completion
+        self._remember_completion = remember_completion
         self._executor = ThreadPoolExecutor(
             max_workers=self._max_concurrency,
             thread_name_prefix="pa-asset-analysis",
@@ -289,7 +291,7 @@ class MultiAssetAnalysisScheduler:
             queue = self._queues.pop(str(asset_key), deque())
             while queue:
                 queued = queue.popleft()
-                self._finish_task_id_locked(queued.task.task_id)
+                self._finish_task_id_locked(queued.task.task_id, remember=False)
                 self._metrics["cancelled"] += 1
                 completions.append(
                     JobCompletion(
@@ -331,7 +333,7 @@ class MultiAssetAnalysisScheduler:
                 for queue in self._queues.values():
                     while queue:
                         queued = queue.popleft()
-                        self._finish_task_id_locked(queued.task.task_id)
+                        self._finish_task_id_locked(queued.task.task_id, remember=False)
                         self._metrics["cancelled"] += 1
                         completions.append(
                             JobCompletion(
@@ -454,7 +456,10 @@ class MultiAssetAnalysisScheduler:
             current = self._running.get(asset_key)
             if current is not None and current.queued.task.task_id == task_id:
                 self._running.pop(asset_key, None)
-                self._finish_task_id_locked(task_id)
+                self._finish_task_id_locked(
+                    task_id,
+                    remember=self._should_remember_completion(completion),
+                )
                 self._schedule_next_locked(asset_key)
             self._condition.notify_all()
 
@@ -480,12 +485,23 @@ class MultiAssetAnalysisScheduler:
             error_message=error_message,
         )
 
-    def _finish_task_id_locked(self, task_id: str) -> None:
+    def _finish_task_id_locked(self, task_id: str, *, remember: bool) -> None:
         self._active_task_ids.discard(task_id)
+        if not remember:
+            return
         self._recent_task_ids[task_id] = None
         self._recent_task_ids.move_to_end(task_id)
         while len(self._recent_task_ids) > self._dedupe_history:
             self._recent_task_ids.popitem(last=False)
+
+    def _should_remember_completion(self, completion: JobCompletion) -> bool:
+        if self._remember_completion is None:
+            return completion.status == "completed"
+        try:
+            return bool(self._remember_completion(completion))
+        except Exception:
+            logger.exception("Completion dedupe policy failed; task remains retryable")
+            return False
 
     def _notify_completion(self, completion: JobCompletion) -> None:
         if self._on_completion is None:

@@ -164,6 +164,8 @@ class AIModelSettingsDialog(QDialog):
 
         p.thinking = self._thinking_check.isChecked()
         p.reasoning_effort = self._reasoning_effort_combo.currentText()  # type: ignore[assignment]
+        if not api_key:
+            p.api_key_encrypted = ""
 
         save_settings(self._settings, SETTINGS_JSON_PATH)
         self.accept()

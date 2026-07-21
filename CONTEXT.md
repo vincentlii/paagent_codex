@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0006`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0007`。
 
 ## 核心目标
 
@@ -67,6 +67,10 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
   orchestrator。程序在调用模型前复核 frame 与 task 的 symbol/timeframe。
 - `monitoring_jobs` 记录调度终态和时延；分析内容仍以 JSON record 与 `analysis_runs` 为准，二者
   通过 `run_id` 关联。
+- 调度线程 `completed` 不等于分析成功；只有 `RunOutcome` 成功、完整记录已落盘时，
+  `analysis_success=1` 并进入跨重启去重。Provider、内部或持久化失败保留原 task 身份并执行有界退避。
+- Headless 每个资产持有独立数据源；Qt 不进入服务进程。源码与 Prompt 可只读，全部运行状态归属
+  `PA_AGENT_HOME`。
 - GUI 的业务结果与线程完成是两个事件。取消后保留 QThread 到真实退出；关闭窗口不得销毁仍在
   运行的分析、准备、快照、刷新或追问线程。
 

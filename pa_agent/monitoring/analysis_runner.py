@@ -8,6 +8,26 @@ from typing import Any
 
 from pa_agent.monitoring.identity import canonical_timeframe
 from pa_agent.monitoring.scheduler import AnalysisTask
+from pa_agent.util.threading import OrchestratorEvent
+
+_SUCCESSFUL_ANALYSIS_STATUSES = frozenset(
+    {"completed", "completed_with_warnings", "degraded_pa_only"}
+)
+_RETRYABLE_ANALYSIS_STATUSES = frozenset(
+    {"unavailable_provider", "internal_error"}
+)
+
+
+@dataclass(frozen=True)
+class AnalysisRunResult:
+    """Separate scheduler execution from the domain result it returned."""
+
+    record: Any = field(compare=False, repr=False)
+    analysis_status: str
+    analysis_success: bool
+    retryable: bool
+    record_persisted: bool
+    audit_ok: bool
 
 
 @dataclass(frozen=True)
@@ -39,13 +59,35 @@ class IndependentAnalysisHandler:
         orchestrator = self._orchestrator_factory(task)
         if orchestrator is None or not callable(getattr(orchestrator, "submit", None)):
             raise TypeError("orchestrator_factory must return an orchestrator")
-        return orchestrator.submit(
+        events: list[OrchestratorEvent] = []
+        record = orchestrator.submit(
             payload.frame,
             cancel_token,
-            lambda _event: None,
+            events.append,
             previous_record=payload.previous_record,
             incremental_new_bar_count=payload.incremental_new_bar_count,
             htf_context=dict(payload.htf_context),
+        )
+        outcome = getattr(record, "run_outcome", None)
+        outcome = outcome if isinstance(outcome, dict) else {}
+        status = str(outcome.get("status") or "internal_error")
+        persisted = OrchestratorEvent.RecordSaved in events
+        save_failed = OrchestratorEvent.RecordSaveFailed in events
+        success = (
+            status in _SUCCESSFUL_ANALYSIS_STATUSES
+            and persisted
+            and not save_failed
+        )
+        return AnalysisRunResult(
+            record=record,
+            analysis_status=status,
+            analysis_success=success,
+            retryable=(
+                status in _RETRYABLE_ANALYSIS_STATUSES
+                or (status in _SUCCESSFUL_ANALYSIS_STATUSES and not success)
+            ),
+            record_persisted=persisted,
+            audit_ok=OrchestratorEvent.RecordAuditFailed not in events,
         )
 
     @staticmethod

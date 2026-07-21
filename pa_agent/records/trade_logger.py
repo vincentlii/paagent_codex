@@ -25,9 +25,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from pa_agent.config.paths import TRADE_RECORDS_DIR
+
 logger = logging.getLogger(__name__)
 
-_TRADE_RECORDS_DIR = Path("trade_records")
+_TRADE_RECORDS_DIR = TRADE_RECORDS_DIR
 
 # Maximum bars to show in the chart image
 _CHART_MAX_BARS = 50

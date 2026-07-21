@@ -12,7 +12,7 @@
    copy config\settings.example.json config\settings.json
    ```
 
-2. 启动程序，在 **设置** 中填写你的 **API Key**（会加密写入 `api_key_encrypted`）。
+2. 启动程序，在 **设置** 中填写你的 **API Key**（会加密写入 `api_key_encrypted`，本机解密密钥为同目录下已忽略的 `secret.key`）。
 
    也可直接编辑 `config/settings.json` 中的 `base_url`、`model` 等字段，Key 仍建议通过 GUI 保存以便自动加密。
 
@@ -34,8 +34,8 @@
 |------|------|--------|------|
 | `provider.model` | string | `"deepseek-v4-flash"` | 模型名称（须与网关支持的名称一致） |
 | `provider.base_url` | string | `"https://api.deepseek.com"` | OpenAI 兼容 API 根地址。DeepSeek：`https://api.deepseek.com`；MiMo：`https://api.xiaomimimo.com/v1`（程序自动处理 `enable_thinking` 与 `reasoning_content` 回放） |
-| `provider.api_key` | string | `""` | API Key（明文，内存中临时使用；不持久化到文件） |
-| `provider.api_key_encrypted` | string | `""` | 加密后的 Key；留空表示未配置（通过 GUI 保存时自动加密写入） |
+| `provider.api_key` | string | `""` | API Key 的内存字段；保存时强制清空，不以明文写入 JSON |
+| `provider.api_key_encrypted` | string | `""` | Fernet 密文；由 GUI/`save_settings` 自动写入，本机 `secret.key` 用于解密 |
 | `provider.thinking` | bool | `true` | 是否启用思考/推理类扩展参数（依模型与网关而定）。关闭可 3–5 倍提速但分析质量下降 |
 | `provider.reasoning_effort` | string | `"high"` | 推理深度：`low` / `medium` / `high` / `max` |
 | `provider.context_window` | int | `2000000` | 用于上下文占用提示的窗口大小（tokens） |
@@ -91,7 +91,24 @@
 | `validation.retry_max_semantic` | int | `1` | 语义错误（category c）最大重试次数（0–3） |
 | `validation.retry_stage2` | bool | `true` | 阶段二校验失败时是否重试 |
 
+### monitoring — Linux Headless 多资产监控
+
+| 字段 | 说明 |
+|------|------|
+| `monitoring.enabled` | Headless 总开关；VPS 运行前必须设为 `true` |
+| `monitoring.assets` | 资产列表；每项包含 `source`、`exchange`、`symbol`、`timeframe` 与 `enabled` |
+| `monitoring.max_concurrency` | 同时进行的 AI 分析上限；每个任务使用独立 client/orchestrator |
+| `monitoring.max_data_concurrency` | 同时拉取行情的上限；同一资产的数据源实例不共享 |
+| `monitoring.poll_interval_seconds` | 新收盘 K 线轮询间隔 |
+| `monitoring.run_on_startup` | 启动时是否立即分析当前最新快照；关闭时从下一根新收盘 K 线开始 |
+| `monitoring.max_analysis_retries` | 同一冻结快照在 Provider/持久化失败后的额外重试次数 |
+| `monitoring.retry_backoff_seconds` | 行情和分析失败的指数退避基数 |
+
+Headless API Key 优先级：`PA_AGENT_API_KEY` → `PA_AGENT_API_KEY_FILE` → systemd `pa_agent_api_key` credential → 本地密文配置。前三种只进入进程内存，不会写回 `settings.json`。
+
 ## 安全提醒
+
+- `secret.key` 与 `settings.json` 必须一起保密；本地加密防止明文误泄露，但不能抵御已取得运行账户权限的攻击者。VPS 优先使用 systemd credentials。
 
 - **不要**将 `config/settings.json`、`config/exception_state.json`、`config/tv_symbol_aliases.json` 提交到 Git。
 - 若曾误提交 API Key，请立即在服务商处**作废并轮换**密钥。

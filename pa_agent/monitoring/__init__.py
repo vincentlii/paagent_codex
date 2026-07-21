@@ -1,6 +1,7 @@
 """Multi-asset monitoring primitives."""
 
 from pa_agent.monitoring.analysis_runner import (
+    AnalysisRunResult,
     FrozenAnalysisPayload,
     IndependentAnalysisHandler,
 )
@@ -14,6 +15,7 @@ from pa_agent.monitoring.scheduler import (
 from pa_agent.monitoring.service import MultiAssetAnalysisService
 
 __all__ = [
+    "AnalysisRunResult",
     "AnalysisTask",
     "FrozenAnalysisPayload",
     "IndependentAnalysisHandler",

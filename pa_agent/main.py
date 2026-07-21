@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 import sys
 
-from PyQt6.QtWidgets import QApplication
-
 logger = logging.getLogger(__name__)
 
 
@@ -17,6 +15,17 @@ def main(argv: list[str] | None = None) -> int:
     enable_crash_diagnostics()
     configure_logging()
     log_startup_diagnostics()
+
+    try:
+        from PyQt6.QtWidgets import QApplication
+    except ModuleNotFoundError as exc:
+        if exc.name and exc.name.startswith("PyQt6"):
+            print(
+                'PA Agent GUI is not installed. Run: pip install -e ".[gui]"',
+                file=sys.stderr,
+            )
+            return 2
+        raise
 
     argv = list(sys.argv if argv is None else argv)
     app = QApplication(argv)
@@ -33,9 +42,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Update logging with the real API key now that settings are loaded
     if ctx.settings is not None:
-        from pa_agent.util.logging import configure_logging, update_api_key
         configure_logging(api_key=ctx.settings.provider.api_key)
-        from pa_agent.util.crash_diagnostics import log_startup_diagnostics
         log_startup_diagnostics()
 
     # Build and show the main window

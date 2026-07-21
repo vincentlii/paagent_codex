@@ -7,12 +7,14 @@ import pytest
 
 from pa_agent.config.settings import Settings
 from pa_agent.monitoring.analysis_runner import (
+    AnalysisRunResult,
     FrozenAnalysisPayload,
     IndependentAnalysisHandler,
 )
 from pa_agent.monitoring.audit import SchedulerAuditStore
 from pa_agent.monitoring.scheduler import AnalysisTask
 from pa_agent.monitoring.service import MultiAssetAnalysisService
+from pa_agent.util.threading import OrchestratorEvent
 
 
 def _task(symbol: str, index: int = 0) -> AnalysisTask:
@@ -32,11 +34,14 @@ def test_handler_builds_a_fresh_orchestrator_for_every_asset() -> None:
     built: list[object] = []
 
     class _Orchestrator:
-        def submit(self, frame, _token, _event, **_kwargs):
-            return SimpleNamespace(
+        def submit(self, frame, _token, on_event, **_kwargs):
+            record = SimpleNamespace(
                 meta=SimpleNamespace(run_id=f"run-{frame.symbol}"),
                 stage2_decision={"symbol": frame.symbol},
+                run_outcome={"status": "completed", "official_path": "pa_only"},
             )
+            on_event(OrchestratorEvent.RecordSaved)
+            return record
 
     def factory(_task):
         orchestrator = _Orchestrator()
@@ -89,9 +94,12 @@ def test_handler_preserves_monthly_timeframe_semantics() -> None:
     handled: list[str] = []
 
     class _Orchestrator:
-        def submit(self, frame, _token, _event, **_kwargs):
+        def submit(self, frame, _token, on_event, **_kwargs):
             handled.append(frame.timeframe)
-            return object()
+            on_event(OrchestratorEvent.RecordSaved)
+            return SimpleNamespace(
+                run_outcome={"status": "completed", "official_path": "pa_only"}
+            )
 
     task = AnalysisTask.create(
         source="tradingview",
@@ -115,11 +123,14 @@ def test_handler_preserves_monthly_timeframe_semantics() -> None:
 
 def test_twenty_assets_are_audited_once_with_terminal_status(tmp_path) -> None:
     class _Orchestrator:
-        def submit(self, frame, _token, _event, **_kwargs):
-            return SimpleNamespace(
+        def submit(self, frame, _token, on_event, **_kwargs):
+            record = SimpleNamespace(
                 meta=SimpleNamespace(run_id=f"run-{frame.symbol}"),
                 stage2_decision={"symbol": frame.symbol},
+                run_outcome={"status": "completed", "official_path": "pa_only"},
             )
+            on_event(OrchestratorEvent.RecordSaved)
+            return record
 
     audit_path = tmp_path / "monitoring.sqlite3"
     service = MultiAssetAnalysisService(
@@ -137,7 +148,8 @@ def test_twenty_assets_are_audited_once_with_terminal_status(tmp_path) -> None:
     with sqlite3.connect(audit_path) as connection:
         rows = connection.execute(
             "SELECT task_id, submission_status, completion_status, run_id, "
-            "queue_latency_ms, execution_latency_ms FROM monitoring_jobs"
+            "queue_latency_ms, execution_latency_ms, analysis_status, "
+            "analysis_success FROM monitoring_jobs"
         ).fetchall()
 
     assert len(rows) == 20
@@ -147,6 +159,8 @@ def test_twenty_assets_are_audited_once_with_terminal_status(tmp_path) -> None:
     assert all(row[3] for row in rows)
     assert all(row[4] >= 0 for row in rows)
     assert all(row[5] >= 0 for row in rows)
+    assert {row[6] for row in rows} == {"completed"}
+    assert {row[7] for row in rows} == {1}
 
 
 def test_production_factory_does_not_share_mutable_model_state(
@@ -204,8 +218,12 @@ def test_scheduler_audit_failure_is_visible_in_service_metrics() -> None:
             return False
 
     class _Orchestrator:
-        def submit(self, *_args, **_kwargs):
-            return SimpleNamespace(meta=SimpleNamespace(run_id="run-audit-failed"))
+        def submit(self, _frame, _token, on_event, **_kwargs):
+            on_event(OrchestratorEvent.RecordSaved)
+            return SimpleNamespace(
+                meta=SimpleNamespace(run_id="run-audit-failed"),
+                run_outcome={"status": "completed", "official_path": "pa_only"},
+            )
 
     service = MultiAssetAnalysisService(
         IndependentAnalysisHandler(lambda _task: _Orchestrator()),
@@ -216,3 +234,66 @@ def test_scheduler_audit_failure_is_visible_in_service_metrics() -> None:
     service.shutdown()
 
     assert service.snapshot()["audit_failures"] == 2
+
+
+def test_handler_classifies_provider_failure_without_calling_it_success() -> None:
+    class _Orchestrator:
+        def submit(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                meta=SimpleNamespace(run_id="run-provider-failed"),
+                run_outcome={
+                    "status": "unavailable_provider",
+                    "official_path": "none",
+                },
+            )
+
+    result = IndependentAnalysisHandler(lambda _task: _Orchestrator())(
+        _task("XAUUSD"),
+        SimpleNamespace(),
+    )
+
+    assert isinstance(result, AnalysisRunResult)
+    assert result.analysis_status == "unavailable_provider"
+    assert result.analysis_success is False
+    assert result.retryable is True
+
+
+def test_logical_analysis_failure_can_retry_and_success_is_restart_deduped(tmp_path) -> None:
+    outcomes = iter(("unavailable_provider", "degraded_pa_only"))
+
+    class _Orchestrator:
+        def submit(self, _frame, _token, on_event, **_kwargs):
+            status = next(outcomes)
+            if status == "degraded_pa_only":
+                on_event(OrchestratorEvent.RecordSaved)
+            return SimpleNamespace(
+                meta=SimpleNamespace(run_id=f"run-{status}"),
+                run_outcome={
+                    "status": status,
+                    "official_path": "none" if status == "unavailable_provider" else "pa_only",
+                },
+            )
+
+    task = _task("XAUUSD")
+    store = SchedulerAuditStore(tmp_path / "monitoring.sqlite3")
+    service = MultiAssetAnalysisService(
+        IndependentAnalysisHandler(lambda _task: _Orchestrator()),
+        audit_store=store,
+    )
+
+    assert service.submit(task).accepted
+    assert service.wait_idle(timeout=2.0)
+    assert store.was_successful(task.task_id) is False
+    assert service.submit(task).accepted
+    assert service.wait_idle(timeout=2.0)
+    assert store.was_successful(task.task_id) is True
+    assert service.submit(task).status == "duplicate"
+    service.shutdown()
+
+    with sqlite3.connect(store.db_path) as connection:
+        row = connection.execute(
+            "SELECT submission_count, analysis_status, analysis_success "
+            "FROM monitoring_jobs WHERE task_id = ?",
+            (task.task_id,),
+        ).fetchone()
+    assert row == (3, "degraded_pa_only", 1)

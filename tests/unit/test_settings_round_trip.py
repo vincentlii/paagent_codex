@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from pa_agent.config.settings import (
     GeneralSettings,
+    MonitoringAssetSettings,
     MonitoringSettings,
     Settings,
     load_settings,
@@ -49,6 +50,46 @@ def test_monitoring_queue_must_cover_worker_concurrency():
         MonitoringSettings(max_concurrency=4, max_pending_jobs=3)
 
 
+def test_monitoring_assets_are_canonical_and_minute_month_remain_distinct():
+    minute = MonitoringAssetSettings(
+        source="TRADINGVIEW",
+        exchange="oanda",
+        symbol=" xauusd ",
+        timeframe="1m",
+    )
+    monthly = MonitoringAssetSettings(
+        source="tradingview",
+        exchange="OANDA",
+        symbol="XAUUSD",
+        timeframe="1M",
+    )
+
+    assert minute.source == "tradingview"
+    assert minute.exchange == "OANDA"
+    assert minute.symbol == "XAUUSD"
+    assert minute.timeframe == "1m"
+    assert monthly.timeframe == "1M"
+
+
+def test_monitoring_rejects_duplicate_or_ambiguous_asset_subscriptions():
+    duplicate = {
+        "source": "tradingview",
+        "exchange": "OANDA",
+        "symbol": "XAUUSD",
+        "timeframe": "1h",
+    }
+    with pytest.raises(ValidationError, match="duplicate monitoring asset"):
+        MonitoringSettings(assets=[duplicate, dict(duplicate)])
+
+    with pytest.raises(ValidationError, match="ambiguous monitoring asset"):
+        MonitoringSettings(
+            assets=[
+                {**duplicate, "exchange": ""},
+                {**duplicate, "exchange": "OANDA"},
+            ]
+        )
+
+
 def test_round_trip(tmp_path):
     """save → load preserves all fields."""
     p = tmp_path / "settings.json"
@@ -63,15 +104,46 @@ def test_round_trip(tmp_path):
     assert loaded.provider.model == original.provider.model
 
 
-def test_api_key_present_on_disk(tmp_path):
-    """The saved JSON contains the plaintext API key."""
+def test_api_key_is_encrypted_on_disk_and_round_trips(tmp_path):
+    """The saved JSON contains ciphertext, never the plaintext API key."""
     p = tmp_path / "settings.json"
     s = Settings()
     s.provider.api_key = "sk-super-secret-key"
     save_settings(s, p)
     raw = p.read_text(encoding="utf-8")
     data = json.loads(raw)
-    assert data["provider"]["api_key"] == "sk-super-secret-key"
+    assert "sk-super-secret-key" not in raw
+    assert data["provider"]["api_key"] == ""
+    assert data["provider"]["api_key_encrypted"]
+    assert (tmp_path / "secret.key").is_file()
+    assert load_settings(p).provider.api_key == "sk-super-secret-key"
+
+
+def test_legacy_plaintext_api_key_is_migrated_to_ciphertext(tmp_path):
+    p = tmp_path / "settings.json"
+    data = Settings().model_dump()
+    data["provider"]["api_key"] = "legacy-plaintext-key"
+    p.write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = load_settings(p)
+
+    raw = p.read_text(encoding="utf-8")
+    assert loaded.provider.api_key == "legacy-plaintext-key"
+    assert "legacy-plaintext-key" not in raw
+    assert json.loads(raw)["provider"]["api_key_encrypted"]
+
+
+def test_missing_encryption_key_does_not_invent_or_expose_a_secret(tmp_path):
+    p = tmp_path / "settings.json"
+    settings = Settings()
+    settings.provider.api_key = "temporary-key"
+    save_settings(settings, p)
+    (tmp_path / "secret.key").unlink()
+
+    loaded = load_settings(p)
+
+    assert loaded.provider.api_key == ""
+    assert "temporary-key" not in p.read_text(encoding="utf-8")
 
 
 def test_corrupt_json_returns_defaults(tmp_path):

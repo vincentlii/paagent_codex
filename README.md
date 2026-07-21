@@ -1,4 +1,4 @@
-# PA Agent — AI K线分析辅助工具（桌面端）
+# PA Agent — AI K线分析辅助工具（桌面端 / Linux Headless）
 
 **交流 QQ 群：1016222782**
 
@@ -19,7 +19,7 @@
 - 📚 **经验库**：按周期位置检索历史案例供分析参考
 - 📝 **完整落盘**：Prompt、原始响应、诊断/决策 JSON、Token 用量、追问记录
 - 🛡️ **可配置校验体系**：JSON 校验、一致性检查、语义校验、截断修复、失败自动重试
-- 🔒 **API Key** 本地加密存储
+- 🔒 **API Key** 本地密文存储，并支持环境变量、凭据文件与 systemd credentials
 
 ---
 
@@ -27,7 +27,7 @@
 
 | 项目     | 要求                                                                    |
 | -------- | ----------------------------------------------------------------------- |
-| 操作系统 | Windows 10 / 11（主支持）、macOS 12+（TradingView 数据源）              |
+| 操作系统 | Windows 10 / 11、macOS 12+；Linux VPS 使用 TradingView Headless         |
 | Python   | 3.11+                                                                    |
 | 数据源   | MT5 / TradingView / yfinance / AkShare **至少配置一种**                  |
 | 网络     | 可访问所配置的 AI API（如 DeepSeek、PackyAPI 等）                        |
@@ -36,18 +36,28 @@
 
 ## 快速开始
 
-直接在系统中安装（推荐部署在本机）：
+桌面图形界面：
 
 ```cmd
-pip install -e .
+pip install -e ".[gui]"
 python -m pa_agent.main
 ```
 
 首次启动后在**设置**中填写 **Base URL**、**模型名** 与 **API Key**。
 
-> 如需隔离环境也可创建虚拟环境：`python -m venv .venv` 后激活再 `pip install -e .`。
+> 如需隔离环境也可创建虚拟环境：`python -m venv .venv` 后激活再安装。
 
-**安装内容**：PyQt6（GUI 框架）+ pyqtgraph（K 线图表绘图）+ numpy/pandas（数据处理）+ openai（AI API 客户端）+ **akshare/baostock（A 股数据源）** + json 校验、模型定义等全套依赖。
+Linux VPS 不安装 Qt：
+
+```bash
+pip install -e .
+pa-agent-headless --check
+pa-agent-headless
+```
+
+Headless 会为每个配置资产独立拉取已收盘 K 线并自动调用 AI；同一快照成功后不会重复分析，失败只按有界退避重试。完整安装、配置与 systemd 部署见 [`docs/linux_headless_deployment.md`](docs/linux_headless_deployment.md)。
+
+核心安装包含数据、AI、校验和审计依赖；`[gui]` 才额外安装 PyQt6 与 pyqtgraph。
 
 > 若需运行测试（pytest）或代码格式化（ruff/black），额外安装：`pip install -e ".[dev]"`。
 

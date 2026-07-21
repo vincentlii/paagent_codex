@@ -11,14 +11,13 @@ from __future__ import annotations
 import logging
 import logging.handlers
 from pathlib import Path
-from typing import List
 
 from pa_agent.config.paths import LOG_FILE_PATH
 from pa_agent.util.mask_secret import mask_secret
 
 # ── Module-level state ────────────────────────────────────────────────────────
 
-_active_formatters: List["MaskingFormatter"] = []
+_active_formatters: list[MaskingFormatter] = []
 _configured: bool = False
 
 # ── MaskingFormatter ──────────────────────────────────────────────────────────
@@ -31,7 +30,7 @@ class MaskingFormatter(logging.Formatter):
         super().__init__(fmt)
         self._api_key = api_key
 
-    def format(self, record: logging.LogRecord) -> str:  # noqa: A003
+    def format(self, record: logging.LogRecord) -> str:
         message = super().format(record)
         if self._api_key:
             message = message.replace(self._api_key, mask_secret(self._api_key))
@@ -58,9 +57,9 @@ _QUIET_LOGGER_NAMES = (
 )
 
 
-def verify_logging_handlers() -> bool:
+def verify_logging_handlers(log_file_path: Path | None = None) -> bool:
     """Return True when the expected rotating file handler is attached to root."""
-    expected = str(LOG_FILE_PATH.resolve())
+    expected = str((log_file_path or LOG_FILE_PATH).resolve())
     for handler in logging.getLogger().handlers:
         if isinstance(handler, logging.handlers.RotatingFileHandler):
             base = getattr(handler, "baseFilename", "")
@@ -69,7 +68,7 @@ def verify_logging_handlers() -> bool:
     return False
 
 
-def configure_logging(api_key: str = "") -> None:
+def configure_logging(api_key: str = "", *, log_file_path: Path | None = None) -> None:
     """Configure the root logger with rotating file handler and console handler.
 
     Both handlers use MaskingFormatter that replaces api_key with mask_secret(api_key).
@@ -77,12 +76,12 @@ def configure_logging(api_key: str = "") -> None:
 
     If handlers were removed after a prior configure_logging call, re-attaches them.
     """
-    global _configured  # noqa: PLW0603
+    global _configured
 
     if _configured:
         if api_key:
             update_api_key(api_key)
-        if verify_logging_handlers():
+        if verify_logging_handlers(log_file_path):
             return
         # Handlers missing (e.g. external code cleared root.handlers) — re-install.
         _configured = False
@@ -97,9 +96,10 @@ def configure_logging(api_key: str = "") -> None:
     _active_formatters.append(console_formatter)
 
     # Rotating file handler
-    LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    target_log_path = Path(log_file_path or LOG_FILE_PATH)
+    target_log_path.parent.mkdir(parents=True, exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
-        LOG_FILE_PATH,
+        target_log_path,
         maxBytes=5 * 1024 * 1024,
         backupCount=10,
         encoding="utf-8",
@@ -136,7 +136,7 @@ def configure_logging(api_key: str = "") -> None:
 
     _configured = True
     logging.getLogger("pa_agent.diagnostics").info(
-        "configure_logging: handlers attached (log_file=%s)", LOG_FILE_PATH
+        "configure_logging: handlers attached (log_file=%s)", target_log_path
     )
 
 

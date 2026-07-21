@@ -484,6 +484,8 @@ class SettingsDialog(QDialog):
 
         p.thinking = self._thinking_check.isChecked()
         p.reasoning_effort = self._reasoning_effort_combo.currentText()  # type: ignore[assignment]
+        if not api_key:
+            p.api_key_encrypted = ""
 
         g.analysis_bar_count = self._analysis_bar_count_spin.value()
         g.higher_timeframe_enabled = self._higher_timeframe_check.isChecked()

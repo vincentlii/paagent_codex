@@ -40,6 +40,7 @@ class MultiAssetAnalysisService:
             max_pending_per_asset=max_pending_per_asset,
             dedupe_history=dedupe_history,
             on_completion=self._handle_completion,
+            remember_completion=self._remember_completion,
         )
 
     def submit(self, task: AnalysisTask) -> SubmissionResult:
@@ -79,3 +80,9 @@ class MultiAssetAnalysisService:
     def _record_audit_failure(self) -> None:
         with self._audit_failure_lock:
             self._audit_failures += 1
+
+    @staticmethod
+    def _remember_completion(completion: JobCompletion) -> bool:
+        if completion.status != "completed":
+            return False
+        return bool(getattr(completion.result, "analysis_success", True))

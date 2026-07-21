@@ -142,6 +142,29 @@ def test_failure_is_audited_and_does_not_block_next_snapshot() -> None:
     assert scheduler.snapshot()["failed"] == 1
 
 
+def test_same_snapshot_can_retry_after_failure_but_is_deduped_after_success() -> None:
+    attempts = 0
+
+    def handler(task, _cancel_token):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise TimeoutError("provider timeout")
+        return task.task_id
+
+    scheduler = MultiAssetAnalysisScheduler(handler, max_concurrency=1)
+    task = _task("XAUUSD")
+
+    assert scheduler.submit(task).accepted
+    assert scheduler.wait_idle(timeout=2.0)
+    assert scheduler.submit(task).accepted
+    assert scheduler.wait_idle(timeout=2.0)
+    assert scheduler.submit(task).status == "duplicate"
+    scheduler.shutdown()
+
+    assert attempts == 2
+
+
 def test_cancel_asset_cancels_running_and_queued_work() -> None:
     started = threading.Event()
     completions = []

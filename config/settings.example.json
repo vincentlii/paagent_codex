@@ -2,6 +2,7 @@
   "provider": {
     "model": "deepseek-chat",
     "base_url": "https://api.deepseek.com",
+    "api_key": "",
     "api_key_encrypted": "",
     "thinking": true,
     "reasoning_effort": "high",
@@ -38,6 +39,29 @@
     "vpa_enabled": false
   },
   "validation": {},
+  "monitoring": {
+    "enabled": false,
+    "max_concurrency": 2,
+    "max_pending_jobs": 100,
+    "max_pending_per_asset": 2,
+    "dedupe_history": 10000,
+    "max_data_concurrency": 4,
+    "poll_interval_seconds": 15,
+    "run_on_startup": true,
+    "max_analysis_retries": 2,
+    "retry_backoff_seconds": 30,
+    "analysis_timeout_seconds": 900,
+    "shutdown_timeout_seconds": 60,
+    "assets": [
+      {
+        "enabled": true,
+        "source": "tradingview",
+        "exchange": "OANDA",
+        "symbol": "XAUUSD",
+        "timeframe": "15m"
+      }
+    ]
+  },
   "feishu": {
     "enabled": true,
     "webhook_url": "",

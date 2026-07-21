@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+from contextlib import suppress
+from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -129,6 +135,46 @@ class GeneralSettings(BaseModel):
         return v
 
 
+class MonitoringAssetSettings(BaseModel):
+    """One independently sourced asset monitored by the headless runtime."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    source: DataSourceKind = "tradingview"
+    exchange: str = ""
+    symbol: str
+    timeframe: str
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _canonical_source(cls, value: object) -> str:
+        return str(value or "").strip().lower()
+
+    @field_validator("exchange", mode="before")
+    @classmethod
+    def _canonical_exchange(cls, value: object) -> str:
+        return str(value or "").strip().upper()
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _canonical_symbol(cls, value: object) -> str:
+        text = str(value or "").strip().upper()
+        if not text:
+            raise ValueError("monitoring asset symbol is required")
+        return text
+
+    @field_validator("timeframe", mode="before")
+    @classmethod
+    def _canonical_timeframe(cls, value: object) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("monitoring asset timeframe is required")
+        if text.endswith("M"):
+            return f"{text[:-1].lower()}M"
+        return text.lower()
+
+
 class MonitoringSettings(BaseModel):
     """Bounded multi-asset analysis scheduling settings."""
 
@@ -139,11 +185,39 @@ class MonitoringSettings(BaseModel):
     max_pending_jobs: int = Field(default=100, ge=1, le=10_000)
     max_pending_per_asset: int = Field(default=2, ge=1, le=100)
     dedupe_history: int = Field(default=10_000, ge=1, le=1_000_000)
+    max_data_concurrency: int = Field(default=4, ge=1, le=20)
+    poll_interval_seconds: float = Field(default=15.0, ge=1.0, le=3600.0)
+    run_on_startup: bool = True
+    max_analysis_retries: int = Field(default=2, ge=0, le=10)
+    retry_backoff_seconds: float = Field(default=30.0, ge=1.0, le=3600.0)
+    analysis_timeout_seconds: float = Field(default=900.0, ge=30.0, le=7200.0)
+    shutdown_timeout_seconds: float = Field(default=60.0, ge=1.0, le=600.0)
+    assets: list[MonitoringAssetSettings] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _queue_covers_workers(self) -> MonitoringSettings:
         if self.max_pending_jobs < self.max_concurrency:
             raise ValueError("max_pending_jobs must be at least max_concurrency")
+        enabled = [asset for asset in self.assets if asset.enabled]
+        seen: set[tuple[str, str, str, str]] = set()
+        by_instrument: dict[tuple[str, str, str], list[str]] = {}
+        for asset in enabled:
+            key = (asset.source, asset.exchange, asset.symbol, asset.timeframe)
+            if key in seen:
+                raise ValueError(
+                    "duplicate monitoring asset: "
+                    f"{asset.source}:{asset.exchange or 'auto'}:"
+                    f"{asset.symbol}:{asset.timeframe}"
+                )
+            seen.add(key)
+            instrument = (asset.source, asset.symbol, asset.timeframe)
+            exchanges = by_instrument.setdefault(instrument, [])
+            if exchanges and (not asset.exchange or any(not item for item in exchanges)):
+                raise ValueError(
+                    "ambiguous monitoring asset: an automatic exchange cannot coexist "
+                    "with another subscription for the same source/symbol/timeframe"
+                )
+            exchanges.append(asset.exchange)
         return self
 
 
@@ -211,10 +285,6 @@ def provider_api_key_configured(settings: Settings | None) -> bool:
 
 
 # ── Persistence ───────────────────────────────────────────────────────────────
-import json
-import logging
-import os
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +320,7 @@ def _migrate_legacy_feishu_json(raw: dict, settings_path: Path) -> bool:
     return migrated
 
 
-def load_settings(path: Path | None = None) -> "Settings":
+def load_settings(path: Path | None = None) -> Settings:
     """Load settings from *path* (default: SETTINGS_JSON_PATH).
 
     Returns default Settings and writes them to disk if the file is absent.
@@ -283,28 +353,37 @@ def load_settings(path: Path | None = None) -> "Settings":
     raw["general"] = general
     provider = raw.get("provider", {})
     provider.pop("pricing", None)
+    legacy_plaintext_key = bool(str(provider.get("api_key") or "").strip())
+    encrypted_key = str(provider.get("api_key_encrypted") or "").strip()
+    if not legacy_plaintext_key and encrypted_key:
+        from pa_agent.security.api_key_store import decrypt_api_key
+
+        provider["api_key"] = decrypt_api_key(encrypted_key, path)
     raw["provider"] = provider
 
-    # Migrate legacy encrypted key: drop it, api_key already in provider dict
+    # Keep the in-memory plaintext field available to provider clients.
     raw.setdefault("provider", {}).setdefault("api_key", "")
 
     migrated_feishu = _migrate_legacy_feishu_json(raw, path)
     settings = Settings.model_validate(raw)
-    dirty = migrated_feishu
-    if settings.pushplus.enabled and not settings.pushplus.token.strip():
-        if not (os.environ.get("PUSHPLUS_TOKEN") or "").strip():
-            settings.pushplus.enabled = False
-            logger.info(
-                "PushPlus enabled but token empty — auto-disabled "
-                "(Feishu notifications unaffected)"
-            )
-            dirty = True
+    dirty = migrated_feishu or legacy_plaintext_key
+    if (
+        settings.pushplus.enabled
+        and not settings.pushplus.token.strip()
+        and not (os.environ.get("PUSHPLUS_TOKEN") or "").strip()
+    ):
+        settings.pushplus.enabled = False
+        logger.info(
+            "PushPlus enabled but token empty — auto-disabled "
+            "(Feishu notifications unaffected)"
+        )
+        dirty = True
     if dirty:
         save_settings(settings, path)
     return settings
 
 
-def save_settings(settings: "Settings", path: Path | None = None) -> None:
+def save_settings(settings: Settings, path: Path | None = None) -> None:
     """Persist settings to *path* (default: SETTINGS_JSON_PATH)."""
     from pa_agent.config.paths import SETTINGS_JSON_PATH
 
@@ -312,5 +391,24 @@ def save_settings(settings: "Settings", path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     data = settings.model_dump()
+    provider = data.setdefault("provider", {})
+    plaintext_key = str(provider.get("api_key") or "")
+    if plaintext_key:
+        from pa_agent.security.api_key_store import encrypt_api_key
 
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        provider["api_key_encrypted"] = encrypt_api_key(plaintext_key, path)
+    provider["api_key"] = ""
+
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+        with temp_path.open("x", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        with suppress(OSError):
+            path.chmod(0o600)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise

@@ -1,0 +1,33 @@
+[Unit]
+Description=PA Agent headless multi-asset analysis
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=pa-agent
+Group=pa-agent
+WorkingDirectory=/opt/pa-agent
+Environment=PA_AGENT_HOME=/var/lib/pa-agent
+Environment=PA_AGENT_PROMPT_DIR=/opt/pa-agent/prompt_engineering
+EnvironmentFile=-/etc/pa-agent/pa-agent.env
+LoadCredential=pa_agent_api_key:/etc/pa-agent/api_key
+ExecStartPre=/opt/miniconda3/envs/pa-agent/bin/pa-agent-headless --check
+ExecStart=/opt/miniconda3/envs/pa-agent/bin/pa-agent-headless
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=90s
+KillSignal=SIGTERM
+UMask=0077
+StateDirectory=pa-agent
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pa-agent
+
+[Install]
+WantedBy=multi-user.target
