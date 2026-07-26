@@ -27,7 +27,9 @@ def test_confidence_threshold_is_persisted_as_an_execution_policy() -> None:
     out = _apply_confidence_threshold(stage2, 70)
 
     assert out["decision"]["order_type"] == "不下单"
+    assert out["decision"]["trade_confidence"] is None
     assert out["decision"]["estimated_win_rate"] is None
     assert out["terminal"]["node_id"] == "confidence_threshold"
     assert out["decision_trace"][-1]["answer"] == "否"
     assert out["confidence_threshold"]["result"] == "rejected"
+    assert out["confidence_threshold"]["trade_confidence"] == 65

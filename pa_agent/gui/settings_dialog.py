@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont
 
-from pa_agent.config.settings import Settings, save_settings
+from pa_agent.config.settings import Settings, save_settings, validate_api_key_value
 from pa_agent.config.paths import SETTINGS_JSON_PATH
 from pa_agent.ai.cursor_connector import (
     is_openclaw_cs_model,
@@ -450,7 +450,11 @@ class SettingsDialog(QDialog):
 
         model = self._model_edit.text().strip()
         base_url = self._base_url_edit.text().strip()
-        api_key = self._api_key_edit.text().strip()
+        try:
+            api_key = validate_api_key_value(self._api_key_edit.text())
+        except ValueError as exc:
+            QMessageBox.warning(self, "AI 提供商配置有误", str(exc))
+            return
 
         # Explicit model aliases win over stale base_url (openclaw_wb before openclaw).
         if is_openclaw_wb_model(model) or should_use_workbuddy_provider(model, base_url):

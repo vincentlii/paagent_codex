@@ -412,7 +412,7 @@ def build_stage2_gate_wait_response(stage1_json: dict[str, Any]) -> dict[str, An
                 stage1_json.get("risk_warning")
                 or f"闸门在 {node_id}，市场诊断置信度沿用阶段一。"
             ),
-            "trade_confidence": 0,
+            "trade_confidence": None,
             "trade_confidence_reasoning": "闸门未通过，不执行交易决策。",
             "estimated_win_rate": None,
             "estimated_win_rate_reasoning": None,
@@ -431,8 +431,8 @@ def build_stage2_gate_wait_response(stage1_json: dict[str, Any]) -> dict[str, An
             "entry_bar": {
                 "bar": None,
                 "strength": "not_triggered",
-                "follow_through": False,
-                "still_valid": False,
+                "follow_through": None,
+                "still_valid": None,
                 "freshness": "invalid",
             },
             "second_entry": {

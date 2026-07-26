@@ -41,6 +41,21 @@ def test_limit_plan_is_filled_then_wins_on_a_later_closed_bar() -> None:
     assert result.realized_return_r == 2.0
 
 
+def test_protective_stop_touch_does_not_claim_analytical_invalidation() -> None:
+    result = evaluate_trade_plan(
+        _plan(),
+        [
+            _bar(2, open_=103, high=104, low=99, close=102),
+            _bar(3, open_=102, high=103, low=94, close=101),
+        ],
+        horizon_bars=10,
+    )
+
+    assert result.outcome == "loss"
+    assert "protective stop" in result.notes.lower()
+    assert "analytical invalidation was not evaluated" in result.notes.lower()
+
+
 def test_same_bar_entry_and_exit_touch_is_ambiguous() -> None:
     result = evaluate_trade_plan(
         _plan(),

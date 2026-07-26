@@ -55,6 +55,8 @@ class _AssetState:
     fetch_failures: int = 0
     next_fetch_at: float = 0.0
     last_analysis_status: str | None = None
+    prepared_task: AnalysisTask | None = None
+    prepared_closed_bar_ts: int | None = None
 
 
 class HeadlessMonitor:
@@ -247,6 +249,15 @@ class HeadlessMonitor:
         )
         if frame is None:
             raise ValueError("insufficient closed bars for analysis")
+        latest_closed_bar_ts = max(int(bar.ts_open) for bar in frame.bars)
+        with self._lock:
+            if (
+                state.prepared_task is not None
+                and state.prepared_closed_bar_ts == latest_closed_bar_ts
+            ):
+                state.fetch_failures = 0
+                state.next_fetch_at = 0.0
+                return state.prepared_task
         if self._settings.general.higher_timeframe_enabled:
             htf_context = fetch_higher_timeframe_context(
                 source=source,
@@ -287,6 +298,8 @@ class HeadlessMonitor:
         with self._lock:
             state.fetch_failures = 0
             state.next_fetch_at = 0.0
+            state.prepared_task = task
+            state.prepared_closed_bar_ts = latest_closed_bar_ts
         return task
 
     def _ensure_source(self, state: _AssetState) -> Any:

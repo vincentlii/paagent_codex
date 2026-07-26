@@ -12,7 +12,7 @@ StageLit = Literal["stage1", "stage2"]
 RETRY_REWRITE_SENTINEL = "__REWRITE_REQUIRED__"
 
 _RETRY_FIELD_PATH_RE = re.compile(
-    r"^(?:(?:s1|s2|gate|trace|vpa|breakout_price|signal_chain):)?"
+    r"^(?:(?:s1|s2|gate|trace|vpa|breakout_price|signal_chain|metrics):)?"
     r"(?P<path>[A-Za-z_][A-Za-z0-9_]*(?:\[\d+\]|\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+))*)"
     r"(?=\s|$)"
 )
@@ -236,10 +236,11 @@ def build_retry_feedback(
         "bar_by_bar_summary" in inv and "role" in inv for inv in invalid
     ):
         lines.append("")
-        lines.append("**bar_by_bar_summary.role 枚举提示：**")
+        lines.append("**bar_by_bar_summary.role 格式提示：**")
         lines.append(
-            "- `role` 只能用 **structure / signal / entry / confirmation / noise / trap / climax / test**；"
-            "**禁止**写 support/resistance/continuation 或 detected_patterns 中的形态名。"
+            "- `role` 必须是 1-32 个字符的简洁 PA 功能描述，例如 "
+            "structure / signal / entry / confirmation / continuation / pullback / trap / test；"
+            "不要在此重复完整 Setup 名称或写成长句。"
         )
 
     invalid_text = "\n".join(str(item) for item in invalid)

@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-_TRADE_RECORDS_DIR = Path("trade_records")
+from pa_agent.config.paths import TRADE_RECORDS_DIR
 
 _REL_LABELS_ZH = {
     "same_direction": "同向",
@@ -97,10 +97,16 @@ def bars_elapsed_between(
     return max(0, math.floor((int(current_ms) - previous_ms) / duration_ms))
 
 
-def load_last_trade_csv_row(symbol: str, timeframe: str) -> dict[str, str] | None:
+def load_last_trade_csv_row(
+    symbol: str,
+    timeframe: str,
+    *,
+    records_dir: Path | None = None,
+) -> dict[str, str] | None:
     safe_symbol = str(symbol).replace("/", "-").replace("\\", "-")
     safe_timeframe = str(timeframe).replace("/", "-")
-    path = _TRADE_RECORDS_DIR / f"{safe_symbol}_{safe_timeframe}.csv"
+    root = records_dir if records_dir is not None else TRADE_RECORDS_DIR
+    path = root / f"{safe_symbol}_{safe_timeframe}.csv"
     if not path.is_file():
         return None
     try:

@@ -18,6 +18,14 @@ VpaMode = Literal["off", "shadow", "soft"]
 MIN_ANALYSIS_BARS = 20
 
 
+def validate_api_key_value(value: str, *, source: str = "API Key") -> str:
+    """Return a trimmed header-safe secret or raise without echoing it."""
+    key = str(value or "").strip()
+    if key and (not key.isascii() or any(char.isspace() for char in key)):
+        raise ValueError(f"{source} must be one single-line ASCII token")
+    return key
+
+
 class AIProviderSettings(BaseModel):
     """AI provider connection and behaviour settings."""
 
@@ -36,6 +44,11 @@ class AIProviderSettings(BaseModel):
         "json_object",
         "text",
     ] = "auto"
+
+    @field_validator("api_key")
+    @classmethod
+    def _validate_api_key(cls, value: str) -> str:
+        return validate_api_key_value(value)
 
 
 class PromptSettings(BaseModel):
@@ -392,7 +405,7 @@ def save_settings(settings: Settings, path: Path | None = None) -> None:
 
     data = settings.model_dump()
     provider = data.setdefault("provider", {})
-    plaintext_key = str(provider.get("api_key") or "")
+    plaintext_key = validate_api_key_value(str(provider.get("api_key") or ""))
     if plaintext_key:
         from pa_agent.security.api_key_store import encrypt_api_key
 

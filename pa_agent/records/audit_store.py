@@ -7,6 +7,7 @@ loading prompts, raw model responses, or sensitive provider configuration.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import sqlite3
@@ -15,6 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
+from pa_agent.records.codec import load_record
+from pa_agent.records.projection import pa_joint_comparison, usage_from_call_attempts
 from pa_agent.records.schema import AnalysisRecord
 
 logger = logging.getLogger(__name__)
@@ -306,8 +309,8 @@ class AnalysisAuditStore:
         for path in sorted(Path(records_dir).glob("*.json")):
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
-                partial_reason = raw.pop("_partial_reason", None)
-                record = AnalysisRecord.model_validate(raw)
+                partial_reason = raw.get("_partial_reason")
+                record = load_record(path).record
             except (OSError, ValueError, TypeError):
                 skipped += 1
                 continue
@@ -686,26 +689,33 @@ class AnalysisAuditStore:
         decision = decision if isinstance(decision, dict) else {}
         terminal = stage2.get("terminal") if isinstance(stage2, dict) else {}
         terminal = terminal if isinstance(terminal, dict) else {}
-        sidecar = record.vpa_sidecar if isinstance(record.vpa_sidecar, dict) else {}
         pa_hypotheses = record.pa_hypotheses if isinstance(record.pa_hypotheses, dict) else {}
         canonical_vpa = record.vpa_evidence if isinstance(record.vpa_evidence, dict) else {}
         canonical_joint = record.joint_decision if isinstance(record.joint_decision, dict) else {}
-        catalog = sidecar.get("evidence_catalog") if isinstance(sidecar, dict) else {}
+        catalog = record.vpa_catalog if isinstance(record.vpa_catalog, dict) else {}
         catalog = catalog if isinstance(catalog, dict) else {}
         provenance = catalog.get("provenance") if isinstance(catalog, dict) else {}
         provenance = provenance if isinstance(provenance, dict) else {}
-        impact = sidecar.get("stage2_impact") if isinstance(sidecar, dict) else {}
-        impact = impact if isinstance(impact, dict) else {}
-        vpa_context = sidecar.get("stage1_context") if isinstance(sidecar, dict) else {}
-        vpa_context = vpa_context if isinstance(vpa_context, dict) else {}
-        comparison = sidecar.get("comparison") if isinstance(sidecar, dict) else {}
+        arbitration = canonical_joint.get("joint_arbitration")
+        arbitration = arbitration if isinstance(arbitration, dict) else {}
+        impact = {
+            "background_relation": canonical_vpa.get("background_relation"),
+            "entry_timing_relation": canonical_vpa.get("entry_timing_relation"),
+            "evidence_used": copy.deepcopy(arbitration.get("evidence_used") or []),
+            "decision_effect": arbitration.get("decision_effect"),
+            "reason": arbitration.get("reason"),
+        }
+        vpa_context = canonical_vpa
+        comparison = pa_joint_comparison(record) or {}
         comparison = comparison if isinstance(comparison, dict) else {}
         observed = comparison.get("observed_effect") if isinstance(comparison, dict) else {}
         observed = observed if isinstance(observed, dict) else {}
-        role_execution = sidecar.get("role_execution") if isinstance(sidecar, dict) else {}
-        role_execution = role_execution if isinstance(role_execution, dict) else {}
+        role_execution = {
+            **(record.role_runtime if isinstance(record.role_runtime, dict) else {}),
+            **(record.role_statuses if isinstance(record.role_statuses, dict) else {}),
+        }
         joint_stage2 = (
-            sidecar.get("joint_stage2") if isinstance(sidecar.get("joint_stage2"), dict) else {}
+            record.joint_stage2 if isinstance(record.joint_stage2, dict) else {}
         )
         joint_stage2 = joint_stage2 if isinstance(joint_stage2, dict) else {}
         joint_decision = joint_stage2.get("decision") if isinstance(joint_stage2, dict) else {}
@@ -749,8 +759,8 @@ class AnalysisAuditStore:
             "decision_review": decision_review,
         }
         baseline_stage2 = (
-            sidecar.get("baseline_stage2")
-            if isinstance(sidecar.get("baseline_stage2"), dict)
+            record.pa_baseline_stage2
+            if isinstance(record.pa_baseline_stage2, dict)
             else {}
         )
         baseline_decision = baseline_stage2.get("decision")
@@ -783,8 +793,8 @@ class AnalysisAuditStore:
             "htf_status": htf.get("status"),
             "htf_timeframe": htf.get("timeframe"),
             "htf_reason": htf.get("reason"),
-            "vpa_mode": sidecar.get("mode"),
-            "snapshot_hash": sidecar.get("snapshot_hash"),
+            "vpa_mode": run_outcome.get("requested_vpa_mode"),
+            "snapshot_hash": catalog.get("snapshot_hash"),
             "catalog_id": catalog.get("catalog_id"),
             "volume_kind": provenance.get("volume_kind"),
             "venue": provenance.get("venue"),
@@ -795,13 +805,13 @@ class AnalysisAuditStore:
             "baseline_order_type": (
                 baseline_decision.get("order_type")
                 if baseline_decision
-                else decision.get("order_type") if sidecar else None
+                else decision.get("order_type") if catalog else None
             ),
             "joint_order_type": joint_decision.get("order_type"),
             "baseline_trade_confidence": (
                 baseline_decision.get("trade_confidence")
                 if baseline_decision
-                else decision.get("trade_confidence") if sidecar else None
+                else decision.get("trade_confidence") if catalog else None
             ),
             "joint_trade_confidence": joint_decision.get("trade_confidence"),
             "joint_order_direction": joint_decision.get("order_direction"),
@@ -816,7 +826,7 @@ class AnalysisAuditStore:
             "review_context_json": cls._json(review_context),
             "validation_audit_json": cls._json(record.validation_audit),
             "joint_diff_json": cls._json(comparison),
-            "usage_json": cls._json(record.usage_total),
+            "usage_json": cls._json(usage_from_call_attempts(record.call_attempts)),
             "indexed_at_ms": cls._now_ms(),
         }
 

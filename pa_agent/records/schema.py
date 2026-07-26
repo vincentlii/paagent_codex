@@ -4,10 +4,10 @@ Defines the canonical schema for analysis records, followup turns,
 alarm payloads, validation errors, and experience entries.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RecordMeta(BaseModel):
@@ -30,33 +30,54 @@ class AnalysisRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = 4
+    schema_version: Literal[5] = 5
+    source_schema_version: Optional[int] = None
     meta: RecordMeta
     kline_data: list[dict]              # Same data as sent to AI
     htf_text: str
     htf_context: Optional[dict] = None  # Compact HTF provenance; full block stays in htf_text
     htf_kline_data: list[dict] = Field(default_factory=list)
     stage1_messages: list[dict]
-    stage1_response: Optional[dict]     # Raw response (includes reasoning_content)
-    stage1_diagnosis: Optional[dict]
+    stage1_response: Optional[dict] = None  # Raw response (includes reasoning_content)
+    stage1_diagnosis: Optional[dict] = None
     stage2_messages: list[dict]
-    stage2_response: Optional[dict]
-    stage2_decision: Optional[dict]
+    stage2_response: Optional[dict] = None
+    stage2_decision: Optional[dict] = None
+    pa_baseline_stage2: Optional[dict] = None
+    joint_stage2: Optional[dict] = None
     strategy_files_used: list[str]
     experience_loaded: list[dict]
-    exception: Optional[dict]           # If error occurred: category + debug info
-    usage_total: dict                   # Cumulative usage for audit
+    exception: Optional[dict] = None    # If error occurred: category + debug info
+    # Runtime projection for compatibility; JSON persistence derives it from
+    # call_attempts and omits this duplicate field.
+    usage_total: dict = Field(default_factory=dict, exclude=True)
     validation_audit: list[dict] = Field(default_factory=list)
     call_attempts: list[dict] = Field(default_factory=list)
     pa_hypotheses: Optional[dict] = None
+    vpa_catalog: Optional[dict] = None
     vpa_evidence: Optional[dict] = None
     joint_decision: Optional[dict] = None
+    role_statuses: dict = Field(default_factory=dict)
+    role_runtime: dict = Field(default_factory=dict)
+    role_responses: dict = Field(default_factory=dict)
     run_outcome: dict = Field(default_factory=dict)
-    # Compatibility view for GUI/audit readers; canonical role outputs live above.
-    vpa_sidecar: Optional[dict] = None
     data_quality: dict = Field(default_factory=dict)
     snapshot_context: dict = Field(default_factory=dict)
     experiment_context: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def derive_runtime_usage(self) -> "AnalysisRecord":
+        from pa_agent.records.projection import usage_from_call_attempts
+
+        self.usage_total = usage_from_call_attempts(self.call_attempts)
+        return self
+
+    @property
+    def vpa_sidecar(self) -> Optional[dict]:
+        """Deprecated in-memory UI projection; never persisted in schema v5."""
+        from pa_agent.records.projection import gui_vpa_view
+
+        return gui_vpa_view(self)
 
 
 class FollowupTurn(BaseModel):

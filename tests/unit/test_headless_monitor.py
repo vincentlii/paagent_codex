@@ -7,6 +7,7 @@ from pa_agent.config.paths import resolve_runtime_paths
 from pa_agent.config.settings import MonitoringSettings, Settings
 from pa_agent.data.base import KlineBar
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
+from pa_agent.data.higher_timeframe import disabled_higher_timeframe_context
 from pa_agent.monitoring.analysis_runner import AnalysisRunResult
 from pa_agent.monitoring.headless import HeadlessMonitor
 from pa_agent.monitoring.scheduler import JobCompletion, SubmissionResult
@@ -277,6 +278,32 @@ def test_run_on_startup_false_waits_for_new_close_not_snapshot_revision(tmp_path
 
     source.advance()
     monitor.poll_once()
+    assert len(service.submitted) == 1
+
+
+def test_same_closed_bar_reuses_frozen_task_without_refetching_htf(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+    monitor._settings.general.higher_timeframe_enabled = True
+    calls: list[int] = []
+    monkeypatch.setattr(
+        "pa_agent.monitoring.headless.fetch_higher_timeframe_context",
+        lambda **_kwargs: (
+            calls.append(1)
+            or disabled_higher_timeframe_context("1h")
+        ),
+    )
+
+    monitor.poll_once()
+    first = service.submitted[-1]
+    service.on_completion(
+        _completion(first, status="completed", success=True, retryable=False)
+    )
+    monitor.poll_once()
+
+    assert calls == [1]
     assert len(service.submitted) == 1
 
 

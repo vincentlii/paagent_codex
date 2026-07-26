@@ -2,25 +2,42 @@ import json
 from pathlib import Path
 
 from pa_agent.quality.replay_manifest import build_replay_manifest, write_replay_manifest
+from pa_agent.records.codec import dump_record
+from pa_agent.records.schema import AnalysisRecord, RecordMeta
 
 
 def _record(run_id: str, *, close: float = 100.0) -> dict:
-    return {
-        "meta": {"run_id": run_id, "symbol": "TEST", "timeframe": "15m"},
-        "kline_data": [
+    return dump_record(
+        AnalysisRecord(
+            meta=RecordMeta(
+                timestamp_local_iso="2026-07-22T12:00:00+08:00",
+                timestamp_local_ms=1_700_000_000_000,
+                run_id=run_id,
+                symbol="TEST",
+                timeframe="15m",
+                bar_count=1,
+                ai_provider={"model": "test"},
+            ),
+            kline_data=[
             {
-                "ts": 1_700_000_000_000,
+                "seq": 1,
+                "ts_open": 1_700_000_000_000,
                 "open": close - 1,
                 "high": close + 1,
                 "low": close - 2,
                 "close": close,
                 "volume": 10,
+                "closed": True,
             }
-        ],
-        "htf_context": {"timeframe": "1h"},
-        "exception": None,
-        "vpa_sidecar": None,
-    }
+            ],
+            htf_text="",
+            htf_context={"timeframe": "1h"},
+            stage1_messages=[],
+            stage2_messages=[],
+            strategy_files_used=[],
+            experience_loaded=[],
+        )
+    )
 
 
 def test_manifest_is_deterministic_and_does_not_copy_market_payload(tmp_path: Path) -> None:

@@ -43,6 +43,15 @@ def _make_mock_response(content: str = "hello", reasoning: str = "thinking...") 
     return resp
 
 
+def test_client_revalidates_mutated_api_key_before_building_http_headers() -> None:
+    settings = _make_settings()
+    settings.api_key = "sk-valid-prefix\npython -m pa_agent.main"
+    client = DeepSeekClient(settings)
+
+    with pytest.raises(ValueError, match="API Key"):
+        client._openai_client()
+
+
 def test_chat_does_not_send_forbidden_params():
     """chat() must never pass temperature/top_p/presence_penalty/frequency_penalty."""
     settings = _make_settings()

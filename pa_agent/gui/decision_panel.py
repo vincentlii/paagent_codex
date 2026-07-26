@@ -7,7 +7,6 @@ from typing import Any
 from pa_agent.util.trade_metrics import (
     compute_risk_reward,
     format_estimated_win_rate,
-    min_risk_reward_ratio,
     passes_trader_equation,
 )
 from pa_agent.ai.cycle_enums import format_cycle_position, format_cycle_with_direction, format_trend_label
@@ -623,7 +622,6 @@ class DecisionPanel(QWidget):
 
             rr = compute_risk_reward(entry, tp, sl, direction)
             if rr is not None:
-                ratio = float(rr["ratio"])
                 risk = float(rr["risk"])
                 reward = float(rr["reward"])
                 win_pct = _parse_score_100(decision.get("estimated_win_rate"))
@@ -631,18 +629,19 @@ class DecisionPanel(QWidget):
                     win_pct is not None
                     and passes_trader_equation(win_pct, risk, reward)
                 )
-                min_rr = min_risk_reward_ratio()
-                metrics_ok = (
-                    ratio >= min_rr
-                    and (eq_ok if win_pct is not None else True)
-                )
                 eq_note = ""
                 if win_pct is not None:
                     eq_note = " · 方程通过" if eq_ok else " · 方程不通过"
                 self._rr_inline_label.setText(
                     f"盈亏比  {rr['ratio_text']}（风险 {risk:.4g} / 回报 {reward:.4g}）{eq_note}"
                 )
-                rr_color = "#3fb950" if metrics_ok else "#f85149"
+                rr_color = (
+                    "#3fb950"
+                    if eq_ok
+                    else "#f85149"
+                    if win_pct is not None
+                    else "#e6b800"
+                )
                 self._rr_inline_label.setStyleSheet(
                     f"color: {rr_color}; font-size: 15px; font-weight: bold;"
                 )

@@ -7,6 +7,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from pa_agent.data.snapshot_identity import canonical_market_snapshot_hash
+from pa_agent.records.codec import load_record
+
 
 def _canonical_hash(value: Any) -> str:
     payload = json.dumps(
@@ -21,13 +24,14 @@ def _canonical_hash(value: Any) -> str:
 
 def _snapshot_identity(record: dict[str, Any]) -> str:
     meta = record.get("meta") if isinstance(record.get("meta"), dict) else {}
-    identity = {
-        "symbol": meta.get("symbol"),
-        "timeframe": meta.get("timeframe"),
-        "kline_data": record.get("kline_data") or [],
-        "htf_context": record.get("htf_context"),
-    }
-    return _canonical_hash(identity)
+    return canonical_market_snapshot_hash(
+        symbol=str(meta.get("symbol") or ""),
+        timeframe=str(meta.get("timeframe") or ""),
+        kline_data=record.get("kline_data") or [],
+        snapshot_context=record.get("snapshot_context") or {},
+        htf_context=record.get("htf_context"),
+        htf_kline_data=record.get("htf_kline_data") or [],
+    )
 
 
 def build_replay_manifest(paths: Iterable[str | Path]) -> dict[str, Any]:
@@ -38,8 +42,10 @@ def build_replay_manifest(paths: Iterable[str | Path]) -> dict[str, Any]:
 
     for raw_path in sorted((Path(path) for path in paths), key=lambda item: item.name):
         try:
-            record = json.loads(raw_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            loaded = load_record(raw_path)
+            model = loaded.record
+            record = model.model_dump(mode="json", exclude_none=True)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
             invalid.append({"path": raw_path.name, "error": type(exc).__name__})
             continue
         if not isinstance(record, dict):
@@ -50,7 +56,6 @@ def build_replay_manifest(paths: Iterable[str | Path]) -> dict[str, Any]:
         if run_id in run_ids:
             duplicate_run_ids.add(run_id)
         run_ids.add(run_id)
-        sidecar = record.get("vpa_sidecar")
         cases.append(
             {
                 "run_id": run_id,
@@ -59,8 +64,10 @@ def build_replay_manifest(paths: Iterable[str | Path]) -> dict[str, Any]:
                 "snapshot_id": _snapshot_identity(record),
                 "record_sha256": _canonical_hash(record),
                 "has_htf": bool(record.get("htf_context") or record.get("htf_text")),
-                "has_vpa": isinstance(sidecar, dict) and bool(sidecar),
-                "outcome": "internal_error" if record.get("exception") else "completed",
+                "has_vpa": isinstance(record.get("vpa_catalog"), dict),
+                "outcome": str((record.get("run_outcome") or {}).get("status") or (
+                    "internal_error" if record.get("exception") else "completed"
+                )),
             }
         )
 

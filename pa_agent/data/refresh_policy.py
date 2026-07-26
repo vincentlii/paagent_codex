@@ -6,6 +6,21 @@ LIVE_SOCKET_SOURCES: frozenset[str] = frozenset({"tradingview"})
 
 HTTP_MIN_REFRESH_MS = 2500
 LIVE_SOCKET_MIN_REFRESH_MS = 3000
+TRADINGVIEW_MIN_REFRESH_BY_TIMEFRAME_MS: dict[str, int] = {
+    "1m": 10_000,
+    "3m": 15_000,
+    "5m": 15_000,
+    "15m": 30_000,
+    "30m": 30_000,
+    "45m": 30_000,
+    "1h": 60_000,
+    "2h": 60_000,
+    "3h": 60_000,
+    "4h": 60_000,
+    "1d": 300_000,
+    "1w": 300_000,
+    "1M": 300_000,
+}
 HTTP_SNAPSHOT_CACHE_TTL_S = 8.0
 HTTP_SNAPSHOT_CACHE_TTL_1D_S = 12.0
 HTTP_ZOMBIE_JOIN_MS = 15_000
@@ -27,7 +42,13 @@ def effective_refresh_interval_ms(
     if kind in HTTP_POLL_SOURCES:
         ms = max(ms, HTTP_MIN_REFRESH_MS)
     if kind in LIVE_SOCKET_SOURCES:
-        ms = max(ms, LIVE_SOCKET_MIN_REFRESH_MS)
+        ms = max(
+            ms,
+            TRADINGVIEW_MIN_REFRESH_BY_TIMEFRAME_MS.get(
+                timeframe,
+                LIVE_SOCKET_MIN_REFRESH_MS,
+            ),
+        )
     if kind in HTTP_POLL_SOURCES and timeframe == "1d":
         ms = max(ms, 3000)
     return ms

@@ -33,7 +33,8 @@ def _source_record(*, htf_available: bool, with_htf_bars: bool) -> AnalysisRecor
         }
     )
     return AnalysisRecord(
-        schema_version=4 if with_htf_bars else 3,
+        schema_version=5,
+        source_schema_version=4 if with_htf_bars else 3,
         meta=RecordMeta(
             timestamp_local_iso="2026-07-20T12:00:00+08:00",
             timestamp_local_ms=frame.snapshot_ts_local_ms,
@@ -67,10 +68,7 @@ def _source_record(*, htf_available: bool, with_htf_bars: bool) -> AnalysisRecor
         experience_loaded=[],
         exception=None,
         usage_total={},
-        vpa_sidecar={
-            "mode": "shadow",
-            "evidence_catalog": catalog,
-        },
+        vpa_catalog=catalog,
         snapshot_context={
             "source_identity": {
                 "provider": "tradingview",
@@ -101,7 +99,7 @@ def test_replay_reconstructs_current_and_full_available_htf_frames() -> None:
     assert htf_context["status"] == "available"
     assert htf_context["frame"].timeframe == "4h"
     assert len(htf_context["frame"].bars) == 20
-    assert catalog["catalog_id"] == source.vpa_sidecar["evidence_catalog"]["catalog_id"]
+    assert catalog["catalog_id"] == source.vpa_catalog["catalog_id"]
 
 
 def test_replay_rejects_legacy_record_that_claims_htf_without_full_bars() -> None:

@@ -18,6 +18,7 @@ from pa_agent.experiments.pa_vpa_aabb import (
 from pa_agent.experiments.store import AnalysisExperimentStore
 from pa_agent.records.audit_store import AnalysisAuditStore
 from pa_agent.records.pending_writer import PendingWriter
+from pa_agent.records.codec import dump_record
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
 from pa_agent.util.threading import CancelToken
 from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
@@ -107,16 +108,6 @@ def _record(run_id: str, *, mode: str, catalog: dict | None) -> AnalysisRecord:
             "mode": "soft",
             "snapshot_hash": catalog["snapshot_hash"],
             "evidence_catalog": copy.deepcopy(catalog),
-            "vpa_report": copy.deepcopy(vpa_evidence),
-            "joint_arbitration": copy.deepcopy(joint_decision["joint_arbitration"]),
-            "stage1_context": copy.deepcopy(vpa_evidence),
-            "stage2_impact": {
-                "background_relation": "neutral",
-                "entry_timing_relation": "challenges",
-                "decision_effect": "require_confirmation",
-                "evidence_used": ["vpa-e001"],
-                "reason": "Independent VPA evidence challenges immediate timing.",
-            },
             "role_execution": {
                 "design": "pa_vpa_joint_v1",
                 "provider_fallback_allowed": False,
@@ -159,6 +150,8 @@ def _record(run_id: str, *, mode: str, catalog: dict | None) -> AnalysisRecord:
         stage2_messages=[],
         stage2_response={},
         stage2_decision=copy.deepcopy(VALID_STAGE2),
+        pa_baseline_stage2=copy.deepcopy(VALID_STAGE2) if mode == "soft" else None,
+        joint_stage2=copy.deepcopy(VALID_STAGE2) if mode == "soft" else None,
         strategy_files_used=[],
         experience_loaded=[],
         exception=None,
@@ -167,7 +160,21 @@ def _record(run_id: str, *, mode: str, catalog: dict | None) -> AnalysisRecord:
         pa_hypotheses={"primary": {"hypothesis_id": "pa-primary"}},
         vpa_evidence=vpa_evidence,
         joint_decision=joint_decision,
-        vpa_sidecar=sidecar,
+        vpa_catalog=(
+            copy.deepcopy(catalog)
+            if mode == "soft" and catalog is not None
+            else None
+        ),
+        role_statuses=(
+            {"vpa": "validated", "joint": "validated"}
+            if mode == "soft"
+            else {}
+        ),
+        role_runtime=(
+            copy.deepcopy(sidecar["role_execution"])
+            if isinstance(sidecar, dict)
+            else {}
+        ),
         run_outcome={
             "status": "completed",
             "official_path": official_path,
@@ -291,9 +298,9 @@ def test_protocol_validator_rejects_leakage_hash_drift_and_catalog_drift() -> No
     )
 
     bad_b = next(record for record in records if record.experiment_context["group"] == "B")
-    bad_sidecar = copy.deepcopy(bad_b.vpa_sidecar)
-    bad_sidecar["evidence_catalog"]["catalog_id"] = "vpa-catalog-tampered"
-    tampered = bad_b.model_copy(update={"vpa_sidecar": bad_sidecar})
+    bad_catalog = copy.deepcopy(bad_b.vpa_catalog)
+    bad_catalog["catalog_id"] = "vpa-catalog-tampered"
+    tampered = bad_b.model_copy(update={"vpa_catalog": bad_catalog})
     assert (
         "b_arm_catalog_drift"
         in validate_aabb_records([tampered if item is bad_b else item for item in records])[
@@ -301,15 +308,10 @@ def test_protocol_validator_rejects_leakage_hash_drift_and_catalog_drift() -> No
         ]
     )
 
-    drifted_sidecar = copy.deepcopy(bad_b.vpa_sidecar)
-    drifted_sidecar["stage1_context"]["summary"] = "drifted"
-    representation_drift = bad_b.model_copy(update={"vpa_sidecar": drifted_sidecar})
-    assert (
-        "b_arm_vpa_representation_drift"
-        in validate_aabb_records(
-            [representation_drift if item is bad_b else item for item in records]
-        )["errors"]
-    )
+    persisted = dump_record(bad_b)
+    assert "vpa_sidecar" not in persisted
+    assert persisted["vpa_evidence"] == bad_b.vpa_evidence
+    assert persisted["joint_decision"] == bad_b.joint_decision
 
 
 def test_runner_persists_four_independent_records_and_manifest(tmp_path: Path) -> None:

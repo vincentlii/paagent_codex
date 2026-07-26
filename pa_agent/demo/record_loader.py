@@ -1,14 +1,14 @@
 """Load pending analysis JSON records for demo replay."""
 from __future__ import annotations
 
-import json
 import logging
 import random
 from pathlib import Path
 
 from pa_agent.config.paths import RECORDS_PENDING_DIR
-from pa_agent.data.base import KlineBar, KlineFrame
+from pa_agent.data.base import KlineBar, KlineFrame, normalize_kline_bar
 from pa_agent.data.snapshot import compute_indicators
+from pa_agent.records.codec import load_record
 from pa_agent.records.schema import AnalysisRecord
 from pa_agent.util.timefmt import now_local_ms
 
@@ -32,11 +32,7 @@ def pick_random_record_path(directory: Path | None = None) -> Path | None:
 
 def load_analysis_record(path: Path) -> AnalysisRecord:
     """Parse one pending record file."""
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    # Strip debug-only fields injected by PendingWriter.save_partial()
-    # that are deliberately kept out of the Pydantic model.
-    raw.pop("_partial_reason", None)
-    return AnalysisRecord.model_validate(raw)
+    return load_record(path).record
 
 
 def try_load_analysis_record(path: Path) -> AnalysisRecord | None:
@@ -113,25 +109,20 @@ def frame_from_record_klines(
     """Build a chart/analysis frame from persisted ``kline_data`` (newest-first)."""
     rebased: list[KlineBar] = []
     for i, b in enumerate(kline_data):
-        ts = float(b["ts_open"])
-        if ts > 1e12:
-            ts = ts / 1000.0
         rebased.append(
-            KlineBar(
-                seq=int(b.get("seq", i + 1)),
-                ts_open=ts,
-                open=float(b["open"]),
-                high=float(b["high"]),
-                low=float(b["low"]),
-                close=float(b["close"]),
-                volume=float(b.get("volume", 0)),
-                amount=float(b.get("amount", 0) or 0),
-                pct_chg=(
-                    float(b["pct_chg"])
-                    if b.get("pct_chg") is not None
-                    else None
-                ),
-                closed=bool(b.get("closed", True)),
+            normalize_kline_bar(
+                KlineBar(
+                    seq=int(b.get("seq", i + 1)),
+                    ts_open=b["ts_open"],
+                    open=b["open"],
+                    high=b["high"],
+                    low=b["low"],
+                    close=b["close"],
+                    volume=b.get("volume", 0),
+                    amount=b.get("amount", 0) or 0,
+                    pct_chg=b.get("pct_chg"),
+                    closed=bool(b.get("closed", True)),
+                )
             )
         )
     if not rebased:

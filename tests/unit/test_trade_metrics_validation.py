@@ -43,7 +43,7 @@ def _planned_limit_stage2() -> dict:
             "bar": None,
             "strength": "not_triggered",
             "follow_through": None,
-            "still_valid": True,
+            "still_valid": None,
             "freshness": "pending",
         },
         "second_entry": {"is_second_entry": False, "type": "none"},
@@ -82,39 +82,49 @@ def test_valid_structural_trade_metrics_pass() -> None:
     assert isinstance(_validate(copy.deepcopy(VALID_STAGE2)), Ok)
 
 
-def test_rr_below_one_is_rejected_without_moving_prices() -> None:
+def test_rr_below_one_passes_when_trader_equation_is_positive() -> None:
     stage2 = copy.deepcopy(VALID_STAGE2)
-    stage2["decision"]["take_profit_price"] = 2060.0
-    stage2["decision"]["take_profit_price_2"] = 2070.0
-    before = copy.deepcopy(stage2["decision"])
-
+    stage2["decision"]["take_profit_price"] = 2068.0
+    stage2["decision"]["take_profit_price_2"] = 2080.0
     result = _validate(stage2)
 
-    assert isinstance(result, ValidationError)
-    assert any("metrics:" in field and "below minimum" in field for field in result.invalid_fields)
-    assert stage2["decision"] == before
+    assert isinstance(result, Ok)
+    assert result.obj["decision"]["order_type"] == stage2["decision"]["order_type"]
 
 
-def test_failed_trader_equation_is_rejected_not_coerced_to_no_order() -> None:
+def test_failed_trader_equation_is_program_rejected_without_model_retry() -> None:
     stage2 = copy.deepcopy(VALID_STAGE2)
     stage2["decision"]["estimated_win_rate"] = 20
-    before_type = stage2["decision"]["order_type"]
+    before = copy.deepcopy(stage2)
 
     result = _validate(stage2)
 
-    assert isinstance(result, ValidationError)
-    assert any("trader equation fails" in field for field in result.invalid_fields)
-    assert stage2["decision"]["order_type"] == before_type
+    assert isinstance(result, Ok)
+    assert result.obj["decision"]["order_type"] == "不下单"
+    assert result.obj["decision"]["entry_price"] is None
+    assert result.obj["terminal"]["node_id"] == "10.3"
+    assert result.obj["terminal"]["outcome"] == "reject"
+    assert any(
+        event["path"] == "execution_policy"
+        for event in result.normalization_events
+    )
+    assert stage2 == before
 
 
-def test_tp2_must_extend_beyond_tp1() -> None:
+def test_invalid_tp2_is_blocked_by_execution_policy() -> None:
     stage2 = copy.deepcopy(VALID_STAGE2)
     stage2["decision"]["take_profit_price_2"] = stage2["decision"]["take_profit_price"]
 
     result = _validate(stage2)
 
-    assert isinstance(result, ValidationError)
-    assert any("take_profit_price_2" in field for field in result.invalid_fields)
+    assert isinstance(result, Ok)
+    assert result.obj["decision"]["order_type"] == "不下单"
+    policy_event = next(
+        event
+        for event in result.normalization_events
+        if event["path"] == "execution_policy"
+    )
+    assert any("take_profit_price_2" in reason for reason in policy_event["reasons"])
 
 
 def test_stale_entry_bar_cannot_support_new_order() -> None:
@@ -157,6 +167,72 @@ def test_planned_limit_without_signal_bar_remains_available() -> None:
     result = _validate(stage2)
 
     assert isinstance(result, Ok)
+
+
+def test_absent_pending_entry_clears_placeholder_follow_through_state() -> None:
+    stage2 = _planned_limit_stage2()
+    stage2["bar_analysis"]["entry_bar"].update(
+        {"follow_through": True, "still_valid": True}
+    )
+
+    result = _validate(stage2)
+
+    assert isinstance(result, Ok)
+    entry_bar = result.obj["bar_analysis"]["entry_bar"]
+    assert entry_bar["follow_through"] is None
+    assert entry_bar["still_valid"] is None
+
+
+def test_pending_entry_requires_the_complete_pending_state() -> None:
+    stage2 = _planned_limit_stage2()
+    stage2["bar_analysis"]["entry_bar"].update(
+        {
+            "strength": "strong",
+            "freshness": "fresh",
+            "follow_through": None,
+            "still_valid": None,
+        }
+    )
+
+    result = _validate(stage2)
+
+    assert isinstance(result, ValidationError)
+    assert any(
+        "pending entry requires freshness=pending" in field
+        for field in result.invalid_fields
+    )
+
+
+def test_follow_through_rejects_unbounded_string_values() -> None:
+    stage2 = copy.deepcopy(VALID_STAGE2)
+    stage2["bar_analysis"]["entry_bar"]["follow_through"] = "banana"
+
+    result = _validate(stage2)
+
+    assert isinstance(result, ValidationError)
+
+
+def test_market_order_requires_valid_confirmed_entry_state() -> None:
+    stage2 = copy.deepcopy(VALID_STAGE2)
+    stage2["decision"]["order_type"] = "市价单"
+    stage2["decision"]["entry_basis_bar"] = None
+    stage2["decision"]["entry_basis_extreme"] = None
+    stage2["decision"]["entry_rule"] = None
+    stage2["bar_analysis"]["entry_bar"].update(
+        {"follow_through": False, "still_valid": False}
+    )
+
+    result = _validate(stage2)
+
+    assert isinstance(result, ValidationError)
+    assert any(
+        "market order requires follow_through=true" in field
+        for field in result.invalid_fields
+    )
+    assert any(
+        "executable order requires still_valid=true" in field
+        for field in result.invalid_fields
+    )
 
 
 def test_planned_limit_entry_must_be_on_future_pullback_side_of_k1_close() -> None:

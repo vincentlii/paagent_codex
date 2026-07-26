@@ -75,10 +75,40 @@ _ENTRY_BAR: dict = {
     "properties": {
         "bar": {"type": ["string", "null"]},
         "strength": {"type": "string", "enum": ["strong", "weak", "not_triggered"]},
-        "follow_through": {"type": ["boolean", "string", "null"]},
+        "follow_through": {"type": ["boolean", "null"]},
         "still_valid": {"type": ["boolean", "null"]},
         "freshness": {"type": "string", "enum": ["fresh", "pending", "stale", "invalid"]},
     },
+    "allOf": [
+        {
+            "if": {
+                "properties": {"freshness": {"const": "pending"}},
+                "required": ["freshness"],
+            },
+            "then": {
+                "properties": {
+                    "bar": {"type": "null"},
+                    "strength": {"const": "not_triggered"},
+                    "follow_through": {"type": "null"},
+                    "still_valid": {"type": "null"},
+                }
+            },
+        },
+        {
+            "if": {
+                "properties": {"bar": {"type": "null"}},
+                "required": ["bar"],
+            },
+            "then": {
+                "properties": {
+                    "strength": {"const": "not_triggered"},
+                    "follow_through": {"type": "null"},
+                    "still_valid": {"type": "null"},
+                    "freshness": {"enum": ["pending", "invalid"]},
+                }
+            },
+        },
+    ],
     "additionalProperties": False,
 }
 
@@ -126,6 +156,20 @@ _STAGE2_SIGNAL_BAR: dict = {
     "type": "object",
     "required": ["bar", "quality", "pattern", "reason"],
     "properties": _SIGNAL_BAR["properties"],
+    "allOf": [
+        {
+            "if": {
+                "properties": {"bar": {"type": "null"}},
+                "required": ["bar"],
+            },
+            "then": {
+                "properties": {
+                    "quality": {"const": "invalid"},
+                    "pattern": {"const": "none"},
+                }
+            },
+        }
+    ],
     "additionalProperties": False,
 }
 
@@ -155,10 +199,9 @@ _BAR_BY_BAR_ITEM: dict = {
         "bar": {"type": "string"},
         "role": {
             "type": "string",
-            "enum": [
-                "structure", "signal", "entry", "confirmation",
-                "noise", "trap", "climax", "test",
-            ],
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": r"\S",
         },
         "bar_type": {
             "type": "string",
@@ -219,6 +262,41 @@ _PA_EVIDENCE: dict = {
                     "pattern": r"^K\d+$",
                 },
             },
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {
+                            "post_anchor_state": {
+                                "const": "pause_or_pullback_present",
+                            },
+                        },
+                        "required": ["post_anchor_state"],
+                    },
+                    "then": {
+                        "properties": {
+                            "first_pause_or_pullback_bar": {"type": "string"},
+                        },
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "post_anchor_state": {
+                                "enum": [
+                                    "no_closed_bar_after_anchor",
+                                    "continuation_only",
+                                ],
+                            },
+                        },
+                        "required": ["post_anchor_state"],
+                    },
+                    "then": {
+                        "properties": {
+                            "first_pause_or_pullback_bar": {"type": "null"},
+                        },
+                    },
+                },
+            ],
             "additionalProperties": False,
         },
     },
@@ -332,9 +410,78 @@ STAGE1_SCHEMA: dict = {
             },
             "then": {
                 "properties": {
-                    "spike_stage": {"type": "string", "enum": ["active", "ending", "transitioning"]}
+                    "spike_stage": {"type": "string", "enum": ["active", "ending", "transitioning"]},
+                    "pa_evidence": {
+                        "properties": {
+                            "spike_analysis": {"type": "object"},
+                        }
+                    },
                 },
                 "required": ["spike_stage"],
+            },
+        },
+        {
+            "if": {
+                "properties": {
+                    "cycle_position": {"not": {"const": "spike"}},
+                },
+                "required": ["cycle_position"],
+            },
+            "then": {
+                "properties": {
+                    "spike_stage": {"type": "null"},
+                    "pa_evidence": {
+                        "properties": {
+                            "spike_analysis": {"type": "null"},
+                        }
+                    },
+                },
+            },
+        },
+        {
+            "if": {
+                "properties": {
+                    "pa_evidence": {
+                        "type": "object",
+                        "properties": {
+                            "spike_analysis": {
+                                "type": "object",
+                                "properties": {
+                                    "post_anchor_state": {
+                                        "const": "pause_or_pullback_present",
+                                    },
+                                },
+                                "required": ["post_anchor_state"],
+                            },
+                        },
+                        "required": ["spike_analysis"],
+                    },
+                },
+                "required": ["pa_evidence"],
+            },
+            "then": {
+                "properties": {
+                    "spike_stage": {
+                        "type": "string",
+                        "enum": ["ending", "transitioning"],
+                    },
+                    "market_phase": {"const": "transitioning"},
+                    "transition_risk": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                    },
+                },
+            },
+        },
+        {
+            "if": {
+                "properties": {"market_phase": {"const": "stable"}},
+                "required": ["market_phase"],
+            },
+            "then": {
+                "properties": {
+                    "transition_risk": {"type": "null"},
+                },
             },
         },
         # transitioning market_phase requires transition_risk to be non-null
@@ -397,7 +544,7 @@ _DECISION_BASE: dict = {
         "reasoning": {"type": "string", "minLength": 1, "maxLength": 280},
         "diagnosis_confidence": {"type": "integer", "minimum": 0, "maximum": 100},
         "diagnosis_confidence_reasoning": {"type": "string"},
-        "trade_confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+        "trade_confidence": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
         "trade_confidence_reasoning": {"type": "string"},
         "estimated_win_rate": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
         "estimated_win_rate_reasoning": {"type": ["string", "null"]},
@@ -423,6 +570,7 @@ _DECISION_BASE: dict = {
                     "take_profit_price_2": {"type": "null"},
                     "stop_loss_price": {"type": "null"},
                     "order_direction": {"type": "null"},
+                    "trade_confidence": {"type": "null"},
                     "estimated_win_rate": {"type": "null"},
                     "estimated_win_rate_reasoning": {"type": "null"},
                 },
@@ -443,6 +591,7 @@ _DECISION_BASE: dict = {
                     "take_profit_price_2": {"type": "number"},
                     "stop_loss_price": {"type": "number"},
                     "order_direction": {"type": "string", "enum": ["做多", "做空"]},
+                    "trade_confidence": {"type": "integer", "minimum": 0, "maximum": 100},
                     "estimated_win_rate": {"type": "integer", "minimum": 0, "maximum": 100},
                     "estimated_win_rate_reasoning": {"type": "string", "minLength": 1},
                 },
@@ -452,6 +601,7 @@ _DECISION_BASE: dict = {
                     "take_profit_price_2",
                     "stop_loss_price",
                     "order_direction",
+                    "trade_confidence",
                     "estimated_win_rate",
                 ],
             },

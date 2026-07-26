@@ -6,7 +6,11 @@ from dataclasses import replace
 from pa_agent.ai.coherence_checks import (
     collect_stage1_quality_warnings,
     collect_stage2_quality_warnings,
+)
+from pa_agent.ai.coherence_checks import (
     validate_stage1_coherence as _validate_stage1_hard,
+)
+from pa_agent.ai.coherence_checks import (
     validate_stage2_coherence as _validate_stage2_hard,
 )
 from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
@@ -380,6 +384,56 @@ def test_middle_half_close_cannot_be_described_as_near_the_bar_high() -> None:
     )
 
 
+def test_explicit_bar_price_claim_must_match_the_frozen_bar() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["gate_trace"][0]["reason"] = "K6低点为2020.00，随后价格重心上移。"
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_frame())
+
+    assert any(
+        "K6.low" in error and "2020.00" in error and "2018" in error
+        for error in errors
+    )
+
+
+def test_explicit_bar_price_claim_handles_field_before_k_reference() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["gate_trace"][0]["reason"] = (
+        "低点从K6的2020.00升至K1低点2028.00，价格重心上移。"
+    )
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_frame())
+
+    assert any("K6.low" in error and "2020.00" in error for error in errors)
+
+
+def test_explicit_bar_price_claim_allows_display_rounding() -> None:
+    frame = make_frame()
+    k6 = replace(frame.bars[5], low=2018.004)
+    frame = replace(frame, bars=(*frame.bars[:5], k6, *frame.bars[6:]))
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["gate_trace"][0]["reason"] = "K6的2018.00低点仍是当前结构参考。"
+
+    errors = validate_stage1_coherence(stage1, kline_frame=frame)
+
+    assert not any("K6.low" in error for error in errors)
+
+
+def test_stage2_explicit_bar_price_claim_uses_the_same_fact_guard() -> None:
+    stage2 = copy.deepcopy(VALID_STAGE2)
+    stage2["decision"]["reasoning"] = (
+        "计划止损参考K6低点2020，其他市场结构由当前背景解释。"
+    )
+
+    errors = validate_stage2_coherence(
+        stage2,
+        VALID_STAGE1,
+        kline_frame=make_frame(),
+    )
+
+    assert any("K6.low" in error and "2020" in error for error in errors)
+
+
 def test_adjacent_pair_fact_can_ground_a_non_k1_extreme_claim() -> None:
     frame = make_mixed_frame()
     k3 = replace(frame.bars[2], high=4100.0, close=4098.0)
@@ -595,31 +649,56 @@ def test_bar_break_parser_accepts_chinese_adjacent_k_references() -> None:
     assert any("K2" in error and "K4-K3" in error and "high" in error for error in errors)
 
 
-def test_spike_pause_evidence_cannot_coexist_with_active_stable_state() -> None:
+def test_spike_anchor_must_exist_in_the_frozen_frame() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
-    stage1.update(
-        {
-            "cycle_position": "spike",
-            "direction": "bullish",
-            "spike_stage": "active",
-            "market_phase": "stable",
-            "transition_risk": None,
-            "pa_evidence": {
-                "fact_refs": ["PA.BAR.K5", "PA.BAR.K4"],
-                "theory_rule_ids": ["BROOKS.CYCLE.SPIKE_TO_CHANNEL"],
-                "spike_analysis": {
-                    "anchor_bar": "K5",
-                    "post_anchor_state": "pause_or_pullback_present",
-                    "first_pause_or_pullback_bar": "K4",
-                },
-            },
-        }
-    )
+    stage1["pa_evidence"]["spike_analysis"] = {
+        "anchor_bar": "K99",
+        "post_anchor_state": "no_closed_bar_after_anchor",
+        "first_pause_or_pullback_bar": None,
+    }
 
     errors = validate_stage1_coherence(stage1, kline_frame=make_mixed_frame())
 
-    assert any("spike_stage" in error for error in errors)
-    assert any("market_phase" in error for error in errors)
+    assert any("anchor_bar K99" in error and "not found" in error for error in errors)
+
+
+def test_no_closed_bar_after_anchor_requires_latest_closed_bar_anchor() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["pa_evidence"]["spike_analysis"] = {
+        "anchor_bar": "K2",
+        "post_anchor_state": "no_closed_bar_after_anchor",
+        "first_pause_or_pullback_bar": None,
+    }
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_mixed_frame())
+
+    assert any("no_closed_bar_after_anchor" in error and "K1" in error for error in errors)
+
+
+def test_spike_continuation_requires_a_later_closed_bar() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["pa_evidence"]["spike_analysis"] = {
+        "anchor_bar": "K1",
+        "post_anchor_state": "continuation_only",
+        "first_pause_or_pullback_bar": None,
+    }
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_mixed_frame())
+
+    assert any("continuation_only" in error and "later closed bar" in error for error in errors)
+
+
+def test_spike_pause_bar_must_be_more_recent_than_its_anchor() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["pa_evidence"]["spike_analysis"] = {
+        "anchor_bar": "K4",
+        "post_anchor_state": "pause_or_pullback_present",
+        "first_pause_or_pullback_bar": "K5",
+    }
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_mixed_frame())
+
+    assert any("first_pause_or_pullback_bar" in error and "more recent" in error for error in errors)
 
 
 def test_pa_evidence_cannot_invent_theory_rule_id() -> None:
@@ -648,6 +727,19 @@ def test_stage2_cannot_reverse_stage1_direction_on_same_snapshot() -> None:
     errors = validate_stage2_coherence(stage2, VALID_STAGE1, kline_frame=make_frame())
 
     assert any("回到阶段一重做方向诊断" in error for error in errors)
+
+
+def test_stage2_owns_concrete_setup_when_stage1_hint_is_empty() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["entry_setup"] = ""
+
+    errors = validate_stage2_coherence(
+        VALID_STAGE2,
+        stage1,
+        kline_frame=make_frame(),
+    )
+
+    assert errors == []
 
 
 def test_coherence_validator_does_not_reclassify_llm_bar_semantics() -> None:

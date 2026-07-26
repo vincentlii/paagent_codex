@@ -173,7 +173,12 @@ Joint 模型不复制完整 Stage 2。Validator 在冻结 PA baseline 上确定�
 输入输出契约。VPA 关闭时不构建 catalog、不派生 VPA Schema，也不向 PA Prompt 注入任何
 VPA 字段。
 
-`next_confirmation.state` 只允许 `pending_closed_bar` / `not_applicable`。前者的 trigger 必须明确等待下一根已收盘 K 线，并把 acceptance/rejection 锚定到具体 `K#` 高低点或已命名结构；若提及未来量能变化，还必须写明因果基线、前一根已收盘棒或其他程序可复算比较器。中文 `K线` / `K 线` 的空白差异只属于语法差异，不得改变语义判定。
+`next_confirmation.state` 只允许 `pending_closed_bar` / `not_applicable`。前者使用非空
+`trigger` 与 `requires_closed_bar=true`，并明确等待下一根已收盘 K 线，把
+acceptance/rejection 锚定到具体 `K#` 高低点或已命名结构；若提及未来量能变化，还必须写明
+因果基线、前一根已收盘棒或其他程序可复算比较器。后者使用 `trigger=null` 与
+`requires_closed_bar=false`，且只适用于没有 PA Entry Attempt 的场景。中文 `K线` /
+`K 线` 的空白差异只属于语法差异，不得改变语义判定。
 
 `decision_effect` 只允许 `keep_brooks_baseline`、`require_confirmation`、`prefer_retest`、`lower_confidence`、`reject_current_attempt`。数据可用且 Stage 2 实际执行时，必须引用至少一项 Stage 1 已验证 evidence；任何非 baseline effect 还必须引用至少一项含真实相对量比较器的 evidence。无证据时只能明确 `neutral` 或 `insufficient_data`。
 
@@ -217,12 +222,20 @@ Validator 的语义错误必须以真实 JSON 字段路径开头。它可以核�
 
 Normalizer 只兼容白名单内无歧义语法别名，例如 `waiting` → `pending_closed_bar`、`weakened_bull` → `weakens_bull`。每次兼容都必须写入 `normalization` 审计事件；调用仍可标记为 validated，但该 run 不得计为 `first_pass_clean`，也不得把语法兼容误算为 PA/VPA 语义错误。
 
-重试时，审计记录保留原始失败回答、Schema 合法值和实际 retry feedback，但发送给模型的修正草稿会把失败输出替换为 `{"__rewrite_required__": true}`。VPA 与 Joint 各以完整角色对象为事务边界重写，不把旧错误句或模型核对过程重新注入正式输出。
+重试时，审计记录保留原始失败回答、Schema 合法值和实际 retry feedback。PA Stage 1/2
+继续使用带 immutable guard 的 sanitized draft；VPA/Joint 则把可解析的原始角色草稿放回
+assistant turn，并要求只修复反馈列出的字段或引用、其余值逐字保持。修复结果仍以完整角色对象
+为事务边界重新执行 Schema、引用、事实和权限校验；authority violation 不进入自由重写。
+不得用 `{"__rewrite_required__": true}` 丢弃一份可解析草稿后重新随机生成整份高维报告。
 
 ## 9. 订单与执行安全
 
 - Stage 1 Gate 为 `wait/unknown` 时程序短路 Stage 2 模型调用，生成一致的 no-order 结果。
 - Stage 2 不得重新定义 Stage 1 的方向、周期或 Gate；出现反证时本轮等待下一根已收盘 K 线重新分析。
+- Stage 1 可以让 Gate 通过但不定义当前 Setup；这表示允许 Stage 2 基于已冻结的市场框架、
+  方向和 Brooks 路由独立完成 Setup、trigger、invalidation 与订单裁决。Stage 1 的
+  `entry_setup` 只是框架提示；只有完整 Stage 2 计划通过校验后，程序才建立
+  `PaSetupCandidate` 交给 Joint 裁决。
 - entry、stop、TP1、TP2 必须各有结构依据。RR 是复算结果，不能通过扩大止损、把止损塞进噪音或缩小目标凑方程。
 - §9.0P 计划型限价只校验做多 `entry < K1.close`、做空 `entry > K1.close`。程序不因 K1 历史影线触价猜测未来挂单失效。
 - 未提供已验证 tick size 时，程序不猜测、不静默改价。

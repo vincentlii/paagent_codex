@@ -61,6 +61,7 @@ def test_stage2_invalid_confidence(frame, pending_writer, assembler, exp_reader)
     # Validation error category should be 'c' (invalid value)
     assert record.exception is not None
     assert record.exception["category"] == "c"
+    assert record.run_outcome["status"] == "invalid_model_output"
 
     # Stage1 succeeded, Stage2 failed
     assert OrchestratorEvent.Stage1Done in events

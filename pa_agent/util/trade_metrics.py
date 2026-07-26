@@ -78,15 +78,6 @@ def format_estimated_win_rate_reasoning(decision: dict[str, Any]) -> str:
     return str(decision.get("estimated_win_rate_reasoning", "") or "").strip()
 
 
-# Lower cap: reward must be at least equal to risk (1:1) for any stance.
-MIN_RISK_REWARD_RATIO = 1.0
-
-
-def min_risk_reward_ratio() -> float:
-    """Minimum reward:risk ratio required by the execution policy."""
-    return MIN_RISK_REWARD_RATIO
-
-
 def passes_trader_equation(
     win_rate_pct: float,
     risk: float,
@@ -155,7 +146,7 @@ def validate_take_profit_2_geometry(
 def validate_order_trade_metrics(
     decision: dict[str, Any],
 ) -> list[str]:
-    """Validate entry/TP/SL geometry, RR floor, and trader equation for live orders."""
+    """Validate price geometry and positive expectancy for executable candidates."""
     order_type = decision.get("order_type")
     if order_type not in ("限价单", "突破单", "市价单"):
         return []
@@ -172,17 +163,8 @@ def validate_order_trade_metrics(
         ]
 
     errors: list[str] = []
-    ratio = float(rr["ratio"])
     risk = float(rr["risk"])
     reward = float(rr["reward"])
-    min_rr = min_risk_reward_ratio()
-
-    if ratio < min_rr:
-        errors.append(
-            f"decision prices: risk_reward {rr['ratio_text']} is below minimum "
-            f"{min_rr:.2f}:1; choose another structurally valid plan or set "
-            "order_type=不下单 with 10.3=否"
-        )
 
     win_rate = _parse_win_rate(decision.get("estimated_win_rate"))
     if win_rate is None:
@@ -193,8 +175,7 @@ def validate_order_trade_metrics(
         ev = win_rate / 100.0 * reward - (1.0 - win_rate / 100.0) * risk
         errors.append(
             f"decision prices: trader equation fails at {win_rate:.0f}% win rate "
-            f"(risk={risk:.4g}, reward={reward:.4g}, expectancy≈{ev:.4g}); "
-            "10.3 must be 否 and order_type=不下单 unless prices are fixed"
+            f"(risk={risk:.4g}, reward={reward:.4g}, expectancy≈{ev:.4g})"
         )
 
     errors.extend(validate_take_profit_2_geometry(decision))

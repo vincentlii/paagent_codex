@@ -36,10 +36,20 @@ def test_top_level_vpa_sidecar_is_not_required_inside_stage2_decision() -> None:
     assert payload["vpa_impact"]["decision_effect"] == "keep_brooks_baseline"
 
 
-def test_finished_callback_can_recover_matching_record_sidecar() -> None:
+def test_finished_callback_projects_matching_record_for_the_ui() -> None:
     stage2 = {"decision": {"order_type": "不下单"}}
-    sidecar = {"stage1_context": {"summary": "live VPA summary"}}
-    record = SimpleNamespace(stage2_decision=stage2, vpa_sidecar=sidecar)
+    record = SimpleNamespace(
+        stage2_decision=stage2,
+        vpa_catalog={"snapshot_hash": "a" * 64},
+        vpa_evidence={"summary": "live VPA summary"},
+        joint_decision=None,
+        pa_baseline_stage2=stage2,
+        joint_stage2=None,
+        run_outcome={"status": "completed", "requested_vpa_mode": "shadow"},
+        role_runtime={},
+        role_statuses={"vpa": "validated", "joint": "not_applicable"},
+    )
 
-    assert sidecar_for_stage2_record(record, stage2) is sidecar
+    view = sidecar_for_stage2_record(record, stage2)
+    assert view["stage1_context"]["summary"] == "live VPA summary"
     assert sidecar_for_stage2_record(record, {"decision": {"order_type": "限价单"}}) is None

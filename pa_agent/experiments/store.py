@@ -6,6 +6,8 @@ import hashlib
 import json
 import logging
 import math
+import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -39,8 +41,9 @@ class ExperimentWriteResult:
 class AnalysisExperimentStore:
     """Own experiment manifests while analysis JSON remains the source artifact."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, manifest_dir: Path | None = None) -> None:
         self._db_path = Path(db_path)
+        self._manifest_dir = Path(manifest_dir or self._db_path.parent / "experiments")
 
     def start_experiment(self, manifest: dict[str, Any]) -> ExperimentWriteResult:
         try:
@@ -73,7 +76,7 @@ class AnalysisExperimentStore:
                         "created_at_ms": self._now_ms(),
                     },
                 )
-            return ExperimentWriteResult(ok=True)
+            return self._sync_json_manifest(str(manifest["experiment_id"]))
         except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
             logger.warning("Experiment manifest start failed: %s", exc)
             return ExperimentWriteResult(ok=False, error=str(exc))
@@ -128,7 +131,7 @@ class AnalysisExperimentStore:
                         self._now_ms(),
                     ),
                 )
-            return ExperimentWriteResult(ok=True)
+            return self._sync_json_manifest(experiment_id)
         except (OSError, sqlite3.Error, KeyError, TypeError, ValueError) as exc:
             logger.warning("Experiment arm write failed: %s", exc)
             return ExperimentWriteResult(ok=False, error=str(exc))
@@ -165,7 +168,7 @@ class AnalysisExperimentStore:
                         ok=False,
                         error=f"unknown experiment_id: {experiment_id}",
                     )
-            return ExperimentWriteResult(ok=True)
+            return self._sync_json_manifest(experiment_id)
         except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
             logger.warning("Experiment manifest finish failed: %s", exc)
             return ExperimentWriteResult(ok=False, error=str(exc))
@@ -195,6 +198,30 @@ class AnalysisExperimentStore:
         except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
             logger.warning("Experiment manifest query failed: %s", exc)
             return None
+
+    def _sync_json_manifest(self, experiment_id: str) -> ExperimentWriteResult:
+        """Atomically mirror the SQLite manifest as a rebuildable JSON artifact."""
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", experiment_id):
+            return ExperimentWriteResult(ok=False, error="invalid experiment_id")
+        manifest = self.get_experiment(experiment_id)
+        if manifest is None:
+            return ExperimentWriteResult(
+                ok=False,
+                error=f"experiment manifest unavailable: {experiment_id}",
+            )
+        try:
+            self._manifest_dir.mkdir(parents=True, exist_ok=True)
+            path = self._manifest_dir / f"{experiment_id}.json"
+            temporary = path.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            os.replace(temporary, path)
+            return ExperimentWriteResult(ok=True)
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning("Experiment JSON manifest sync failed: %s", exc)
+            return ExperimentWriteResult(ok=False, error=str(exc))
 
     def list_experiments(
         self,
@@ -237,7 +264,7 @@ class AnalysisExperimentStore:
         symbol: str | None = None,
         timeframe: str | None = None,
         cohort_id: str | None = None,
-        min_unique_snapshots: int = 50,
+        min_unique_snapshots: int = 300,
         max_relative_trade_rate_decline: float = 0.15,
     ) -> dict[str, Any]:
         rows = self._joined_arm_rows(

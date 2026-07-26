@@ -155,8 +155,8 @@ def test_shadow_and_soft_have_distinct_official_paths(
     assert record.joint_decision["joint_arbitration"]["decision_effect"] == (
         "lower_confidence"
     )
-    assert record.vpa_sidecar["role_execution"]["same_frozen_input"] is True
-    assert record.vpa_sidecar["role_execution"]["official_path"] == official_path
+    assert record.role_runtime["same_frozen_input"] is True
+    assert record.role_runtime["official_path"] == official_path
     assert client.clone_with_provider.call_count == 3
     assert [
         (item["arm"], item["stage"], item["status"])
@@ -194,7 +194,18 @@ def test_vpa_failure_degrades_to_pa_only_without_failing_analysis() -> None:
     assert record.stage2_decision["decision"]["trade_confidence"] == 70
     assert record.vpa_evidence is None
     assert record.joint_decision is None
-    assert record.vpa_sidecar["status"] == "degraded_pa_only"
+    assert record.run_outcome["status"] == "degraded_pa_only"
+    assert record.vpa_sidecar["comparison"] is None
+    assert record.role_statuses["vpa"] == "failed"
+    assert record.role_statuses["joint"] == "not_attempted"
+    assert record.usage_total == {
+        "prompt_tokens": 400,
+        "cached_prompt_tokens": 0,
+        "completion_tokens": 200,
+        "total_tokens": 600,
+        "api_calls": 4,
+        "model_latency_ms": 4,
+    }
     assert writer.save_full.call_count == 1
 
 
@@ -256,7 +267,7 @@ def test_vpa_prose_warning_is_audited_without_retry_or_degradation() -> None:
     writer.save_full.assert_called_once()
 
 
-def test_pa_contract_failure_preserves_unavailable_provider_outcome() -> None:
+def test_pa_contract_failure_is_not_misclassified_as_provider_outage() -> None:
     invalid_stage1 = copy.deepcopy(VALID_STAGE1)
     invalid_stage1.pop("cycle_position")
     orchestrator, _client, writer = _orchestrator(
@@ -269,7 +280,7 @@ def test_pa_contract_failure_preserves_unavailable_provider_outcome() -> None:
     record = orchestrator.submit(make_frame(), CancelToken(), lambda _event: None)
 
     assert record.exception["type"] == "validation_error"
-    assert record.run_outcome["status"] == "unavailable_provider"
+    assert record.run_outcome["status"] == "invalid_model_output"
     assert record.run_outcome["official_path"] == "none"
     writer.save_partial.assert_called_once()
     writer.save_full.assert_not_called()
@@ -325,9 +336,10 @@ def test_pa_gate_wait_still_allows_vpa_review_but_skips_joint_call() -> None:
     assert record.run_outcome["official_path"] == "pa_only"
     assert record.stage2_decision["decision"]["order_type"] == "不下单"
     assert record.vpa_evidence is not None
-    assert record.joint_decision["joint_arbitration"]["decision_effect"] == (
-        "keep_brooks_baseline"
-    )
+    assert record.joint_decision is None
+    assert record.joint_stage2 is None
+    assert record.vpa_sidecar["comparison"] is None
+    assert record.role_statuses["joint"] == "not_applicable"
     assert all(
         item["stage"] != "joint_arbiter" for item in record.call_attempts
     )
@@ -360,7 +372,7 @@ def test_soft_role_path_uses_the_exact_supplied_frozen_catalog(monkeypatch) -> N
     )
 
     assert record.exception is None
-    assert record.vpa_sidecar["evidence_catalog"] == catalog
+    assert record.vpa_catalog == catalog
 
 
 def test_soft_role_path_rejects_a_frozen_catalog_from_another_snapshot() -> None:

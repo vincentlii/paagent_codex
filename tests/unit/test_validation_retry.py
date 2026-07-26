@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -18,7 +19,13 @@ from pa_agent.ai.retry_policy import (
 )
 from pa_agent.config.settings import PromptSettings, Settings, ValidationSettings
 from pa_agent.orchestrator.validation_retry import validate_with_retry
-from tests.integration.conftest import VALID_STAGE1, make_frame, make_reply
+from tests.fixtures.ai_payloads import VALID_STAGE2_NO_ORDER
+from tests.integration.conftest import (
+    VALID_STAGE1,
+    VALID_STAGE2,
+    make_frame,
+    make_reply,
+)
 
 
 def _settings() -> SimpleNamespace:
@@ -29,14 +36,127 @@ def _settings() -> SimpleNamespace:
     )
 
 
-def test_retry_policy_allows_format_error_but_not_trade_metric_rewrite() -> None:
+def test_retry_policy_allows_one_trade_metric_reconsideration() -> None:
     settings = _settings()
 
     assert should_retry("a", [], [], attempt=0, settings=settings)
     assert should_retry("c", ["decision_trace.0.answer"], [], attempt=0, settings=settings)
-    assert not should_retry(
+    assert should_retry(
         "c", ["metrics:trader equation failed"], [], attempt=0, settings=settings
     )
+    assert not should_retry(
+        "c", ["metrics:trader equation failed"], [], attempt=1, settings=settings
+    )
+
+
+def test_trade_metric_retry_can_reject_order_but_cannot_reprice_it() -> None:
+    before = {
+        "decision": {
+            "order_type": "限价单",
+            "order_direction": "做多",
+            "entry_price": 100.0,
+            "stop_loss_price": 95.0,
+            "take_profit_price": 104.0,
+            "take_profit_price_2": None,
+        }
+    }
+    targets = extract_feedback_targets(
+        [
+            "metrics:decision prices: risk_reward is below minimum; "
+            "set order_type=不下单"
+        ],
+        [],
+    )
+    rejected = {
+        "decision": {
+            "order_type": "不下单",
+            "order_direction": None,
+            "entry_price": None,
+            "stop_loss_price": None,
+            "take_profit_price": None,
+            "take_profit_price_2": None,
+        }
+    }
+    repriced = copy.deepcopy(before)
+    repriced["decision"]["entry_price"] = 99.0
+
+    assert targets == {"decision.order_type"}
+    assert detect_immutable_field_changes(
+        "stage2",
+        before,
+        rejected,
+        feedback_mentioned=targets,
+    ) == []
+    assert detect_immutable_field_changes(
+        "stage2",
+        before,
+        repriced,
+        feedback_mentioned=targets,
+    ) == ["decision.entry_price: 100.0 → 99.0"]
+
+
+def test_trade_metric_failure_is_program_rejected_without_retry() -> None:
+    settings = Settings(
+        prompt=PromptSettings(vpa_mode="off"),
+        validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
+    )
+    invalid = copy.deepcopy(VALID_STAGE2)
+    invalid["decision"]["take_profit_price"] = 2060.0
+    invalid["decision"]["take_profit_price_2"] = 2070.0
+    retry_messages: list[list[dict]] = []
+
+    def call_api(messages: list[dict]):
+        retry_messages.append(messages)
+        return make_reply(copy.deepcopy(VALID_STAGE2_NO_ORDER))
+
+    result = validate_with_retry(
+        stage="stage2",
+        messages=[{"role": "user", "content": "stage2"}],
+        reply=make_reply(invalid),
+        validator=JsonValidator(settings),
+        validation_settings=settings.validation,
+        validate_kwargs={
+            "kline_frame": make_frame(),
+            "stage1_json": VALID_STAGE1,
+        },
+        call_api=call_api,
+    )
+
+    assert isinstance(result.result, Ok)
+    assert retry_messages == []
+    assert result.result.obj["decision"]["order_type"] == "不下单"
+    assert any(
+        event["path"] == "execution_policy"
+        for event in result.result.normalization_events
+    )
+
+
+def test_stage2_may_define_the_concrete_plan_when_stage1_setup_hint_is_empty() -> None:
+    settings = Settings(
+        prompt=PromptSettings(vpa_mode="off"),
+        validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
+    )
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["entry_setup"] = ""
+    retry_messages: list[list[dict]] = []
+
+    def call_api(messages: list[dict]):
+        retry_messages.append(messages)
+        raise AssertionError("a valid Stage 2 PA plan must not require repair")
+
+    result = validate_with_retry(
+        stage="stage2",
+        messages=[{"role": "user", "content": "stage2"}],
+        reply=make_reply(copy.deepcopy(VALID_STAGE2)),
+        validator=JsonValidator(settings),
+        validation_settings=settings.validation,
+        validate_kwargs={"kline_frame": make_frame(), "stage1_json": stage1},
+        call_api=call_api,
+    )
+
+    assert isinstance(result.result, Ok)
+    assert result.attempts == 1
+    assert retry_messages == []
 
 
 def test_retry_guard_blocks_unrequested_stage1_thesis_change() -> None:
@@ -142,6 +262,56 @@ def test_validation_retry_rejects_unrequested_pa_evidence_rewrite() -> None:
         field.startswith("retry_immutable:pa_evidence.fact_refs:")
         for field in result.result.invalid_fields
     )
+
+
+def test_spike_transition_repair_includes_the_complete_state_tuple() -> None:
+    settings = Settings(
+        prompt=PromptSettings(vpa_mode="off"),
+        validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
+    )
+    invalid = copy.deepcopy(VALID_STAGE1)
+    invalid.update(
+        {
+            "cycle_position": "spike",
+            "spike_stage": "transitioning",
+            "market_phase": "stable",
+            "transition_risk": None,
+        }
+    )
+    invalid["pa_evidence"]["spike_analysis"] = {
+        "anchor_bar": "K5",
+        "post_anchor_state": "pause_or_pullback_present",
+        "first_pause_or_pullback_bar": "K4",
+    }
+    next(
+        item for item in invalid["gate_trace"] if item["node_id"] == "1.2"
+    )["branch"] = "spike"
+    repaired = copy.deepcopy(invalid)
+    repaired["market_phase"] = "transitioning"
+    repaired["transition_risk"] = "medium"
+    retry_messages: list[list[dict]] = []
+
+    def call_api(messages: list[dict]):
+        retry_messages.append(messages)
+        return make_reply(repaired)
+
+    result = validate_with_retry(
+        stage="stage1",
+        messages=[{"role": "user", "content": "stage1"}],
+        reply=make_reply(invalid),
+        validator=JsonValidator(settings),
+        validation_settings=settings.validation,
+        validate_kwargs={"kline_frame": make_frame()},
+        call_api=call_api,
+    )
+
+    assert isinstance(result.result, Ok)
+    assert result.attempts == 2
+    retry_draft = json.loads(retry_messages[0][-2]["content"])
+    assert retry_draft["market_phase"] == "__REWRITE_REQUIRED__"
+    assert retry_draft["transition_risk"] == "__REWRITE_REQUIRED__"
+    assert "market_phase" in retry_messages[0][-1]["content"]
+    assert "transition_risk" in retry_messages[0][-1]["content"]
 
 
 def test_feedback_target_extraction_is_path_based() -> None:

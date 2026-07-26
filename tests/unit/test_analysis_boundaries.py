@@ -23,8 +23,6 @@ def test_program_features_are_numeric_geometry_not_market_verdicts() -> None:
     assert not hasattr(market_facts, "trend")
     assert not hasattr(market_facts, "breakout")
     assert not hasattr(market_facts, "support_levels")
-
-
 def test_stage1_normalizer_does_not_replace_llm_market_interpretation() -> None:
     raw = {
         "cycle_position": "trading_range",
@@ -48,7 +46,7 @@ def test_stage1_normalizer_does_not_replace_llm_market_interpretation() -> None:
     assert out["detected_patterns"] == ["wedge"]
 
 
-def test_stage2_normalizer_does_not_repair_or_reprice_order() -> None:
+def test_stage2_normalizer_does_not_repair_or_reprice_unrecognized_order() -> None:
     raw = {
         "decision": {
             "order_type": "buy_limit",
@@ -65,7 +63,7 @@ def test_stage2_normalizer_does_not_repair_or_reprice_order() -> None:
 
     assert raw == before
     assert out["decision"] == raw["decision"]
-    assert "next_bar_prediction" not in out
+    assert out["next_bar_prediction"]["unpredictable"] is True
 
 
 def test_model_runtime_metrics_are_accumulated_with_token_usage() -> None:

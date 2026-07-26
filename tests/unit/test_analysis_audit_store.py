@@ -2,11 +2,35 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from pa_agent.records.audit_store import AnalysisAuditStore
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
+
+
+def test_review_cli_list_accepts_default_cohort_filter(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "tools/review_analysis_audit.py",
+            "--db",
+            str(tmp_path / "analysis.sqlite3"),
+            "list",
+            "--limit",
+            "1",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == []
 
 
 def _bar(
@@ -83,49 +107,47 @@ def _record(
             "decision": decision,
             "terminal": {"outcome": "wait" if order_type == "no_trade" else "trade"},
         },
+        pa_baseline_stage2={"decision": {"order_type": "limit"}},
+        joint_stage2={"decision": {"order_type": order_type}},
         strategy_files_used=["range.txt"],
         experience_loaded=[],
         exception=None,
         usage_total={"total_tokens": 1234},
-        run_outcome={"status": "completed", "official_path": "joint"},
-        vpa_sidecar={
-            "mode": "soft",
+        run_outcome={
+            "status": "completed",
+            "official_path": "joint",
+            "requested_vpa_mode": "soft",
+        },
+        vpa_catalog={
+            "catalog_id": "vpa-catalog-test",
+            "data_status": "limited",
             "snapshot_hash": "snapshot-test",
-            "evidence_catalog": {
-                "catalog_id": "vpa-catalog-test",
-                "data_status": "limited",
-                "provenance": {"venue": "BINANCE", "volume_kind": "real"},
-            },
-            "stage1_context": {
-                "data_status": "limited",
-                "observations": [
-                    {
-                        "evidence_ids": ["vpa-e001"],
-                        "finding_kind": "effort_result",
-                        "interpretation": "Relative activity adds independent context.",
-                    }
-                ],
-                "background_relation": "supports",
-                "entry_timing_relation": "challenges",
-            },
-            "stage2_impact": {
-                "background_relation": "supports",
-                "entry_timing_relation": "challenges",
+            "provenance": {"venue": "BINANCE", "volume_kind": "real"},
+        },
+        vpa_evidence={
+            "data_status": "limited",
+            "observations": [
+                {
+                    "evidence_ids": ["vpa-e001"],
+                    "finding_kind": "effort_result",
+                    "interpretation": "Relative activity adds independent context.",
+                }
+            ],
+            "background_relation": "supports",
+            "entry_timing_relation": "challenges",
+        },
+        joint_decision={
+            "joint_arbitration": {
                 "evidence_used": ["vpa-e001"],
                 "decision_effect": "prefer_retest",
                 "reason": "The cited evidence favors waiting for a retest.",
             },
-            "comparison": {
-                "observed_effect": {
-                    "classification": "joint_reduced_entry_attempt",
-                }
-            },
-            "role_execution": {
-                "design": "pa_vpa_joint_v1",
-                "authority_violations": [],
-            },
-            "baseline_stage2": {"decision": {"order_type": "limit"}},
-            "joint_stage2": {"decision": {"order_type": order_type}},
+            "decision_patch": {},
+        },
+        role_statuses={"vpa": "validated", "joint": "validated"},
+        role_runtime={
+            "design": "pa_vpa_joint_v1",
+            "authority_violations": [],
         },
         call_attempts=[
             {
@@ -189,7 +211,7 @@ def test_audit_store_indexes_official_run_and_manual_outcome(tmp_path: Path) -> 
     assert run["vpa_effect"] == "prefer_retest"
     assert run["baseline_order_type"] == "limit"
     assert run["joint_order_type"] == "limit"
-    assert run["joint_observed_effect"] == "joint_reduced_entry_attempt"
+    assert run["joint_observed_effect"] == "keep_baseline"
     review = json.loads(run["review_context_json"])
     assert review["pa_evidence"]["fact_refs"] == ["PA.WINDOW.K5", "PA.BAR.K1"]
     assert review["vpa_impact"]["decision_effect"] == "prefer_retest"

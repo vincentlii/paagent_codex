@@ -119,6 +119,9 @@ def validate_with_retry(
                         "attempt": attempt + 1,
                         "category": "warning",
                         "code": warning.code,
+                        "severity": "warning",
+                        "owner": stage,
+                        "retry_policy": "none",
                         "message": warning.message,
                         "missing_fields": [],
                         "invalid_fields": [],
@@ -132,6 +135,10 @@ def validate_with_retry(
                     {
                         "attempt": attempt + 1,
                         "category": "normalization",
+                        "code": "unambiguous_contract_normalization",
+                        "severity": "normalization",
+                        "owner": stage,
+                        "retry_policy": "none",
                         "message": "unambiguous contract alias normalized",
                         "missing_fields": [],
                         "invalid_fields": [
@@ -206,6 +213,10 @@ def validate_with_retry(
         event = {
             "attempt": attempt + 1,
             "category": err.category,
+            "code": "json_contract_violation",
+            "severity": "hard_error",
+            "owner": stage,
+            "retry_policy": "bounded_retry",
             "message": err.message,
             "missing_fields": list(err.missing_fields),
             "invalid_fields": list(err.invalid_fields),

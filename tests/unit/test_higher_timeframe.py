@@ -110,7 +110,7 @@ def test_analysis_record_persists_full_htf_bars_for_exact_replay() -> None:
 
     record = _build_empty_record(make_frame(), Settings(), htf_context=context)
 
-    assert record.schema_version == 4
+    assert record.schema_version == 5
     assert len(record.htf_kline_data) == 20
     assert record.htf_kline_data[0]["seq"] == 1
 

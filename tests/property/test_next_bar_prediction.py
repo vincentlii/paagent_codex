@@ -11,7 +11,7 @@ from pa_agent.ai.stage2_normalizer import normalize_stage2
     neutral=st.integers(min_value=-100, max_value=200),
     direction=st.sampled_from(["bullish", "bearish", "neutral", "invalid"]),
 )
-def test_normalizer_never_repairs_model_prediction(
+def test_normalizer_canonicalizes_or_degrades_auxiliary_prediction(
     bullish: int,
     bearish: int,
     neutral: int,
@@ -36,4 +36,19 @@ def test_normalizer_never_repairs_model_prediction(
 
     out = normalize_stage2(payload)
 
-    assert out["next_bar_prediction"] == prediction
+    normalized = out["next_bar_prediction"]
+    values = (bullish, bearish, neutral)
+    if all(0 <= value <= 100 for value in values) and 99 <= sum(values) <= 101:
+        maximum = max(values)
+        winners = [
+            key
+            for key, value in prediction["probabilities"].items()
+            if value == maximum
+        ]
+        assert normalized["unpredictable"] is False
+        assert normalized["direction"] in winners
+        assert normalized["probabilities"] == prediction["probabilities"]
+    else:
+        assert normalized["unpredictable"] is True
+        assert normalized["direction"] is None
+        assert normalized["probabilities"] is None

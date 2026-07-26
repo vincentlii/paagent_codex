@@ -6,7 +6,7 @@ from pa_agent.util.trade_metrics import (
     format_estimated_win_rate,
     format_estimated_win_rate_reasoning,
     is_long_direction,
-    min_risk_reward_ratio,
+    passes_trader_equation,
 )
 
 
@@ -22,8 +22,8 @@ def test_compute_risk_reward_short():
     assert rr["reward"] == 31
 
 
-def test_rr_bounds_all_stances_share_one_floor() -> None:
-    assert min_risk_reward_ratio() == 1.0
+def test_positive_expectancy_is_not_replaced_by_a_universal_rr_floor() -> None:
+    assert passes_trader_equation(55, risk=10, reward=9) is True
 
 
 def test_format_estimated_win_rate_from_model_field():

@@ -258,6 +258,27 @@ def test_handler_classifies_provider_failure_without_calling_it_success() -> Non
     assert result.retryable is True
 
 
+def test_handler_does_not_retry_exhausted_model_contract_failure() -> None:
+    class _Orchestrator:
+        def submit(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                meta=SimpleNamespace(run_id="run-invalid-model-output"),
+                run_outcome={
+                    "status": "invalid_model_output",
+                    "official_path": "none",
+                },
+            )
+
+    result = IndependentAnalysisHandler(lambda _task: _Orchestrator())(
+        _task("XAUUSD"),
+        SimpleNamespace(),
+    )
+
+    assert result.analysis_status == "invalid_model_output"
+    assert result.analysis_success is False
+    assert result.retryable is False
+
+
 def test_logical_analysis_failure_can_retry_and_success_is_restart_deduped(tmp_path) -> None:
     outcomes = iter(("unavailable_provider", "degraded_pa_only"))
 

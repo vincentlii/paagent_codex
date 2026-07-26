@@ -10,6 +10,7 @@ import copy
 from typing import Any
 
 from pa_agent.ai.pattern_routing import normalize_detected_patterns
+from pa_agent.ai.price_levels import price_level_midpoint
 from pa_agent.ai.trace_normalize import normalize_stage1_traces
 from pa_agent.ai.vpa_sanitizer import strip_vpa_fields
 
@@ -48,6 +49,7 @@ def normalize_stage1(
             out["detected_patterns"]
         )
     _normalize_closed_enum_aliases(out)
+    _normalize_structure_level_order(out)
     normalize_stage1_traces(out, default_max_seq=_max_bar_seq(kline_frame))
     _attach_incremental_facts(
         out,
@@ -67,6 +69,29 @@ def _normalize_closed_enum_aliases(out: dict[str, Any]) -> None:
             value = item.get("context_effect")
             if isinstance(value, str) and value in _CONTEXT_EFFECT_ALIASES:
                 item["context_effect"] = _CONTEXT_EFFECT_ALIASES[value]
+
+
+def _normalize_structure_level_order(out: dict[str, Any]) -> None:
+    """Canonicalize valid level order without changing membership or prices."""
+    for field, reverse in (
+        ("support_levels", True),
+        ("resistance_levels", False),
+    ):
+        levels = out.get(field)
+        if not isinstance(levels, list) or len(levels) < 2:
+            continue
+        midpoints = [price_level_midpoint(item) for item in levels]
+        if any(value is None for value in midpoints):
+            continue
+        out[field] = [
+            level
+            for _midpoint, level in sorted(
+                zip(midpoints, levels, strict=True),
+                key=lambda item: item[0],
+                reverse=reverse,
+            )
+        ]
+
 
 def _attach_incremental_facts(
     out: dict[str, Any],

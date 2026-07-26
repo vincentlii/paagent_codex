@@ -14,7 +14,8 @@
 
 正式链路使用三个有权限边界的结构化对象：
 
-1. `PaHypothesisSet`：由已验证 PA Stage 1 形成主假设、替代假设和 Brooks Setup candidates。
+1. `PaHypothesisSet`：由已验证 PA Stage 1 形成主假设与替代假设；只有 PA Stage 2 完成
+   具体 Brooks Setup、trigger、invalidation 与订单裁决后，才形成 Setup candidate。
 2. `VpaEvidenceReport`：VPA Analyst 针对每个 PA hypothesis 给出支持、挑战、中性或信息不足，
    且只能引用程序 evidence catalog。
 3. `JointDecisionProposal`：Joint Arbiter 在既有 PA candidate 内决定保持、等待确认、优先回测、

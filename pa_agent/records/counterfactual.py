@@ -191,6 +191,12 @@ def evaluate_trade_plan(
                 mfe_r=round(mfe, 6),
                 mae_r=round(mae, 6),
                 evaluated_through_ts=observed_through,
+                notes=(
+                    ""
+                    if target_hit
+                    else "Protective stop touched by closed-bar range; analytical "
+                    "invalidation was not evaluated."
+                ),
             )
 
     horizon_reached = len(usable) >= horizon

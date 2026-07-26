@@ -41,7 +41,6 @@ def _records(
             client_instance_token=f"client-{arm_id}",
             stage1_request_hash="1" * 64,
         )
-        context["first_pass_clean"] = True
         records.append(
             record.model_copy(
                 update={
@@ -112,11 +111,8 @@ def test_warning_is_audited_but_does_not_fail_first_pass() -> None:
 
 def test_normalization_fails_first_pass_but_not_semantic_grounding() -> None:
     records = _records()
-    context = copy.deepcopy(records[0].experiment_context)
-    context["first_pass_clean"] = False
     records[0] = records[0].model_copy(
         update={
-            "experiment_context": context,
             "validation_audit": [
                 {
                     "stage": "stage1",
@@ -161,12 +157,10 @@ def test_vpa_grounding_rejects_missing_information_increment_and_authority_drift
     )
     vpa_evidence = copy.deepcopy(records[b_index].vpa_evidence)
     vpa_evidence["observations"] = []
-    sidecar = copy.deepcopy(records[b_index].vpa_sidecar)
-    sidecar["vpa_report"] = copy.deepcopy(vpa_evidence)
-    sidecar["stage1_context"] = copy.deepcopy(vpa_evidence)
-    sidecar["role_execution"]["authority_violations"] = ["direction_changed"]
+    role_runtime = copy.deepcopy(records[b_index].role_runtime)
+    role_runtime["authority_violations"] = ["direction_changed"]
     records[b_index] = records[b_index].model_copy(
-        update={"vpa_evidence": vpa_evidence, "vpa_sidecar": sidecar}
+        update={"vpa_evidence": vpa_evidence, "role_runtime": role_runtime}
     )
 
     report = evaluate_analysis_quality(records, thresholds=_thresholds())

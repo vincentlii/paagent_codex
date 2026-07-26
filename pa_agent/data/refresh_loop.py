@@ -31,9 +31,7 @@ class RefreshLoop(QThread):
     frame_ready = pyqtSignal(list)
     status_changed = pyqtSignal(str)
 
-    # Backoff constants
-    _MAX_BACKOFF_S = 10.0       # cap exponential backoff at 10 seconds
-    _BACKOFF_BASE_S = 0.5      # initial backoff = 0.5s, doubles each failure
+    _BACKOFF_SCHEDULE = (2.0, 5.0, 15.0, 30.0, 60.0, 120.0)
 
     def __init__(
         self,
@@ -60,6 +58,13 @@ class RefreshLoop(QThread):
         else:
             self._paused.clear()
 
+    def _wait(self, seconds: float) -> bool:
+        """Wait cooperatively; return False when cancellation was requested."""
+        if self._cancel_token is not None:
+            return not self._cancel_token.wait(max(0.0, seconds))
+        time.sleep(max(0.0, seconds))
+        return True
+
     def run(self) -> None:  # noqa: C901
         """Main loop — runs on the worker thread."""
         failure_start: float | None = None
@@ -70,14 +75,16 @@ class RefreshLoop(QThread):
                 break
 
             if self._paused.is_set():
-                time.sleep(0.1)
+                if not self._wait(0.1):
+                    break
                 continue
 
             # Skip this tick if a previous fetch is still in flight.
             # This prevents overlapping WebSocket connections that trigger
             # TradingView rate-limiting (especially in nologin mode).
             if self._in_flight:
-                time.sleep(0.5)
+                if not self._wait(0.5):
+                    break
                 continue
 
             t0 = time.monotonic()
@@ -114,20 +121,24 @@ class RefreshLoop(QThread):
             # Exponential backoff on repeated failures to avoid hammering
             # TradingView's WebSocket endpoint
             if self._consecutive_failures > 0:
-                backoff_s = min(
-                    self._BACKOFF_BASE_S * (2 ** (self._consecutive_failures - 1)),
-                    self._MAX_BACKOFF_S,
-                )
+                backoff_s = self._BACKOFF_SCHEDULE[
+                    min(
+                        self._consecutive_failures - 1,
+                        len(self._BACKOFF_SCHEDULE) - 1,
+                    )
+                ]
                 logger.debug(
                     "RefreshLoop backoff %.1fs after %d consecutive failure(s)",
                     backoff_s,
                     self._consecutive_failures,
                 )
-                time.sleep(backoff_s)
+                if not self._wait(backoff_s):
+                    break
                 continue
 
             elapsed_ms = (time.monotonic() - t0) * 1000
             sleep_ms = max(0.0, self._interval_ms - elapsed_ms)
             if sleep_ms > 0:
-                time.sleep(sleep_ms / 1000.0)
+                if not self._wait(sleep_ms / 1000.0):
+                    break
 

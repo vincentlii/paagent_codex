@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from pa_agent.config.runtime import RuntimeConfigurationError, load_runtime_settings
-from pa_agent.config.settings import Settings, save_settings
+from pa_agent.config.settings import AIProviderSettings, Settings, save_settings
 
 
 def _settings_file(tmp_path, *, api_key: str = "config-key"):
@@ -101,3 +101,18 @@ def test_malformed_settings_json_is_reported_as_runtime_configuration_error(tmp_
 
     with pytest.raises(RuntimeConfigurationError, match="settings"):
         load_runtime_settings(settings_path, environ={})
+
+
+def test_provider_settings_reject_api_key_with_embedded_command_text() -> None:
+    with pytest.raises(ValueError, match="API Key"):
+        AIProviderSettings(api_key="sk-valid-prefix\npython -m pa_agent.main")
+
+
+def test_runtime_environment_rejects_multiline_api_key(tmp_path) -> None:
+    settings_path = _settings_file(tmp_path)
+
+    with pytest.raises(RuntimeConfigurationError, match="PA_AGENT_API_KEY"):
+        load_runtime_settings(
+            settings_path,
+            environ={"PA_AGENT_API_KEY": "sk-valid-prefix\npython -m pa_agent.main"},
+        )

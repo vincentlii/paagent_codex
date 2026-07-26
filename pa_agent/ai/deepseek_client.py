@@ -18,7 +18,7 @@ from pa_agent.ai.mimo_compat import (
     response_message_dict,
     store_reasoning_from_response,
 )
-from pa_agent.config.settings import AIProviderSettings
+from pa_agent.config.settings import AIProviderSettings, validate_api_key_value
 from pa_agent.util.mask_secret import mask_secret
 
 try:
@@ -436,11 +436,12 @@ class DeepSeekClient:
     def _openai_client(self) -> Any:
         if _OpenAI is None:
             raise RuntimeError("openai package is not installed") from _OPENAI_IMPORT_ERROR
-        fingerprint = (self._settings.base_url, self._settings.api_key)
+        api_key = validate_api_key_value(self._settings.api_key)
+        fingerprint = (self._settings.base_url, api_key)
         if self._sdk_client is None or self._sdk_fingerprint != fingerprint:
             self._sdk_client = _OpenAI(
                 base_url=self._settings.base_url,
-                api_key=self._settings.api_key,
+                api_key=api_key,
             )
             self._sdk_fingerprint = fingerprint
         return self._sdk_client

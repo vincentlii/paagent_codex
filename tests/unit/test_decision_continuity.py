@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import csv
 from datetime import datetime
+from pathlib import Path
 
 from pa_agent.ai.decision_continuity import (
     assess_plan_price_touches,
     audit_relation_fields,
     bars_elapsed_between,
     build_continuity_context,
+    load_last_trade_csv_row,
     render_continuity_prompt_block,
 )
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
@@ -86,6 +89,35 @@ def test_csv_fallback_does_not_reuse_unrelated_record_timestamp(monkeypatch) -> 
     assert context["previous_latest_bar_ts"] is None
     assert context["touch_window_basis"] == "record_time_estimate"
     assert context["previous_cycle_position"] == ""
+
+
+def test_last_trade_lookup_uses_the_explicit_runtime_directory(tmp_path: Path) -> None:
+    state_trade_dir = tmp_path / "state" / "trade_records"
+    state_trade_dir.mkdir(parents=True)
+    path = state_trade_dir / "TEST_5m.csv"
+    with path.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(
+            stream,
+            fieldnames=["record_time", "symbol", "timeframe", "order_type"],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "record_time": "2026-07-13 10:00:00",
+                "symbol": "TEST",
+                "timeframe": "5m",
+                "order_type": "限价单",
+            }
+        )
+
+    row = load_last_trade_csv_row(
+        "TEST",
+        "5m",
+        records_dir=state_trade_dir,
+    )
+
+    assert row is not None
+    assert row["record_time"] == "2026-07-13 10:00:00"
 
 
 def test_prompt_reports_limits_without_auto_cancelling_or_claiming_fill() -> None:

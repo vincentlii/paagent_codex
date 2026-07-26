@@ -80,6 +80,9 @@ def test_experiment_store_keeps_running_manifest_and_four_arm_ledger(tmp_path: P
     assert loaded["status"] == "completed"
     assert loaded["protocol_valid"] == 1
     assert [arm["arm_id"] for arm in loaded["arms"]] == manifest["arm_sequence"]
+    artifact = tmp_path / "experiments" / "aabb-one.json"
+    assert artifact.exists()
+    assert '"status": "completed"' in artifact.read_text(encoding="utf-8")
 
 
 def test_reports_use_assigned_treatment_for_itt_and_received_treatment_for_per_protocol(

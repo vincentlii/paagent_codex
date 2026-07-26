@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic import ValidationError as PydanticValidationError
 
-from pa_agent.config.settings import Settings, load_settings
+from pa_agent.config.settings import Settings, load_settings, validate_api_key_value
 
 _MAX_SECRET_BYTES = 64 * 1024
 
@@ -77,7 +77,13 @@ def load_runtime_settings(
     explicit_file = str(env.get("PA_AGENT_API_KEY_FILE") or "").strip()
     credential_dir = str(env.get("CREDENTIALS_DIRECTORY") or "").strip()
     if direct_key:
-        settings.provider.api_key = direct_key
+        try:
+            settings.provider.api_key = validate_api_key_value(
+                direct_key,
+                source="PA_AGENT_API_KEY",
+            )
+        except ValueError as exc:
+            raise RuntimeConfigurationError(str(exc)) from exc
         source = "environment"
     elif explicit_file:
         settings.provider.api_key = _read_secret(
@@ -93,6 +99,14 @@ def load_runtime_settings(
                 source="systemd credential",
             )
             source = "systemd_credential"
+
+    try:
+        settings.provider.api_key = validate_api_key_value(
+            settings.provider.api_key,
+            source=f"{source} API Key",
+        )
+    except ValueError as exc:
+        raise RuntimeConfigurationError(str(exc)) from exc
 
     model = str(env.get("PA_AGENT_MODEL") or "").strip()
     base_url = str(env.get("PA_AGENT_BASE_URL") or "").strip()

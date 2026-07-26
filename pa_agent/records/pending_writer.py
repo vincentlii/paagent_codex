@@ -19,6 +19,7 @@ from typing import Optional
 from uuid import uuid4
 
 from pa_agent.records.audit_store import AnalysisAuditStore
+from pa_agent.records.codec import dump_record
 from pa_agent.records.schema import AnalysisRecord, FollowupTurn
 from pa_agent.util.mask_secret import mask_secret
 
@@ -109,9 +110,7 @@ class PendingWriter:
         """
         basename = _build_basename(record)
         path = self._pending_dir / f"{basename}.json"
-        data = record.model_dump()
-        if data.get("vpa_sidecar") is None:
-            data.pop("vpa_sidecar", None)
+        data = dump_record(record)
         data = self._sanitize(data, self._api_key)
         ok = self._write_json(path, data)
         audit_ok = True
@@ -138,9 +137,7 @@ class PendingWriter:
             return None
         basename = _build_basename(record)
         path = self._pending_dir / f"{basename}.json"
-        data = record.model_dump()
-        if data.get("vpa_sidecar") is None:
-            data.pop("vpa_sidecar", None)
+        data = dump_record(record)
         data["_partial_reason"] = reason
         if isinstance(data.get("exception"), dict):
             data["exception"] = {**data["exception"], "partial_reason": reason}

@@ -41,6 +41,7 @@ _TV_WS_TIMEOUT_S = 10.0
 
 # Name-mangled attribute tvDatafeed uses internally for its socket timeout.
 _TV_WS_TIMEOUT_ATTR = "_TvDatafeed__ws_timeout"
+_TV_SNAPSHOT_CACHE_TTL_S = 2.0
 
 # Map our timeframe strings to tvDatafeed Interval enum names
 _TF_MAP: dict[str, str] = {
@@ -92,6 +93,9 @@ class TradingViewSource(DataSource):
         self._exchange: str = ""
         self._resolved_exchange: str = ""
         self._resolved_symbol: str = ""
+        self._snapshot_cache: dict[
+            tuple[str, str, str], tuple[float, tuple[KlineBar, ...]]
+        ] = {}
         # Mutex: tvDatafeed is NOT thread-safe — its get_hist() creates a
         # WebSocket and stores it on self.ws; concurrent calls clobber the
         # same socket and cause C++ segfaults.
@@ -142,6 +146,7 @@ class TradingViewSource(DataSource):
         self._exchange = (exchange or "").strip().upper()
         self._resolved_exchange = ""
         self._resolved_symbol = ""
+        self._snapshot_cache.clear()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -171,6 +176,7 @@ class TradingViewSource(DataSource):
         self._close_tv_socket()
         self._tv = None
         self._connected = False
+        self._snapshot_cache.clear()
         logger.info("TradingViewSource disconnected")
 
     def _close_tv_socket(self) -> None:
@@ -231,6 +237,7 @@ class TradingViewSource(DataSource):
         self._symbol = symbol.strip()
         self._resolved_exchange = ""
         self._resolved_symbol = ""
+        self._snapshot_cache.clear()
         # Abort any in-flight get_hist() blocked on a stalled connection so the
         # new symbol/timeframe takes effect immediately instead of waiting out
         # the previous request's timeout. Closing the socket raises inside the
@@ -246,6 +253,9 @@ class TradingViewSource(DataSource):
     def unsubscribe(self) -> None:
         self._symbol = ""
         self._timeframe = ""
+        self._resolved_exchange = ""
+        self._resolved_symbol = ""
+        self._snapshot_cache.clear()
         logger.info("TradingViewSource unsubscribed")
 
     # ── Data fetch ────────────────────────────────────────────────────────────
@@ -420,16 +430,49 @@ class TradingViewSource(DataSource):
 
         user_symbol = symbol
         req_exchange = self._exchange
+        subscription_identity_is_resolved = bool(
+            pinned_identity is None
+            and is_tv_exchange_auto(req_exchange)
+            and self._resolved_exchange
+            and self._resolved_symbol
+            and user_symbol.strip() == self._symbol.strip()
+        )
         if pinned_identity is not None:
             exchange = pinned_identity.venue
             fetch_symbol = pinned_identity.resolved_symbol
             auto_probe = False
             probe_plan: list[tuple[str, str]] = []
+        elif subscription_identity_is_resolved:
+            exchange = self._resolved_exchange
+            fetch_symbol = self._resolved_symbol
+            auto_probe = False
+            probe_plan = []
         else:
             exchange = req_exchange or ""
             fetch_symbol = user_symbol
             auto_probe = is_tv_exchange_auto(req_exchange)
             probe_plan = tv_auto_probe_plan(user_symbol) if auto_probe else []
+            if not auto_probe:
+                try:
+                    exchange, fetch_symbol = resolve_tv_fetch_pair(
+                        req_exchange, user_symbol
+                    )
+                except TvSymbolNotFoundError as exc:
+                    raise DataSourceTransientError(str(exc)) from exc
+        cache_key = (
+            str(exchange or "").upper(),
+            str(fetch_symbol or "").strip(),
+            timeframe,
+        )
+        if not auto_probe:
+            cached = self._snapshot_cache.get(cache_key)
+            if cached is not None:
+                cached_at, cached_bars = cached
+                if (
+                    time.monotonic() - cached_at <= _TV_SNAPSHOT_CACHE_TTL_S
+                    and len(cached_bars) >= n
+                ):
+                    return list(cached_bars[:n])
         try:
             from tvDatafeed import Interval  # type: ignore[import]
             interval = getattr(Interval, _TF_MAP[timeframe])
@@ -448,12 +491,6 @@ class TradingViewSource(DataSource):
                     n_bars=n + 1,
                 )
             else:
-                try:
-                    exchange, fetch_symbol = resolve_tv_fetch_pair(
-                        req_exchange, user_symbol
-                    )
-                except TvSymbolNotFoundError as exc:
-                    raise DataSourceTransientError(str(exc)) from exc
                 df = self._fetch_hist_with_retry(
                     symbol=fetch_symbol,
                     exchange=exchange,
@@ -499,18 +536,26 @@ class TradingViewSource(DataSource):
                 closed=True,
             )
             if i == 0:
-                # Determine whether the newest bar is still forming.
-                # We must NOT pass bar.closed=True into is_bar_still_forming because
-                # that function short-circuits on bar.closed and would always return
-                # False — defeating the purpose of the check entirely.
-                # Instead, use seconds_until_bar_closes which only looks at the
-                # timestamp, and is robust to constant broker-time offsets.
-                from pa_agent.data.bar_close_wait import seconds_until_bar_closes
+                # Check the newest bar against its absolute UTC close instant. Use a
+                # probe marked open so the helper cannot trust the provider flag.
+                from pa_agent.data.bar_close_wait import is_bar_still_forming
 
-                secs_left = seconds_until_bar_closes(
-                    ts_ms, timeframe, now_ms=None
+                probe_bar = KlineBar(
+                    seq=bar.seq,
+                    ts_open=bar.ts_open,
+                    open=bar.open,
+                    high=bar.high,
+                    low=bar.low,
+                    close=bar.close,
+                    volume=bar.volume,
+                    closed=False,
                 )
-                still_forming = secs_left is not None and secs_left > 0
+                still_forming = is_bar_still_forming(
+                    probe_bar,
+                    timeframe,
+                    now_ms=int(time.time() * 1000),
+                    symbol=user_symbol,
+                )
                 bar = KlineBar(
                     seq=bar.seq,
                     ts_open=bar.ts_open,
@@ -525,6 +570,15 @@ class TradingViewSource(DataSource):
             if len(bars) >= n:
                 break
 
+        resolved_cache_key = (
+            self._resolved_exchange,
+            self._resolved_symbol,
+            timeframe,
+        )
+        self._snapshot_cache[resolved_cache_key] = (
+            time.monotonic(),
+            tuple(bars),
+        )
         return bars
 
 

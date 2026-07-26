@@ -34,8 +34,7 @@ def frozen_input_from_record(
     record: AnalysisRecord,
 ) -> tuple[Any, dict[str, Any] | None, dict[str, Any]]:
     """Return current frame, exact HTF context, and the original VPA catalog."""
-    sidecar = record.vpa_sidecar if isinstance(record.vpa_sidecar, dict) else {}
-    catalog = sidecar.get("evidence_catalog") if isinstance(sidecar, dict) else None
+    catalog = record.vpa_catalog if isinstance(record.vpa_catalog, dict) else None
     if not isinstance(catalog, dict):
         raise ValueError("source record does not contain a frozen VPA evidence catalog")
     snapshot_ms = (

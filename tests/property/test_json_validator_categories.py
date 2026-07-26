@@ -67,10 +67,20 @@ def test_invalid_enum_value_is_category_c() -> None:
     assert result.category == "c"
 
 
-def test_stage1_bar_role_alias_is_not_rewritten() -> None:
+def test_stage1_bar_role_accepts_concise_contextual_pa_vocabulary() -> None:
     obj = _valid_stage1()
     obj["bar_by_bar_summary"][0]["role"] = "continuation"
     result = validator.validate("stage1", json.dumps(obj))
+
+    assert isinstance(result, Ok)
+    assert result.obj["bar_by_bar_summary"][0]["role"] == "continuation"
+
+
+def test_stage1_bar_role_still_rejects_empty_or_unbounded_text() -> None:
+    obj = _valid_stage1()
+    obj["bar_by_bar_summary"][0]["role"] = ""
+    result = validator.validate("stage1", json.dumps(obj))
+
     assert isinstance(result, ValidationError)
     assert result.category == "c"
     assert "bar_by_bar_summary.0.role" in result.invalid_fields

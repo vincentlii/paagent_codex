@@ -54,6 +54,10 @@ def run_structured_role(
                 {
                     "attempt": attempt,
                     "category": "normalization",
+                    "code": "unambiguous_contract_normalization",
+                    "severity": "normalization",
+                    "owner": role,
+                    "retry_policy": "none",
                     "role": role,
                     "normalization": dict(item),
                 }
@@ -63,6 +67,10 @@ def run_structured_role(
                 {
                     "attempt": attempt,
                     "category": "warning",
+                    "code": "professional_prose_warning",
+                    "severity": "warning",
+                    "owner": role,
+                    "retry_policy": "none",
                     "role": role,
                     "message": warning,
                 }
@@ -78,16 +86,37 @@ def run_structured_role(
             )
 
         errors = tuple(result.hard_errors)
+        authority_violation = bool(result.authority_violations)
         events.append(
             {
                 "attempt": attempt,
                 "category": "hard_error",
+                "code": (
+                    "authority_violation"
+                    if result.authority_violations
+                    else "role_contract_violation"
+                ),
+                "severity": "hard_error",
+                "owner": role,
+                "retry_policy": (
+                    "none" if authority_violation else "bounded_repair"
+                ),
                 "role": role,
                 "message": "; ".join(errors),
                 "invalid_fields": list(errors),
+                "authority_violations": list(result.authority_violations),
             }
         )
         if repairs >= max(0, int(max_repairs)):
+            return StructuredRoleResult(
+                obj=None,
+                initial_messages=initial,
+                final_messages=current,
+                replies=tuple(replies),
+                validation_events=tuple(events),
+                hard_errors=errors,
+            )
+        if authority_violation:
             return StructuredRoleResult(
                 obj=None,
                 initial_messages=initial,
@@ -104,7 +133,7 @@ def run_structured_role(
             *current,
             {
                 "role": "assistant",
-                "content": '{"__rewrite_required__": true}',
+                "content": raw,
             },
             {"role": "user", "content": feedback},
         ]
@@ -113,7 +142,9 @@ def run_structured_role(
 def _repair_feedback(role: str, errors: tuple[str, ...]) -> str:
     listed = "\n".join(f"- {item}" for item in errors[:20])
     return (
-        f"{role} 输出未通过确定性契约。请完整重写一个裸 JSON object；"
-        "只修复下列字段、引用或越权问题，不解释校验过程，也不要输出 Markdown：\n"
+        f"{role} 输出未通过确定性契约。请返回修正后的完整裸 JSON object；"
+        "聚焦修复下列字段或引用，并优先保持未涉及的专业判断稳定；"
+        "无需为了措辞逐字一致而牺牲完整、自然的最终结论。"
+        "不要解释校验过程，也不要输出 Markdown：\n"
         f"{listed}"
     )

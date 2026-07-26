@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QSplitter,
     QStatusBar,
     QVBoxLayout,
@@ -2614,8 +2613,6 @@ class MainWindow(QMainWindow):
 
     def _exit_demo_mode(self, *, silent: bool = False) -> None:
         """Leave demo mode and restore live controls."""
-        from pathlib import Path
-
         self._demo_auto_next_armed = False
         self._demo_waiting_flow_playback = False
         if self._demo_replayer is not None:
@@ -3645,7 +3642,10 @@ class MainWindow(QMainWindow):
         self._last_stage1_diagnosis = s1_diag if isinstance(s1_diag, dict) else None
         s2_full = getattr(record, "stage2_decision", None)
         if s2_full:
-            from pa_agent.gui.stage2_payload import prepare_stage2_for_ui
+            from pa_agent.gui.stage2_payload import (
+                prepare_stage2_for_ui,
+                sidecar_for_stage2_record,
+            )
 
             s1_diag = getattr(record, "stage1_diagnosis", None) or {}
             inner = prepare_stage2_for_ui(
@@ -3654,7 +3654,7 @@ class MainWindow(QMainWindow):
                 skip_next_bar=not bool(
                     getattr(getattr(self._ctx.settings, "general", None), "enable_next_bar_prediction", False)
                 ) if self._ctx.settings is not None else False,
-                vpa_sidecar=getattr(record, "vpa_sidecar", None),
+                vpa_sidecar=sidecar_for_stage2_record(record, s2_full),
             )
             self._decision_panel.set_decision(
                 inner,
@@ -4268,7 +4268,6 @@ class MainWindow(QMainWindow):
                 compute_incremental_bar_delta,
                 find_latest_successful_record,
             )
-            from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
 
             bar_count = self._analysis_bar_count()
             frame = self._build_chart_frame_from_bars(

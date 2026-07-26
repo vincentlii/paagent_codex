@@ -75,9 +75,12 @@ def test_breakout_order_direction_extreme_mismatch_is_rejected_not_rewritten() -
 
 @given(field=st.sampled_from(_PRICE_FIELDS))
 @h_settings(max_examples=20)
-def test_executable_order_with_null_price_rejected(field: str) -> None:
+def test_executable_order_with_null_price_is_blocked_by_execution_policy(field: str) -> None:
     obj = _order()
     obj["decision"][field] = None
+    before = copy.deepcopy(obj)
     result = validator.validate("stage2", json.dumps(obj))
-    assert isinstance(result, ValidationError), (field, result)
-    assert result.category == "c"
+    assert isinstance(result, Ok), (field, result)
+    assert result.obj["decision"]["order_type"] == "不下单"
+    assert result.obj["terminal"]["outcome"] == "reject"
+    assert obj == before

@@ -19,10 +19,18 @@ _FORMAT_PREFIXES: tuple[str, ...] = (
 
 # Semantic errors that must not be hidden by a formatting retry.
 _NO_RETRY_PREFIXES: tuple[str, ...] = (
-    "metrics:",
     "trace:§14",
     "s2:order_direction",
 )
+
+_SEMANTIC_STATE_FIELDS: frozenset[str] = frozenset(
+    {
+        "spike_stage",
+        "market_phase",
+        "transition_risk",
+    }
+)
+
 
 IMMUTABLE_FIELDS: dict[StageName, tuple[str, ...]] = {
     "stage1": (
@@ -82,8 +90,20 @@ def should_retry(
         return False
     if any(_starts_any(f, _FORMAT_PREFIXES) for f in fields):
         return True
+    if any(str(field) in _SEMANTIC_STATE_FIELDS for field in fields):
+        return attempt < int(getattr(settings, "retry_max_semantic", 1) or 1)
     if any(
-        f.startswith(("s1:", "s2:", "gate:", "trace:", "breakout_price:", "signal_chain:"))
+        f.startswith(
+            (
+                "s1:",
+                "s2:",
+                "gate:",
+                "trace:",
+                "breakout_price:",
+                "signal_chain:",
+                "metrics:",
+            )
+        )
         for f in fields
     ):
         # Default: one semantic retry if enabled
@@ -133,6 +153,8 @@ def extract_feedback_targets(invalid_fields: list[str], missing_fields: list[str
     targets: set[str] = set()
     for raw in list(missing_fields or []) + list(invalid_fields or []):
         text = str(raw)
+        if "order_type" in text:
+            targets.add("decision.order_type")
         if (
             "unbounded new-high/new-low" in text
             or "unbounded negated new-high/new-low" in text

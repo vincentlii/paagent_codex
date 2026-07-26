@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pa_agent.records.projection import gui_vpa_view
+
 
 def sidecar_for_stage2_record(
     record: Any,
@@ -13,8 +15,7 @@ def sidecar_for_stage2_record(
         return None
     if getattr(record, "stage2_decision", None) != stage2:
         return None
-    sidecar = getattr(record, "vpa_sidecar", None)
-    return sidecar if isinstance(sidecar, dict) else None
+    return gui_vpa_view(record)
 
 
 def merge_stage2_for_panels(

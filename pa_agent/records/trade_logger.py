@@ -562,7 +562,11 @@ def _save_trade_record_impl(
         load_last_trade_csv_row,
     )
 
-    prev_csv_row = load_last_trade_csv_row(meta_symbol, meta_timeframe)
+    prev_csv_row = load_last_trade_csv_row(
+        meta_symbol,
+        meta_timeframe,
+        records_dir=_TRADE_RECORDS_DIR,
+    )
     audit = audit_relation_fields(
         prev_csv_row,
         dec,

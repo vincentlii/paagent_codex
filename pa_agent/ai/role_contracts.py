@@ -66,8 +66,17 @@ class PaHypothesisSet(BaseModel):
     source_digest: str
 
     @classmethod
-    def from_stage1(cls, stage1: dict[str, Any]) -> "PaHypothesisSet":
-        """Delegate validated Stage 1 semantics without inventing conclusions."""
+    def from_stage1(
+        cls,
+        stage1: dict[str, Any],
+        stage2: dict[str, Any] | None = None,
+    ) -> "PaHypothesisSet":
+        """Delegate PA semantics without inventing an executable setup plan.
+
+        Stage 1 may name a setup family, but only validated Stage 2 owns a
+        concrete trigger and setup-specific invalidation.  A joint arbiter may
+        therefore see a candidate only after both PA stages supplied that plan.
+        """
         evidence = stage1.get("pa_evidence")
         evidence = evidence if isinstance(evidence, dict) else {}
         fact_refs = [str(item) for item in evidence.get("fact_refs", [])]
@@ -76,7 +85,15 @@ class PaHypothesisSet(BaseModel):
         direction = str(stage1.get("direction") or "neutral")
         if direction not in {"bullish", "bearish", "neutral"}:
             direction = "neutral"
-        setup = str(stage1.get("entry_setup") or "No current PA setup")
+        decision = (
+            stage2.get("decision")
+            if isinstance(stage2, dict) and isinstance(stage2.get("decision"), dict)
+            else {}
+        )
+        trigger = str(decision.get("entry_rule") or "").strip()
+        invalidation = str(decision.get("invalidation_condition") or "").strip()
+        raw_setup = str(stage1.get("entry_setup") or "").strip()
+        setup = raw_setup or trigger or "No current PA setup"
         primary = PaHypothesis(
             hypothesis_id="pa-primary",
             role="primary",
@@ -110,16 +127,30 @@ class PaHypothesisSet(BaseModel):
         gate = str(stage1.get("gate_result") or "unknown")
         if gate not in {"proceed", "wait", "unknown"}:
             gate = "unknown"
-        candidate = PaSetupCandidate(
-            candidate_id="pa-setup-1",
-            hypothesis_id=primary.hypothesis_id,
-            direction=direction,
-            setup=setup,
-            timing_state="eligible" if gate == "proceed" else "waiting",
-            trigger=setup,
-            invalidation=str(stage1.get("risk_warning") or "Re-run PA on a new closed bar."),
-            fact_refs=fact_refs,
-            theory_rule_ids=theory_ids,
+        has_explicit_plan = bool(
+            gate == "proceed"
+            and direction != "neutral"
+            and decision.get("order_direction")
+            and trigger
+            and invalidation
+        )
+        candidate_setup = raw_setup or trigger
+        candidates = (
+            [
+                PaSetupCandidate(
+                    candidate_id="pa-setup-1",
+                    hypothesis_id=primary.hypothesis_id,
+                    direction=direction,
+                    setup=candidate_setup,
+                    timing_state="eligible",
+                    trigger=trigger,
+                    invalidation=invalidation,
+                    fact_refs=fact_refs,
+                    theory_rule_ids=theory_ids,
+                )
+            ]
+            if has_explicit_plan
+            else []
         )
         source_payload = {
             "cycle_position": cycle,
@@ -128,6 +159,11 @@ class PaHypothesisSet(BaseModel):
             "entry_setup": setup,
             "gate_result": gate,
             "pa_evidence": evidence,
+            "stage2_plan": {
+                "order_direction": decision.get("order_direction"),
+                "entry_rule": trigger or None,
+                "invalidation_condition": invalidation or None,
+            },
         }
         digest = hashlib.sha256(
             json.dumps(
@@ -140,7 +176,7 @@ class PaHypothesisSet(BaseModel):
         return cls(
             primary=primary,
             alternative=alternative,
-            setup_candidates=[candidate],
+            setup_candidates=candidates,
             gate_result=gate,
             source_digest=digest,
         )
@@ -157,12 +193,33 @@ class PaHypothesisSet(BaseModel):
         return {item.candidate_id for item in self.setup_candidates}
 
 
-class VpaObservation(BaseModel):
-    """One contextual interpretation of immutable program evidence."""
+class VpaSequenceClaim(BaseModel):
+    """A model interpretation whose chronological order is program-checkable."""
 
     model_config = ConfigDict(extra="forbid")
 
-    bar_range: str
+    earlier_evidence_id: str
+    later_evidence_id: str
+    relation: Literal[
+        "response",
+        "follow_through",
+        "acceptance",
+        "rejection",
+        "test",
+    ]
+
+
+class VpaSequenceClaimDraft(VpaSequenceClaim):
+    """Provider-facing sequence claim; unknown prose metadata is discarded."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class VpaObservationDraft(BaseModel):
+    """Model-owned interpretation fields; program facts are deliberately absent."""
+
+    model_config = ConfigDict(extra="ignore")
+
     evidence_ids: list[str]
     finding_kind: Literal[
         "background",
@@ -171,7 +228,24 @@ class VpaObservation(BaseModel):
         "acceptance_rejection",
         "entry_timing",
     ]
+    interpretation_label: str | None = Field(default=None, max_length=80)
+    epistemic_status: Literal[
+        "candidate",
+        "confirmed",
+        "unresolved",
+        "insufficient_data",
+    ] = "unresolved"
+    sequence_claims: list[VpaSequenceClaimDraft] = Field(default_factory=list)
     interpretation: str
+
+
+class VpaObservation(VpaObservationDraft):
+    """Canonical observation after program-owned fields are materialized."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sequence_claims: list[VpaSequenceClaim] = Field(default_factory=list)
+    bar_range: str
 
 
 class VpaHypothesisAssessment(BaseModel):
@@ -185,14 +259,26 @@ class VpaHypothesisAssessment(BaseModel):
     reason: str
 
 
+class VpaHypothesisAssessmentDraft(VpaHypothesisAssessment):
+    """Provider-facing assessment with whitelist normalization."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class VpaNextConfirmation(BaseModel):
     """Future evidence needed to resolve the current VPA interpretation."""
 
     model_config = ConfigDict(extra="forbid")
 
     state: Literal["pending_closed_bar", "not_applicable"]
-    trigger: str
-    requires_closed_bar: Literal[True]
+    trigger: str | None
+    requires_closed_bar: bool
+
+
+class VpaNextConfirmationDraft(VpaNextConfirmation):
+    """Provider-facing confirmation with whitelist normalization."""
+
+    model_config = ConfigDict(extra="ignore")
 
 
 class VpaEvidenceReport(BaseModel):
@@ -221,7 +307,37 @@ class VpaEvidenceReport(BaseModel):
             for item in self.hypothesis_assessments
             for evidence_id in item.evidence_ids
         )
+        ids.update(
+            evidence_id
+            for item in self.observations
+            for claim in item.sequence_claims
+            for evidence_id in (
+                claim.earlier_evidence_id,
+                claim.later_evidence_id,
+            )
+        )
         return ids
+
+
+class VpaEvidenceReportDraft(BaseModel):
+    """Provider-facing report without program-owned observation ranges."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    catalog_id: str
+    data_status: Literal["available", "limited", "unavailable"]
+    summary: str
+    observations: list[VpaObservationDraft]
+    hypothesis_assessments: list[VpaHypothesisAssessmentDraft]
+    background_relation: Relation
+    entry_timing_relation: Relation
+    next_confirmation: VpaNextConfirmationDraft
+
+
+class VpaEvidenceEnvelopeDraft(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    vpa_report: VpaEvidenceReportDraft
 
 
 class JointArbitration(BaseModel):
@@ -281,6 +397,7 @@ class RunOutcome(BaseModel):
         "degraded_pa_only",
         "unavailable_input",
         "unavailable_provider",
+        "invalid_model_output",
         "cancelled",
         "internal_error",
     ]
@@ -290,17 +407,6 @@ class RunOutcome(BaseModel):
     reason: str | None = None
 
 
-_VPA_MODEL_SCHEMA = VpaEvidenceReport.model_json_schema()
-_VPA_MODEL_DEFS = _VPA_MODEL_SCHEMA.pop("$defs", {})
-VPA_EVIDENCE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "required": ["vpa_report"],
-    "properties": {
-        "vpa_report": _VPA_MODEL_SCHEMA,
-    },
-    "additionalProperties": False,
-}
-if _VPA_MODEL_DEFS:
-    VPA_EVIDENCE_SCHEMA["$defs"] = _VPA_MODEL_DEFS
+VPA_EVIDENCE_SCHEMA: dict[str, Any] = VpaEvidenceEnvelopeDraft.model_json_schema()
 
 JOINT_DECISION_SCHEMA: dict[str, Any] = JointDecisionProposal.model_json_schema()

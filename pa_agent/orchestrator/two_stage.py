@@ -83,10 +83,12 @@ def _has_executable_order(decision: dict[str, Any]) -> bool:
 
 
 def _pa_joint_diff(
-    baseline: AnalysisRecord,
-    joint_stage2: dict[str, Any],
-) -> dict[str, Any]:
+    baseline: AnalysisRecord | None,
+    joint_stage2: dict[str, Any] | None,
+) -> dict[str, Any] | None:
     """Compare the materialized Joint decision with its frozen PA baseline."""
+    if baseline is None or not isinstance(joint_stage2, dict):
+        return None
     base_s2 = (baseline.stage2_decision or {}).get("decision", {})
     joint_s2 = joint_stage2.get("decision", {})
     decision_keys = (
@@ -126,6 +128,52 @@ def _pa_joint_diff(
             "stage2_changed": bool(stage2_diff),
         },
     }
+
+
+def _usage_from_call_attempts(calls: list[dict[str, Any]]) -> dict[str, int]:
+    """Derive cost totals from the response-bearing call ledger."""
+    response_calls = [
+        call
+        for call in calls
+        if isinstance(call, dict) and call.get("response_hash")
+    ]
+    return {
+        "prompt_tokens": sum(max(0, int(call.get("prompt_tokens") or 0)) for call in response_calls),
+        "cached_prompt_tokens": sum(
+            max(0, int(call.get("cached_prompt_tokens") or 0))
+            for call in response_calls
+        ),
+        "completion_tokens": sum(
+            max(0, int(call.get("completion_tokens") or 0))
+            for call in response_calls
+        ),
+        "total_tokens": sum(max(0, int(call.get("total_tokens") or 0)) for call in response_calls),
+        "api_calls": len(response_calls),
+        "model_latency_ms": sum(
+            max(0, round(float(call.get("latency_ms") or 0)))
+            for call in response_calls
+        ),
+    }
+
+
+def _role_execution_status(
+    result: StructuredRoleResult | None,
+    *,
+    applicable: bool,
+    failed: bool = False,
+) -> str:
+    """Represent role execution without ambiguous first-pass booleans."""
+    if failed:
+        return "failed"
+    if not applicable:
+        return "not_applicable"
+    if result is None:
+        return "not_attempted"
+    if not result.ok:
+        return "failed"
+    if len(result.replies) > 1:
+        return "repaired"
+    return "validated"
 
 
 def _stable_hash(value: Any) -> str:
@@ -234,6 +282,13 @@ def _apply_validation_to_call_attempts(
         final_call["validation_category"] = result.category
 
 
+def _validation_failure_status(
+    error: ValidationError,
+) -> Literal["unavailable_provider", "invalid_model_output"]:
+    """Separate provider-declared failures from exhausted model contracts."""
+    return "unavailable_provider" if error.category == "e" else "invalid_model_output"
+
+
 def _apply_confidence_threshold(stage2: dict, threshold: int) -> dict:
     """Apply the configured confidence policy once, before persistence and UI."""
     out = copy.deepcopy(stage2)
@@ -265,6 +320,7 @@ def _apply_confidence_threshold(stage2: dict, threshold: int) -> dict:
         "entry_rule",
         "entry_basis_bar",
         "entry_basis_extreme",
+        "trade_confidence",
         "estimated_win_rate",
         "estimated_win_rate_reasoning",
     ):
@@ -675,6 +731,7 @@ class TwoStageOrchestrator:
         on_event: Callable[[OrchestratorEvent], None],
     ) -> bool:
         """Persist a completed record and emit an event matching the write result."""
+        record.usage_total = _usage_from_call_attempts(record.call_attempts)
         result = self._pending_writer.save_full(record)
         ok = bool(getattr(result, "ok", True))
         if not ok:
@@ -690,6 +747,7 @@ class TwoStageOrchestrator:
         on_event: Callable[[OrchestratorEvent], None],
     ) -> bool:
         """Persist a partial record without confusing it with a completed result."""
+        record.usage_total = _usage_from_call_attempts(record.call_attempts)
         result = self._pending_writer.save_partial(record, reason)
         ok = result is not None and bool(getattr(result, "ok", True))
         if not ok:
@@ -1124,7 +1182,7 @@ class TwoStageOrchestrator:
             )
             record = _with_run_outcome(
                 record,
-                status="unavailable_provider",
+                status=_validation_failure_status(err),
                 requested_vpa_mode=mode,
                 reason=err_message,
             )
@@ -1571,7 +1629,7 @@ class TwoStageOrchestrator:
             )
             record = _with_run_outcome(
                 record,
-                status="unavailable_provider",
+                status=_validation_failure_status(err),
                 requested_vpa_mode=mode,
                 reason=err_message,
             )
@@ -1855,6 +1913,7 @@ class TwoStageOrchestrator:
                 if baseline_status not in {
                     "unavailable_input",
                     "unavailable_provider",
+                    "invalid_model_output",
                     "internal_error",
                 }:
                     baseline_status = "internal_error"
@@ -1877,7 +1936,7 @@ class TwoStageOrchestrator:
 
         stage1 = copy.deepcopy(baseline.stage1_diagnosis or {})
         baseline_stage2 = copy.deepcopy(baseline.stage2_decision or {})
-        hypotheses = PaHypothesisSet.from_stage1(stage1)
+        hypotheses = PaHypothesisSet.from_stage1(stage1, baseline_stage2)
         hypotheses_dict = hypotheses.model_dump()
         catalog = (
             copy.deepcopy(frozen_vpa_catalog)
@@ -2070,29 +2129,11 @@ class TwoStageOrchestrator:
             joint_stage2 = (
                 copy.deepcopy(joint_envelope.get("stage2_decision") or {})
                 if isinstance(joint_envelope, dict)
-                else copy.deepcopy(baseline_stage2)
-            )
-            comparison = _pa_joint_diff(baseline, joint_stage2)
-            arbitration = (
-                copy.deepcopy(joint_envelope.get("joint_arbitration"))
-                if isinstance(joint_envelope, dict)
                 else None
             )
-            compatibility_impact = None
-            if isinstance(arbitration, dict) and isinstance(vpa_report_obj, dict):
-                compatibility_impact = {
-                    "background_relation": vpa_report_obj.get(
-                        "background_relation"
-                    ),
-                    "entry_timing_relation": vpa_report_obj.get(
-                        "entry_timing_relation"
-                    ),
-                    "evidence_used": copy.deepcopy(
-                        arbitration.get("evidence_used") or []
-                    ),
-                    "decision_effect": arbitration.get("decision_effect"),
-                    "reason": arbitration.get("reason"),
-                }
+            joint_semantic = copy.deepcopy(joint_envelope)
+            if isinstance(joint_semantic, dict):
+                joint_semantic.pop("stage2_decision", None)
             completed_status = _completed_run_status(
                 baseline,
                 *role_audit,
@@ -2102,17 +2143,33 @@ class TwoStageOrchestrator:
                 if status == "completed"
                 else status
             )
-            vpa_not_normalized = not any(
-                item.get("stage") == "vpa_evidence"
-                and item.get("category") == "normalization"
-                for item in role_audit
+            joint_applicable = bool(
+                hypotheses.candidate_ids
+                and str(stage1.get("gate_result") or "unknown") == "proceed"
+                and baseline_runner.initial_stage2_messages()
             )
-            joint_not_normalized = not any(
-                item.get("stage") == "joint_arbiter"
-                and item.get("category") == "normalization"
-                for item in role_audit
+            role_statuses = {
+                "vpa": _role_execution_status(
+                    vpa_result,
+                    applicable=True,
+                    failed=degradation_stage == "vpa_evidence",
+                ),
+                "joint": _role_execution_status(
+                    joint_result,
+                    applicable=joint_applicable,
+                    failed=degradation_stage == "joint_arbiter",
+                ),
+            }
+            authority_violations = sorted(
+                {
+                    str(violation)
+                    for event in role_audit
+                    if isinstance(event, dict)
+                    for violation in event.get("authority_violations", [])
+                    if str(violation).strip()
+                }
             )
-            role_execution = {
+            role_runtime = {
                 "design": "pa_vpa_joint_v1",
                 "same_frozen_input": True,
                 "snapshot_hash": snapshot_hash,
@@ -2122,49 +2179,7 @@ class TwoStageOrchestrator:
                     baseline_isolated and vpa_isolated and joint_isolated
                 ),
                 "provider_fallback_allowed": False,
-                "vpa_first_pass": bool(
-                    vpa_result is not None
-                    and vpa_result.ok
-                    and len(vpa_result.replies) == 1
-                    and vpa_not_normalized
-                ),
-                "joint_first_pass": bool(
-                    joint_result is None
-                    or (
-                        joint_result.ok
-                        and len(joint_result.replies) == 1
-                        and joint_not_normalized
-                    )
-                ),
-                "authority_violations": [],
-            }
-            sidecar = {
-                "mode": mode,
-                "configured_mode": configured_mode,
-                "status": effective_status,
-                "snapshot_hash": snapshot_hash,
-                "evidence_catalog": copy.deepcopy(catalog),
-                "pa_hypotheses": copy.deepcopy(hypotheses_dict),
-                "vpa_report": copy.deepcopy(vpa_report_obj),
-                "joint_arbitration": arbitration,
-                "baseline_stage2": copy.deepcopy(baseline_stage2),
-                "joint_stage2": joint_stage2,
-                "comparison": comparison,
-                "role_execution": role_execution,
-                "stage1_context": copy.deepcopy(vpa_report_obj),
-                "stage2_impact": compatibility_impact,
-                "degradation": (
-                    {
-                        "stage": degradation_stage,
-                        "reason": degradation_reason,
-                    }
-                    if degradation_stage
-                    else None
-                ),
-                "role_responses": {
-                    "vpa_evidence": role_response_payload(vpa_result),
-                    "joint_arbiter": role_response_payload(joint_result),
-                },
+                "authority_violations": authority_violations,
             }
             usage = _accumulate_usage_calls(
                 baseline.usage_total,
@@ -2180,11 +2195,19 @@ class TwoStageOrchestrator:
             record = baseline.model_copy(
                 update={
                     "stage2_decision": executable_stage2,
+                    "pa_baseline_stage2": copy.deepcopy(baseline_stage2),
+                    "joint_stage2": copy.deepcopy(joint_stage2),
                     "pa_hypotheses": copy.deepcopy(hypotheses_dict),
+                    "vpa_catalog": copy.deepcopy(catalog),
                     "vpa_evidence": copy.deepcopy(vpa_report_obj),
-                    "joint_decision": copy.deepcopy(joint_envelope),
+                    "joint_decision": joint_semantic,
+                    "role_statuses": role_statuses,
+                    "role_runtime": role_runtime,
+                    "role_responses": {
+                        "vpa_evidence": role_response_payload(vpa_result),
+                        "joint_arbiter": role_response_payload(joint_result),
+                    },
                     "run_outcome": outcome,
-                    "vpa_sidecar": sidecar,
                     "usage_total": usage,
                     "call_attempts": [
                         *copy.deepcopy(baseline.call_attempts),
@@ -2243,19 +2266,11 @@ class TwoStageOrchestrator:
         vpa_report_obj = copy.deepcopy(vpa_result.obj["vpa_report"])
         vpa_report = VpaEvidenceReport.model_validate(vpa_report_obj)
         gate_result = str(stage1.get("gate_result") or "unknown")
-        if gate_result != "proceed" or not baseline_runner.initial_stage2_messages():
-            joint_envelope = {
-                "joint_arbitration": {
-                    "selected_candidate_id": None,
-                    "decision_effect": "keep_brooks_baseline",
-                    "evidence_used": [],
-                    "reason": (
-                        f"PA gate_result={gate_result}; VPA cannot bypass the PA gate."
-                    ),
-                },
-                "decision_patch": {},
-                "stage2_decision": copy.deepcopy(baseline_stage2),
-            }
+        if (
+            gate_result != "proceed"
+            or not baseline_runner.initial_stage2_messages()
+            or not hypotheses.candidate_ids
+        ):
             return finish(
                 status="completed",
                 official_path="pa_only",
@@ -2263,7 +2278,7 @@ class TwoStageOrchestrator:
                 vpa_result=vpa_result,
                 vpa_report_obj=vpa_report_obj,
                 joint_result=None,
-                joint_envelope=joint_envelope,
+                joint_envelope=None,
             )
 
         joint_messages = role_assembler.build_joint_decision(

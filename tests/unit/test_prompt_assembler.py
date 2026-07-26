@@ -189,6 +189,21 @@ def test_stage2_user_prompt_contains_stage1_json(assembler: PromptAssembler):
     assert "bearish" in user
 
 
+def test_stage2_prompt_does_not_assign_quality_without_a_signal_bar(
+    assembler: PromptAssembler,
+) -> None:
+    user = assembler.build_stage2(
+        _make_frame(),
+        {"cycle_position": "normal_channel", "direction": "bullish"},
+        [],
+        [],
+    )[1]["content"]
+
+    assert "计划型限价时 `signal_bar.bar` 为 null" in user
+    assert '`quality="invalid"`、`pattern="none"`' in user
+    assert "`quality=invalid` 或 **weak**" not in user
+
+
 def test_stage2_user_prompt_uses_routed_strategy_only_by_default(
     assembler: PromptAssembler,
 ):
@@ -216,6 +231,15 @@ def test_stage1_output_reminder_present(assembler: PromptAssembler):
     assert "cycle_position" in user
     assert "diagnosis_confidence" in user
     assert "bar_by_bar_summary" in user
+    assert (
+        "`pause_or_pullback_present` 时，`transition_risk` 必须从 "
+        "`high|medium|low` 中选择"
+    ) in user
+    assert (
+        "非 `spike` 周期时 `spike_analysis=null` 且 `spike_stage=null`"
+    ) in user
+    assert "`market_phase=stable` 时 `transition_risk=null`" in user
+    assert '"transition_risk": "high|medium|low|null"' in user
     assert "逐K摘要硬规则" in user
     assert "K5–K1" in user
     assert "reversal_attempt" in user
@@ -264,6 +288,9 @@ def test_vpa_evidence_role_loads_modules_from_frozen_brooks_context(
     assert "Loaded modules: core, trend_pullback, breakout_retest, trading_range_events, climax_absorption_exhaustion" in prompt
     assert "VPA_EVIDENCE_ANALYSIS_TASK" in prompt
     assert "不要输出 `bar_range`" in prompt
+    assert '"interpretation_label"' in prompt
+    assert '"epistemic_status"' in prompt
+    assert '"sequence_claims"' in prompt
 
 
 def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:
@@ -278,6 +305,8 @@ def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:
     assert "`background_relation`" in core
     assert "`entry_timing_relation`" in core
     assert "`finding_kind`" in core
+    assert "`epistemic_status`" in core
+    assert "`sequence_claims`" in core
     assert "with exactly: `alignment`" not in core
 
 
@@ -404,6 +433,22 @@ def test_stage2_output_contract_present(assembler: PromptAssembler):
     assert "不得替代背景解释或交易者方程" in user
     assert "decision_trace" in user
     assert "terminal" in user
+
+
+def test_stage2_pending_entry_and_stop_semantics_are_unambiguous(
+    assembler: PromptAssembler,
+):
+    frame = _make_frame()
+    messages = assembler.build_stage2(frame, {}, [], [])
+    user = messages[1]["content"]
+
+    assert '"follow_through": null' in user
+    assert '"still_valid": null' in user
+    assert "尚未触发的 entry attempt 不存在入场棒跟随" in user
+    assert "保护性止损价格" in user
+    assert "分析假设失效条件" in user
+    assert "若称某价格为 K 线极点或前高/前低，必须写明对应 K#" in user
+    assert "follow_through=false` 当作失败跟随，应写 `pending`" not in user
 
 
 def test_stage2_experience_entries_included(assembler: PromptAssembler):
@@ -1149,3 +1194,29 @@ def test_unpredictable_previous_prediction_renders_note(assembler: PromptAssembl
 
     user = messages[-1]["content"]  # Stage 2 user prompt (last turn)
     assert "不可预测" in user
+
+
+def test_stage2_prompt_states_the_final_trace_order(assembler: PromptAssembler) -> None:
+    frame = _make_frame()
+    stage1_messages = assembler.build_stage1(frame)
+    stage1_json = {
+        "cycle_position": "normal_channel",
+        "direction": "bullish",
+        "gate_result": "proceed",
+        "entry_setup": "",
+    }
+
+    messages = assembler.build_stage2_continuation(
+        frame=frame,
+        stage1_messages=stage1_messages,
+        stage1_reply_content='{"cycle_position":"normal_channel"}',
+        stage1_json=stage1_json,
+        strategy_files=[],
+        experience_entries=[],
+    )
+
+    user = messages[-1]["content"]
+    assert "10.3 → 11.x → 14" in user
+    assert "entry_setup` 只是提示性线索" in user
+    assert "order_type 为“不下单”时" in user
+    assert '"trade_confidence": null' in user

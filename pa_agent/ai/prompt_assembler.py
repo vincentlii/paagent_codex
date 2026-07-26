@@ -89,9 +89,10 @@ _PA_EVIDENCE_OUTPUT_RULE = """
 
 - `pa_evidence.fact_refs` 只能引用 ANALYSIS_FACT_CATALOG 中存在的 `PA.*` ID；确定性计数、连续段、极值与比较不得自行重算。
 - `theory_rule_ids` 只能引用 PA_THEORY_RULE_CATALOG 中存在且本轮实际使用的 Brooks 规则，不得自造或为了凑字段罗列无关规则。
-- 非 `spike` 周期时 `spike_analysis=null`。
+- 非 `spike` 周期时 `spike_analysis=null` 且 `spike_stage=null`，不得残留上一轮 Spike 状态。
 - `spike` 周期必须填写 `spike_analysis`：`anchor_bar` 是本轮识别的 Spike 锚点；`post_anchor_state` 只能为 `no_closed_bar_after_anchor`、`continuation_only`、`pause_or_pullback_present`。
-- 一旦识别 `pause_or_pullback_present`，必须给出第一根对应的已收盘 K 线，`spike_stage` 不得仍为 `active`，`market_phase` 必须为 `transitioning`。这表达 Brooks 的 Spike 向通道/区间过渡语义，不是程序替代市场判断。
+- 一旦识别 `pause_or_pullback_present`，必须给出第一根对应的已收盘 K 线，`spike_stage` 不得仍为 `active`，`market_phase` 必须为 `transitioning`；`pause_or_pullback_present` 时，`transition_risk` 必须从 `high|medium|low` 中选择，并由你根据已收盘价格行为判断，程序不会代填。这个状态组表达 Brooks 的 Spike 向通道/区间过渡语义，不是程序替代市场判断。
+- `market_phase=stable` 时 `transition_risk=null`；风险等级只描述模型已经识别出的转换期，不得反向作为隐藏 Gate。
 """.strip()
 
 _KLINE_INDICATOR_NOTE = (
@@ -253,7 +254,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
   "spike_stage": null,
   "climax_risk": "none|warning|triggered",
   "market_phase": "stable|transitioning",
-  "transition_risk": null,
+  "transition_risk": "high|medium|low|null",
   "detected_patterns": [],
   "key_signals": [],
   "htf_context": "",
@@ -264,7 +265,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
   "bar_analysis": {
     "always_in": "long|short|neutral",
     "last_closed_bar": "K1",
-    "bar_type": "trend_bull|trend_bear|doji|inside|outside_bull|outside_bear|flat|other",
+    "bar_type": "trend_bull|trend_bear|doji|flat|other",
     "signal_bar": {
       "bar": "K2 或 null（无独立信号棒时填 null，禁止整个 signal_bar 为 null）",
       "quality": "strong|medium|weak|invalid（bar=null 时必须填 invalid，禁止填 null）",
@@ -277,7 +278,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
     {
       "bar": "K1",
       "role": "structure|signal|entry|confirmation|noise|trap|climax|test",
-      "bar_type": "trend_bull|trend_bear|doji|inside|outside_bull|outside_bear|flat|other",
+      "bar_type": "trend_bull|trend_bear|doji|flat|other",
       "context_effect": "strengthens_bull|weakens_bull|strengthens_bear|weakens_bear|neutral|transition",
       "follow_through": "yes|no|pending|failed",
       "trapped_side": "bulls|bears|both|none|unknown",
@@ -335,11 +336,11 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 **逐K摘要硬规则：**
 - 必须输出 `bar_by_bar_summary`，**恰好 5 条**（分析窗口≥5根时），覆盖最近 **K5–K1** 每一根已收盘 K 线各 1 条。数据不足 5 根则覆盖全部已有 K 线（每条 1 根）。
 - 每条只写该 K 线对当前结构的增量作用，不写下单价格、不写止损止盈。
-- `role` 只能使用示例中的英文枚举（structure/signal/entry/confirmation/noise/trap/climax/test 等）；延续/跟随棒统一写 `confirmation`，不要写 `continuation`。
-- **`reversal_attempt`、`mtr`、`h2`、`l2` 等形态标签只能写在顶层 `detected_patterns` 数组中；禁止用作 `bar_by_bar_summary[].role`。**
+- `role` 用不超过 32 个字符的简洁 PA 功能词描述该棒在当前背景中的作用，例如 structure、signal、entry、confirmation、continuation、pullback、trap、climax 或 test；不要在此重复完整 Setup 名称。
+- **`reversal_attempt`、`mtr`、`h2`、`l2` 等完整 Setup 标签优先写在顶层 `detected_patterns` 数组中；`bar_by_bar_summary[].role` 只写该棒在这段结构里的局部功能。**
 - K线序号方向：K1 是最新已收盘，K2 是它前一根；判断 K2 的后续跟随时看 K1，判断 K3 的后续跟随时看 K2/K1；K1 的跟随通常为 pending。
 - 程序几何表只提供实体、影线、收盘位置、ATR 比值和与前棒的精确包含/重叠关系，**不提供 `bar_type` 结论**。
-- `bar_type` 由你结合几何事实与市场背景解释；`inside` / `outside_*` 必须符合程序给出的精确包含关系，`doji` / `trend_*` 等语义标签不可只靠单一固定阈值机械决定。
+- `relation_to_previous` 已由程序精确测量；不要在 `bar_type` 重复输出 inside/outside。`bar_type` 只表达需要背景解释的 trend/doji/flat/other，且不可只靠单一固定阈值机械决定。
 - 先引用 K 线与程序事实 ID，再给出标签；`reason` 只写定性解释，不复写程序表中的数值、计数或 canonical key=value，不得自行抄算、扩展窗口或伪造程序未提供的事实。若多种解释均合理，使用 `other` 或在 `reason` 中说明歧义。
 - `context_effect` 必须使用 **strengthens_bull / strengthens_bear**（带 s），禁止写 strengthen_bull、strengthen_bear。
 
@@ -392,7 +393,7 @@ _STAGE2_OUTPUT_CONTRACT = """
 **思考过程与 JSON 内所有说明性文字必须使用简体中文**（仅 JSON 键名与规定枚举除外）。
 禁止用 markdown 代码围栏（不要写 ```json 或结尾的 ```），只输出裸 JSON 对象。
 JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
-重要规则：当 order_type 为“不下单”时，entry_price、take_profit_price、take_profit_price_2、stop_loss_price、order_direction 必须全部为 null。
+重要规则：当 order_type 为“不下单”时，entry_price、take_profit_price、take_profit_price_2、stop_loss_price、order_direction、trade_confidence、estimated_win_rate、estimated_win_rate_reasoning 必须全部为 null。
 
 ```json
 {
@@ -409,10 +410,10 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
     "reasoning": "",
     "diagnosis_confidence": 75,
     "diagnosis_confidence_reasoning": "",
-    "trade_confidence": 70,
+    "trade_confidence": null,
     "trade_confidence_reasoning": "",
-    "estimated_win_rate": 50,
-    "estimated_win_rate_reasoning": "",
+    "estimated_win_rate": null,
+    "estimated_win_rate_reasoning": null,
     "key_factors": [],
     "watch_points": [],
     "risk_assessment": "",
@@ -428,8 +429,8 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
     "entry_bar": {
       "bar": "K1 或 null（计划尚未触发时）",
       "strength": "strong|weak|not_triggered",
-      "follow_through": true,
-      "still_valid": true,
+      "follow_through": null,
+      "still_valid": null,
       "freshness": "fresh|pending|stale|invalid"
     },
     "second_entry": {
@@ -466,6 +467,9 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 ## 阶段二决策路径（二元决策树 §3–§11、§14）
 
 阶段一 gate_result=proceed 时，decision_trace 必须遵守**执行顺序**（可跳过不适用分支，但不可乱序）：
+- `gate_result=proceed` 表示阶段二可以基于阶段一的市场框架、方向与策略路由，独立完成
+  Setup、入场时机和订单裁决。阶段一 `entry_setup` 只是提示性线索；为空时不得视为禁止
+  阶段二识别 Setup。Stage 2 是具体 PA 交易方案的唯一所有者。
 
 1. **§3–§8** 按 cycle_position 走对应结构分支（尖峰/通道/区间/反转/楔形等）
 2. **§9 执行顺序（硬规则）**：§9.0（信号棒）→ 若否则 **§9.0P（背景限价，必填）** → §9.1–§9.7 中适用于当前路径的节点。
@@ -475,6 +479,8 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 4. **§10** 风险收益（必须按序）：**10.1 止损明确 → 10.2 止损不过大 → 10.3 交易者方程**（勿编造具体手数、合约数或资金规模）
 5. **§11 下单方式由你根据 Setup、位置和触发条件选择**；程序只校验订单字段、引用关系、三价方向、数学与执行安全。真实 tick size 由交易接口最终校验。
 6. **§14** 禁止行为清单：下单前快速扫描，触犯任一条 → order_type=不下单
+   - `decision_trace` 的记录顺序必须为 **10.3 → 11.x → 14**：先形成完整候选方案与
+     下单方式，再记录最终执行前禁止项扫描。不得把 14 写在 11.x 前面。
    - **⚠️ §14 answer 语义硬规则（违反会校验失败）：**
      - `answer=是` = **触犯了禁止行为**（此时必须输出 order_type=不下单）
      - `answer=否` = **未触犯任何禁止项**（可以继续下单）
@@ -501,14 +507,16 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
   - 做多：stop < entry < take_profit_price < take_profit_price_2
   - 做空：take_profit_price_2 < take_profit_price < entry < stop
   - §10.3 交易者方程与 RR 校验**仅使用 take_profit_price（TP1）**；TP2 不得用于方程计算
-- 有下单时：盈亏比须 **≥ 1.0**（回报÷风险），且须满足 **胜率%×回报 > (100−胜率)%×风险**
+- 有下单候选时须满足 **胜率%×回报 > (100−胜率)%×风险**。不存在跨 Setup 通用的固定 RR 下限；RR<1 只有在有充分 PA 依据支持较高胜率时才可能为正期望，禁止为过方程而机械上调胜率。
 - 不满足上述任一条 → **10.3 必须判「否」**，order_type=**不下单**，不得输出限价/突破/市价单
 - **10.3 通过之前**不得输出具体下单类型；**10.3 之后**才写 §11
 - 因方程不通过而放弃（已有三价方案）：terminal.node_id 应为 **10.3**，outcome=**reject**（有方案可拒，不用 wait）
 - 完成 10.3 后，必须把你在方程中使用的**胜率主观估计**写入 decision.estimated_win_rate（0–100 整数），并在 estimated_win_rate_reasoning 简要说明依据；**禁止**留空或仅从 trace 文字里暗示。它是当前 PA Setup 的可复盘主观先验，不是已验证统计胜率；不得用固定数字、单次样本或外部辅助证据的单次确认机械上调。
 
 **结构型止损 / 止盈质量规则（防止噪音内小单）：**
-- `stop_loss_price` 必须放在「本笔交易假设真正失效」的结构位之外，而不是为了通过 10.3 方程而贴近 EMA、K1 low/high、整数位或单根 K 线内部噪音。
+- `stop_loss_price` 是会被盘中价格触发的**保护性止损价格**；必须放在本次 Entry Attempt 的明确结构锚点之外，而不是为了通过 10.3 方程而贴近 EMA、K1 low/high、整数位或单根 K 线内部噪音。
+- `invalidation_condition` 是用于下一轮重判的**分析假设失效条件**，可以要求已收盘 K 线确认。两者可以不同：若保护性止损早于完整 PA 背景失效，必须明确称为战术风险边界，禁止把它写成整个通道/趋势已经失效。
+- 若称某价格为 K 线极点或前高/前低，必须写明对应 K#；程序会核对 K#、OHLC 字段和价格。是否属于 swing、通道边界或 Setup 失效仍由你结合背景判断。
 - 若止损只是在 EMA / 支撑 / 阻力外侧很近的位置，且没有越过明确 swing low/high、信号棒极点、通道边界失效位或区间边界失效位，则视为「噪音内止损」；§10.1 或 §10.2 应判「否」。
 - `take_profit_price`（TP1）应放在有结构依据的最近有效目标位，不要为了通过方程而选 K1 内部噪音位
 - `take_profit_price_2`（TP2）应为更远但有结构依据的目标（MM 投影、通道对边远端、区间高度翻测等）；必须满足做多 tp2>tp1、做空 tp2<tp1
@@ -538,7 +546,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 - 当 cycle_position 为 **broad_channel / trading_range / normal_channel / trending_tr**，且价格靠近 **支撑/阻力/通道边界**（阶段一 support_levels/resistance_levels），或顺势 **回撤/反弹到结构位** 可挂限价时：
   - **§9.0P 应判「是」**，reason 写明「计划型限价，等待回撤/反弹到位」；
   - §9.0 同时写「否」（无合格信号棒）；
-  - `signal_bar.bar` 为 **null**，`quality=invalid` 或 **weak**；
+  - `signal_bar.bar` 为 **null**，`quality=invalid`、`pattern=none`；没有信号棒时不得声称其质量为 weak/medium/strong；
   - `entry_bar` 设 `strength=not_triggered`、`freshness=pending`；
   - 继续 §10 定三价 → 10.3 通过 → `order_type=限价单`。
 - **禁止**因 K1 为 doji/弱棒/无跟随，就 §9.0P=否 后直接 `不下单`——应先尝试结构位限价。
@@ -570,11 +578,12 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 
 **§9 逐K信号链与新鲜度硬规则：**
 - §9.0–§9.7 必须引用 `bar_analysis.signal_bar.bar` 与阶段一 `bar_by_bar_summary` 中的对应 K 线；计划型限价时 `signal_bar.bar` 为 null，须在 **§9.0P**（非 §9.0）写明依据；`quality="invalid"`、`pattern="none"`。若限价单/突破单尚未触发，`bar_analysis.entry_bar.bar` 可为 null，但必须设 `strength="not_triggered"`、`freshness="pending"`，并在 9.7 写明“等待触发，尚无入场棒”。
+- 尚未触发的 entry attempt 不存在入场棒跟随或入场棒有效性：此时必须写 `follow_through=null`、`still_valid=null`。只有已有具体 `entry_bar.bar` 时才可写布尔值。
 - **⚠️ 市价单 entry_bar 硬规则**：`order_type="市价单"` 代表基于当前已收盘棒立即入场，**不存在「等待触发」状态**。`entry_bar.bar` 必须填写信号棒（通常为 K1），`strength` 设为 `strong` 或 `weak`，`freshness` 设为 `fresh`，`follow_through` 设为 `true`。**禁止**市价单将 `entry_bar.bar` 填为 null 或将 `freshness` 填为 `pending`——这会导致校验失败。
 - **K 线序号约定**：K 数字越大表示越早的已收盘棒（K8 早于 K1）。信号棒通常比入场棒更早，故 signal_bar 的 K 序号 **大于** entry_bar 的 K 序号（例：K3 信号 → K1 入场）。
 - 如果信号棒之后已经出现 2–3 根无跟随、反向强 K、或 `entry_bar.freshness=stale|invalid`，不得继续把旧信号当作新的突破单依据。
 - 如果最新 K1 是 doji、弱入场棒、无跟随或反向确认，应降低 trade_confidence；但若 **计划型限价边界 setup（§9.0P=是）** 且周期/方向/结构位一致，**仍应继续 §10 并尝试限价单**，不要仅因 K1 不完美就 `不下单`。
-- 当 `bar_analysis.signal_bar.quality=weak|invalid`，或已触发入场棒但 `entry_bar.follow_through=false` 时，若仍下单，必须在 §9 和 reasoning 中明确说明为何该弱点未使信号失效；否则应等待。挂单未触发时不得把 `follow_through=false` 当作失败跟随，应写 `pending`。
+- 当 `bar_analysis.signal_bar.quality=weak|invalid`，或已触发入场棒但 `entry_bar.follow_through=false` 时，若仍下单，必须在 §9 和 reasoning 中明确说明为何该弱点未使信号失效；否则应等待。挂单未触发时不得把 `follow_through=false` 当作失败跟随，必须写 `follow_through=null`。
 - **计划型限价单**：quality=weak|invalid 且 entry_bar 为 pending 时，**不视为**必须观望；须在 **§9.0P** 判「是」并说明结构位/setup 依据。
 
 **⚠️ watch_points 与 stage1 risk_warning 一致性规则（必须遵守）：**
@@ -600,7 +609,7 @@ terminal 必须与 order_type 一致（**decision 与 decision_trace 同步**）
 
 **⚠️ terminal.node_id 和 outcome 的语义规则（必须区分以下两种情形）：**
 
-情形 A：**有入场计划，但交易者方程不通过**（有具体止损、止盈数字，但盈亏比不达标）
+情形 A：**有入场计划，但程序复算的交易者方程不通过**（有具体止损、止盈与胜率先验，但期望值不为正）
 → `terminal.node_id = "10.3"`，`outcome = "reject"`
 → 典型表现：10.3 trace 里有具体数值计算，方程结果为负
 
@@ -623,8 +632,10 @@ terminal 必须与 order_type 一致（**decision 与 decision_trace 同步**）
 diagnosis_confidence_reasoning：必须简要说明打分依据（如“trending_tr 与 normal_channel 特征重叠，HTF 方向与小框架不一致”）
 
 二、trade_confidence —— 对交易决策本身的把握
-按 Setup 完整度、位置、触发质量、失效位清晰度、结构目标和主要反证相对校准。
-该分数描述当前交易判断，不代替 §10.3，也不应为了越过用户配置阈值而上调。
+仅对当前可执行交易方案评分；`order_type=不下单` 时必须为 `null`，不得为不存在的
+Entry Attempt 编造数值置信度。有可执行订单时必须填 0–100 整数，并按 Setup 完整度、
+位置、触发质量、失效位清晰度、结构目标和主要反证相对校准。
+该分数描述当前交易方案，不代替 §10.3，也不应为了越过用户配置阈值而上调。
 trade_confidence_reasoning：必须简要说明打分依据（如“入场信号明确但止损空间偏大，risk:reward 仅 1.5:1”）
 
 三、estimated_win_rate —— 对**本笔交易方案**成交后获利概率的主观估计（0–100 整数）
@@ -1303,6 +1314,13 @@ class PromptAssembler:
     "observations": [{
       "evidence_ids": ["仅使用目录中的 ID"],
       "finding_kind": "background | effort_result | sequence_comparison | acceptance_rejection | entry_timing",
+      "interpretation_label": "开放式专业标签或 null；先写证据，最后才使用标签",
+      "epistemic_status": "candidate | confirmed | unresolved | insufficient_data",
+      "sequence_claims": [{
+        "earlier_evidence_id": "较早证据 ID",
+        "later_evidence_id": "较晚证据 ID",
+        "relation": "response | follow_through | acceptance | rejection | test"
+      }],
       "interpretation": "上下文解释、竞争解释与局限，不复写数字"
     }],
     "hypothesis_assessments": [{
@@ -1315,13 +1333,21 @@ class PromptAssembler:
     "entry_timing_relation": "supports | neutral | challenges | insufficient_data",
     "next_confirmation": {
       "state": "pending_closed_bar | not_applicable",
-      "trigger": "下一根已收盘 K 线需要验证的 acceptance/rejection",
-      "requires_closed_bar": true
+      "trigger": "pending_closed_bar 时填写下一根已收盘 K 线需要验证的 acceptance/rejection；not_applicable 时为 null",
+      "requires_closed_bar": "pending_closed_bar 时为 true；not_applicable 时为 false"
     }
   }
 }
 
-不要输出 `bar_range`，程序会根据 evidence IDs 唯一生成。数据可用时，
+不要输出 `bar_range`，程序会根据 evidence IDs 唯一生成。K 序号越大越早，K1
+是最新已收盘 K 线；凡声称 response/follow-through/acceptance/rejection/test，优先用
+`sequence_claims` 明确较早与较晚 evidence ID。证据不够时保持 `unresolved`，不要为了
+填标签把候选事件写成确认事件。`interpretation_label` 是开放式速记，不是第二份证明。
+每条 `interpretation` 明确提到的 K#，必须由该条自己的 `evidence_ids` 覆盖；不得借用
+其他 observation 的 evidence。只有 VPA 本身存在需要下一根已收盘 K 线验证的竞争解释时，
+`next_confirmation` 才写 `pending_closed_bar`；VPA 为 neutral/insufficient，或没有独立的后续
+验证条件时可写 `not_applicable`。该字段是证据观察项，不是 Brooks Entry Attempt 的审批 Gate。
+数据可用时，
 至少给出一项真正的 Effort/Result、序列比较、Acceptance/Rejection 或
 Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并明确写
 `insufficient_data`。"""

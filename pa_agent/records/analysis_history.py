@@ -1,13 +1,13 @@
 """Helpers for locating prior analysis records for incremental runs."""
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from pa_agent.config.paths import RECORDS_PENDING_DIR
 from pa_agent.data.base import KlineFrame
 from pa_agent.data.datetime_ts import format_epoch_for_display, ts_open_to_ms
+from pa_agent.records.codec import load_record as load_record_file
 from pa_agent.records.schema import AnalysisRecord
 
 _TS_EPS_MS = 1.0  # milliseconds tolerance for bar open time matching
@@ -43,8 +43,7 @@ def list_record_paths(directory: Path | None = None) -> list[Path]:
 def load_record(path: Path) -> AnalysisRecord | None:
     """Load one AnalysisRecord, returning None for unreadable legacy files."""
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        return AnalysisRecord.model_validate(raw)
+        return load_record_file(path).record
     except Exception:
         return None
 

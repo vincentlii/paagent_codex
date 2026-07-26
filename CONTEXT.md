@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0007`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0008`。
 
 ## 核心目标
 
@@ -26,7 +26,8 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
 - `ComputedTradeMetrics`：程序根据候选价格计算的止损距离、目标距离、成本和盈亏比。
 - `ExecutionPolicyResult`：程序对订单合法性、风险边界与运行模式的最终约束结果。
 - `RunOutcome`：`completed`、`completed_with_warnings`、`degraded_pa_only`、
-  `unavailable_input`、`unavailable_provider`、`cancelled` 或 `internal_error`。
+  `unavailable_input`、`unavailable_provider`、`invalid_model_output`、`cancelled`
+  或 `internal_error`。
 
 ## 权限边界
 
@@ -37,6 +38,10 @@ LLM 负责依赖上下文且允许多种合理解释的内容：市场背景、A
 Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 
 程序不能从指标或自由文本反推交易语义；LLM 不能改写程序事实、凭空创造证据或绕过订单安全。
+
+明确写成 `K# + open/high/low/close + 数值` 的声明属于程序事实，必须与冻结快照一致；
+程序允许显示精度舍入，但不得把价格绑定到错误 K 线。未明确绑定 OHLC 字段的 swing、
+结构位、通道和 Setup 解释仍由 LLM 负责。
 
 ## 分析顺序
 
@@ -51,12 +56,15 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 
 ## 失败契约
 
-- PA 输出无法在一次定向修复后形成可信结构：`unavailable_provider`，不得产生可执行订单。
+- PA 输出无法在一次定向修复后形成可信结构：`invalid_model_output`，不得产生可执行订单，
+  且不得误报为网络或供应商不可用。
 - VPA 失败：降级为 PA-only，并明确记录 `degraded_pa_only`。
 - 联合裁决失败：一次定向修复后降级为 PA-only。
 - 数据身份、时序或关键 OHLC 失败：`unavailable_input`。
 - 取消与界面关闭：`cancelled`，不得遗留线程、重复记录或陈旧回调。
 - 未分类的内部异常：`internal_error`，必须保留可诊断信息且不得伪装为成功。
+- 可解析的 VPA/Joint 首稿发生可修复契约错误时，重试必须携带原始草稿并要求未点名字段
+  保持不变；完整结果重新通过所有校验后才能接受。权限越界不进入自由重写。
 
 ## 多资产运行时
 
@@ -93,3 +101,14 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 - 同一分析内主周期与高周期的数据源身份一致。
 - 任何失败都不接受非法订单、不静默损坏记录、不导致未处理崩溃。
 - 历史回放、人工标签和真实成交结果必须分开存储，不互相冒充。
+- 尚未触发的 Entry Attempt 使用唯一空态：`bar=null`、`strength=not_triggered`、
+  `freshness=pending`、`follow_through=null`、`still_valid=null`。已有入场棒的
+  可执行订单必须使用具体 K 线、布尔跟随状态和 `still_valid=true`。
+- `stop_loss_price` 是盘中触价的保护性止损；`invalidation_condition` 是分析假设的
+  重判条件，可能要求收盘确认。OHLC 回放只报告保护止损触达，不得冒充分析假设已失效。
+- Stage 1 的 `entry_setup` 是框架层提示，不是交易授权。`gate_result=proceed` 后，Stage 2
+  独立负责 Brooks Setup、具体触发、失效位与订单裁决；只有有效 Stage 2 才能形成 PA candidate。
+- 没有可执行 Entry Attempt 时，`trade_confidence=null`；程序不得为不存在的交易方案填充
+  数字置信度。存在可执行订单时该字段必须为 0–100 整数。
+- E2E/fixture 不得触发正式交易 CSV、通知或其他生产副作用；复盘连续性读写必须使用同一个
+  `PA_AGENT_HOME` 派生目录。

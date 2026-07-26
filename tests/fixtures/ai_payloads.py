@@ -33,7 +33,7 @@ VALID_STAGE2_NO_ORDER = {
         "reasoning": "No clear setup",
         "diagnosis_confidence": 60,
         "diagnosis_confidence_reasoning": "周期尚可",
-        "trade_confidence": 35,
+        "trade_confidence": None,
         "trade_confidence_reasoning": "无合格入场",
         "estimated_win_rate": None,
         "estimated_win_rate_reasoning": None,

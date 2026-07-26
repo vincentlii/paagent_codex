@@ -18,6 +18,29 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
+_NO_ORDER_REPAIR_PATHS = (
+    "decision.order_type",
+    "decision.order_direction",
+    "decision.entry_price",
+    "decision.entry_basis_bar",
+    "decision.entry_basis_extreme",
+    "decision.entry_rule",
+    "decision.take_profit_price",
+    "decision.take_profit_price_2",
+    "decision.stop_loss_price",
+    "decision.reasoning",
+    "decision.trade_confidence",
+    "decision.trade_confidence_reasoning",
+    "decision.estimated_win_rate",
+    "decision.estimated_win_rate_reasoning",
+    "decision.key_factors",
+    "decision.watch_points",
+    "decision.risk_assessment",
+    "decision.invalidation_condition",
+    "decision_trace",
+    "terminal",
+)
+
 # ── Result types ──────────────────────────────────────────────────────────────
 
 @dataclass
@@ -298,16 +321,22 @@ class JsonValidator:
         missing: list[str] = []
         invalid: list[str] = []
         allowed: dict[str, list] = {}
+        schema_issue_keys: list[str] = []
 
         for err in errors:
             path = ".".join(str(p) for p in err.absolute_path) or err.schema_path[-1]
             if err.validator == "required":
                 # Extract the missing property name from the message
-                missing.append(err.message.split("'")[1] if "'" in err.message else str(path))
+                field = err.message.split("'")[1] if "'" in err.message else str(path)
+                missing.append(field)
+                schema_issue_keys.append(f"missing:{field}")
             else:
                 invalid.append(str(path) or err.message[:80])
+                schema_issue_keys.append(f"invalid:{path}")
                 if "enum" in err.schema:
                     allowed[str(path)] = err.schema["enum"]
+        missing = list(dict.fromkeys(missing))
+        invalid = list(dict.fromkeys(invalid))
 
         if (
             stage == "stage2"
@@ -366,20 +395,29 @@ class JsonValidator:
             for msg in self._check_next_cycle_prediction(obj):
                 invalid.append(msg)
 
-            for msg in self._check_trade_metrics(obj):
-                invalid.append(f"metrics:{msg}")
+            trade_metric_errors = self._check_trade_metrics(obj)
+            for msg in trade_metric_errors:
+                invalid.append(f"metrics:trade_metrics {msg}")
+            if trade_metric_errors:
+                self._append_no_order_repair_targets(invalid, prefix="metrics")
 
             from pa_agent.ai.coherence_checks import validate_stage2_coherence
             from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
 
             for msg in validate_stage2_trace_consistency(obj):
                 invalid.append(f"trace:{msg}")
-            for msg in validate_stage2_coherence(
+            stage2_coherence_errors = validate_stage2_coherence(
                 obj,
                 stage1_json if isinstance(stage1_json, dict) else {},
                 kline_frame=kline_frame,
-            ):
+            )
+            for msg in stage2_coherence_errors:
                 invalid.append(f"s2:{msg}")
+            if any(
+                msg.startswith("decision.order_type:")
+                for msg in stage2_coherence_errors
+            ):
+                self._append_no_order_repair_targets(invalid, prefix="s2")
 
         warnings = self._collect_quality_warnings(
             stage,
@@ -408,6 +446,12 @@ class JsonValidator:
                 f"missing field {missing[0]}" if missing else "custom validation failed"
             )
         )
+        schema_error_count = len(dict.fromkeys(schema_issue_keys))
+        message = (
+            f"{schema_error_count} schema error(s): {first_message}"
+            if schema_error_count
+            else f"validation error: {first_message}"
+        )
         return ValidationError(
             category=category,
             stage=stage,
@@ -415,7 +459,7 @@ class JsonValidator:
             missing_fields=missing,
             invalid_fields=invalid,
             allowed_values=allowed,
-            message=f"{len(errors)} schema error(s): {first_message}",
+            message=message,
         )
 
     def _collect_quality_warnings(
@@ -461,6 +505,18 @@ class JsonValidator:
         ]
 
     @staticmethod
+    def _append_no_order_repair_targets(
+        invalid: list[str],
+        *,
+        prefix: str,
+    ) -> None:
+        for path in _NO_ORDER_REPAIR_PATHS:
+            invalid.append(
+                f"{prefix}:{path} must be rewritten as part of the "
+                "atomic no-order repair"
+            )
+
+    @staticmethod
     def _contract_normalization_events(
         stage: str,
         before: dict[str, Any],
@@ -469,17 +525,78 @@ class JsonValidator:
         """Audit exact syntax aliases accepted at the model boundary."""
         paths: list[str] = []
         if stage == "stage1":
+            paths.extend(["support_levels", "resistance_levels"])
             before_bars = before.get("bar_by_bar_summary")
             after_bars = after.get("bar_by_bar_summary")
             if isinstance(before_bars, list) and isinstance(after_bars, list):
                 for index in range(min(len(before_bars), len(after_bars))):
                     paths.append(f"bar_by_bar_summary.{index}.context_effect")
+        else:
+            paths.extend(
+                [
+                    "next_bar_prediction.direction",
+                    "next_cycle_prediction.cycle",
+                ]
+            )
 
         events: list[dict[str, Any]] = []
+        if stage == "stage2":
+            for field in ("next_bar_prediction", "next_cycle_prediction"):
+                old_prediction = before.get(field)
+                new_prediction = after.get(field)
+                degraded = (
+                    isinstance(new_prediction, dict)
+                    and new_prediction.get("unpredictable") is True
+                    and (
+                        not isinstance(old_prediction, dict)
+                        or old_prediction.get("unpredictable") is not True
+                    )
+                )
+                if degraded:
+                    events.append(
+                        {
+                            "path": field,
+                            "before": copy.deepcopy(old_prediction),
+                            "after": copy.deepcopy(new_prediction),
+                        }
+                    )
+            before_decision = before.get("decision")
+            after_decision = after.get("decision")
+            if (
+                isinstance(before_decision, dict)
+                and isinstance(after_decision, dict)
+                and before_decision.get("order_type")
+                in {"限价单", "突破单", "市价单"}
+                and after_decision.get("order_type") == "不下单"
+            ):
+                from pa_agent.util.trade_metrics import validate_order_trade_metrics
+
+                events.append(
+                    {
+                        "path": "execution_policy",
+                        "before": {
+                            key: copy.deepcopy(before_decision.get(key))
+                            for key in (
+                                "order_type",
+                                "order_direction",
+                                "entry_price",
+                                "stop_loss_price",
+                                "take_profit_price",
+                                "take_profit_price_2",
+                                "estimated_win_rate",
+                            )
+                        },
+                        "after": {
+                            "order_type": "不下单",
+                            "terminal": copy.deepcopy(after.get("terminal")),
+                        },
+                        "reasons": validate_order_trade_metrics(before_decision),
+                    }
+                )
         for path in paths:
             old_value = JsonValidator._path_value(before, path)
             new_value = JsonValidator._path_value(after, path)
-            if old_value is not None and new_value is not None and old_value != new_value:
+            if new_value is not None and old_value != new_value:
                 events.append(
                     {
                         "path": path,
@@ -790,6 +907,30 @@ class JsonValidator:
             and str(item.get("answer", "") or "").strip() == "是"
             for item in obj.get("decision_trace", [])
         )
+        if planned_entry:
+            if entry_bar.get("bar") is not None:
+                errors.append("pending entry requires bar=null")
+            if strength != "not_triggered":
+                errors.append("pending entry requires strength=not_triggered")
+            if freshness != "pending":
+                errors.append("pending entry requires freshness=pending")
+            if entry_bar.get("follow_through") is not None:
+                errors.append("pending entry requires follow_through=null")
+            if entry_bar.get("still_valid") is not None:
+                errors.append("pending entry requires still_valid=null")
+        else:
+            if entry_seq is None:
+                errors.append("executable order requires a concrete entry_bar.bar")
+            if strength not in {"strong", "weak"}:
+                errors.append("triggered entry requires strength=strong|weak")
+            if freshness != "fresh":
+                errors.append("new executable order requires freshness=fresh")
+            if not isinstance(entry_bar.get("follow_through"), bool):
+                errors.append("triggered entry requires boolean follow_through")
+            if entry_bar.get("still_valid") is not True:
+                errors.append("executable order requires still_valid=true")
+            if order_type == "市价单" and entry_bar.get("follow_through") is not True:
+                errors.append("market order requires follow_through=true")
         if sig_seq is None and not planned_entry:
             errors.append("bar_analysis.signal_bar.bar must be a K{n} reference")
         if entry_seq is None and not pending_entry:

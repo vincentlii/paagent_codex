@@ -22,6 +22,7 @@ from pa_agent.ai.factual_grounding import (
 )
 from pa_agent.ai.kline_features import classify_close_position_zone
 from pa_agent.ai.kline_references import K_RANGE_RE, K_REFERENCE_RE
+from pa_agent.ai.price_levels import parse_price_level_bounds
 
 BAR_BY_BAR_TARGET_COUNT = 5
 STAGE1_MANDATORY_GATE_NODES = STAGE1_GATE_NODE_IDS
@@ -114,10 +115,50 @@ _BAR_BREAK_RANGE_RE = re.compile(
     r"(high|low|\u9ad8\u70b9|\u4f4e\u70b9)",
     re.IGNORECASE,
 )
-_PRICE_LEVEL_RE = re.compile(
-    r"^\s*(?P<first>\d+(?:\.\d+)?)"
-    r"(?:\s*[-~\uFF0D\u2014\u5230\u81F3]\s*(?P<second>\d+(?:\.\d+)?))?\s*$"
+_EXPLICIT_BAR_PRICE_PATTERNS = (
+    re.compile(
+        r"(?<![A-Za-z0-9_])K\s*(?P<seq>\d+)(?![A-Za-z0-9_.])"
+        r"\s*(?:的\s*)?"
+        r"(?P<field>open|high|low|close|开盘(?:价)?|最高(?:价|点)?|"
+        r"最低(?:价|点)?|收盘(?:价)?|高点|低点)"
+        r"\s*(?:为|是|at|was|is|=|:|：)?\s*"
+        r"(?P<price>[-+]?(?:\d+(?:\.\d+)?|\.\d+))",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9_])K\s*(?P<seq>\d+)(?![A-Za-z0-9_.])"
+        r"\s*(?:的\s*)?"
+        r"(?P<price>[-+]?(?:\d+(?:\.\d+)?|\.\d+))\s*"
+        r"(?P<field>open|high|low|close|开盘(?:价)?|最高(?:价|点)?|"
+        r"最低(?:价|点)?|收盘(?:价)?|高点|低点)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?P<field>open|high|low|close|开盘(?:价)?|最高(?:价|点)?|"
+        r"最低(?:价|点)?|收盘(?:价)?|高点|低点)\s*(?:从|自)\s*"
+        r"(?<![A-Za-z0-9_])K\s*(?P<seq>\d+)(?![A-Za-z0-9_.])"
+        r"\s*(?:的\s*)?(?P<price>[-+]?(?:\d+(?:\.\d+)?|\.\d+))",
+        re.IGNORECASE,
+    ),
 )
+_BAR_PRICE_FIELD_NAMES = {
+    "open": "open",
+    "开盘": "open",
+    "开盘价": "open",
+    "high": "high",
+    "最高": "high",
+    "最高价": "high",
+    "最高点": "high",
+    "高点": "high",
+    "low": "low",
+    "最低": "low",
+    "最低价": "low",
+    "最低点": "low",
+    "低点": "low",
+    "close": "close",
+    "收盘": "close",
+    "收盘价": "close",
+}
 
 
 def validate_stage1_coherence(
@@ -176,6 +217,7 @@ def validate_stage1_coherence(
             if seq is None or (bar_count and not 1 <= seq <= bar_count):
                 errors.append(f"bar_by_bar_summary[{index}].bar 不在当前K线窗口")
     errors.extend(_validate_stage1_bar_geometry(stage1, kline_frame))
+    errors.extend(_validate_explicit_bar_price_claims(stage1, kline_frame))
     errors.extend(_validate_stage1_structured_facts(stage1, kline_frame))
     return errors
 
@@ -225,6 +267,7 @@ def validate_stage2_coherence(
                 "order_direction 与阶段一 direction 相反；同一快照必须回到阶段一重做方向诊断"
             )
     errors.extend(_validate_stage2_bar_references(stage2, kline_frame))
+    errors.extend(_validate_explicit_bar_price_claims(stage2, kline_frame))
     return errors
 
 
@@ -265,6 +308,42 @@ def _validate_stage2_bar_references(stage2: dict[str, Any], frame: Any) -> list[
             errors.append(
                 f"bar_analysis.{field}.bar K{seq} not found in current K-line frame"
             )
+    return errors
+
+
+def _validate_explicit_bar_price_claims(value: Any, frame: Any) -> list[str]:
+    """Check only explicit K#/OHLC/value claims against the frozen bars."""
+    if frame is None:
+        return []
+    bars = {
+        int(getattr(bar, "seq", 0)): bar
+        for bar in getattr(frame, "bars", ()) or ()
+        if int(getattr(bar, "seq", 0) or 0) > 0
+    }
+    errors: list[str] = []
+    seen: set[tuple[str, int, str, str]] = set()
+    for path, text in _narrative_strings(value):
+        for pattern in _EXPLICIT_BAR_PRICE_PATTERNS:
+            for match in pattern.finditer(text):
+                seq = int(match.group("seq"))
+                field = _BAR_PRICE_FIELD_NAMES.get(match.group("field").lower())
+                bar = bars.get(seq)
+                if field is None or bar is None:
+                    continue
+                raw_price = match.group("price")
+                key = (path, seq, field, raw_price)
+                if key in seen:
+                    continue
+                seen.add(key)
+                stated = float(raw_price)
+                actual = float(getattr(bar, field))
+                decimals = len(raw_price.partition(".")[2])
+                tolerance = 0.5 * (10 ** (-decimals)) + 1e-12
+                if abs(stated - actual) > tolerance:
+                    errors.append(
+                        f"{path} K{seq}.{field} states {raw_price}, "
+                        f"but frozen bar value is {actual:.12g}"
+                    )
     return errors
 
 
@@ -431,7 +510,7 @@ def _validate_stage1_structured_facts(
     errors: list[str] = []
     errors.extend(_validate_pa_evidence_contract(stage1, frame))
     errors.extend(_validate_structure_level_sides(stage1, frame))
-    errors.extend(_validate_spike_transition_contract(stage1))
+    errors.extend(_validate_spike_transition_contract(stage1, frame))
     return errors
 
 
@@ -706,20 +785,13 @@ def _validate_structure_level_sides(stage1: dict[str, Any], frame: Any) -> list[
             errors.append(f"{field} may contain at most 3 levels")
         midpoints: list[float] = []
         for index, raw in enumerate(raw_levels):
-            match = _PRICE_LEVEL_RE.fullmatch(str(raw or ""))
-            if match is None:
+            bounds = parse_price_level_bounds(raw)
+            if bounds is None:
                 errors.append(
                     f"{field}[{index}] must be a positive numeric price or price range"
                 )
                 continue
-            first = float(match.group("first"))
-            second = float(match.group("second") or first)
-            if first <= 0 or second <= 0:
-                errors.append(
-                    f"{field}[{index}] must be a positive numeric price or price range"
-                )
-                continue
-            low, high = sorted((first, second))
+            low, high = bounds
             midpoints.append((low + high) / 2.0)
             if kind == "support" and high >= close:
                 errors.append(f"{field}[{index}] must be strictly below K1.close")
@@ -846,29 +918,62 @@ def _validate_pa_evidence_contract(stage1: dict[str, Any], frame: Any) -> list[s
     return errors
 
 
-def _validate_spike_transition_contract(stage1: dict[str, Any]) -> list[str]:
+def _validate_spike_transition_contract(
+    stage1: dict[str, Any],
+    frame: Any = None,
+) -> list[str]:
     evidence = stage1.get("pa_evidence")
     spike = evidence.get("spike_analysis") if isinstance(evidence, dict) else None
     if not isinstance(spike, dict):
         return []
     state = spike.get("post_anchor_state")
     errors: list[str] = []
-    if state == "pause_or_pullback_present":
-        if stage1.get("spike_stage") == "active":
-            errors.append(
-                "spike_stage=active conflicts with pa_evidence pause_or_pullback_present"
-            )
-        if stage1.get("market_phase") != "transitioning":
-            errors.append(
-                "market_phase must be transitioning after the first identified spike pause/pullback"
-            )
-        if not spike.get("first_pause_or_pullback_bar"):
-            errors.append(
-                "pa_evidence.spike_analysis requires first_pause_or_pullback_bar for a transition"
-            )
-    if state == "continuation_only" and spike.get("first_pause_or_pullback_bar") is not None:
+    known_seqs = {
+        int(getattr(bar, "seq", 0))
+        for bar in (getattr(frame, "bars", ()) if frame is not None else ())
+        if int(getattr(bar, "seq", 0) or 0) > 0
+    }
+    anchor_raw = spike.get("anchor_bar")
+    anchor_seq = _parse_k_seq(anchor_raw)
+    pause_raw = spike.get("first_pause_or_pullback_bar")
+    pause_seq = _parse_k_seq(pause_raw)
+    if anchor_seq is not None and known_seqs and anchor_seq not in known_seqs:
         errors.append(
-            "first_pause_or_pullback_bar must be null when post_anchor_state=continuation_only"
+            f"pa_evidence.spike_analysis.anchor_bar K{anchor_seq} not found "
+            "in current K-line frame"
+        )
+    if pause_seq is not None and known_seqs and pause_seq not in known_seqs:
+        errors.append(
+            "pa_evidence.spike_analysis.first_pause_or_pullback_bar "
+            f"K{pause_seq} not found in current K-line frame"
+        )
+    if (
+        state == "no_closed_bar_after_anchor"
+        and anchor_seq is not None
+        and known_seqs
+        and anchor_seq != min(known_seqs)
+    ):
+        errors.append(
+            "post_anchor_state=no_closed_bar_after_anchor requires anchor_bar=K1"
+        )
+    if (
+        state in {"continuation_only", "pause_or_pullback_present"}
+        and anchor_seq is not None
+        and known_seqs
+        and anchor_seq == min(known_seqs)
+    ):
+        errors.append(
+            f"post_anchor_state={state} requires at least one later closed bar "
+            "after anchor_bar"
+        )
+    if (
+        pause_seq is not None
+        and anchor_seq is not None
+        and pause_seq >= anchor_seq
+    ):
+        errors.append(
+            "first_pause_or_pullback_bar must be more recent than anchor_bar "
+            "(K sequence must be smaller)"
         )
     return errors
 

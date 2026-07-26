@@ -15,6 +15,7 @@ from pa_agent.config.paths import RECORDS_PENDING_DIR, SETTINGS_JSON_PATH  # noq
 from pa_agent.config.settings import load_settings  # noqa: E402
 from pa_agent.experiments.store import AnalysisExperimentStore  # noqa: E402
 from pa_agent.records.audit_store import AnalysisAuditStore  # noqa: E402
+from pa_agent.records.codec import load_record  # noqa: E402
 from pa_agent.records.quality_gate import (  # noqa: E402
     QualityThresholds,
     evaluate_analysis_quality,
@@ -79,9 +80,7 @@ def _load_completed_experiment_records(
                 missing_record += 1
                 continue
             try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                raw.pop("_partial_reason", None)
-                records.append(AnalysisRecord.model_validate(raw))
+                records.append(load_record(path).record)
             except (OSError, ValueError, TypeError):
                 invalid_json += 1
     return records, {
@@ -141,7 +140,7 @@ def main() -> int:
     listing.add_argument("--limit", type=int, default=100)
     experiments.add_argument("--limit", type=int, default=100)
     quality.add_argument("--limit-experiments", type=int, default=200)
-    quality.add_argument("--min-snapshots", type=int, default=20)
+    quality.add_argument("--min-snapshots", type=int, default=300)
     quality.add_argument("--min-repeatability-snapshots", type=int, default=20)
     quality.add_argument("--max-call-p50-ms", type=float, default=100_000)
     quality.add_argument("--max-call-p95-ms", type=float, default=150_000)
@@ -194,7 +193,6 @@ def main() -> int:
             audit_store.list_runs(
                 symbol=args.symbol,
                 timeframe=args.timeframe,
-                cohort_id=args.cohort_id,
                 limit=args.limit,
             )
         )

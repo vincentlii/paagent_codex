@@ -21,7 +21,7 @@ from pa_agent.experiments.pa_vpa_aabb import (
 
 @dataclass(frozen=True)
 class QualityThresholds:
-    min_unique_snapshots: int = 20
+    min_unique_snapshots: int = 300
     min_repeatability_snapshots: int = 20
     max_call_p50_latency_ms: float = 100_000.0
     max_call_p95_latency_ms: float = 150_000.0
@@ -69,25 +69,18 @@ def _semantic_roles(events: list[dict[str, Any]]) -> tuple[bool, bool]:
     pa_error = False
     vpa_error = False
     for event in events:
+        severity = str(event.get("severity") or "")
         category = str(event.get("category") or "")
-        if category in {"warning", "normalization"}:
+        if severity in {"warning", "normalization"} or category in {
+            "warning",
+            "normalization",
+        }:
             continue
-        stage = str(event.get("stage") or "")
-        fields = [
-            str(value)
-            for key in ("invalid_fields", "missing_fields")
-            for value in event.get(key, [])
-        ]
-        is_vpa_stage = stage in {"vpa_evidence", "joint_arbiter"}
-        if not fields:
-            if category in {"a", "b", "c", "d", "e"}:
-                vpa_error = vpa_error or is_vpa_stage
-                pa_error = pa_error or not is_vpa_stage
-            continue
-        for field in fields:
-            is_vpa = is_vpa_stage or field.startswith(("vpa:", "joint:"))
-            vpa_error = vpa_error or is_vpa
-            pa_error = pa_error or not is_vpa
+        owner = str(event.get("owner") or event.get("stage") or "")
+        if owner in {"vpa_evidence", "joint_arbiter"}:
+            vpa_error = True
+        elif owner in {"stage1", "stage2"}:
+            pa_error = True
     return pa_error, vpa_error
 
 
@@ -100,17 +93,20 @@ def _has_pa_grounding(record: Any) -> bool:
 
 
 def _has_vpa_information_increment(record: Any) -> bool:
-    sidecar = _value(record, "vpa_sidecar", {}) or {}
-    sidecar = sidecar if isinstance(sidecar, dict) else {}
-    context = _value(record, "vpa_evidence", None) or sidecar.get("stage1_context")
-    impact = sidecar.get("stage2_impact")
-    if not isinstance(context, dict) or not isinstance(impact, dict):
+    context = _value(record, "vpa_evidence", None)
+    joint = _value(record, "joint_decision", None)
+    arbitration = (
+        joint.get("joint_arbitration")
+        if isinstance(joint, dict) and isinstance(joint.get("joint_arbitration"), dict)
+        else {}
+    )
+    if not isinstance(context, dict):
         return False
     if context.get("data_status") == "unavailable":
         return (
             context.get("background_relation") == "insufficient_data"
             and context.get("entry_timing_relation") == "insufficient_data"
-            and impact.get("decision_effect") == "keep_brooks_baseline"
+            and arbitration.get("decision_effect") in {None, "keep_brooks_baseline"}
         )
     substantive = {
         "effort_result",
@@ -118,7 +114,7 @@ def _has_vpa_information_increment(record: Any) -> bool:
         "acceptance_rejection",
         "entry_timing",
     }
-    catalog = sidecar.get("evidence_catalog") or {}
+    catalog = _value(record, "vpa_catalog", {}) or {}
     evidence = (
         {
             str(item.get("evidence_id")): item
@@ -243,8 +239,7 @@ def evaluate_analysis_quality(
                     vpa_increment_missing.append(run_id)
                 if vpa_event:
                     vpa_semantic.append(run_id)
-                sidecar = _value(record, "vpa_sidecar", {}) or {}
-                role_execution = sidecar.get("role_execution") if isinstance(sidecar, dict) else {}
+                role_execution = _value(record, "role_runtime", {}) or {}
                 if not isinstance(role_execution, dict) or role_execution.get(
                     "authority_violations"
                 ):

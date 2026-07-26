@@ -609,12 +609,12 @@ def contains_retry_deliberation(text: object) -> bool:
     return len(_REPAIR_DELIBERATION_MARKER_RE.findall(value)) >= 2
 
 
-def validate_vpa_comparator_narrative(
+def classify_vpa_comparator_narrative(
     text: object,
     *,
     evidence_items: Iterable[dict[str, Any]],
     path: str,
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """Ground relative-volume wording in the exact program comparator used.
 
     This validates only reproducible relation language. It deliberately does
@@ -623,11 +623,12 @@ def validate_vpa_comparator_narrative(
     """
     value = str(text or "").strip()
     if not value:
-        return []
+        return [], []
     items = [item for item in evidence_items if isinstance(item, dict)]
     errors: list[str] = []
+    warnings: list[str] = []
     if _AMBIGUOUS_VOLUME_RE.search(value) and not _EXPLICIT_VOLUME_COMPARATOR_RE.search(value):
-        errors.append(
+        warnings.append(
             f"{path} uses relative-volume language without an explicit comparator"
         )
 
@@ -663,15 +664,10 @@ def validate_vpa_comparator_narrative(
         if not selectors:
             continue
 
-        expectations: dict[str, set[str]] = {}
-        for _, fact_key, expected, _ in claims:
-            expectations.setdefault(fact_key, set()).add(expected)
-        if len(selectors) > 1 and any(
-            len(expected_values) > 1 for expected_values in expectations.values()
-        ):
-            errors.append(
-                f"{path} binds conflicting comparator claims to multiple evidence "
-                "selectors; separate each claim into its own clause"
+        if len(selectors) > 1:
+            warnings.append(
+                f"{path} binds comparator language to multiple evidence selectors; "
+                "separate each claim into its own clause"
             )
             continue
 
@@ -686,4 +682,19 @@ def validate_vpa_comparator_narrative(
                         f"{path} {label} claim for {selector} conflicts with "
                         "program relation"
                     )
-    return errors
+    return errors, warnings
+
+
+def validate_vpa_comparator_narrative(
+    text: object,
+    *,
+    evidence_items: Iterable[dict[str, Any]],
+    path: str,
+) -> list[str]:
+    """Compatibility wrapper returning all comparator findings."""
+    errors, warnings = classify_vpa_comparator_narrative(
+        text,
+        evidence_items=evidence_items,
+        path=path,
+    )
+    return [*errors, *warnings]

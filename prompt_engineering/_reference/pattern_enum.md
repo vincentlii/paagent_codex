@@ -36,6 +36,8 @@
 
 - `trend_bull` / `trend_bear` / `doji` / `inside` / `outside_bull` / `outside_bear` / `flat` / `other`
 
+`inside` / `outside` 属于程序可复算的 `relation_to_previous`。Prompt 默认不要求重复输出；Schema 保留兼容，但若模型主动使用，必须与程序几何事实一致。
+
 ## entry_setup_type 建议枚举
 
 - `H1` / `H2` / `L1` / `L2` / `MTR` / `wedge` / `tr_boundary` / `breakout_pullback` / `EMA_pullback` / `triangle_breakout` / `none`

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import json
 
 from pa_agent.ai.coherence_checks import validate_stage1_coherence
+from pa_agent.ai.json_validator import JsonValidator, Ok
 from pa_agent.ai.stage1_normalizer import normalize_stage1
 from tests.integration.conftest import VALID_STAGE1, make_frame
 
@@ -74,3 +76,34 @@ def test_stage1_incremental_metadata_is_program_owned_fact() -> None:
     assert out["incremental_delta"]["new_closed_bars"] == ["K1", "K2"]
     assert "direction" in out["incremental_delta"]["changed_fields"]
     assert out["incremental_delta"]["summary"] == "LLM contextual summary"
+
+
+def test_numeric_structure_levels_are_ordered_without_changing_the_set() -> None:
+    raw = {
+        "support_levels": ["100", "105-107", "90"],
+        "resistance_levels": ["130", "120-122", "140"],
+        "gate_trace": [],
+    }
+
+    out = normalize_stage1(raw)
+
+    assert out["support_levels"] == ["105-107", "100", "90"]
+    assert out["resistance_levels"] == ["120-122", "130", "140"]
+    assert sorted(out["support_levels"]) == sorted(raw["support_levels"])
+    assert sorted(out["resistance_levels"]) == sorted(raw["resistance_levels"])
+
+
+def test_stage1_validator_audits_level_order_normalization() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["support_levels"] = ["2020", "2030"]
+    stage1["resistance_levels"] = ["2060", "2050"]
+
+    result = JsonValidator().validate("stage1", json.dumps(stage1))
+
+    assert isinstance(result, Ok)
+    assert result.obj["support_levels"] == ["2030", "2020"]
+    assert result.obj["resistance_levels"] == ["2050", "2060"]
+    assert {event["path"] for event in result.normalization_events} == {
+        "support_levels",
+        "resistance_levels",
+    }

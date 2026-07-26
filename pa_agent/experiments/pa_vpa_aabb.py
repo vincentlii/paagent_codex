@@ -24,6 +24,7 @@ from pa_agent.ai.vpa_measurements import (
     vpa_catalog_id,
 )
 from pa_agent.data.base import KlineFrame
+from pa_agent.data.snapshot_identity import canonical_market_snapshot_hash
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.quality.runtime_fingerprint import (
     analysis_runtime_fingerprint as _shared_runtime_fingerprint,
@@ -219,15 +220,13 @@ def freeze_experiment_input(
     ):
         raise ValueError("analysis_fingerprint must be a SHA-256 hex digest")
     runtime_fingerprint = runtime_fingerprint.lower()
-    market_snapshot_hash = _stable_hash(
-        {
-            "symbol": frame.symbol,
-            "timeframe": frame.timeframe,
-            "kline_data": serialize_frame_bars(frame),
-            "snapshot_context": snapshot_context,
-            "htf_context": htf_snapshot,
-            "htf_kline_data": htf_bars,
-        }
+    market_snapshot_hash = canonical_market_snapshot_hash(
+        symbol=frame.symbol,
+        timeframe=frame.timeframe,
+        kline_data=serialize_frame_bars(frame),
+        snapshot_context=snapshot_context,
+        htf_context=htf_snapshot,
+        htf_kline_data=htf_bars,
     )
     cohort_id = _cohort_id(
         provider_fingerprint=provider_fingerprint,
@@ -272,15 +271,13 @@ def _record_frozen_input_hash(record: AnalysisRecord) -> str:
 
 
 def _record_market_snapshot_hash(record: AnalysisRecord) -> str:
-    return _stable_hash(
-        {
-            "symbol": record.meta.symbol,
-            "timeframe": record.meta.timeframe,
-            "kline_data": record.kline_data,
-            "snapshot_context": record.snapshot_context,
-            "htf_context": record.htf_context,
-            "htf_kline_data": record.htf_kline_data,
-        }
+    return canonical_market_snapshot_hash(
+        symbol=record.meta.symbol,
+        timeframe=record.meta.timeframe,
+        kline_data=record.kline_data,
+        snapshot_context=record.snapshot_context,
+        htf_context=record.htf_context,
+        htf_kline_data=record.htf_kline_data,
     )
 
 
@@ -473,8 +470,6 @@ def validate_aabb_records(records: list[AnalysisRecord]) -> dict[str, Any]:
             errors.add("persisted_market_snapshot_hash_mismatch")
         if _record_cohort_id(record) != context.get("cohort_id"):
             errors.add("persisted_cohort_id_mismatch")
-        if bool(context.get("first_pass_clean")) != first_pass_clean(record):
-            errors.add("first_pass_classification_mismatch")
         if any(
             bool(call.get("provider_fallback_used"))
             for call in record.call_attempts
@@ -498,7 +493,7 @@ def validate_aabb_records(records: list[AnalysisRecord]) -> dict[str, Any]:
         if expected_group == "A":
             if any(
                 value is not None
-                for value in (record.vpa_evidence, record.joint_decision, record.vpa_sidecar)
+                for value in (record.vpa_catalog, record.vpa_evidence, record.joint_decision)
             ):
                 errors.add("a_arm_vpa_leakage")
             if any(
@@ -508,31 +503,19 @@ def validate_aabb_records(records: list[AnalysisRecord]) -> dict[str, Any]:
             ):
                 errors.add("a_arm_vpa_call_leakage")
         else:
-            sidecar = record.vpa_sidecar if isinstance(record.vpa_sidecar, dict) else {}
-            catalog = sidecar.get("evidence_catalog") if isinstance(sidecar, dict) else {}
+            catalog = record.vpa_catalog if isinstance(record.vpa_catalog, dict) else {}
             if not isinstance(catalog, dict) or catalog.get("catalog_id") != context.get(
                 "catalog_id"
             ):
                 errors.add("b_arm_catalog_drift")
             elif vpa_catalog_id(catalog) != context.get("catalog_id"):
                 errors.add("b_arm_catalog_content_drift")
-            role_execution = sidecar.get("role_execution") if isinstance(sidecar, dict) else {}
+            role_execution = record.role_runtime if isinstance(record.role_runtime, dict) else {}
             if (
                 not isinstance(role_execution, dict)
                 or role_execution.get("provider_fallback_allowed") is not False
             ):
                 errors.add("b_arm_role_fallback_boundary_missing")
-            if record.vpa_evidence != sidecar.get(
-                "vpa_report"
-            ) or record.vpa_evidence != sidecar.get("stage1_context"):
-                errors.add("b_arm_vpa_representation_drift")
-            joint_arbitration = (
-                record.joint_decision.get("joint_arbitration")
-                if isinstance(record.joint_decision, dict)
-                else None
-            )
-            if joint_arbitration != sidecar.get("joint_arbitration"):
-                errors.add("b_arm_joint_representation_drift")
     return {"valid": not errors, "errors": sorted(errors)}
 
 
@@ -706,7 +689,6 @@ class PaVpaAabbRunner:
                 client_instance_token=execution.client_instance_token,
                 stage1_request_hash=stage1_hash,
             )
-            context["first_pass_clean"] = first_pass_clean(execution.record)
             record = execution.record.model_copy(
                 update={
                     "schema_version": max(4, int(execution.record.schema_version)),
@@ -733,7 +715,7 @@ class PaVpaAabbRunner:
                         "run_id": record.meta.run_id,
                         "record_path": None,
                         "run_status": (record.run_outcome or {}).get("status"),
-                        "first_pass_clean": context["first_pass_clean"],
+                        "first_pass_clean": first_pass_clean(record),
                         "treatment_received": bool(
                             group == "B"
                             and (record.run_outcome or {}).get("official_path") == "joint"
@@ -763,7 +745,7 @@ class PaVpaAabbRunner:
                 "run_id": record.meta.run_id,
                 "record_path": str(getattr(persisted, "path", "")),
                 "run_status": (record.run_outcome or {}).get("status"),
-                "first_pass_clean": context["first_pass_clean"],
+                "first_pass_clean": first_pass_clean(record),
                 "treatment_received": bool(
                     group == "B" and (record.run_outcome or {}).get("official_path") == "joint"
                 ),

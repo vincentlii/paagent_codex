@@ -768,7 +768,9 @@ Barbwire / 极窄区间需综合识别：
 是：
 - 阶段一 gate_result=proceed，cycle_position 为宽通道/常规通道/交易区间/趋势型交易区间（或尖峰回撤结构位），且价格靠近 **支撑/阻力/通道边界/EMA/顺势回撤位**。
 - **依据是周期 + 方向背景 + 结构位**，不要求独立信号棒。
-- `signal_bar.bar=null`，`quality=invalid/weak`，`pattern=none`；`entry_bar` 设 not_triggered/pending。
+- `signal_bar.bar=null`，`quality=invalid/weak`，`pattern=none`；`entry_bar` 设
+  `bar=null`、`strength=not_triggered`、`freshness=pending`、
+  `follow_through=null`、`still_valid=null`。
 - **必须继续 §10.1→10.2→10.3→§11**，尝试输出 `order_type=限价单` 及三价；不得在 watch_points 代替 decision 三价。
 
 **§9.0P=是 时的 K1 对照（仅计划型限价）：**
@@ -794,7 +796,7 @@ Barbwire / 极窄区间需综合识别：
 2. 定 **take_profit_price（TP1）**（最近有效结构目标）
 3. 定 **take_profit_price_2（TP2）**（更远结构目标：MM、通道对边远端、区间翻测等；**必填**）
 4. 定 **stop_loss_price** 于结构失效位
-5. RR 仅用于校验：若 RR ≥ 1.0，保留有结构依据的三价；不得为了把 RR 调到某个数值而移动 stop 或缩小目标。
+5. RR 是交易者方程的输入而非独立 Gate：保留有结构依据的三价；不得为了把 RR 调到某个数值而移动 stop、缩小目标或机械上调胜率。
 6. 若 RR < 1.0：只可改选另一个仍有效的 entry、目标或结构失效位；**禁止**向外扩 stop，也禁止把 stop 贴进噪音。仍无法 ≥1.0 → reject
 7. 几何校验：做多 stop<entry<TP1<TP2；做空 TP2<TP1<entry<stop
 
@@ -960,14 +962,14 @@ Barbwire / 极窄区间需综合识别：
 - 允许下单。
 
 - 基本要求：
-- 刮头皮 / 波段 / 趋势：**TP1** 以最近有结构支撑的价位为准；程序要求 RR ≥ 1.0 且交易者方程通过。RR 不授权调整结构止损。
+- 刮头皮 / 波段 / 趋势：**TP1** 以最近有结构支撑的价位为准；程序复算交易者方程，不使用跨 Setup 固定 RR 下限。RR 不授权调整结构止损或机械上调胜率。
 - **TP2** 为更远结构目标（MM 等），必填，不参与 §10.3。
 - **反转 / MTR**：仅诊断，**不进入 §10.3 下单路径**；`order_type=不下单`。
 - 数值检验：胜率%×回报 > (100−胜率)%×风险（回报、风险**仅来自 TP1**）才允许下单。
 
 **结构目标与止损适配（全场景）：**
 - 先按结构定 entry、TP1、TP2、结构失效 stop。
-- 若 RR ≥ 1.0：保留有独立结构依据的 TP1/TP2 与 stop；不得为了数值平衡而移动 stop。
+- 若程序复算的交易者方程为正：保留有独立结构依据的 TP1/TP2 与 stop；不得为了数值平衡而移动 stop 或机械上调胜率。
 - 若 RR < 1.0：只可改选另一个仍有效的 entry、目标或结构失效位；**禁止**向外扩 stop，也不能贴噪音收紧 stop；仍 < 1.0 且无法合理修正 → reject。
 - **禁止**缩小 TP1 来迎合 RR；结构目标有磁力效应。
 
