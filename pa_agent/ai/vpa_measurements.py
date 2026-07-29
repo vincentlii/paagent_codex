@@ -84,6 +84,16 @@ def _sign_label(value: float | None) -> str:
     return "flat"
 
 
+def net_close_progress_direction_relation(facts: Mapping[str, Any]) -> str:
+    """Compare two program-computed sequence directions without market labels."""
+    current = str(facts.get("current_progress_direction") or "unavailable").lower()
+    prior = str(facts.get("prior_progress_direction") or "unavailable").lower()
+    directional = {"positive", "negative"}
+    if current not in directional or prior not in directional:
+        return "flat_or_unavailable"
+    return "same" if current == prior else "opposite"
+
+
 def _percentile_rank(value: float, sample: list[float]) -> float | None:
     if not sample:
         return None
@@ -852,6 +862,8 @@ def render_vpa_measurements(
                 f"{facts.get('current_progress_direction')} vs "
                 f"{facts.get('prior_net_close_progress_atr')}/"
                 f"{facts.get('prior_progress_direction')}; "
+                "net_progress_direction_relation="
+                f"{net_close_progress_direction_relation(facts)}; "
                 f"abs_progress_relation={facts.get('current_vs_prior_abs_progress_relation')}; "
                 f"spread_atr={facts.get('current_cumulative_spread_atr')} vs "
                 f"{facts.get('prior_cumulative_spread_atr')}; "

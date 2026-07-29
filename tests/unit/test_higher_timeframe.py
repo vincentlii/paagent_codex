@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 
 from pa_agent.ai.higher_timeframe import (
     collect_higher_timeframe_warnings,
@@ -241,3 +242,48 @@ def test_higher_timeframe_citations_use_an_unambiguous_namespace() -> None:
         "H0" in error
         for error in validate_higher_timeframe_output(zero, context)
     )
+
+
+def test_higher_timeframe_spatial_label_must_match_current_close() -> None:
+    context = fetch_higher_timeframe_context(
+        source=_FakeSource(),
+        source_kind="tradingview",
+        symbol="XAUUSD",
+        current_timeframe="15m",
+        bar_count=20,
+        now_ms=1_700_000_000_000,
+    )
+    htf_frame = context["frame"]
+    h2 = next(bar for bar in htf_frame.bars if bar.seq == 2)
+    frame = make_frame()
+    below_h2 = replace(
+        frame.bars[0],
+        open=float(h2.low) - 12.0,
+        high=float(h2.low) - 5.0,
+        low=float(h2.low) - 15.0,
+        close=float(h2.low) - 10.0,
+    )
+    below_frame = replace(frame, bars=(below_h2, *frame.bars[1:]))
+    claim = {"htf_context": "HTF.H2 低点是当前价格的下方磁力位。"}
+
+    errors = validate_higher_timeframe_output(
+        claim,
+        context,
+        current_frame=below_frame,
+    )
+
+    assert any("spatial relation" in error for error in errors)
+
+    above_h2 = replace(
+        frame.bars[0],
+        open=float(h2.low) + 8.0,
+        high=float(h2.low) + 15.0,
+        low=float(h2.low) + 5.0,
+        close=float(h2.low) + 10.0,
+    )
+    above_frame = replace(frame, bars=(above_h2, *frame.bars[1:]))
+    assert validate_higher_timeframe_output(
+        claim,
+        context,
+        current_frame=above_frame,
+    ) == []

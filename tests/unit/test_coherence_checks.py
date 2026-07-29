@@ -384,6 +384,29 @@ def test_middle_half_close_cannot_be_described_as_near_the_bar_high() -> None:
     )
 
 
+def test_exact_close_at_low_wording_is_a_quality_warning_not_hard_failure() -> None:
+    frame = make_mixed_frame()
+    k3 = replace(
+        frame.bars[2],
+        open=4073.0,
+        high=4080.0,
+        low=4070.0,
+        close=4074.6,
+    )
+    frame = replace(frame, bars=(*frame.bars[:2], k3, *frame.bars[3:]))
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["bar_by_bar_summary"][2]["reason"] = "K3 收盘在低点，延续仍待确认。"
+
+    hard = _validate_stage1_hard(stage1, kline_frame=frame)
+    warnings = collect_stage1_quality_warnings(stage1, kline_frame=frame)
+
+    assert not any("close position" in item for item in hard)
+    assert any(
+        "close position" in item and "close_zone=middle_half" in item
+        for item in warnings
+    )
+
+
 def test_explicit_bar_price_claim_must_match_the_frozen_bar() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["gate_trace"][0]["reason"] = "K6低点为2020.00，随后价格重心上移。"

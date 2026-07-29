@@ -84,6 +84,8 @@ def test_task_identity_ignores_capture_clock_but_changes_with_market_facts() -> 
 
 def test_effective_vpa_mode_changes_analysis_cohort_not_market_snapshot() -> None:
     off_settings = Settings()
+    shadow_settings = Settings()
+    shadow_settings.prompt.vpa_mode = "shadow"
     soft_settings = Settings()
     soft_settings.prompt.vpa_mode = "soft"
 
@@ -103,10 +105,20 @@ def test_effective_vpa_mode_changes_analysis_cohort_not_market_snapshot() -> Non
         venue="OANDA",
         analysis_fingerprint="b" * 64,
     )
+    shadow = create_frozen_analysis_task(
+        _frame(),
+        None,
+        shadow_settings,
+        source="tradingview",
+        venue="OANDA",
+        analysis_fingerprint="b" * 64,
+    )
 
     assert soft.snapshot_hash == off.snapshot_hash
     assert soft.cohort_id != off.cohort_id
     assert soft.task_id != off.task_id
+    assert soft.cohort_id == shadow.cohort_id
+    assert soft.task_id == shadow.task_id
 
 
 def test_runtime_fingerprint_covers_source_and_prompt_assets(tmp_path) -> None:

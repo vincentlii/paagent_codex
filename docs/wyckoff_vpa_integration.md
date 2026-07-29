@@ -6,14 +6,14 @@
 
 核心分工：
 
-> 程序测量事实；Brooks PA 定义市场框架与 Setup；VPA 补充或挑战独立量价证据；LLM 裁决当前 Entry Attempt；程序验证输出与订单合法性。
+> 程序测量事实；Brooks PA 定义市场框架、Setup 与正式 Entry Attempt；VPA 补充或挑战独立量价证据；研究 Joint 评估可能影响；程序验证输出与订单合法性。
 
 本次融合解决的是事实可靠性、分析可审计性、VPA 信息增量和实验有效性，不直接证明盈利能力，也不以单次行情结果调整规则。
 
 - VPA 不是第二套交易系统、第二个 Strategy Router 或机械 Gate。
 - Brooks Router 始终是唯一策略路由，只读取已验证的 Stage 1 枚举与 pattern keys。
 - 程序不机械识别 Spring、UT/UTAD、SOS/SOW、LPS/LPSY、Absorption 或 Exhaustion。
-- `shadow` 与 `soft` 共用同一 PA/VPA/Joint 分析链，但正式结果权限不同。
+- 生产只允许 `off` 与 `shadow`；`soft`/Joint 仅存在于隔离的 A/A/B/B 研究 B 臂。
 - VPA 关闭时，Prompt、测量、Schema 要求和历史 VPA 字段都不得进入原 PA 链路。
 
 ## 2. 职责分配
@@ -25,7 +25,7 @@
 | Brooks Router | 根据已验证结构化 PA 字段选择策略文件 | 读取自由文本、VPA 标签或指标阈值猜策略 |
 | PA-only Arbiter | 仅按 PA 假设与 Brooks 策略知识形成 baseline decision | 读取 VPA Prompt、catalog 或历史 VPA 字段 |
 | VPA Evidence Analyst | 独立检查量价证据并支持、挑战或声明信息不足 | 创建 Setup、改单、改方向、改胜率 |
-| Joint Decision Arbiter | 在已有 PA candidate 内校准当前 Entry Attempt 的时机与可信度 | 绕过 Gate、创建反向交易、修改冻结胜率 |
+| Joint Decision Arbiter（仅研究） | 在已有 PA candidate 内评估时机与可信度的可能变化 | 进入生产、绕过 Gate、创建反向交易、修改冻结胜率 |
 | Validator | Schema、事实一致性、引用范围、权限边界、订单数学和路径一致性 | 裁定某个专业解释是否唯一正确 |
 | Audit | 保存调用、差异、复盘上下文、结果标签和性能数据 | 把反事实回放冒充真实成交或盈利 |
 
@@ -62,22 +62,20 @@ Volume seasonality 使用数据层提供的、早于当前分析窗口的同源�
 1. PA Framework Analyst 与 PA-only Arbiter，得到不含任何 VPA 信息的 baseline。
 2. 程序把已验证 PA 输出封装为 `PaHypothesisSet`。
 3. VPA Evidence Analyst 只读取冻结事实、PA 假设和按 Context 注入的 VPA 知识，生成 `VpaEvidenceReport`。
-4. Joint Decision Arbiter 只在既有 PA candidate 内生成 `JointDecisionProposal`。
-5. PA-only baseline 是唯一正式 GUI、告警和订单结果；Joint 仅保存供复盘。
+4. PA-only baseline 是唯一正式 GUI、告警和订单结果；VPA report 作为旁路摘要供复盘。
 
-VPA 或 Joint 失败不会使 PA 分析伪装失败；记录明确标记 `degraded_pa_only`。取消则始终是
-`cancelled`，不得被当成降级成功。
+VPA 失败不会使 PA 分析伪装失败；记录标记 `completed_with_warnings`，并保持
+`official_path=pa_only`。取消则始终是 `cancelled`，不得被当成降级成功。
 
-### `soft`
+### `soft`（仅研究）
 
-执行与 `shadow` 相同的三角色链路。程序把合法 `JointDecisionProposal.decision_patch` 应用到
-冻结 PA baseline 并重跑 Stage 2 校验，生成的 materialized decision 是正式结果。
-VPA 或 Joint 在一次定向修复后仍失败时，正式结果退化为 PA-only，并标记
-`degraded_pa_only`。用户置信度阈值只对最终正式结果应用一次。
+只有 A/A/B/B executor 可授权 effective=`soft`，并在 B 臂中运行 Joint。普通 GUI、Headless
+或监控配置请求 `soft` 时会显式收敛为 effective=`shadow`，记录 `soft_not_promoted` warning，
+不会采用 Joint 结果。用户置信度阈值只对生产正式 PA 结果应用一次。
 
 ## 4. A/A/B/B 实验有效性
 
-生产 Shadow/Soft 不是 A/B，模型自述的 baseline comparison 也不是反事实。真正实验仅由
+生产 Shadow 不是 A/B，模型自述的 baseline comparison 也不是反事实。真正实验仅由
 `pa_vpa_aabb_v1` 离线运行器针对同一冻结输入执行四次独立完整分析：A1/A2 为 `off`，B1/B2
 为 `soft`。顺序按冻结输入 hash 确定为 ABBA 或 BAAB，降低固定顺序和服务端时漂影响。
 
@@ -133,20 +131,30 @@ VPA 或 Joint 在一次定向修复后仍失败时，正式结果退化为 PA-on
 - `source=volume` 只说明该 evidence 含有量字段，不等于存在 VPA 信息增量。至少一个因果基线、前棒、seasonality 或相邻序列比较关系必须为程序实际算出的 `above/equal/below`；只有 raw volume、比较器均为 `unavailable` 时必须按证据不足处理。
 - `real`、`tick`、`proxy`、`unknown` 按数据源元数据解释。tick/proxy 只能做同源相对比较，unknown 不得声称真实成交量。
 - `vpa-c` 只提供相邻三棒窗口的原始比较，不自动切分 wave 或生成信号。
+- `vpa-c` 的两个窗口会临时派生 `net_progress_direction_relation=same|opposite|flat_or_unavailable`，
+  仅防止把同向净推进写成反向或把负向净推进窗口直接标成反弹段。该字段不写回冻结 catalog，
+  也不判断两个窗口是否构成可比的 Brooks leg。
 - Seasonality 仅在数据层提供同品种、同来源、同时间桶的足量历史时可用。当前快照没有该历史时明确记录 `history_not_provided`。
 
 VPA Evidence Analyst 必须逐字复制 `catalog_id`，只能引用目录中存在的 evidence ID。
 `observations[].bar_range` 由程序根据 evidence ID 并集生成，模型不得填写。放量、缩量、扩张、
 收缩等表述必须给出明确比较对象，并与程序关系一致。
+解释中出现的明确 `K#` 若唯一对应单棒 evidence，程序会补入该 evidence ID 并记录
+normalization；若已被所引窗口覆盖则不重复补。不存在、歧义或无法覆盖的 K 引用仍拒绝。
 
 ## 7. VPA Schema 与权限
 
 PA 链先固化为 `PaHypothesisSet`：
 
-- `primary` 与 `alternatives`
-- `setup_candidates`
+- `primary` 与 `alternative`
+- `setup_candidates`：真实 `order_type`、方向、entry/stop/TP、可选 Setup/trigger/invalidation
+- `trade_math`：程序复算 risk、TP1 reward、RR、盈亏平衡胜率、PA 主观先验和期望值
+- `window_context`：仅对 Stage 1 已引用 `PA.WINDOW` 输出 high/low、极值 K 线及各价格从低点起的数值位置，不生成“上沿/中部”标签
 - `cycle_position`、`direction`、`gate_result`
-- 源 Stage 1 digest
+- 冻结价格 snapshot hash 与完整 handoff digest
+
+该对象只能由 `compile_pa_handoff(...)` 生成。限价单/市价单允许 `entry_rule=null`；缺少可选
+Setup 或 invalidation 文案时保持 null，不得由程序猜测，也不得静默丢失合法 Entry Attempt。
 
 `VpaEvidenceReport` 只保存：
 
@@ -177,8 +185,13 @@ VPA 字段。
 `trigger` 与 `requires_closed_bar=true`，并明确等待下一根已收盘 K 线，把
 acceptance/rejection 锚定到具体 `K#` 高低点或已命名结构；若提及未来量能变化，还必须写明
 因果基线、前一根已收盘棒或其他程序可复算比较器。后者使用 `trigger=null` 与
-`requires_closed_bar=false`，且只适用于没有 PA Entry Attempt 的场景。中文 `K线` /
+`requires_closed_bar=false`，适用于没有独立 VPA 后续验证条件的场景，包括 neutral、
+insufficient_data 或没有 PA Entry Attempt。中文 `K线` /
 `K 线` 的空白差异只属于语法差异，不得改变语义判定。
+
+`ENTRY_ATTEMPT_CONTEXT` 明确当前是否存在可评价的 PA candidate。没有 candidate 时，程序把
+`entry_timing_relation` 收敛为 `insufficient_data`，不触发 LLM 重试；VPA 仍可输出背景量价信息、
+竞争解释和下一根已收盘 K 线的证据观察。这不是 VPA Gate，也不降低 PA 交易频率。
 
 `decision_effect` 只允许 `keep_brooks_baseline`、`require_confirmation`、`prefer_retest`、`lower_confidence`、`reject_current_attempt`。数据可用且 Stage 2 实际执行时，必须引用至少一项 Stage 1 已验证 evidence；任何非 baseline effect 还必须引用至少一项含真实相对量比较器的 evidence。无证据时只能明确 `neutral` 或 `insufficient_data`。
 
@@ -191,17 +204,26 @@ VPA 不得：
 - 修改 `estimated_win_rate` 或 Stage 2 `diagnosis_confidence`。
 - 仅依赖 PA 已有价格结构，伪装成独立 VPA 支持或冲突。
 
-Joint 可以影响现有 `trade_confidence`、`watch_points`、`risk_assessment`、entry timing 和
+研究 Joint 可以影响实验臂中的 `trade_confidence`、`watch_points`、`risk_assessment`、entry timing 和
 trigger requirement。`keep_brooks_baseline` 必须为空补丁；中性或证据不足不得改 baseline。
-Shadow 的正式结果仍使用 PA-only baseline；Soft 才使用 materialized Joint 结果。
+生产 Shadow 始终使用 PA-only baseline；materialized Joint 结果只属于研究 B 臂。
 
 Validator 只判断事实与权限，不判断某个 Spring、Absorption 或 Exhaustion 解释是否专业上唯一正确。
 
 正式 Role Validator 只把无歧义契约设为 hard error：未知 evidence ID、目录身份不一致、
 结构化关系缺少相对量证据、越权改变 PA baseline、明确引用 K0，或 `K#` 超出所引 evidence/
 冻结闭盘窗口。数字转抄、自由文本比较措辞、命名时段、参与者归因和 VPA 信息增量不足均为
-可审计 warning，不触发重试或中断分析；这些 regex 发现不能升级成隐性交易 Gate。VPA/Joint
-角色即使最终 hard failure，也只能降级为已验证 PA-only，不得使整次 PA 分析失败。
+可审计 warning，不触发重试或中断分析；这些 regex 发现不能升级成隐性交易 Gate。生产 VPA
+最终 hard failure 只形成 warning；研究 Joint hard failure 只能让该 B 臂保留 PA-only，不得使
+已验证 PA 分析失败。
+
+唯一新增的自由文本 hard check 是可复算关系的明确反述：相邻窗口净推进同向/反向、带明确
+K 范围的窗口方向标签，以及 HTF 已引用 OHLC 点位相对当前 K1.close 的上/下方。它们不判断
+Absorption、Exhaustion、Spring、Test、支撑阻力或磁力位是否专业成立。
+
+显式 `sequence_claim` 的倒序是 hard error；两个 evidence 窗口重叠时，该关系无法证明先后，
+程序只删除这一条 claim 并记录 normalization + warning，保留其余 VPA observation，避免一个
+局部关系错误拖垮整个 Shadow 报告。
 
 ## 8. PA grounding 与高周期
 
@@ -216,6 +238,8 @@ Validator 只判断事实与权限，不判断某个 Spring、Absorption 或 Exh
 - HTF 相关解释必须引用 `HTF.H#`，不得用 Brooks `H1/H2` 形态标签冒充高周期 K 线证据，也不得复写高周期数值。VPA 不跨周期比较 raw volume 或 RVOL。
 - 自由文本中的普通 `K#`、结构化 `K#-K#` 范围与 `HTF.H#` 必须使用共享解析器。解析器需支持中文紧邻文本和常见横线，不得把 `PA.*` fact ID 内的 `K#` 当成普通 K 线引用。
 - HTF 越界校验以实际注入的序号集合为准，同时检查单点与范围两个端点；`H0`、缺失序号和超出注入集合的序号均拒绝。
+- HTF 文本把某个明确 `HTF.H#` OHLC 点位称作上方/下方目标、水平或磁力位时，空间方向必须
+  相对当前周期 K1.close 成立；程序只核对价格在哪一侧，不决定该点位是否有结构意义。
 - PA 极值声明和 VPA 比较声明只能使用同一语义子句内的 `K#`、`PA.*` 或 `evidence_id` 作为证据，不得从后续子句借用引用。VPA 逗号仅在两侧都构成独立的“引用 + 比较声明”时分句，避免将 `evidence_id: interpretation` 拆开。
 
 Validator 的语义错误必须以真实 JSON 字段路径开头。它可以核对显式结构化引用或同一局部表达中的确定事实，但不得从自由文本中选择一个范围，再把其他分句的数字猜测性绑定到该范围；尤其禁止恢复自然语言阳阴棒计数复算器。
@@ -235,7 +259,7 @@ assistant turn，并要求只修复反馈列出的字段或引用、其余值逐
 - Stage 1 可以让 Gate 通过但不定义当前 Setup；这表示允许 Stage 2 基于已冻结的市场框架、
   方向和 Brooks 路由独立完成 Setup、trigger、invalidation 与订单裁决。Stage 1 的
   `entry_setup` 只是框架提示；只有完整 Stage 2 计划通过校验后，程序才建立
-  `PaSetupCandidate` 交给 Joint 裁决。
+  `PaSetupCandidate` 供 VPA 对照，并可在隔离研究中交给 Joint 裁决。
 - entry、stop、TP1、TP2 必须各有结构依据。RR 是复算结果，不能通过扩大止损、把止损塞进噪音或缩小目标凑方程。
 - §9.0P 计划型限价只校验做多 `entry < K1.close`、做空 `entry > K1.close`。程序不因 K1 历史影线触价猜测未来挂单失效。
 - 未提供已验证 tick size 时，程序不猜测、不静默改价。
@@ -248,7 +272,7 @@ JSON record 是完整审计源；SQLite `records/audit/analysis.sqlite3` 是可�
 索引保存：
 
 - PA/VPA 结构化摘要和 `review_context_json`。
-- `PaHypothesisSet`、`VpaEvidenceReport`、`JointDecisionProposal` 与明确 `RunOutcome`。
+- `PaHypothesisSet`、`VpaEvidenceReport` 与明确 `RunOutcome`；`JointDecisionProposal` 仅存在于研究 record。
 - 离线实验 manifest、冻结输入 hash、ABBA/BAAB 顺序，以及四臂的 assignment、处理接收、first-pass、持久化和失败状态。
 - 每次调用的 arm、stage、attempt、request/response hash、latency、tokens 和 validator status。
 - 每次失败或兼容归一化的原始响应、字段路径、合法枚举、实际重试提示和 normalization before/after。
@@ -258,7 +282,7 @@ JSON record 是完整审计源；SQLite `records/audit/analysis.sqlite3` 是可�
 `analysis_outcomes` 只记录人工确认的执行结果。`counterfactual_outcomes` 只评估冻结计划，不代表真实 fill 或 live PnL。market order 缺真实 fill、同 K 入场与离场、同 K 同触 stop/target、突破跳空越价等情况必须保留为 unsupported/ambiguous。
 
 每条 record 的反事实只回放该 record 的正式订单，并在派生索引中标记为 `arm=official`。A/B 对照通过四条独立 record 的 experiment arm
-归组完成，禁止从一条生产 Shadow/Soft record 合成第二个“VPA arm”。
+归组完成，禁止从一条生产 Shadow record 合成第二个“VPA arm”。
 
 常用命令：
 
@@ -288,6 +312,8 @@ python tools/run_pa_vpa_aabb.py records/pending/<source-record>.json
 
 `quality` 默认选择最近一个完成且 protocol-valid 的 cohort；使用 `--cohort-id` 可显式复核旧 cohort。
 `summary` 与 `counterfactual` 也支持该参数。跨 cohort 的默认汇总必须标记为 descriptive only，不能用于晋级。
+本次 VPA core、证据渲染与 Validator 变更会改变 source/prompt digest；后续 A/A/B/B 必须建立
+新 cohort，不得与修改前样本合并计算 VPA lift。
 
 Gate 即使通过也固定返回 `ready_for_soft=false`。正式启用前还必须独立验收 matched counterfactual outcomes、交易频率稳定性，以及包含手续费和滑点的样本外表现。
 

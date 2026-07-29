@@ -37,10 +37,12 @@ The rescue release keeps the project principle unchanged:
    invalid formats, wrong-side levels, price-action geometry conflicts and explicit
    `K# + OHLC field + price` contradictions remain hard failures. Display rounding is
    allowed; market interpretation is not inferred from prose.
-4. Stage 1 alone cannot create an executable PA setup. A setup candidate exists only
-   after a valid PA-only Stage 2 provides an order, entry rule and invalidation. VPA
-   may support, challenge or time that candidate; it may not create one, reverse its
-   direction or change `estimated_win_rate`.
+4. Stage 1 alone cannot create an executable PA setup. `compile_pa_handoff(...)` is the
+   only PA-to-VPA/Joint compiler and consumes validated Stage 1/Stage 2 plus the frozen
+   price snapshot. A candidate exists for every valid executable order; breakout orders
+   retain their required basis/rule, while limit and market orders may legitimately have
+   `entry_rule=null`. Missing Setup prose or analytical invalidation remains explicit null
+   instead of being invented or silently turning the candidate into an empty list.
 5. TradingView resolves and pins provider venue and symbol for one subscription.
    Short-lived data caching must not trigger a new auto-resolution. Closed bars are
    determined from the absolute UTC open time plus timeframe duration.
@@ -49,7 +51,7 @@ The rescue release keeps the project principle unchanged:
    different counterfactual input.
 7. A/A/B/B uses four registered independent arms over one frozen snapshot, isolated
    clients and an ABBA/BAAB order. SQLite remains the query store and an atomic JSON
-   manifest is written for portable audit. Production Shadow or Soft runs are not
+    manifest is written for portable audit. Production Shadow runs are not
    presented as counterfactual A/B evidence.
 8. Research quality requires at least 300 independent `market_snapshot_hash` values
    within one cohort before claims about VPA lift are accepted. Duplicate runs measure
@@ -71,20 +73,37 @@ The rescue release keeps the project principle unchanged:
     - deterministic normalization is allowed only where the declared state or supplied
       numbers imply one representation, and every material change is audited;
     - professional wording, non-unique PA/VPA interpretation and terminology quality are
-      warnings. They never trigger a model retry or discard an otherwise valid analysis.
+    warnings. They never trigger a model retry or discard an otherwise valid analysis.
+    A VPA `sequence_claim` whose two evidence windows overlap is deterministically removed
+    with normalization plus warning because it cannot express an ordered response; the
+    containing observation remains usable. A strictly reversed claim remains a hard error.
 13. Auxiliary next-bar and next-cycle forecasts cannot invalidate the PA trade decision.
     Valid probability distributions receive a deterministic argmax label; missing or
     malformed auxiliary forecasts degrade to `unpredictable` with an audit event.
 14. Brooks Trader Equation, not a universal reward:risk floor, owns deterministic trade
-    expectancy. A sub-1:1 candidate is legal when its model-estimated probability and
-    program-computed risk/reward produce positive expectancy. During Shadow/Soft, VPA
-    cannot modify `estimated_win_rate`.
+    expectancy. A sub-1:1 candidate is legal when its PA subjective probability prior and
+    program-computed risk/reward produce positive expectancy. The handoff labels this input
+    `llm_subjective_prior`, records `calibration_id=null` until real calibration exists, and
+    exposes program-computed break-even probability and expectancy. It must not be described
+    as historical/backtest probability without sourced statistics. VPA cannot modify it.
 15. VPA `next_confirmation` describes evidence that would distinguish competing volume-
     price hypotheses. It is not approval for a Brooks Setup and cannot become an implicit
     entry gate. Neutral or insufficient VPA evidence preserves the PA baseline.
 16. Provider credentials are validated at configuration and transport boundaries. API
     keys containing whitespace or non-ASCII command contamination are rejected before an
     HTTP header is constructed and are never echoed in diagnostics.
+17. Research quality reports separate first-pass cleanliness from final accepted quality.
+    A repaired first attempt remains visible and fails `first_pass_clean`, but an earlier
+    error does not reclassify a later validated final call as a current PA/VPA semantic
+    failure or failed call status. Latency and token totals still include every attempt.
+18. Citation and relation normalization may use only identities already implied by the
+    frozen catalog. An explicit `K#` can be bound to one unique single-bar evidence item;
+    unknown or ambiguous references remain hard failures. When no PA Entry Attempt exists,
+    VPA timing is normalized to `insufficient_data` without suppressing background evidence.
+    Adjacent-window net direction is derived at render/validation time from existing facts,
+    not persisted into the catalog, so historical catalog identities remain stable. Explicit
+    same/opposite window claims and HTF upper/lower spatial claims are frozen-fact checks;
+    leg names, support/resistance meaning and Wyckoff interpretation remain model-owned.
 
 ## Migration and Failure Policy
 
@@ -92,7 +111,8 @@ The rescue release keeps the project principle unchanged:
   conflicts and rejects unknown future schema versions instead of guessing.
 - Historical files are not rewritten automatically. Corpus audit reports legacy
   usage mismatches, missing HTF bars and stale snapshot hashes as historical defects.
-- Missing or invalid VPA/Joint output degrades to PA-only with typed status. Invalid
+- Missing or invalid production VPA output preserves PA-only with a typed warning;
+  invalid research Joint output degrades its B arm to PA-only. Invalid
   deterministic facts or PA output cannot produce an executable order.
 - One directed repair is allowed only when a typed finding declares it repairable.
   Repeated schema variation becomes an explicit failed/degraded role, not an
@@ -113,8 +133,13 @@ The rescue release keeps the project principle unchanged:
   cross a threshold.
 - Stage 1 `entry_setup` is a framework hint, not an authorization token. After
   `gate_result=proceed`, Stage 2 exclusively owns concrete Brooks Setup selection,
-  trigger, invalidation and order arbitration. A PA candidate exists only after that
-  complete Stage 2 plan validates.
+  optional trigger/invalidation prose and order arbitration. A PA candidate exists only
+  after the executable Stage 2 plan validates; candidate identity never depends on optional
+  prose fields.
+- Stage 2 normalizers perform representation-only work. Invalid order geometry or Trader
+  Equation is handled by the explicit deterministic execution policy, which preserves the
+  provider response in audit data, blocks the order without a generative retry, and records
+  a typed warning instead of disguising the action as normalization.
 - `trade_confidence` describes an executable Entry Attempt. It is null when no such
   attempt exists and an integer from 0 to 100 only for an executable order; the
   program never fabricates a confidence score for a no-order decision.

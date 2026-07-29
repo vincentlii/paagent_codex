@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from pa_agent.ai.kline_references import extract_htf_reference_seqs
@@ -9,6 +10,41 @@ from pa_agent.data.base import KlineFrame
 from pa_agent.data.datetime_ts import format_epoch_for_display
 
 _MAX_DETAIL_BARS = 24
+_HTF_FIELD_RE = re.compile(
+    r"HTF\.H\s*(?P<seq>\d+).{0,16}?"
+    r"(?P<field>open|high|low|close|开盘(?:价)?|最高(?:价|点)?|"
+    r"最低(?:价|点)?|收盘(?:价)?|高点|低点)",
+    re.IGNORECASE,
+)
+_LOWER_SPATIAL_RE = re.compile(
+    r"下方(?:磁力位|目标位|位置|水平|关键位)|"
+    r"\b(?:downside|lower)\s+(?:magnet|target|level)\b",
+    re.IGNORECASE,
+)
+_UPPER_SPATIAL_RE = re.compile(
+    r"上方(?:磁力位|目标位|位置|水平|关键位)|"
+    r"\b(?:upside|upper|overhead)\s+(?:magnet|target|level)\b",
+    re.IGNORECASE,
+)
+_HTF_FIELD_NAMES = {
+    "open": "open",
+    "开盘": "open",
+    "开盘价": "open",
+    "high": "high",
+    "最高": "high",
+    "最高价": "high",
+    "最高点": "high",
+    "高点": "high",
+    "low": "low",
+    "最低": "low",
+    "最低价": "low",
+    "最低点": "low",
+    "低点": "low",
+    "close": "close",
+    "收盘": "close",
+    "收盘价": "close",
+}
+_CLAUSE_SPLIT_RE = re.compile(r"[。！？!?;；\n]+|\.\s+")
 
 
 def _number(value: object, digits: int = 4) -> str:
@@ -72,6 +108,7 @@ def render_higher_timeframe_context(context: dict[str, Any] | None) -> str:
         "阶段一 `htf_context` 必须引用至少一个本块 `HTF.H#` 序号，"
         "并明确说明它如何支持、冲突或仅提供背景；"
         "不得用当前周期 K# 冒充高周期证据。",
+        "上方/下方等空间词一律相对当前周期 K1 收盘价，不得把已在当前价上方的 HTF 点位称为下方目标，反之亦然。",
         _background_price_facts(frame),
         "",
         "HTF.H# | 时间 | 开盘价 | 最高价 | 最低价 | 收盘价 | 阳阴 | EMA20 | ATR14",
@@ -92,6 +129,8 @@ def render_higher_timeframe_context(context: dict[str, Any] | None) -> str:
 def validate_higher_timeframe_output(
     stage1: dict[str, Any],
     context: dict[str, Any] | None,
+    *,
+    current_frame: KlineFrame | None = None,
 ) -> list[str]:
     """Reject only citations that contradict the injected HTF frame."""
     if not isinstance(context, dict) or context.get("status") != "available":
@@ -108,7 +147,45 @@ def validate_higher_timeframe_output(
     if invalid:
         refs = ", ".join(f"HTF.H{value}" for value in invalid)
         return [f"htf_context cites bars outside the injected HTF frame: {refs}"]
-    return []
+    if not isinstance(current_frame, KlineFrame):
+        return []
+    current = next(
+        (
+            bar
+            for bar in current_frame.bars
+            if int(bar.seq) == 1 and bool(bar.closed)
+        ),
+        None,
+    )
+    if current is None:
+        return []
+    htf_by_seq = {int(bar.seq): bar for bar in frame.bars}
+    errors: list[str] = []
+    for clause in _CLAUSE_SPLIT_RE.split(text):
+        direction = (
+            "lower"
+            if _LOWER_SPATIAL_RE.search(clause)
+            else "upper"
+            if _UPPER_SPATIAL_RE.search(clause)
+            else None
+        )
+        matches = list(_HTF_FIELD_RE.finditer(clause))
+        if direction is None or len(matches) != 1:
+            continue
+        match = matches[0]
+        bar = htf_by_seq.get(int(match.group("seq")))
+        field = _HTF_FIELD_NAMES.get(match.group("field").lower())
+        if bar is None or field is None:
+            continue
+        level = float(getattr(bar, field))
+        current_close = float(current.close)
+        valid_side = level < current_close if direction == "lower" else level > current_close
+        if not valid_side:
+            errors.append(
+                f"htf_context spatial relation for HTF.H{bar.seq}.{field} "
+                f"conflicts with current K1.close"
+            )
+    return errors
 
 
 def collect_higher_timeframe_warnings(

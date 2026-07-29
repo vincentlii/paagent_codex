@@ -129,6 +129,14 @@ def test_trade_metric_failure_is_program_rejected_without_retry() -> None:
         event["path"] == "execution_policy"
         for event in result.result.normalization_events
     )
+    policy_event = next(
+        event
+        for event in result.validation_events
+        if event.get("code") == "deterministic_execution_policy"
+    )
+    assert policy_event["category"] == "execution_policy"
+    assert policy_event["severity"] == "warning"
+    assert policy_event["retry_policy"] == "none"
 
 
 def test_stage2_may_define_the_concrete_plan_when_stage1_setup_hint_is_empty() -> None:

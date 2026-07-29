@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from pa_agent.ai.prompt_assembler import VPA_KNOWLEDGE_MODULES, PromptAssembler
+from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
 from pa_agent.config.settings import PromptSettings
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
 
@@ -291,6 +292,11 @@ def test_vpa_evidence_role_loads_modules_from_frozen_brooks_context(
     assert '"interpretation_label"' in prompt
     assert '"epistemic_status"' in prompt
     assert '"sequence_claims"' in prompt
+    assert "针对该真实 Entry Attempt" in prompt
+    assert "各自 `bar_range` 不得重叠" in prompt
+    assert "ENTRY_ATTEMPT_CONTEXT" in prompt
+    assert '"applicable": false' in prompt
+    assert "entry_timing_relation=insufficient_data" in prompt
 
 
 def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:
@@ -307,6 +313,7 @@ def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:
     assert "`finding_kind`" in core
     assert "`epistemic_status`" in core
     assert "`sequence_claims`" in core
+    assert "`requires_closed_bar` is true only" in core
     assert "with exactly: `alignment`" not in core
 
 
@@ -365,6 +372,49 @@ def test_joint_prompt_is_focused_and_uses_a_bounded_patch(
     assert '"stage2_decision"' not in prompt
     assert "K线数据" not in prompt
     assert "ANALYSIS_FACT_CATALOG" not in prompt
+
+
+def test_joint_prompt_injects_only_referenced_program_comparators(
+    assembler: PromptAssembler,
+) -> None:
+    catalog = build_vpa_evidence_catalog(_make_frame(25))
+    enabled = assembler.clone_with_prompt_settings(
+        PromptSettings(vpa_mode="shadow"),
+        vpa_evidence_catalog=catalog,
+    )
+    messages = enabled.build_joint_decision(
+        {"decision": {"order_type": "限价单"}, "decision_trace": []},
+        {
+            "primary": {"hypothesis_id": "pa-primary"},
+            "setup_candidates": [{"candidate_id": "pa-setup-1"}],
+        },
+        {
+            "summary": "Independent sequence evidence.",
+            "observations": [{"evidence_ids": ["vpa-c001"]}],
+            "hypothesis_assessments": [],
+            "entry_timing_relation": "neutral",
+        },
+    )
+    prompt = "\n".join(item["content"] for item in messages)
+
+    assert "REFERENCED_PROGRAM_COMPARATORS" in prompt
+    assert '"evidence_id": "vpa-c001"' in prompt
+    assert '"net_close_progress_direction_relation": "same"' in prompt
+    assert '"evidence_id": "vpa-e001"' not in prompt
+
+
+def test_stage2_win_rate_is_explicitly_an_uncalibrated_pa_prior(
+    assembler: PromptAssembler,
+) -> None:
+    prompt = assembler.build_stage2(
+        _make_frame(20),
+        {"cycle_position": "normal_channel", "direction": "bullish"},
+        [],
+        [],
+    )[1]["content"]
+
+    assert "当前 Setup 的 PA 主观先验" in prompt
+    assert "禁止称其为“历史胜率”或“回测胜率”" in prompt
 
 
 def test_stage1_prompt_injects_canonical_brooks_theory_rule_catalog(

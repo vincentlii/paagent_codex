@@ -15,6 +15,7 @@ from pa_agent.ai.kline_references import (
     REFERENCE_TOKEN_RE,
     parse_k_bar_range_bounds,
 )
+from pa_agent.ai.vpa_measurements import net_close_progress_direction_relation
 
 _NUMERIC_LITERAL_RE = re.compile(
     r"(?<![A-Za-z0-9_])[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:\s*%|\s*x)?"
@@ -82,6 +83,11 @@ _WINDOW_LOW_EXTREME_RE = re.compile(
 _LOCAL_CLOSE_POSITION_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "high": (
         re.compile(
+            r"(?:收盘(?:价|位置)?)(?:位于|处于|在|于)\s*"
+            r"(?:本(?:根|棒|K线)?|该(?:根|棒|K线)?|自身)?(?:最高点|高点)",
+            re.IGNORECASE,
+        ),
+        re.compile(
             r"(?:\u6536\u76d8(?:\u4ef7|\u4f4d\u7f6e)?|\u6536\u4e8e|\u6536\u5728).{0,28}?"
             r"(?:(?:\u63a5\u8fd1|\u9760\u8fd1|\u8d34\u8fd1|\u90bb\u8fd1)"
             r"(?:(?!\u7a97\u53e3|\u533a\u95f4|\u524d\u7a97|K\s*\d).){0,10}?"
@@ -108,6 +114,11 @@ _LOCAL_CLOSE_POSITION_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         ),
     ),
     "low": (
+        re.compile(
+            r"(?:收盘(?:价|位置)?)(?:位于|处于|在|于)\s*"
+            r"(?:本(?:根|棒|K线)?|该(?:根|棒|K线)?|自身)?(?:最低点|低点)",
+            re.IGNORECASE,
+        ),
         re.compile(
             r"(?:\u6536\u76d8(?:\u4ef7|\u4f4d\u7f6e)?|\u6536\u4e8e|\u6536\u5728).{0,28}?"
             r"(?:(?:\u63a5\u8fd1|\u9760\u8fd1|\u8d34\u8fd1|\u90bb\u8fd1)"
@@ -257,6 +268,28 @@ _VPA_CAPABILITY_NEGATION_AFTER_RE = re.compile(
 _VPA_CLAUSE_SPLIT_RE = re.compile(r"[\u3002\uFF01\uFF1F!?;\uFF1B\n]+|\.\s+")
 
 _RELATION_CLAIMS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
+    (
+        "net close progress direction",
+        "net_close_progress_direction_relation",
+        "opposite",
+        re.compile(
+            r"(?:two|the\s+two|both)\s+(?:comparison\s+)?windows?.{0,32}?"
+            r"(?:opposite|different)\s+(?:net\s+)?(?:close\s+)?progress\s+directions?|"
+            r"(?:两(?:个)?|这两(?:个)?)窗口.{0,24}?(?:净收盘|净)?(?:进展)?方向(?:相反|不同)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "net close progress direction",
+        "net_close_progress_direction_relation",
+        "same",
+        re.compile(
+            r"(?:two|the\s+two|both)\s+(?:comparison\s+)?windows?.{0,32}?"
+            r"(?:same|matching)\s+(?:net\s+)?(?:close\s+)?progress\s+directions?|"
+            r"(?:两(?:个)?|这两(?:个)?)窗口.{0,24}?(?:净收盘|净)?(?:进展)?方向(?:相同|同向)",
+            re.IGNORECASE,
+        ),
+    ),
     (
         "causal baseline",
         "volume_vs_baseline_relation",
@@ -642,6 +675,45 @@ def classify_vpa_comparator_narrative(
         if bounds is not None and bounds[0] == bounds[1]:
             by_bar.setdefault(bounds[0], []).append(item)
 
+    direction_labels = {
+        "反弹段": "positive",
+        "上涨段": "positive",
+        "上行段": "positive",
+        "下跌段": "negative",
+        "下行段": "negative",
+        "回落段": "negative",
+        "rebound segment": "positive",
+        "rising segment": "positive",
+        "falling segment": "negative",
+        "declining segment": "negative",
+    }
+    for item in items:
+        evidence_id = str(item.get("evidence_id") or "").strip()
+        facts = item.get("facts") if isinstance(item.get("facts"), dict) else {}
+        if not evidence_id.lower().startswith("vpa-c") or not _mentioned_vpa_evidence_ids(
+            value, (evidence_id,)
+        ):
+            continue
+        for prefix in ("current", "prior"):
+            window = str(facts.get(f"{prefix}_window") or "").strip()
+            actual = str(facts.get(f"{prefix}_progress_direction") or "")
+            if not window or actual not in {"positive", "negative"}:
+                continue
+            label_match = re.search(
+                rf"{re.escape(window)}\s*[（(]\s*([^）)]+?)\s*[）)]",
+                value,
+                re.IGNORECASE,
+            )
+            if label_match is None:
+                continue
+            label = label_match.group(1).strip().lower()
+            expected = direction_labels.get(label)
+            if expected is not None and expected != actual:
+                errors.append(
+                    f"{path} {prefix} window direction claim for {evidence_id} "
+                    "conflicts with program relation"
+                )
+
     for clause in _vpa_claim_units(value, by_id):
         clause = clause.strip()
         if not clause:
@@ -674,7 +746,13 @@ def classify_vpa_comparator_narrative(
         for label, fact_key, expected, _ in claims:
             for selector, candidates in selectors.items():
                 relations = {
-                    str((candidate.get("facts") or {}).get(fact_key) or "")
+                    (
+                        net_close_progress_direction_relation(
+                            candidate.get("facts") or {}
+                        )
+                        if fact_key == "net_close_progress_direction_relation"
+                        else str((candidate.get("facts") or {}).get(fact_key) or "")
+                    )
                     for candidate in candidates
                 }
                 if expected not in relations:

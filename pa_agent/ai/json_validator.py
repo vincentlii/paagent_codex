@@ -298,6 +298,12 @@ class JsonValidator:
             incremental_previous_stage1=incremental_previous_stage1,
             skip_next_bar=skip_next_bar,
         )
+        if stage == "stage2":
+            from pa_agent.ai.execution_policy import (
+                apply_stage2_execution_policy,
+            )
+
+            obj = apply_stage2_execution_policy(obj)
         normalization_events = self._contract_normalization_events(
             stage,
             pre_normalized_obj,
@@ -359,7 +365,11 @@ class JsonValidator:
                 invalid.append(f"s1:{msg}")
             from pa_agent.ai.higher_timeframe import validate_higher_timeframe_output
 
-            for msg in validate_higher_timeframe_output(obj, htf_context):
+            for msg in validate_higher_timeframe_output(
+                obj,
+                htf_context,
+                current_frame=kline_frame,
+            ):
                 invalid.append(f"s1:{msg}")
             if incremental_new_bar_count > 0:
                 for msg in validate_incremental_stage1_coherence(

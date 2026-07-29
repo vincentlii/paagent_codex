@@ -6,6 +6,7 @@ from datetime import timedelta, timezone
 from pa_agent.ai.vpa_measurements import (
     build_vpa_evidence_catalog,
     compute_vpa_measurements,
+    net_close_progress_direction_relation,
     render_vpa_measurements,
 )
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
@@ -219,6 +220,25 @@ def test_vpa_uses_close_to_close_progress_and_sequence_comparison() -> None:
     assert comparison["facts"]["prior_window"] == "K6-K4"
     assert comparison["facts"]["current_vs_prior_volume_relation"] == "above"
     assert comparison["facts"]["current_progress_direction"] == "negative"
+    assert net_close_progress_direction_relation(comparison["facts"]) == "same"
+    assert "net_progress_direction_relation=same" in render_vpa_measurements(
+        _frame([100, 120, 140, 80, 90, 110, 100])
+    )
+
+
+def test_vpa_sequence_direction_relation_is_exact_and_non_semantic() -> None:
+    assert net_close_progress_direction_relation(
+        {
+            "current_progress_direction": "positive",
+            "prior_progress_direction": "negative",
+        }
+    ) == "opposite"
+    assert net_close_progress_direction_relation(
+        {
+            "current_progress_direction": "flat",
+            "prior_progress_direction": "negative",
+        }
+    ) == "flat_or_unavailable"
 
 
 def test_vpa_seasonality_requires_adapter_supplied_same_slot_history() -> None:

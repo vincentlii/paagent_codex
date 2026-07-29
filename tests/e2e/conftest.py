@@ -28,3 +28,26 @@ def disable_external_post_order_side_effects(
         "_spawn_post_order_followup",
         lambda _self, _inner, _decision: None,
     )
+
+
+@pytest.fixture(autouse=True)
+def wait_for_main_window_shutdown(qtbot):
+    """Honor MainWindow's deferred QThread shutdown before Qt teardown."""
+    yield
+
+    from PyQt6.QtWidgets import QApplication
+
+    from pa_agent.gui.main_window import MainWindow
+
+    windows = [
+        widget
+        for widget in QApplication.topLevelWidgets()
+        if isinstance(widget, MainWindow)
+    ]
+    for window in windows:
+        window.close()
+    if windows:
+        qtbot.waitUntil(
+            lambda: all(window._shutdown_complete for window in windows),
+            timeout=10_000,
+        )

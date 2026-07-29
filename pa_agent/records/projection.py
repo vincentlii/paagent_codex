@@ -32,14 +32,36 @@ def usage_from_call_attempts(calls: list[dict[str, Any]]) -> dict[str, int]:
 
 def vpa_impact(record: Any) -> dict[str, Any] | None:
     report = record.vpa_evidence if isinstance(record.vpa_evidence, dict) else None
+    if report is None:
+        return None
     joint = record.joint_decision if isinstance(record.joint_decision, dict) else None
     arbitration = (
         joint.get("joint_arbitration")
         if isinstance(joint, dict) and isinstance(joint.get("joint_arbitration"), dict)
         else None
     )
-    if report is None or arbitration is None:
-        return None
+    if arbitration is None:
+        evidence_used: list[str] = []
+        for collection_name in ("observations", "hypothesis_assessments"):
+            collection = report.get(collection_name)
+            if not isinstance(collection, list):
+                continue
+            for item in collection:
+                if not isinstance(item, dict):
+                    continue
+                for evidence_id in item.get("evidence_ids") or []:
+                    if isinstance(evidence_id, str) and evidence_id not in evidence_used:
+                        evidence_used.append(evidence_id)
+        return {
+            "background_relation": report.get("background_relation"),
+            "entry_timing_relation": report.get("entry_timing_relation"),
+            "evidence_used": evidence_used,
+            "decision_effect": "shadow_only_no_effect",
+            "reason": (
+                "VPA evidence was recorded for evaluation only; "
+                "the official PA decision was not changed."
+            ),
+        }
     return {
         "background_relation": report.get("background_relation"),
         "entry_timing_relation": report.get("entry_timing_relation"),
@@ -106,8 +128,12 @@ def gui_vpa_view(record: Any) -> dict[str, Any] | None:
     if not isinstance(record.vpa_catalog, dict):
         return None
     outcome = record.run_outcome if isinstance(record.run_outcome, dict) else {}
+    requested_mode = outcome.get("requested_vpa_mode")
+    effective_mode = outcome.get("effective_vpa_mode") or requested_mode
     view = {
-        "mode": outcome.get("requested_vpa_mode"),
+        "mode": effective_mode,
+        "requested_mode": requested_mode,
+        "effective_mode": effective_mode,
         "status": outcome.get("status"),
         "snapshot_hash": record.vpa_catalog.get("snapshot_hash"),
         "evidence_catalog": record.vpa_catalog,

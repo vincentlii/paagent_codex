@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 
+from pa_agent.ai.pa_handoff import compile_pa_handoff
 from pa_agent.ai.role_contracts import PaHypothesisSet
 from pa_agent.ai.role_validator import validate_vpa_evidence
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
@@ -109,25 +110,30 @@ def test_missing_joint_result_has_no_counterfactual_comparison() -> None:
     assert _pa_joint_diff(None, None) is None
 
 
-def test_pa_candidate_requires_explicit_stage2_trigger_and_invalidation() -> None:
+def test_pa_candidate_uses_the_validated_structured_stage2_plan() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
-    assert PaHypothesisSet.from_stage1(stage1).setup_candidates == []
+    assert compile_pa_handoff(stage1, None, make_frame()).setup_candidates == []
 
-    hypotheses = PaHypothesisSet.from_stage1(stage1, VALID_STAGE2)
+    hypotheses = compile_pa_handoff(stage1, VALID_STAGE2, make_frame())
     assert len(hypotheses.setup_candidates) == 1
     candidate = hypotheses.setup_candidates[0]
     assert candidate.trigger == VALID_STAGE2["decision"]["entry_rule"]
     assert candidate.invalidation == VALID_STAGE2["decision"]["invalidation_condition"]
 
-    incomplete = copy.deepcopy(VALID_STAGE2)
-    incomplete["decision"]["invalidation_condition"] = None
-    assert PaHypothesisSet.from_stage1(stage1, incomplete).setup_candidates == []
+    no_prose_invalidation = copy.deepcopy(VALID_STAGE2)
+    no_prose_invalidation["decision"]["invalidation_condition"] = None
+    candidate = compile_pa_handoff(
+        stage1,
+        no_prose_invalidation,
+        make_frame(),
+    ).setup_candidates[0]
+    assert candidate.invalidation is None
 
 
 def test_interpretive_candidate_label_is_open_but_reversed_time_is_hard_error() -> None:
     frame = make_frame()
     catalog = build_vpa_evidence_catalog(frame)
-    hypotheses = PaHypothesisSet.from_stage1(VALID_STAGE1, VALID_STAGE2)
+    hypotheses = compile_pa_handoff(VALID_STAGE1, VALID_STAGE2, frame)
     payload = _vpa_payload(catalog, hypotheses)
 
     accepted = validate_vpa_evidence(

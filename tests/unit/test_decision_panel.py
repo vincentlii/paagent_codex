@@ -162,6 +162,39 @@ def test_vpa_summary_exposes_joint_degradation_reason() -> None:
     assert "PA/Joint差异：keep_baseline" in text
 
 
+def test_vpa_summary_exposes_requested_to_effective_mode() -> None:
+    text = _format_vpa_summary(
+        None,
+        None,
+        {
+            "mode": "shadow",
+            "requested_mode": "soft",
+            "effective_mode": "shadow",
+            "status": "completed_with_warnings",
+        },
+    )
+
+    assert "链路：soft→shadow · completed_with_warnings" in text
+
+
+def test_shadow_vpa_failure_does_not_claim_official_pa_degradation() -> None:
+    text = _format_vpa_summary(
+        None,
+        None,
+        {
+            "mode": "shadow",
+            "status": "completed_with_warnings",
+            "degradation": {
+                "stage": "vpa_evidence",
+                "reason": "provider output was invalid",
+            },
+        },
+    )
+
+    assert "VPA 旁路失败，PA 结果不受影响：vpa_evidence" in text
+    assert "已降级为 PA-only" not in text
+
+
 def test_clear_resets_all_optional_sections(panel: DecisionPanel) -> None:
     test_vpa_summary_uses_stage1_context_and_stage2_effect(panel)
 

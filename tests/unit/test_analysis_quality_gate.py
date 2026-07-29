@@ -131,6 +131,49 @@ def test_normalization_fails_first_pass_but_not_semantic_grounding() -> None:
     assert report["axes"]["pa_grounding"]["semantic_error_runs"] == []
 
 
+def test_repaired_attempt_fails_first_pass_but_passes_final_quality_axes() -> None:
+    records = _records()
+    record = records[0]
+    calls = copy.deepcopy(record.call_attempts)
+    first_stage1 = next(call for call in calls if call["stage"] == "stage1")
+    first_stage1["status"] = "validation_failed"
+    first_stage1["validation_category"] = "c"
+    calls.append(
+        {
+            **copy.deepcopy(first_stage1),
+            "attempt": 2,
+            "request_hash": "7" * 64,
+            "response_hash": "8" * 64,
+            "status": "validated",
+            "validation_category": None,
+        }
+    )
+    records[0] = record.model_copy(
+        update={
+            "call_attempts": calls,
+            "validation_audit": [
+                {
+                    "attempt": 1,
+                    "stage": "stage1",
+                    "owner": "stage1",
+                    "category": "c",
+                    "severity": "error",
+                    "message": "first attempt contradicted one frozen fact",
+                    "invalid_fields": ["s1:frozen_fact"],
+                    "missing_fields": [],
+                }
+            ],
+        }
+    )
+
+    report = evaluate_analysis_quality(records, thresholds=_thresholds())
+
+    run_id = records[0].meta.run_id
+    assert report["axes"]["first_pass_clean"]["failed_runs"] == [run_id]
+    assert report["axes"]["pa_grounding"]["semantic_error_runs"] == []
+    assert report["axes"]["performance"]["failed_call_status_runs"] == []
+
+
 def test_protocol_rejects_missing_arm_and_a_arm_vpa_leakage() -> None:
     missing = _records()[:-1]
     report = evaluate_analysis_quality(missing, thresholds=_thresholds())

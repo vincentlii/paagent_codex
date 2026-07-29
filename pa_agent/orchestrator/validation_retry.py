@@ -131,15 +131,32 @@ def validate_with_retry(
                     }
                 )
             for normalization in result.normalization_events:
+                execution_policy = normalization.get("path") == "execution_policy"
                 validation_events.append(
                     {
                         "attempt": attempt + 1,
-                        "category": "normalization",
-                        "code": "unambiguous_contract_normalization",
-                        "severity": "normalization",
-                        "owner": stage,
+                        "category": (
+                            "execution_policy"
+                            if execution_policy
+                            else "normalization"
+                        ),
+                        "code": (
+                            "deterministic_execution_policy"
+                            if execution_policy
+                            else "unambiguous_contract_normalization"
+                        ),
+                        "severity": (
+                            "warning" if execution_policy else "normalization"
+                        ),
+                        "owner": (
+                            "execution_policy" if execution_policy else stage
+                        ),
                         "retry_policy": "none",
-                        "message": "unambiguous contract alias normalized",
+                        "message": (
+                            "unsafe executable order blocked by deterministic policy"
+                            if execution_policy
+                            else "unambiguous contract alias normalized"
+                        ),
                         "missing_fields": [],
                         "invalid_fields": [
                             f"normalized_alias:{normalization['path']}"

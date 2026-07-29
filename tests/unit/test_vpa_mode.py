@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pa_agent.ai.json_validator import JsonValidator
 from pa_agent.config.settings import PromptSettings, Settings
-from pa_agent.config.vpa import resolve_vpa_mode, vpa_is_enabled
+from pa_agent.config.vpa import (
+    resolve_production_vpa_mode,
+    resolve_vpa_mode,
+    vpa_is_enabled,
+)
 
 
 def test_vpa_mode_prefers_explicit_mode_over_legacy_boolean() -> None:
@@ -17,6 +21,13 @@ def test_vpa_mode_migrates_legacy_enabled_to_shadow() -> None:
 
     assert resolve_vpa_mode(settings) == "shadow"
     assert vpa_is_enabled(settings) is True
+
+
+def test_production_mode_constrains_soft_to_shadow() -> None:
+    settings = PromptSettings(vpa_mode="soft")
+
+    assert resolve_vpa_mode(settings) == "soft"
+    assert resolve_production_vpa_mode(settings) == "shadow"
 
 
 def test_validator_strips_legacy_embedded_vpa_in_every_mode() -> None:

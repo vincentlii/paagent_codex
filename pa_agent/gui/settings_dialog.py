@@ -144,16 +144,16 @@ class SettingsDialog(QDialog):
 
         self._vpa_mode_combo = QComboBox()
         self._vpa_mode_combo.addItem("关闭（原 PA 流程）", "off")
-        self._vpa_mode_combo.addItem("Shadow（A/B 审计）", "shadow")
-        self._vpa_mode_combo.addItem("Soft（受限影响入场）", "soft")
+        self._vpa_mode_combo.addItem("Shadow（VPA 旁路观察）", "shadow")
+        self._vpa_mode_combo.addItem("Soft（仅研究实验）", "soft")
         soft_index = self._vpa_mode_combo.findData("soft")
         soft_item = self._vpa_mode_combo.model().item(soft_index)
         if soft_item is not None:
             soft_item.setEnabled(False)
-            soft_item.setToolTip("Soft 在 Shadow 统计验收前暂不开放")
+            soft_item.setToolTip("Soft 仅供隔离的 A/A/B/B 研究实验使用")
         self._vpa_mode_combo.setToolTip(
             "Shadow：原 PA 结果为正式结果，同时运行同快照 VPA 对照。\n"
-            "Soft：只允许 VPA 通过受限、可审计的入场影响进入最终结果。"
+            "Soft：仅供隔离的 A/A/B/B 研究实验使用，不从 GUI 进入正式结果。"
         )
         general_form.addRow("Wyckoff VPA:", self._vpa_mode_combo)
 
@@ -346,9 +346,9 @@ class SettingsDialog(QDialog):
             bool(getattr(g, "enable_next_bar_prediction", False))
         )
         self._enable_next_bar_check.blockSignals(False)
-        from pa_agent.config.vpa import resolve_vpa_mode
+        from pa_agent.config.vpa import resolve_production_vpa_mode
 
-        vpa_idx = self._vpa_mode_combo.findData(resolve_vpa_mode(prompt))
+        vpa_idx = self._vpa_mode_combo.findData(resolve_production_vpa_mode(prompt))
         if vpa_idx >= 0:
             self._vpa_mode_combo.setCurrentIndex(vpa_idx)
         self._decision_conf_threshold_spin.setValue(

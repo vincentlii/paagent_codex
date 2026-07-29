@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 
+from pa_agent.ai.pa_handoff import compile_pa_handoff
 from pa_agent.ai.role_contracts import PaHypothesisSet, VpaEvidenceReport
 from pa_agent.ai.role_validator import (
     validate_joint_decision,
@@ -15,7 +16,7 @@ from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
 def _hypotheses() -> PaHypothesisSet:
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["alternative_cycle_position"] = "trending_tr"
-    return PaHypothesisSet.from_stage1(stage1, VALID_STAGE2)
+    return compile_pa_handoff(stage1, VALID_STAGE2, make_frame())
 
 
 def _vpa_payload(
@@ -70,17 +71,17 @@ def test_pa_hypothesis_set_delegates_stage1_without_new_direction() -> None:
     assert hypotheses.setup_candidates[0].timing_state == "eligible"
 
 
-def test_stage2_plan_creates_pa_candidate_without_stage1_setup_hint() -> None:
+def test_stage2_plan_creates_candidate_without_inventing_a_setup_name() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["entry_setup"] = ""
 
-    hypotheses = PaHypothesisSet.from_stage1(stage1, VALID_STAGE2)
+    hypotheses = compile_pa_handoff(stage1, VALID_STAGE2, make_frame())
 
     assert len(hypotheses.setup_candidates) == 1
     candidate = hypotheses.setup_candidates[0]
     assert candidate.trigger == VALID_STAGE2["decision"]["entry_rule"]
     assert candidate.invalidation == VALID_STAGE2["decision"]["invalidation_condition"]
-    assert hypotheses.primary.setup == VALID_STAGE2["decision"]["entry_rule"]
+    assert hypotheses.primary.setup is None
     assert "No current PA setup" not in hypotheses.primary.thesis
 
 
@@ -169,6 +170,36 @@ def test_vpa_sequence_claim_must_use_observation_evidence_ids() -> None:
 
     assert not result.ok
     assert any("same observation" in item for item in result.hard_errors)
+
+
+def test_vpa_overlapping_sequence_claim_is_dropped_without_failing_report() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    observation = payload["vpa_report"]["observations"][0]
+    observation["evidence_ids"] = ["vpa-c001", "vpa-e001"]
+    observation["sequence_claims"] = [
+        {
+            "earlier_evidence_id": "vpa-c001",
+            "later_evidence_id": "vpa-e001",
+            "relation": "follow_through",
+        }
+    ]
+
+    result = validate_vpa_evidence(
+        json.dumps(payload),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert result.ok
+    assert result.obj["vpa_report"]["observations"][0]["sequence_claims"] == []
+    assert any("chronology overlaps" in item for item in result.warnings)
+    assert any(
+        item["path"] == "vpa_report.observations[0].sequence_claims[0]"
+        and item["after"] == "dropped_overlapping_chronology"
+        for item in result.normalizations
+    )
 
 
 def test_vpa_role_hard_rejects_an_explicit_comparator_contradiction() -> None:
@@ -261,7 +292,7 @@ def test_vpa_role_audits_unsupported_attribution_but_allows_disclaimer() -> None
     )
 
 
-def test_vpa_role_rejects_unclosed_confirmation_and_uncited_k_reference() -> None:
+def test_vpa_role_rejects_unclosed_confirmation_and_unavailable_k_reference() -> None:
     hypotheses = _hypotheses()
     catalog = build_vpa_evidence_catalog(make_frame())
 
@@ -301,15 +332,129 @@ def test_vpa_role_rejects_unclosed_confirmation_and_uncited_k_reference() -> Non
         catalog=catalog,
         pa_hypotheses=hypotheses,
     )
-    assert not uncited_result.ok
+    assert uncited_result.ok
+    assert uncited_result.obj["vpa_report"]["observations"][0]["evidence_ids"] == [
+        "vpa-e001",
+        "vpa-e002",
+    ]
     assert any(
-        "K2 outside its cited evidence ranges" in item
-        for item in uncited_result.hard_errors
+        item["path"] == "vpa_report.observations[0].evidence_ids"
+        and item["after"] == ["vpa-e001", "vpa-e002"]
+        for item in uncited_result.normalizations
+    )
+
+    unavailable = _vpa_payload(catalog, hypotheses)
+    unavailable["vpa_report"]["observations"][0]["interpretation"] = (
+        "K99 provides the relevant effort-versus-result context."
+    )
+    unavailable_result = validate_vpa_evidence(
+        json.dumps(unavailable),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+    assert not unavailable_result.ok
+    assert any(
+        "K99 outside its cited evidence ranges" in item
+        for item in unavailable_result.hard_errors
     )
 
 
+def test_vpa_k_reference_already_covered_by_range_is_not_duplicated() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    observation = payload["vpa_report"]["observations"][0]
+    observation["evidence_ids"] = ["vpa-c001"]
+    observation["interpretation"] = (
+        "K5 is already covered by the cited sequence comparison."
+    )
+
+    result = validate_vpa_evidence(
+        json.dumps(payload),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert result.ok
+    assert result.obj["vpa_report"]["observations"][0]["evidence_ids"] == [
+        "vpa-c001"
+    ]
+
+
+def test_vpa_no_entry_candidate_normalizes_timing_relation_without_retry() -> None:
+    hypotheses = compile_pa_handoff(VALID_STAGE1, None, make_frame())
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses, relation="challenges")
+
+    result = validate_vpa_evidence(
+        json.dumps(payload),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert result.ok
+    assert result.obj["vpa_report"]["entry_timing_relation"] == "insufficient_data"
+    assert any("no PA setup candidate" in item for item in result.warnings)
+    assert any(
+        item["path"] == "vpa_report.entry_timing_relation"
+        and item["after"] == "insufficient_data"
+        for item in result.normalizations
+    )
+
+
+def test_vpa_rejects_only_explicit_sequence_direction_fact_contradiction() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    observation = payload["vpa_report"]["observations"][0]
+    observation["evidence_ids"] = ["vpa-c001"]
+    observation["interpretation"] = (
+        "vpa-c001 shows that the two windows have opposite net progress directions."
+    )
+
+    conflict = validate_vpa_evidence(
+        json.dumps(payload),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert not conflict.ok
+    assert any(
+        "net close progress direction" in item
+        and "conflicts with program relation" in item
+        for item in conflict.hard_errors
+    )
+
+    payload["vpa_report"]["observations"][0]["interpretation"] = (
+        "vpa-c001 对比 K3-K1（下跌段）与 K6-K4（反弹段），"
+        "但因两窗口方向相反，直接动量比较需谨慎。"
+    )
+    chinese_conflict = validate_vpa_evidence(
+        json.dumps(payload, ensure_ascii=False),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+    assert not chinese_conflict.ok
+    assert any(
+        "window direction claim" in item
+        or "net close progress direction" in item
+        for item in chinese_conflict.hard_errors
+    )
+
+    payload["vpa_report"]["observations"][0]["interpretation"] = (
+        "vpa-c001 may contain rebound bars, while both windows retain positive "
+        "net progress."
+    )
+    contextual = validate_vpa_evidence(
+        json.dumps(payload),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+    assert contextual.ok
+
+
 def test_vpa_not_applicable_confirmation_has_no_future_trigger() -> None:
-    hypotheses = PaHypothesisSet.from_stage1(VALID_STAGE1)
+    hypotheses = compile_pa_handoff(VALID_STAGE1, None, make_frame())
     catalog = build_vpa_evidence_catalog(make_frame())
     payload = _vpa_payload(catalog, hypotheses)
     payload["vpa_report"]["next_confirmation"] = {
@@ -369,7 +514,7 @@ def test_joint_keep_baseline_passes_and_win_rate_change_is_rejected() -> None:
     frame = make_frame()
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["alternative_cycle_position"] = "trending_tr"
-    hypotheses = PaHypothesisSet.from_stage1(stage1, VALID_STAGE2)
+    hypotheses = compile_pa_handoff(stage1, VALID_STAGE2, make_frame())
     catalog = build_vpa_evidence_catalog(frame)
     vpa_result = validate_vpa_evidence(
         json.dumps(_vpa_payload(catalog, hypotheses)),
@@ -420,7 +565,7 @@ def test_joint_keep_baseline_passes_and_win_rate_change_is_rejected() -> None:
 def test_joint_cannot_create_trade_from_pa_no_order() -> None:
     frame = make_frame()
     stage1 = copy.deepcopy(VALID_STAGE1)
-    hypotheses = PaHypothesisSet.from_stage1(stage1, VALID_STAGE2)
+    hypotheses = compile_pa_handoff(stage1, VALID_STAGE2, make_frame())
     catalog = build_vpa_evidence_catalog(frame)
     vpa_result = validate_vpa_evidence(
         json.dumps(_vpa_payload(catalog, hypotheses)),
@@ -478,7 +623,7 @@ def test_joint_timing_effects_materialize_without_rewriting_pa_baseline() -> Non
     frame = make_frame()
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["alternative_cycle_position"] = "trending_tr"
-    hypotheses = PaHypothesisSet.from_stage1(stage1, VALID_STAGE2)
+    hypotheses = compile_pa_handoff(stage1, VALID_STAGE2, make_frame())
     catalog = build_vpa_evidence_catalog(frame)
     vpa_result = validate_vpa_evidence(
         json.dumps(_vpa_payload(catalog, hypotheses)),
@@ -539,7 +684,7 @@ def test_joint_reason_uses_warning_for_prose_and_hard_error_for_k_bounds() -> No
     frame = make_frame()
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["alternative_cycle_position"] = "trending_tr"
-    hypotheses = PaHypothesisSet.from_stage1(stage1, VALID_STAGE2)
+    hypotheses = compile_pa_handoff(stage1, VALID_STAGE2, make_frame())
     catalog = build_vpa_evidence_catalog(frame)
     vpa_result = validate_vpa_evidence(
         json.dumps(_vpa_payload(catalog, hypotheses)),

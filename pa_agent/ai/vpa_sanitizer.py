@@ -5,7 +5,7 @@ import copy
 import re
 from typing import Any
 
-from pa_agent.ai.kline_references import parse_k_bar_range_bounds
+from pa_agent.ai.kline_references import K_REFERENCE_RE, parse_k_bar_range_bounds
 
 VPA_KEY_PREFIXES = ("vpa_", "wyckoff_")
 VPA_FEATURE_SOURCES = frozenset(
@@ -23,6 +23,8 @@ _VPA_PROMPT_RE = re.compile(
     rf"\n?{re.escape(VPA_PROMPT_START)}.*?{re.escape(VPA_PROMPT_END)}\n?",
     re.DOTALL,
 )
+
+
 def is_vpa_key(key: object) -> bool:
     text = str(key or "").strip().lower()
     return any(text.startswith(prefix) for prefix in VPA_KEY_PREFIXES)
@@ -98,6 +100,77 @@ def materialize_vpa_report_observation_ranges(
             f"K{oldest}-K{newest}" if oldest != newest else f"K{oldest}"
         )
     return out
+
+
+def bind_explicit_vpa_k_references(
+    report_obj: dict[str, Any],
+    evidence_catalog: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Bind explicit K# prose to a unique single-bar evidence item when possible.
+
+    This is citation normalization, not interpretation. References already
+    covered by a cited range are unchanged; unknown or ambiguous references
+    remain unbound so the validator can reject them.
+    """
+    out = copy.deepcopy(report_obj)
+    catalog = evidence_catalog if isinstance(evidence_catalog, dict) else {}
+    exact_by_bar: dict[int, list[str]] = {}
+    ranges_by_id: dict[str, tuple[int, int]] = {}
+    for item in catalog.get("evidence", []):
+        if not isinstance(item, dict) or not item.get("evidence_id"):
+            continue
+        evidence_id = str(item["evidence_id"])
+        bounds = _range_bounds(item.get("bar_range"))
+        if bounds is None:
+            continue
+        ranges_by_id[evidence_id] = bounds
+        if bounds[0] == bounds[1]:
+            exact_by_bar.setdefault(bounds[0], []).append(evidence_id)
+
+    targets: list[tuple[str, dict[str, Any], str]] = []
+    for index, observation in enumerate(out.get("observations", [])):
+        if isinstance(observation, dict):
+            targets.append(
+                (f"vpa_report.observations[{index}]", observation, "interpretation")
+            )
+    for index, assessment in enumerate(out.get("hypothesis_assessments", [])):
+        if isinstance(assessment, dict):
+            targets.append(
+                (f"vpa_report.hypothesis_assessments[{index}]", assessment, "reason")
+            )
+
+    events: list[dict[str, Any]] = []
+    for path, item, text_key in targets:
+        cited = [str(value) for value in item.get("evidence_ids", [])]
+        before = list(cited)
+        covered: set[int] = set()
+        for evidence_id in cited:
+            bounds = ranges_by_id.get(evidence_id)
+            if bounds is not None:
+                covered.update(range(bounds[0], bounds[1] + 1))
+        for match in K_REFERENCE_RE.finditer(str(item.get(text_key) or "")):
+            seq = int(match.group(1))
+            if seq in covered:
+                continue
+            candidates = exact_by_bar.get(seq, [])
+            if len(candidates) != 1:
+                continue
+            evidence_id = candidates[0]
+            if evidence_id not in cited:
+                cited.append(evidence_id)
+            covered.add(seq)
+        if cited == before:
+            continue
+        item["evidence_ids"] = cited
+        events.append(
+            {
+                "path": f"{path}.evidence_ids",
+                "before": before,
+                "after": list(cited),
+                "reason": "bound_unique_explicit_k_reference",
+            }
+        )
+    return out, events
 
 
 def _range_bounds(value: object) -> tuple[int, int] | None:

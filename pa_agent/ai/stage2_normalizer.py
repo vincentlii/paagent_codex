@@ -35,7 +35,6 @@ def normalize_stage2(
         order=CYCLE_ORDER,
     )
     _canonicalize_state_dependent_nulls(out)
-    _apply_trade_execution_policy(out)
     if skip_next_bar:
         out.pop("next_bar_prediction", None)
     return out
@@ -116,68 +115,6 @@ def _canonicalize_state_dependent_nulls(stage2: dict[str, Any]) -> None:
         entry_bar["strength"] = "not_triggered"
         entry_bar["follow_through"] = None
         entry_bar["still_valid"] = None
-
-
-def _apply_trade_execution_policy(stage2: dict[str, Any]) -> None:
-    """Reject an invalid candidate without asking the model to rewrite PA semantics."""
-    from pa_agent.util.trade_metrics import validate_order_trade_metrics
-
-    decision = stage2.get("decision")
-    trace = stage2.get("decision_trace")
-    if not isinstance(decision, dict) or not isinstance(trace, list):
-        return
-    errors = validate_order_trade_metrics(decision)
-    if not errors:
-        return
-    equation_index = next(
-        (
-            index
-            for index, item in enumerate(trace)
-            if isinstance(item, dict) and str(item.get("node_id") or "") == "10.3"
-        ),
-        None,
-    )
-    if equation_index is None:
-        return
-
-    reason = f"Program execution policy rejected this candidate: {errors[0]}"
-    original_order_type = decision.get("order_type")
-    decision["order_type"] = "不下单"
-    for key in (
-        "order_direction",
-        "entry_price",
-        "entry_basis_bar",
-        "entry_basis_extreme",
-        "entry_rule",
-        "take_profit_price",
-        "take_profit_price_2",
-        "stop_loss_price",
-        "trade_confidence",
-        "estimated_win_rate",
-        "estimated_win_rate_reasoning",
-        "invalidation_condition",
-    ):
-        decision[key] = None
-    decision["reasoning"] = reason[:280]
-    decision["trade_confidence_reasoning"] = (
-        f"Candidate {original_order_type} was blocked by deterministic execution policy."
-    )
-    decision["risk_assessment"] = reason
-    watch_points = [str(item) for item in decision.get("watch_points", [])]
-    policy_watch = "Reassess the candidate on a new closed-bar snapshot."
-    if policy_watch not in watch_points:
-        watch_points.append(policy_watch)
-    decision["watch_points"] = watch_points
-
-    equation_node = copy.deepcopy(trace[equation_index])
-    equation_node["answer"] = "否"
-    equation_node["reason"] = reason
-    stage2["decision_trace"] = [*trace[:equation_index], equation_node]
-    stage2["terminal"] = {
-        "node_id": "10.3",
-        "outcome": "reject",
-        "label": "Program execution policy rejected the candidate",
-    }
 
 
 def _max_bar_seq(frame: Any) -> int | None:

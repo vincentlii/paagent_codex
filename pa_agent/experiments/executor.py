@@ -61,6 +61,7 @@ class OrchestratorArmExecutor:
             settings=settings,
             call_arm="pa",
             allow_provider_fallback=False,
+            allow_research_joint=spec.group == "B",
         )
         record = orchestrator.submit(
             frozen.frame,

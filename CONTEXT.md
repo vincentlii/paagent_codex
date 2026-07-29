@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0008`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0009`。
 
 ## 核心目标
 
@@ -17,13 +17,15 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
 - `AnalysisSnapshotBundle`：同源主周期、可选高周期、成交量语义及质量报告组成的
   冻结输入。
 - `DataQualityReport`：程序可复算的数据完整性、新鲜度、时间序列与来源一致性结论。
-- `PaHypothesisSet`：PA 分析者提出的主假设、替代假设、Brooks Setup 候选及证据引用；
-  它不是最终订单。
+- `PaHypothesisSet`：`compile_pa_handoff(...)` 从已验证 PA Stage 1/Stage 2 与冻结价格快照
+  编译出的唯一角色交接对象，包含主/替代假设、真实 Entry Attempt、程序交易数学、
+  PA 已引用窗口的数值位置与证据引用；它不新增交易判断。
 - `VpaEvidenceReport`：VPA 分析者针对 PA 假设给出的支持、挑战或信息不足结论；
   它不能创建 Setup、翻转方向或修改胜率。
 - `JointDecisionProposal`：联合裁决者在既有 PA 候选中选择当前 Entry Attempt、
   时机或等待条件，并只携带可影响时机/置信度的有界补丁。
-- `ComputedTradeMetrics`：程序根据候选价格计算的止损距离、目标距离、成本和盈亏比。
+- `PaTradeMath`：程序根据候选价格和 PA 主观胜率先验计算的风险、TP1 回报、RR、
+  盈亏平衡胜率和期望值；不生成胜率。
 - `ExecutionPolicyResult`：程序对订单合法性、风险边界与运行模式的最终约束结果。
 - `RunOutcome`：`completed`、`completed_with_warnings`、`degraded_pa_only`、
   `unavailable_input`、`unavailable_provider`、`invalid_model_output`、`cancelled`
@@ -43,14 +45,19 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 程序允许显示精度舍入，但不得把价格绑定到错误 K 线。未明确绑定 OHLC 字段的 swing、
 结构位、通道和 Setup 解释仍由 LLM 负责。
 
+明确的相邻窗口净收盘推进方向，以及某个 `HTF.H#` OHLC 点位相对当前周期 K1 收盘价的
+上/下方，也属于可复算事实。程序可以拒绝“同向写成反向”或“上方点位写成下方目标”，
+但不能据此把窗口命名为推动/回调，也不能决定该点位是否真是支撑、阻力或磁力位。
+
 ## 分析顺序
 
 1. 程序解析一次数据源身份并冻结主周期、高周期和成交量事实。
-2. PA Framework Analyst 产生市场框架；程序封装主假设、替代假设与 Setup candidates。
-3. PA-only Arbiter 形成并冻结不含 VPA 的 Stage 2 baseline。
-4. VPA Evidence Analyst 独立检查量价证据，对 PA 假设支持、挑战或声明信息不足。
-5. Joint Decision Arbiter 只输出有界补丁，在既有 PA candidate 内决定时机。
-6. 程序把合法补丁应用到 baseline，复算交易指标并执行安全约束，随后持久化完整审计链。
+2. PA Stage 1 产生市场框架、主假设与替代假设。
+3. PA Stage 2 形成并冻结不含 VPA 的具体订单 baseline。
+4. `compile_pa_handoff(...)` 只复制 PA 语义并补充可复算的订单数学、身份和窗口位置事实。
+5. VPA Evidence Analyst 独立检查量价证据；生产 Shadow 到此结束，正式结果仍是 PA-only。
+6. 隔离的 A/A/B/B 研究 B 臂才调用 Joint Arbiter，在既有 PA candidate 内输出有界补丁。
+7. 程序验证补丁与执行安全，随后持久化完整审计链。
 
 这是一条信息依赖链，不代表 VPA 从属于 PA，也不允许形成第二套 Strategy Router。
 
@@ -58,8 +65,8 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 
 - PA 输出无法在一次定向修复后形成可信结构：`invalid_model_output`，不得产生可执行订单，
   且不得误报为网络或供应商不可用。
-- VPA 失败：降级为 PA-only，并明确记录 `degraded_pa_only`。
-- 联合裁决失败：一次定向修复后降级为 PA-only。
+- 生产 Shadow 的 VPA 失败：保留有效 PA-only，记录 `completed_with_warnings` 与失败角色。
+- 研究 Joint 失败：一次定向修复后该 B 臂保留 PA-only，不创建新订单。
 - 数据身份、时序或关键 OHLC 失败：`unavailable_input`。
 - 取消与界面关闭：`cancelled`，不得遗留线程、重复记录或陈旧回调。
 - 未分类的内部异常：`internal_error`，必须保留可诊断信息且不得伪装为成功。
@@ -85,14 +92,16 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 ## 实验边界
 
 - `off`：PA Framework + PA-only Arbiter，VPA 数据、Prompt、Schema、历史完全不进入链路。
-- `shadow`：同一冻结输入上同时保留 PA-only 与 Joint 结果，PA-only 为正式结果。
-- `soft`：Joint 为正式结果；VPA 或 Joint 失败时退化为 PA-only。
+- `shadow`：正式 PA-only 完成后追加独立 VPA Evidence；不调用或保存 Joint。
+- `soft`：仅 A/A/B/B 研究 B 臂可授权，Joint 作为该实验臂结果；生产请求会记录
+  requested=`soft`、effective=`shadow`。
 - A/A/B/B 是离线或抽样研究协议，不是每次生产分析的固定开销。协议在调用前登记
   A1/A2/B1/B2，使用同一冻结输入、四个独立客户端与 ABBA/BAAB 顺序，并区分 ITT 和
   per-protocol；生产 Shadow/Soft 及模型自述 comparison 都不构成反事实。
 - A/A/B/B 的独立抽样单位是 `market_snapshot_hash`；`cohort_id` 隔离 Provider、settings、源码与
   Prompt 版本。同一行情的重复臂、重跑或跨版本复核都不得增加独立样本数。
-- 未经样本外校准的数字胜率或置信度只用于研究，不得成为硬下单门槛。
+- PA `estimated_win_rate` 是未校准的 Setup 主观先验，仍参与 Brooks Trader Equation；
+  不得称为历史统计。VPA、固定外部阈值与单次样本不得修改它或新增概率 Gate。
 
 ## 不变量
 
@@ -107,8 +116,14 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 - `stop_loss_price` 是盘中触价的保护性止损；`invalidation_condition` 是分析假设的
   重判条件，可能要求收盘确认。OHLC 回放只报告保护止损触达，不得冒充分析假设已失效。
 - Stage 1 的 `entry_setup` 是框架层提示，不是交易授权。`gate_result=proceed` 后，Stage 2
-  独立负责 Brooks Setup、具体触发、失效位与订单裁决；只有有效 Stage 2 才能形成 PA candidate。
+  独立负责 Brooks Setup、可选触发/失效文案与订单裁决；任何有效可执行 Stage 2 订单都形成
+  PA candidate，候选存在性不得依赖限价单/市价单可为空的 `entry_rule`。
 - 没有可执行 Entry Attempt 时，`trade_confidence=null`；程序不得为不存在的交易方案填充
   数字置信度。存在可执行订单时该字段必须为 0–100 整数。
+- 没有 PA Entry Attempt 时，VPA `entry_timing_relation=insufficient_data`；这不是 VPA Gate，
+  也不妨碍 VPA 对背景、Effort/Result 和未来 acceptance/rejection 条件形成独立观察。
+- VPA 明确 K 引用只能绑定到唯一单棒 evidence，或被已引用窗口覆盖；程序只补引用元数据，
+  不替模型生成解释。相邻窗口的 `same/opposite/flat_or_unavailable` 由现有 facts 临时派生，
+  不写回冻结 catalog，避免破坏历史 catalog identity。
 - E2E/fixture 不得触发正式交易 CSV、通知或其他生产副作用；复盘连续性读写必须使用同一个
   `PA_AGENT_HOME` 派生目录。

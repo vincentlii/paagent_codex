@@ -160,6 +160,9 @@ def _format_vpa_summary(
     if isinstance(vpa_sidecar, dict):
         status = _first_text(vpa_sidecar, "status")
         mode = _first_text(vpa_sidecar, "mode")
+        requested_mode = _first_text(vpa_sidecar, "requested_mode")
+        if requested_mode and mode and requested_mode != mode:
+            mode = f"{requested_mode}→{mode}"
         raw_measurements = vpa_sidecar.get("evidence_catalog") or vpa_sidecar.get("measurements")
         measurements = dict(raw_measurements) if isinstance(raw_measurements, dict) else raw_measurements
         if isinstance(measurements, dict) and "data_status" in measurements:
@@ -180,7 +183,11 @@ def _format_vpa_summary(
         if isinstance(degradation, dict):
             stage = _first_text(degradation, "stage") or "unknown"
             reason = _first_text(degradation, "reason")
-            detail = f"已降级为 PA-only：{stage}"
+            detail = (
+                f"VPA 旁路失败，PA 结果不受影响：{stage}"
+                if mode.endswith("shadow") and stage == "vpa_evidence"
+                else f"已降级为 PA-only：{stage}"
+            )
             if reason:
                 detail += f" · {reason[:180]}"
             lines.append(detail)

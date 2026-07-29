@@ -65,9 +65,27 @@ def _percentile(values: list[float], quantile: float) -> float | None:
     return round(ordered[index], 3)
 
 
-def _semantic_roles(events: list[dict[str, Any]]) -> tuple[bool, bool]:
+def _final_call_statuses(
+    calls: list[dict[str, Any]],
+) -> dict[tuple[str, str], str]:
+    final: dict[tuple[str, str], tuple[int, str]] = {}
+    for call in calls:
+        key = (str(call.get("arm") or ""), str(call.get("stage") or ""))
+        attempt = int(call.get("attempt") or 0)
+        previous = final.get(key)
+        if previous is None or attempt >= previous[0]:
+            final[key] = (attempt, str(call.get("status") or ""))
+    return {key: value[1] for key, value in final.items()}
+
+
+def _semantic_roles(
+    events: list[dict[str, Any]],
+    calls: list[dict[str, Any]],
+) -> tuple[bool, bool]:
+    """Classify only unrepaired final semantic failures by role."""
     pa_error = False
     vpa_error = False
+    final_statuses = _final_call_statuses(calls)
     for event in events:
         severity = str(event.get("severity") or "")
         category = str(event.get("category") or "")
@@ -77,6 +95,16 @@ def _semantic_roles(events: list[dict[str, Any]]) -> tuple[bool, bool]:
         }:
             continue
         owner = str(event.get("owner") or event.get("stage") or "")
+        stage = str(event.get("stage") or owner)
+        matching_statuses = [
+            status
+            for (_arm, call_stage), status in final_statuses.items()
+            if call_stage == stage
+        ]
+        if matching_statuses and all(
+            status == "validated" for status in matching_statuses
+        ):
+            continue
         if owner in {"vpa_evidence", "joint_arbiter"}:
             vpa_error = True
         elif owner in {"stage1", "stage2"}:
@@ -229,7 +257,7 @@ def evaluate_analysis_quality(
             ]
             if not first_pass_clean(record):
                 first_pass_failed.append(run_id)
-            pa_event, vpa_event = _semantic_roles(events)
+            pa_event, vpa_event = _semantic_roles(events, calls)
             if not _has_pa_grounding(record):
                 pa_missing.append(run_id)
             if pa_event:
@@ -245,7 +273,10 @@ def evaluate_analysis_quality(
                 ):
                     authority_failed.append(run_id)
 
-            if not calls or any(str(call.get("status") or "") != "validated" for call in calls):
+            final_statuses = _final_call_statuses(calls)
+            if not final_statuses or any(
+                status != "validated" for status in final_statuses.values()
+            ):
                 call_status_failed.append(run_id)
             if any(call.get("latency_ms") is None for call in calls):
                 missing_latency_runs.append(run_id)

@@ -1,0 +1,328 @@
+"""Compile validated PA outputs into the frozen VPA/Joint handoff.
+
+This module only copies model-owned PA semantics and derives reproducible
+order math, identity, and numeric window positions. It never names a setup,
+classifies market location, or changes the PA decision.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from typing import Any
+
+from pa_agent.ai.fact_catalog import AnalysisFactCatalog, build_analysis_fact_catalog
+from pa_agent.ai.role_contracts import (
+    PaHypothesis,
+    PaHypothesisSet,
+    PaSetupCandidate,
+    PaTradeMath,
+    PaWindowContext,
+)
+from pa_agent.data.base import KlineFrame
+from pa_agent.util.trade_metrics import compute_risk_reward, passes_trader_equation
+
+_EXECUTABLE_ORDER_TYPES = frozenset({"限价单", "突破单", "市价单"})
+_ORDER_DIRECTIONS = frozenset({"做多", "做空"})
+
+
+def _finite(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _fraction_from_low(value: float, low: float, high: float) -> float:
+    width = high - low
+    if width <= 0:
+        return 0.0
+    return round((value - low) / width, 8)
+
+
+def _window_context(
+    *,
+    fact_refs: list[str],
+    catalog: AnalysisFactCatalog,
+    decision: dict[str, Any],
+) -> list[PaWindowContext]:
+    try:
+        current_close = float(catalog.fact("PA.BAR.K1").value["close"])
+    except (KeyError, TypeError, ValueError):
+        return []
+    prices = {
+        "entry": float(decision["entry_price"]),
+        "stop": float(decision["stop_loss_price"]),
+        "tp1": float(decision["take_profit_price"]),
+        "tp2": float(decision["take_profit_price_2"]),
+    }
+    result: list[PaWindowContext] = []
+    seen: set[str] = set()
+    for fact_id in fact_refs:
+        if fact_id in seen or not fact_id.startswith("PA.WINDOW.K"):
+            continue
+        seen.add(fact_id)
+        try:
+            fact = catalog.fact(fact_id)
+        except KeyError:
+            continue
+        if fact.fact_type != "rolling_price_window" or not isinstance(
+            fact.value,
+            dict,
+        ):
+            continue
+        high = _finite(fact.value.get("high"))
+        low = _finite(fact.value.get("low"))
+        if high is None or low is None or high <= low:
+            continue
+        result.append(
+            PaWindowContext(
+                fact_id=fact.fact_id,
+                bar_range=fact.bar_range,
+                high=high,
+                high_bars=[str(item) for item in fact.value.get("high_bars", [])],
+                low=low,
+                low_bars=[str(item) for item in fact.value.get("low_bars", [])],
+                current_close_fraction_from_low=_fraction_from_low(
+                    current_close,
+                    low,
+                    high,
+                ),
+                entry_fraction_from_low=_fraction_from_low(
+                    prices["entry"],
+                    low,
+                    high,
+                ),
+                stop_fraction_from_low=_fraction_from_low(
+                    prices["stop"],
+                    low,
+                    high,
+                ),
+                tp1_fraction_from_low=_fraction_from_low(
+                    prices["tp1"],
+                    low,
+                    high,
+                ),
+                tp2_fraction_from_low=_fraction_from_low(
+                    prices["tp2"],
+                    low,
+                    high,
+                ),
+            )
+        )
+    return result
+
+
+def _trade_math(decision: dict[str, Any]) -> PaTradeMath:
+    rr = compute_risk_reward(
+        decision.get("entry_price"),
+        decision.get("take_profit_price"),
+        decision.get("stop_loss_price"),
+        decision.get("order_direction"),
+    )
+    win_rate_raw = decision.get("estimated_win_rate")
+    if rr is None or isinstance(win_rate_raw, bool) or not isinstance(
+        win_rate_raw,
+        int,
+    ):
+        raise ValueError(
+            "validated executable PA plan has incomplete trade mathematics"
+        )
+    risk = float(rr["risk"])
+    reward = float(rr["reward"])
+    win_rate = int(win_rate_raw)
+    probability = win_rate / 100.0
+    return PaTradeMath(
+        risk=risk,
+        reward_to_tp1=reward,
+        reward_risk_ratio=float(rr["ratio"]),
+        break_even_win_rate_pct=100.0 * risk / (risk + reward),
+        pa_estimated_win_rate_pct=win_rate,
+        estimated_expectancy=probability * reward - (1.0 - probability) * risk,
+        equation_passes=passes_trader_equation(win_rate, risk, reward),
+        win_rate_provenance="llm_subjective_prior",
+        calibration_id=None,
+    )
+
+
+def _candidate(
+    *,
+    decision: dict[str, Any],
+    stage2: dict[str, Any],
+    setup: str | None,
+    fact_refs: list[str],
+    theory_ids: list[str],
+    catalog: AnalysisFactCatalog,
+) -> PaSetupCandidate | None:
+    order_type = str(decision.get("order_type") or "")
+    if order_type not in _EXECUTABLE_ORDER_TYPES:
+        return None
+    order_direction = str(decision.get("order_direction") or "")
+    numeric_fields = (
+        "entry_price",
+        "stop_loss_price",
+        "take_profit_price",
+        "take_profit_price_2",
+    )
+    if order_direction not in _ORDER_DIRECTIONS or any(
+        _finite(decision.get(field)) is None for field in numeric_fields
+    ):
+        raise ValueError(
+            "validated executable PA plan is missing structured order fields"
+        )
+    trigger = str(decision.get("entry_rule") or "").strip() or None
+    basis_bar = str(decision.get("entry_basis_bar") or "").strip() or None
+    basis_extreme = decision.get("entry_basis_extreme")
+    if order_type == "突破单" and (
+        trigger is None
+        or basis_bar is None
+        or basis_extreme not in {"high", "low"}
+    ):
+        raise ValueError(
+            "validated executable PA plan is missing breakout basis fields"
+        )
+    if basis_extreme not in {"high", "low"}:
+        basis_extreme = None
+    invalidation = (
+        str(decision.get("invalidation_condition") or "").strip() or None
+    )
+    bar_analysis = stage2.get("bar_analysis")
+    entry_bar = (
+        bar_analysis.get("entry_bar")
+        if isinstance(bar_analysis, dict)
+        and isinstance(bar_analysis.get("entry_bar"), dict)
+        else {}
+    )
+    timing_state = (
+        "waiting"
+        if entry_bar.get("bar") is None
+        or str(entry_bar.get("freshness") or "") == "pending"
+        else "eligible"
+    )
+    candidate_direction = "bullish" if order_direction == "做多" else "bearish"
+    return PaSetupCandidate(
+        candidate_id="pa-setup-1",
+        hypothesis_id="pa-primary",
+        direction=candidate_direction,
+        setup=setup,
+        timing_state=timing_state,
+        order_type=order_type,
+        order_direction=order_direction,
+        entry_price=float(decision["entry_price"]),
+        entry_basis_bar=basis_bar,
+        entry_basis_extreme=basis_extreme,
+        trigger=trigger,
+        stop_loss_price=float(decision["stop_loss_price"]),
+        take_profit_price=float(decision["take_profit_price"]),
+        take_profit_price_2=float(decision["take_profit_price_2"]),
+        invalidation=invalidation,
+        trade_math=_trade_math(decision),
+        window_context=_window_context(
+            fact_refs=fact_refs,
+            catalog=catalog,
+            decision=decision,
+        ),
+        fact_refs=fact_refs,
+        theory_rule_ids=theory_ids,
+    )
+
+
+def compile_pa_handoff(
+    stage1: dict[str, Any],
+    stage2: dict[str, Any] | None,
+    frame: KlineFrame,
+) -> PaHypothesisSet:
+    """Compile validated PA outputs without inventing missing PA semantics."""
+    evidence = stage1.get("pa_evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    fact_refs = [str(item) for item in evidence.get("fact_refs", [])]
+    theory_ids = [str(item) for item in evidence.get("theory_rule_ids", [])]
+    cycle = str(stage1.get("cycle_position") or "unknown")
+    direction = str(stage1.get("direction") or "neutral")
+    if direction not in {"bullish", "bearish", "neutral"}:
+        direction = "neutral"
+    gate = str(stage1.get("gate_result") or "unknown")
+    if gate not in {"proceed", "wait", "unknown"}:
+        gate = "unknown"
+    setup = str(stage1.get("entry_setup") or "").strip() or None
+    primary_thesis = f"{cycle} / {direction}. Gate={gate}."
+    if setup:
+        primary_thesis = f"{cycle} / {direction}: {setup}. Gate={gate}."
+    primary = PaHypothesis(
+        hypothesis_id="pa-primary",
+        role="primary",
+        cycle_position=cycle,
+        direction=direction,
+        setup=setup,
+        thesis=primary_thesis,
+        fact_refs=fact_refs,
+        theory_rule_ids=theory_ids,
+    )
+    alternative_cycle = stage1.get("alternative_cycle_position")
+    alternative = None
+    if alternative_cycle and str(alternative_cycle) != cycle:
+        alternative = PaHypothesis(
+            hypothesis_id="pa-alternative",
+            role="alternative",
+            cycle_position=str(alternative_cycle),
+            direction=direction,
+            setup=setup,
+            thesis=(
+                f"Competing PA framework: {alternative_cycle} / {direction}; "
+                "reassess the same model-owned setup without changing PA authority."
+            ),
+            fact_refs=fact_refs,
+            theory_rule_ids=theory_ids,
+        )
+    stage2_obj = stage2 if isinstance(stage2, dict) else {}
+    decision = (
+        stage2_obj.get("decision")
+        if isinstance(stage2_obj.get("decision"), dict)
+        else {}
+    )
+    catalog = build_analysis_fact_catalog(frame)
+    candidate = (
+        _candidate(
+            decision=decision,
+            stage2=stage2_obj,
+            setup=setup,
+            fact_refs=fact_refs,
+            theory_ids=theory_ids,
+            catalog=catalog,
+        )
+        if gate == "proceed"
+        else None
+    )
+    candidates = [candidate] if candidate is not None else []
+    source_payload = {
+        "primary": primary.model_dump(mode="python"),
+        "alternative": (
+            alternative.model_dump(mode="python")
+            if alternative is not None
+            else None
+        ),
+        "setup_candidates": [
+            item.model_dump(mode="python") for item in candidates
+        ],
+        "gate_result": gate,
+        "price_snapshot_hash": catalog.snapshot_hash,
+    }
+    source_digest = hashlib.sha256(
+        json.dumps(
+            source_payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return PaHypothesisSet(
+        primary=primary,
+        alternative=alternative,
+        setup_candidates=candidates,
+        gate_result=gate,
+        price_snapshot_hash=catalog.snapshot_hash,
+        source_digest=source_digest,
+    )

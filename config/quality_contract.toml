@@ -23,6 +23,6 @@ gui_lifecycle_cycles = 1000
 minimum_independent_snapshots = 300
 minimum_decisive_outcomes = 100
 max_unexplained_trade_frequency_decline = 0.15
-numeric_probability_gate_requires_calibration = true
+external_numeric_probability_gate_requires_calibration = true
 production_countertrend_orders_allowed = false
 

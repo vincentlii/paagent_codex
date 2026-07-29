@@ -13,11 +13,17 @@ _VALID_VPA_MODES = frozenset(("off", "shadow", "soft"))
 
 
 def resolve_vpa_mode(prompt_settings: object | None) -> VpaMode:
-    """Return the effective VPA mode with a backward-compatible fallback."""
+    """Return the requested VPA mode with a backward-compatible fallback."""
     raw_mode = getattr(prompt_settings, "vpa_mode", None)
     if raw_mode in _VALID_VPA_MODES:
         return raw_mode
     return "shadow" if bool(getattr(prompt_settings, "vpa_enabled", False)) else "off"
+
+
+def resolve_production_vpa_mode(prompt_settings: object | None) -> VpaMode:
+    """Return the production-safe mode; Joint/Soft remains research-only."""
+    requested = resolve_vpa_mode(prompt_settings)
+    return "shadow" if requested == "soft" else requested
 
 
 def vpa_is_enabled(prompt_settings: object | None) -> bool:

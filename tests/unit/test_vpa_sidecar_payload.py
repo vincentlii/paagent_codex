@@ -41,7 +41,15 @@ def test_finished_callback_projects_matching_record_for_the_ui() -> None:
     record = SimpleNamespace(
         stage2_decision=stage2,
         vpa_catalog={"snapshot_hash": "a" * 64},
-        vpa_evidence={"summary": "live VPA summary"},
+        vpa_evidence={
+            "summary": "live VPA summary",
+            "background_relation": "supports",
+            "entry_timing_relation": "neutral",
+            "observations": [{"evidence_ids": ["VPA.K1", "VPA.SEQ.K3_K1"]}],
+            "hypothesis_assessments": [
+                {"evidence_ids": ["VPA.K1", "VPA.WAVE.1"]}
+            ],
+        },
         joint_decision=None,
         pa_baseline_stage2=stage2,
         joint_stage2=None,
@@ -52,4 +60,14 @@ def test_finished_callback_projects_matching_record_for_the_ui() -> None:
 
     view = sidecar_for_stage2_record(record, stage2)
     assert view["stage1_context"]["summary"] == "live VPA summary"
+    assert view["stage2_impact"] == {
+        "background_relation": "supports",
+        "entry_timing_relation": "neutral",
+        "evidence_used": ["VPA.K1", "VPA.SEQ.K3_K1", "VPA.WAVE.1"],
+        "decision_effect": "shadow_only_no_effect",
+        "reason": (
+            "VPA evidence was recorded for evaluation only; "
+            "the official PA decision was not changed."
+        ),
+    }
     assert sidecar_for_stage2_record(record, {"decision": {"order_type": "限价单"}}) is None

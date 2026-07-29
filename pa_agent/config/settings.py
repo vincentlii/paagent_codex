@@ -62,7 +62,7 @@ class PromptSettings(BaseModel):
     experience_max_chars_per_entry: int = Field(default=400, ge=100, le=4000)
     #: Inject pattern判定表 + 速查 brief into Stage 1 user prompt (reduces missed tags).
     stage1_inject_pattern_briefs: bool = True
-    #: ``shadow`` keeps PA-only official; ``soft`` adopts a validated joint decision.
+    #: ``shadow`` keeps PA-only official; ``soft`` is reserved for research A/A/B/B runs.
     vpa_mode: VpaMode | None = None
     #: Legacy switch retained for existing settings files. New writes set ``vpa_mode``.
     vpa_enabled: bool = False

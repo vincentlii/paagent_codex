@@ -7,11 +7,9 @@ joint arbiter may only act on an existing PA candidate.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Relation = Literal["supports", "neutral", "challenges", "insufficient_data"]
 DecisionEffect = Literal[
@@ -32,10 +30,44 @@ class PaHypothesis(BaseModel):
     role: Literal["primary", "alternative"]
     cycle_position: str
     direction: Literal["bullish", "bearish", "neutral"]
-    setup: str
+    setup: str | None
     thesis: str
     fact_refs: list[str] = Field(default_factory=list)
     theory_rule_ids: list[str] = Field(default_factory=list)
+
+
+class PaTradeMath(BaseModel):
+    """Program-recomputed trade mathematics over the frozen PA plan."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    risk: float
+    reward_to_tp1: float
+    reward_risk_ratio: float
+    break_even_win_rate_pct: float
+    pa_estimated_win_rate_pct: int
+    estimated_expectancy: float
+    equation_passes: bool
+    win_rate_provenance: Literal["llm_subjective_prior"]
+    calibration_id: str | None = None
+
+
+class PaWindowContext(BaseModel):
+    """Numeric price positions in PA-selected windows, without location labels."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fact_id: str
+    bar_range: str
+    high: float
+    high_bars: list[str]
+    low: float
+    low_bars: list[str]
+    current_close_fraction_from_low: float
+    entry_fraction_from_low: float
+    stop_fraction_from_low: float
+    tp1_fraction_from_low: float
+    tp2_fraction_from_low: float
 
 
 class PaSetupCandidate(BaseModel):
@@ -46,10 +78,20 @@ class PaSetupCandidate(BaseModel):
     candidate_id: str
     hypothesis_id: str
     direction: Literal["bullish", "bearish", "neutral"]
-    setup: str
+    setup: str | None
     timing_state: Literal["eligible", "waiting"]
-    trigger: str
-    invalidation: str
+    order_type: Literal["限价单", "突破单", "市价单"]
+    order_direction: Literal["做多", "做空"]
+    entry_price: float
+    entry_basis_bar: str | None
+    entry_basis_extreme: Literal["high", "low"] | None
+    trigger: str | None
+    stop_loss_price: float
+    take_profit_price: float
+    take_profit_price_2: float
+    invalidation: str | None
+    trade_math: PaTradeMath
+    window_context: list[PaWindowContext] = Field(default_factory=list)
     fact_refs: list[str] = Field(default_factory=list)
     theory_rule_ids: list[str] = Field(default_factory=list)
 
@@ -63,123 +105,8 @@ class PaHypothesisSet(BaseModel):
     alternative: PaHypothesis | None
     setup_candidates: list[PaSetupCandidate]
     gate_result: Literal["proceed", "wait", "unknown"]
+    price_snapshot_hash: str
     source_digest: str
-
-    @classmethod
-    def from_stage1(
-        cls,
-        stage1: dict[str, Any],
-        stage2: dict[str, Any] | None = None,
-    ) -> "PaHypothesisSet":
-        """Delegate PA semantics without inventing an executable setup plan.
-
-        Stage 1 may name a setup family, but only validated Stage 2 owns a
-        concrete trigger and setup-specific invalidation.  A joint arbiter may
-        therefore see a candidate only after both PA stages supplied that plan.
-        """
-        evidence = stage1.get("pa_evidence")
-        evidence = evidence if isinstance(evidence, dict) else {}
-        fact_refs = [str(item) for item in evidence.get("fact_refs", [])]
-        theory_ids = [str(item) for item in evidence.get("theory_rule_ids", [])]
-        cycle = str(stage1.get("cycle_position") or "unknown")
-        direction = str(stage1.get("direction") or "neutral")
-        if direction not in {"bullish", "bearish", "neutral"}:
-            direction = "neutral"
-        decision = (
-            stage2.get("decision")
-            if isinstance(stage2, dict) and isinstance(stage2.get("decision"), dict)
-            else {}
-        )
-        trigger = str(decision.get("entry_rule") or "").strip()
-        invalidation = str(decision.get("invalidation_condition") or "").strip()
-        raw_setup = str(stage1.get("entry_setup") or "").strip()
-        setup = raw_setup or trigger or "No current PA setup"
-        primary = PaHypothesis(
-            hypothesis_id="pa-primary",
-            role="primary",
-            cycle_position=cycle,
-            direction=direction,
-            setup=setup,
-            thesis=(
-                f"{cycle} / {direction}: {setup}. "
-                f"Gate={stage1.get('gate_result', 'unknown')}."
-            ),
-            fact_refs=fact_refs,
-            theory_rule_ids=theory_ids,
-        )
-        alternative_cycle = stage1.get("alternative_cycle_position")
-        alternative = None
-        if alternative_cycle and str(alternative_cycle) != cycle:
-            alternative = PaHypothesis(
-                hypothesis_id="pa-alternative",
-                role="alternative",
-                cycle_position=str(alternative_cycle),
-                direction=direction,
-                setup=setup,
-                thesis=(
-                    f"Competing PA framework: {alternative_cycle} / "
-                    f"{direction}; reassess the same setup without changing "
-                    "the current-timeframe directional authority."
-                ),
-                fact_refs=fact_refs,
-                theory_rule_ids=theory_ids,
-            )
-        gate = str(stage1.get("gate_result") or "unknown")
-        if gate not in {"proceed", "wait", "unknown"}:
-            gate = "unknown"
-        has_explicit_plan = bool(
-            gate == "proceed"
-            and direction != "neutral"
-            and decision.get("order_direction")
-            and trigger
-            and invalidation
-        )
-        candidate_setup = raw_setup or trigger
-        candidates = (
-            [
-                PaSetupCandidate(
-                    candidate_id="pa-setup-1",
-                    hypothesis_id=primary.hypothesis_id,
-                    direction=direction,
-                    setup=candidate_setup,
-                    timing_state="eligible",
-                    trigger=trigger,
-                    invalidation=invalidation,
-                    fact_refs=fact_refs,
-                    theory_rule_ids=theory_ids,
-                )
-            ]
-            if has_explicit_plan
-            else []
-        )
-        source_payload = {
-            "cycle_position": cycle,
-            "alternative_cycle_position": alternative_cycle,
-            "direction": direction,
-            "entry_setup": setup,
-            "gate_result": gate,
-            "pa_evidence": evidence,
-            "stage2_plan": {
-                "order_direction": decision.get("order_direction"),
-                "entry_rule": trigger or None,
-                "invalidation_condition": invalidation or None,
-            },
-        }
-        digest = hashlib.sha256(
-            json.dumps(
-                source_payload,
-                ensure_ascii=True,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        return cls(
-            primary=primary,
-            alternative=alternative,
-            setup_candidates=candidates,
-            gate_result=gate,
-            source_digest=digest,
-        )
 
     @property
     def hypothesis_ids(self) -> set[str]:
@@ -403,8 +330,15 @@ class RunOutcome(BaseModel):
     ]
     official_path: Literal["pa_only", "joint", "none"]
     requested_vpa_mode: Literal["off", "shadow", "soft"]
+    effective_vpa_mode: Literal["off", "shadow", "soft"] | None = None
     degradation_stage: Literal["vpa_evidence", "joint_arbiter"] | None = None
     reason: str | None = None
+
+    @model_validator(mode="after")
+    def _default_effective_mode(self) -> "RunOutcome":
+        if self.effective_vpa_mode is None:
+            self.effective_vpa_mode = self.requested_vpa_mode
+        return self
 
 
 VPA_EVIDENCE_SCHEMA: dict[str, Any] = VpaEvidenceEnvelopeDraft.model_json_schema()

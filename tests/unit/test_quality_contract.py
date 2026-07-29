@@ -14,7 +14,10 @@ def test_repository_quality_contract_is_valid() -> None:
     assert contract.version == 1
     assert contract.invariants["max_fact_contradictions"] == 0
     assert contract.structured_output["certified_provider_first_pass_rate"] == 0.995
-    assert contract.research["numeric_probability_gate_requires_calibration"] is True
+    assert (
+        contract.research["external_numeric_probability_gate_requires_calibration"]
+        is True
+    )
     assert (
         QualityThresholds().min_unique_snapshots
         == contract.research["minimum_independent_snapshots"]

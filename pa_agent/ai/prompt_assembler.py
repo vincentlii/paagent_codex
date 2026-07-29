@@ -21,7 +21,11 @@ from pa_agent.ai.pattern_routing import (
     STAGE1_DETECTED_PATTERNS_GUIDE,
     STAGE1_PATTERN_BRIEFS_BLOCK,
 )
-from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog, render_vpa_measurements
+from pa_agent.ai.vpa_measurements import (
+    build_vpa_evidence_catalog,
+    net_close_progress_direction_relation,
+    render_vpa_measurements,
+)
 from pa_agent.ai.vpa_sanitizer import (
     strip_vpa_fields,
     strip_vpa_prompt_sections,
@@ -500,8 +504,8 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
   2. 定 **take_profit_price（TP1）** 于最近有效结构目标（通道对边、区间对侧、前 swing 等）
   3. 定 **take_profit_price_2（TP2）** 于更远结构目标（Measured Move、通道对边远端、区间翻测等）
   4. 定 **stop_loss_price** 于结构失效位之外；若引用“极点外 1 跳”原则，须注明真实 tick size 未确认、执行前校验
-  5. 若按结构定价得到 RR **≥ 1.0**：保留有结构依据的三价，再检验 §10.3；不得为了让 RR 靠近某个数值而移动 stop。
-  6. 若结构 stop 导致 RR < 1.0：只可改选另一个仍有效的 entry、目标或失效结构；不能为通过方程扩大止损或贴近噪音。仍无法 ≥1.0 → reject。
+  5. 完成结构定价后计算 RR；RR 只进入 §10.3，不是独立 Gate。不得为了让 RR 靠近某个数值而移动 stop。
+  6. RR < 1.0 时，必须有独立 PA 证据支持相应较高胜率，且 §10.3 仍为正期望；不得为通过方程扩大止损、把 stop 贴进噪音或机械上调胜率。只有方程不通过或价格缺乏结构依据时才 reject。
 - **TP1 / TP2 硬规则**：
   - 有下单时 `take_profit_price` 与 `take_profit_price_2` **均必填**；不下单时均为 null
   - 做多：stop < entry < take_profit_price < take_profit_price_2
@@ -512,6 +516,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 - **10.3 通过之前**不得输出具体下单类型；**10.3 之后**才写 §11
 - 因方程不通过而放弃（已有三价方案）：terminal.node_id 应为 **10.3**，outcome=**reject**（有方案可拒，不用 wait）
 - 完成 10.3 后，必须把你在方程中使用的**胜率主观估计**写入 decision.estimated_win_rate（0–100 整数），并在 estimated_win_rate_reasoning 简要说明依据；**禁止**留空或仅从 trace 文字里暗示。它是当前 PA Setup 的可复盘主观先验，不是已验证统计胜率；不得用固定数字、单次样本或外部辅助证据的单次确认机械上调。
+- 上下文未提供带样本量、来源与校准版本的统计资料时，禁止称其为“历史胜率”或“回测胜率”；应明确写为当前 Setup 的 PA 主观先验。
 
 **结构型止损 / 止盈质量规则（防止噪音内小单）：**
 - `stop_loss_price` 是会被盘中价格触发的**保护性止损价格**；必须放在本次 Entry Attempt 的明确结构锚点之外，而不是为了通过 10.3 方程而贴近 EMA、K1 low/high、整数位或单根 K 线内部噪音。
@@ -520,7 +525,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 - 若止损只是在 EMA / 支撑 / 阻力外侧很近的位置，且没有越过明确 swing low/high、信号棒极点、通道边界失效位或区间边界失效位，则视为「噪音内止损」；§10.1 或 §10.2 应判「否」。
 - `take_profit_price`（TP1）应放在有结构依据的最近有效目标位，不要为了通过方程而选 K1 内部噪音位
 - `take_profit_price_2`（TP2）应为更远但有结构依据的目标（MM 投影、通道对边远端、区间高度翻测等）；必须满足做多 tp2>tp1、做空 tp2<tp1
-- 若结构止损合理但 RR < 1.0：只能改选另一组仍有结构依据的 entry、目标或失效位；不得把 stop 收紧进噪音，也禁止向外扩 stop；若仍 < 1.0 或方程不通过 → `order_type=不下单`
+- 若结构止损合理但 RR < 1.0：必须用独立 PA 证据支持相应胜率，并由 §10.3 判断是否仍有正期望；不得把 stop 收紧进噪音、向外扩 stop 或机械上调胜率。只有方程不通过或价格锚点缺乏结构依据时才 `order_type=不下单`。
 - 计划型限价单只有在「结构失效位」和「目标结构位」都清晰时才可执行；宽通道 / 区间边界 setup 只是允许进入评估，不代表必须下单。
 
 **计划型限价优先级（背景与周期 > 独立信号棒）：**
@@ -1037,6 +1042,66 @@ class PromptAssembler:
             logger.warning("render_vpa_measurements failed: %s", exc)
             return ""
 
+    @staticmethod
+    def _entry_attempt_context(pa_hypotheses: dict[str, Any]) -> dict[str, Any]:
+        candidates = pa_hypotheses.get("setup_candidates", [])
+        candidates = candidates if isinstance(candidates, list) else []
+        candidate_ids = [
+            str(item.get("candidate_id"))
+            for item in candidates
+            if isinstance(item, dict) and item.get("candidate_id")
+        ]
+        return {
+            "applicable": bool(candidate_ids),
+            "candidate_ids": candidate_ids,
+            "reason": "candidate_available" if candidate_ids else "no_pa_setup_candidate",
+        }
+
+    def _referenced_program_comparators(
+        self,
+        vpa_report: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        catalog = self._vpa_evidence_catalog
+        if not isinstance(catalog, dict):
+            return []
+        cited_ids = {
+            str(evidence_id)
+            for section in (
+                vpa_report.get("observations", []),
+                vpa_report.get("hypothesis_assessments", []),
+            )
+            if isinstance(section, list)
+            for item in section
+            if isinstance(item, dict)
+            for evidence_id in item.get("evidence_ids", [])
+        }
+        projected: list[dict[str, Any]] = []
+        for item in catalog.get("evidence", []):
+            if not isinstance(item, dict):
+                continue
+            evidence_id = str(item.get("evidence_id") or "")
+            if evidence_id not in cited_ids or not evidence_id.startswith("vpa-c"):
+                continue
+            facts = item.get("facts") if isinstance(item.get("facts"), dict) else {}
+            projected.append(
+                {
+                    "evidence_id": evidence_id,
+                    "current_window": facts.get("current_window"),
+                    "prior_window": facts.get("prior_window"),
+                    "current_progress_direction": facts.get("current_progress_direction"),
+                    "prior_progress_direction": facts.get("prior_progress_direction"),
+                    "net_close_progress_direction_relation": (
+                        net_close_progress_direction_relation(facts)
+                    ),
+                    "volume_relation": facts.get("current_vs_prior_volume_relation"),
+                    "abs_progress_relation": facts.get(
+                        "current_vs_prior_abs_progress_relation"
+                    ),
+                    "spread_relation": facts.get("current_vs_prior_spread_relation"),
+                }
+            )
+        return projected
+
     def _record_context(self, value: Any) -> Any:
         """Return legacy-record context without obsolete embedded VPA fields."""
         return strip_vpa_fields(value or {})
@@ -1289,12 +1354,17 @@ class PromptAssembler:
         )
         knowledge = self._load_vpa_rule_prompt(stage1_json=stage1_json)
         measurements = self._render_vpa_measurements_block(frame)
+        entry_attempt_context = self._entry_attempt_context(pa_hypotheses)
         user_content = (
             "## VPA_EVIDENCE_ANALYSIS_TASK\n\n"
             "以下 PA 内容已经通过程序校验并冻结。你只能评估量价证据与这些"
-            "假设及候选的关系，不能重写 PA。\n\n"
+            "假设及候选的关系，不能重写 PA。候选中的订单价格、trade_math 与"
+            "window_context 均由程序冻结；有候选时，entry_timing_relation 必须"
+            "针对该真实 Entry Attempt，而不是笼统复述 PA 方向。\n\n"
             "### PA_HYPOTHESES\n\n"
             f"```json\n{json.dumps(pa_hypotheses, ensure_ascii=False, indent=2)}\n```\n\n"
+            "### ENTRY_ATTEMPT_CONTEXT\n\n"
+            f"```json\n{json.dumps(entry_attempt_context, ensure_ascii=False, indent=2)}\n```\n\n"
             "### FROZEN_PA_CONTEXT\n\n"
             f"```json\n{json.dumps(frozen_pa, ensure_ascii=False, indent=2)}\n```\n\n"
             + (
@@ -1341,12 +1411,15 @@ class PromptAssembler:
 
 不要输出 `bar_range`，程序会根据 evidence IDs 唯一生成。K 序号越大越早，K1
 是最新已收盘 K 线；凡声称 response/follow-through/acceptance/rejection/test，优先用
-`sequence_claims` 明确较早与较晚 evidence ID。证据不够时保持 `unresolved`，不要为了
+`sequence_claims` 明确较早与较晚 evidence ID；两个 ID 必须列在同一 observation，且
+各自 `bar_range` 不得重叠。证据不够时保持 `unresolved`，不要为了
 填标签把候选事件写成确认事件。`interpretation_label` 是开放式速记，不是第二份证明。
 每条 `interpretation` 明确提到的 K#，必须由该条自己的 `evidence_ids` 覆盖；不得借用
 其他 observation 的 evidence。只有 VPA 本身存在需要下一根已收盘 K 线验证的竞争解释时，
 `next_confirmation` 才写 `pending_closed_bar`；VPA 为 neutral/insufficient，或没有独立的后续
 验证条件时可写 `not_applicable`。该字段是证据观察项，不是 Brooks Entry Attempt 的审批 Gate。
+当 `ENTRY_ATTEMPT_CONTEXT.applicable=false` 时，不存在可被 VPA 评价的当前入场尝试，
+必须写 `entry_timing_relation=insufficient_data`；仍可输出独立的背景观察和后续证据条件。
 数据可用时，
 至少给出一项真正的 Effort/Result、序列比较、Acceptance/Rejection 或
 Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并明确写
@@ -1378,6 +1451,8 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
             )
             if key in baseline_stage2
         }
+        entry_attempt_context = self._entry_attempt_context(pa_hypotheses)
+        referenced_comparators = self._referenced_program_comparators(vpa_report)
         user_content = (
             "## JOINT_DECISION_ARBITRATION_TASK\n\n"
             "以下 PA 候选、PA-only 决策和 VPA 报告均已通过程序校验并冻结。"
@@ -1385,9 +1460,17 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
             " PA、重算价格或复制完整 Stage 2。\n\n"
             "### PA_HYPOTHESES_AND_CANDIDATES\n\n"
             f"```json\n{json.dumps(pa_hypotheses, ensure_ascii=False, indent=2)}\n```\n\n"
+            "### ENTRY_ATTEMPT_CONTEXT\n\n"
+            f"```json\n{json.dumps(entry_attempt_context, ensure_ascii=False, indent=2)}\n```\n\n"
             "### VALIDATED_VPA_REPORT\n\n"
             f"```json\n{json.dumps(vpa_report, ensure_ascii=False, indent=2)}\n```\n\n"
-            "### FROZEN_PA_ONLY_STAGE2_BASELINE\n\n"
+            + (
+                "### REFERENCED_PROGRAM_COMPARATORS\n\n"
+                f"```json\n{json.dumps(referenced_comparators, ensure_ascii=False, indent=2)}\n```\n\n"
+                if referenced_comparators
+                else ""
+            )
+            + "### FROZEN_PA_ONLY_STAGE2_BASELINE\n\n"
             f"```json\n{json.dumps(baseline_context, ensure_ascii=False, indent=2)}\n```\n\n"
             """输出且只输出：
 {

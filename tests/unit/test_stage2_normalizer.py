@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 
 from pa_agent.ai.stage2_normalizer import normalize_stage2
+from tests.integration.conftest import VALID_STAGE2
 
 
 def test_stage2_normalizer_only_canonicalizes_trace_notation() -> None:
@@ -25,6 +26,17 @@ def test_stage2_normalizer_only_canonicalizes_trace_notation() -> None:
     assert out["decision_trace"][0]["node_id"] == "10.3"
     assert out["decision_trace"][0]["bar_range"] == "K5-K1"
     assert out["decision_trace"][0]["answer"] == "partial"
+
+
+def test_stage2_normalizer_never_rewrites_an_executable_trade() -> None:
+    raw = copy.deepcopy(VALID_STAGE2)
+    raw["decision"]["estimated_win_rate"] = 20
+
+    out = normalize_stage2(raw)
+
+    assert out["decision"]["order_type"] == "突破单"
+    assert out["decision"]["entry_price"] == 2050.0
+    assert out["terminal"] == raw["terminal"]
 
 
 def test_stage2_feature_flag_removes_next_bar_and_keeps_cycle_as_auxiliary_stub() -> None:

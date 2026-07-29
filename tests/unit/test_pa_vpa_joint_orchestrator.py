@@ -80,6 +80,7 @@ def _orchestrator(
     joint_replies: list,
     baseline_replies: list | None = None,
     vpa_side_effect=None,
+    allow_research_joint: bool | None = None,
 ) -> tuple[TwoStageOrchestrator, MagicMock, MagicMock]:
     settings = Settings(
         prompt=PromptSettings(vpa_mode=mode),
@@ -120,6 +121,11 @@ def _orchestrator(
         pending_writer=writer,
         exp_reader=exp_reader,
         settings=settings,
+        allow_research_joint=(
+            mode == "soft"
+            if allow_research_joint is None
+            else allow_research_joint
+        ),
     )
     return orchestrator, client, writer
 
@@ -148,25 +154,32 @@ def test_shadow_and_soft_have_distinct_official_paths(
     assert record.exception is None
     assert record.run_outcome["status"] == "completed"
     assert record.run_outcome["official_path"] == official_path
+    assert record.run_outcome["effective_vpa_mode"] == mode
     assert record.stage2_decision["decision"]["trade_confidence"] == expected_confidence
     assert record.stage2_decision["decision"]["estimated_win_rate"] == 55
     assert record.pa_hypotheses["primary"]["hypothesis_id"] == "pa-primary"
     assert record.vpa_evidence["catalog_id"].startswith("vpa-catalog-")
-    assert record.joint_decision["joint_arbitration"]["decision_effect"] == (
-        "lower_confidence"
-    )
+    if mode == "soft":
+        assert record.joint_decision["joint_arbitration"]["decision_effect"] == (
+            "lower_confidence"
+        )
+    else:
+        assert record.joint_decision is None
+        assert record.pa_baseline_stage2 is None
     assert record.role_runtime["same_frozen_input"] is True
     assert record.role_runtime["official_path"] == official_path
-    assert client.clone_with_provider.call_count == 3
-    assert [
-        (item["arm"], item["stage"], item["status"])
-        for item in record.call_attempts
-    ] == [
+    assert client.clone_with_provider.call_count == (3 if mode == "soft" else 2)
+    expected_calls = [
         ("pa", "stage1", "validated"),
         ("pa", "stage2", "validated"),
         ("vpa_evidence", "vpa_evidence", "validated"),
-        ("joint_arbiter", "joint_arbiter", "validated"),
     ]
+    if mode == "soft":
+        expected_calls.append(("joint_arbiter", "joint_arbiter", "validated"))
+    assert [
+        (item["arm"], item["stage"], item["status"])
+        for item in record.call_attempts
+    ] == expected_calls
     writer.save_full.assert_called_once()
     assert events[-1] == OrchestratorEvent.RecordSaved
 
@@ -188,13 +201,13 @@ def test_vpa_failure_degrades_to_pa_only_without_failing_analysis() -> None:
     )
 
     assert record.exception is None
-    assert record.run_outcome["status"] == "degraded_pa_only"
+    assert record.run_outcome["status"] == "completed_with_warnings"
     assert record.run_outcome["official_path"] == "pa_only"
     assert record.run_outcome["degradation_stage"] == "vpa_evidence"
     assert record.stage2_decision["decision"]["trade_confidence"] == 70
     assert record.vpa_evidence is None
     assert record.joint_decision is None
-    assert record.run_outcome["status"] == "degraded_pa_only"
+    assert record.run_outcome["status"] == "completed_with_warnings"
     assert record.vpa_sidecar["comparison"] is None
     assert record.role_statuses["vpa"] == "failed"
     assert record.role_statuses["joint"] == "not_attempted"
@@ -206,6 +219,58 @@ def test_vpa_failure_degrades_to_pa_only_without_failing_analysis() -> None:
         "api_calls": 4,
         "model_latency_ms": 4,
     }
+    assert writer.save_full.call_count == 1
+
+
+def test_production_soft_is_explicitly_constrained_to_shadow() -> None:
+    orchestrator, client, _writer = _orchestrator(
+        "soft",
+        vpa_replies=[make_reply(_vpa_report())],
+        joint_replies=[],
+        allow_research_joint=False,
+    )
+
+    record = orchestrator.submit(make_frame(), CancelToken(), lambda _event: None)
+
+    assert record.run_outcome["status"] == "completed_with_warnings"
+    assert record.run_outcome["official_path"] == "pa_only"
+    assert record.run_outcome["requested_vpa_mode"] == "soft"
+    assert record.run_outcome["effective_vpa_mode"] == "shadow"
+    assert record.vpa_sidecar["requested_mode"] == "soft"
+    assert record.vpa_sidecar["effective_mode"] == "shadow"
+    assert record.vpa_sidecar["mode"] == "shadow"
+    assert record.joint_decision is None
+    assert record.pa_baseline_stage2 is None
+    assert record.role_runtime["design"] == "pa_vpa_shadow_v2"
+    assert client.clone_with_provider.call_count == 2
+    assert any(
+        event.get("code") == "soft_not_promoted"
+        for event in record.validation_audit
+    )
+
+
+def test_production_shadow_vpa_failure_preserves_official_pa_success() -> None:
+    orchestrator, client, writer = _orchestrator(
+        "shadow",
+        vpa_replies=[
+            make_reply({"vpa_report": {"catalog_id": "wrong"}}),
+            make_reply({"vpa_report": {"catalog_id": "still-wrong"}}),
+        ],
+        joint_replies=[],
+    )
+
+    record = orchestrator.submit(make_frame(), CancelToken(), lambda _event: None)
+
+    assert record.exception is None
+    assert record.run_outcome["status"] == "completed_with_warnings"
+    assert record.run_outcome["official_path"] == "pa_only"
+    assert record.run_outcome["effective_vpa_mode"] == "shadow"
+    assert record.run_outcome["degradation_stage"] == "vpa_evidence"
+    assert record.stage2_decision["decision"]["trade_confidence"] == 70
+    assert record.vpa_evidence is None
+    assert record.joint_decision is None
+    assert record.role_statuses == {"vpa": "failed"}
+    assert client.clone_with_provider.call_count == 2
     assert writer.save_full.call_count == 1
 
 
@@ -326,7 +391,7 @@ def test_pa_gate_wait_still_allows_vpa_review_but_skips_joint_call() -> None:
     orchestrator, _client, writer = _orchestrator(
         "soft",
         baseline_replies=[make_reply(stage1_wait)],
-        vpa_replies=[make_reply(_vpa_report())],
+        vpa_replies=[make_reply(_vpa_report(relation="insufficient_data"))],
         joint_replies=[],
     )
 
@@ -395,4 +460,41 @@ def test_soft_role_path_rejects_a_frozen_catalog_from_another_snapshot() -> None
     assert record.run_outcome["status"] == "unavailable_input"
     assert record.exception["failed_check"] == "frozen_vpa_catalog_mismatch"
     client.clone_with_provider.assert_not_called()
+    writer.save_partial.assert_called_once()
+
+
+def test_production_soft_cancel_before_preflight_records_effective_shadow() -> None:
+    orchestrator, client, writer = _orchestrator(
+        "soft",
+        vpa_replies=[],
+        joint_replies=[],
+        allow_research_joint=False,
+    )
+    token = CancelToken()
+    token.set()
+
+    record = orchestrator.submit(make_frame(), token, lambda _event: None)
+
+    assert record.run_outcome["requested_vpa_mode"] == "soft"
+    assert record.run_outcome["effective_vpa_mode"] == "shadow"
+    client.clone_with_provider.assert_not_called()
+    writer.save_partial.assert_called_once()
+
+
+def test_production_soft_pa_failure_records_effective_shadow() -> None:
+    invalid_stage1 = copy.deepcopy(VALID_STAGE1)
+    invalid_stage1.pop("cycle_position")
+    orchestrator, _client, writer = _orchestrator(
+        "soft",
+        baseline_replies=[make_reply(invalid_stage1)],
+        vpa_replies=[],
+        joint_replies=[],
+        allow_research_joint=False,
+    )
+
+    record = orchestrator.submit(make_frame(), CancelToken(), lambda _event: None)
+
+    assert record.run_outcome["status"] == "invalid_model_output"
+    assert record.run_outcome["requested_vpa_mode"] == "soft"
+    assert record.run_outcome["effective_vpa_mode"] == "shadow"
     writer.save_partial.assert_called_once()

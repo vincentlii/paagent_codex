@@ -3,6 +3,8 @@
 - 状态：Accepted
 - 日期：2026-07-20
 
+> Joint Prompt 与 Patch 仅用于 ADR-0009 定义的隔离研究 B 臂；生产 Shadow 不调用 Joint。
+
 ## 背景
 
 旧链路会在普通 PA Stage 1/Stage 2 中注入 VPA 字段，Stage 1 与 Stage 2 还重复加载整份

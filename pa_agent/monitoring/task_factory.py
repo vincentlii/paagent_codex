@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from pa_agent.ai.higher_timeframe import serialize_higher_timeframe_context
-from pa_agent.config.vpa import resolve_vpa_mode
+from pa_agent.config.vpa import resolve_production_vpa_mode
 from pa_agent.data.base import KlineFrame
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.monitoring.analysis_runner import FrozenAnalysisPayload
@@ -151,7 +151,7 @@ def _analysis_settings_payload(settings: Any) -> dict[str, Any]:
     provider.pop("api_key_encrypted", None)
     prompt = settings.prompt.model_dump()
     prompt.pop("vpa_enabled", None)
-    prompt["vpa_mode"] = resolve_vpa_mode(settings.prompt)
+    prompt["vpa_mode"] = resolve_production_vpa_mode(settings.prompt)
     general = settings.general.model_dump()
     return {
         "provider": provider,

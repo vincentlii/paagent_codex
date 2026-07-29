@@ -37,7 +37,10 @@ from pa_agent.ai.role_contracts import (
     VpaEvidenceReport,
 )
 from pa_agent.ai.vpa_measurements import evidence_has_relative_volume_comparison
-from pa_agent.ai.vpa_sanitizer import materialize_vpa_report_observation_ranges
+from pa_agent.ai.vpa_sanitizer import (
+    bind_explicit_vpa_k_references,
+    materialize_vpa_report_observation_ranges,
+)
 from pa_agent.config.settings import ValidationSettings
 
 _EXECUTABLE_ORDER_TYPES = frozenset(
@@ -201,6 +204,68 @@ def _evidence_bar_bounds(item: dict[str, Any] | None) -> tuple[int, int] | None:
     return min(values), max(values)
 
 
+def _sequence_chronology(
+    earlier_item: dict[str, Any] | None,
+    later_item: dict[str, Any] | None,
+) -> str:
+    earlier = _evidence_bar_bounds(earlier_item)
+    later = _evidence_bar_bounds(later_item)
+    if earlier is None or later is None:
+        return "not_comparable"
+    if earlier[0] > later[1]:
+        return "ordered"
+    if earlier[1] < later[0]:
+        return "reversed"
+    return "overlap"
+
+
+def _drop_overlapping_vpa_sequence_claims(
+    report_obj: dict[str, Any],
+    evidence_items: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
+    """Drop only non-orderable structured claims; keep the observation itself."""
+    out = copy.deepcopy(report_obj)
+    events: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    observations = out.get("observations")
+    if not isinstance(observations, list):
+        return out, events, warnings
+    for observation_index, observation in enumerate(observations):
+        if not isinstance(observation, dict):
+            continue
+        claims = observation.get("sequence_claims")
+        if not isinstance(claims, list):
+            continue
+        kept: list[Any] = []
+        for claim_index, claim in enumerate(claims):
+            if not isinstance(claim, dict):
+                kept.append(claim)
+                continue
+            state = _sequence_chronology(
+                evidence_items.get(str(claim.get("earlier_evidence_id") or "")),
+                evidence_items.get(str(claim.get("later_evidence_id") or "")),
+            )
+            if state != "overlap":
+                kept.append(claim)
+                continue
+            path = (
+                f"vpa_report.observations[{observation_index}]"
+                f".sequence_claims[{claim_index}]"
+            )
+            events.append(
+                {
+                    "path": path,
+                    "before": copy.deepcopy(claim),
+                    "after": "dropped_overlapping_chronology",
+                }
+            )
+            warnings.append(
+                f"{path}: chronology overlaps and cannot establish follow-through"
+            )
+        observation["sequence_claims"] = kept
+    return out, events, warnings
+
+
 def _validate_vpa_sequence_claims(
     report: VpaEvidenceReport,
     evidence_items: dict[str, dict[str, Any]],
@@ -210,22 +275,20 @@ def _validate_vpa_sequence_claims(
     warnings: list[str] = []
     for observation_index, observation in enumerate(report.observations):
         for claim_index, claim in enumerate(observation.sequence_claims):
-            earlier = _evidence_bar_bounds(
-                evidence_items.get(claim.earlier_evidence_id)
-            )
-            later = _evidence_bar_bounds(
-                evidence_items.get(claim.later_evidence_id)
-            )
             path = (
                 f"vpa_report.observations[{observation_index}]"
                 f".sequence_claims[{claim_index}]"
             )
-            if earlier is None or later is None:
+            state = _sequence_chronology(
+                evidence_items.get(claim.earlier_evidence_id),
+                evidence_items.get(claim.later_evidence_id),
+            )
+            if state == "not_comparable":
                 warnings.append(f"{path}: chronology is not program-comparable")
                 continue
-            if earlier[0] > later[1]:
+            if state == "ordered":
                 continue
-            if earlier[1] < later[0]:
+            if state == "reversed":
                 errors.append(
                     f"{path}: chronology is reversed; "
                     f"{claim.earlier_evidence_id} is newer than "
@@ -553,10 +616,40 @@ def validate_vpa_evidence(
     report_obj = outer["vpa_report"]
 
     assert isinstance(report_obj, dict)
+    report_obj, binding_normalizations = bind_explicit_vpa_k_references(
+        report_obj,
+        catalog,
+    )
+    normalizations.extend(binding_normalizations)
+    applicability_warnings: list[str] = []
+    if (
+        not pa_hypotheses.candidate_ids
+        and report_obj.get("entry_timing_relation") != "insufficient_data"
+    ):
+        before = report_obj.get("entry_timing_relation")
+        report_obj["entry_timing_relation"] = "insufficient_data"
+        normalizations.append(
+            {
+                "path": "vpa_report.entry_timing_relation",
+                "before": before,
+                "after": "insufficient_data",
+                "reason": "no_pa_setup_candidate",
+            }
+        )
+        applicability_warnings.append(
+            "entry_timing_relation normalized to insufficient_data because "
+            "there is no PA setup candidate"
+        )
     report_obj = materialize_vpa_report_observation_ranges(
         report_obj,
         catalog,
     )
+    (
+        report_obj,
+        sequence_normalizations,
+        sequence_normalization_warnings,
+    ) = _drop_overlapping_vpa_sequence_claims(report_obj, evidence_items)
+    normalizations.extend(sequence_normalizations)
     outer = {"vpa_report": report_obj}
 
     try:
@@ -666,7 +759,10 @@ def validate_vpa_evidence(
                 "unavailable VPA data requires insufficient_data assessments"
             )
 
-    warnings: list[str] = []
+    warnings: list[str] = [
+        *applicability_warnings,
+        *sequence_normalization_warnings,
+    ]
     grounding_errors, grounding_warnings = _validate_vpa_report_grounding(
         report,
         evidence_items=evidence_items,

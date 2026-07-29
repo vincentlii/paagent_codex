@@ -37,11 +37,11 @@ if TYPE_CHECKING:
 
 from pa_agent.ai.json_validator import Ok, ValidationError
 from pa_agent.ai.model_call_runner import ModelCallRunner
+from pa_agent.ai.pa_handoff import compile_pa_handoff
 from pa_agent.ai.provider_failures import ModelCallFailure
 from pa_agent.ai.role_contracts import (
     JOINT_DECISION_SCHEMA,
     VPA_EVIDENCE_SCHEMA,
-    PaHypothesisSet,
     RunOutcome,
     VpaEvidenceReport,
 )
@@ -261,7 +261,11 @@ def _apply_validation_to_call_attempts(
             if event.get("category") == "normalization":
                 response_calls[index]["normalization_applied"] = True
                 continue
-            if event.get("category") == "warning":
+            if event.get("severity") == "warning" or event.get(
+                "category"
+            ) == "warning":
+                if event.get("category") == "execution_policy":
+                    response_calls[index]["execution_policy_applied"] = True
                 response_calls[index]["validation_warning_count"] = (
                     int(response_calls[index].get("validation_warning_count") or 0)
                     + 1
@@ -617,7 +621,7 @@ def _completed_run_status(
 ) -> str:
     """Distinguish clean completion from accepted quality warnings."""
     has_validation_warning = any(
-        str(item.get("category") or "") == "warning"
+        str(item.get("severity") or item.get("category") or "") == "warning"
         for item in [*record.validation_audit, *extra_audit]
     )
     return "completed_with_warnings" if has_validation_warning else "completed"
@@ -694,6 +698,7 @@ class TwoStageOrchestrator:
         call_arm: str = "baseline",
         allow_provider_fallback: bool = True,
         defer_execution_policy: bool = False,
+        allow_research_joint: bool = False,
     ) -> None:
         self._client = client
         self._assembler = assembler
@@ -705,6 +710,7 @@ class TwoStageOrchestrator:
         self._call_arm = call_arm
         self._allow_provider_fallback = allow_provider_fallback
         self._defer_execution_policy = defer_execution_policy
+        self._allow_research_joint = allow_research_joint
         self._initial_stage2_messages: list[dict[str, Any]] = []
 
     def _validation_settings(self) -> Any:
@@ -796,10 +802,14 @@ class TwoStageOrchestrator:
         AnalysisRecord
             Fully or partially populated record.
         """
-        from pa_agent.config.vpa import resolve_vpa_mode
+        from pa_agent.config.vpa import resolve_production_vpa_mode, resolve_vpa_mode
 
         configured_mode = resolve_vpa_mode(getattr(self._settings, "prompt", None))
-        mode = configured_mode
+        mode = (
+            "soft"
+            if configured_mode == "soft" and self._allow_research_joint
+            else resolve_production_vpa_mode(getattr(self._settings, "prompt", None))
+        )
         if mode in {"shadow", "soft"}:
             return self._submit_vpa_roles(
                 frame,
@@ -1769,6 +1779,7 @@ class TwoStageOrchestrator:
                         status="cancelled",
                         official_path="none",
                         requested_vpa_mode=configured_mode,
+                        effective_vpa_mode=mode,
                         reason="cancelled_before_preflight",
                     ).model_dump()
                 }
@@ -1800,6 +1811,7 @@ class TwoStageOrchestrator:
                         status="unavailable_input",
                         official_path="none",
                         requested_vpa_mode=configured_mode,
+                        effective_vpa_mode=mode,
                         reason=preflight.reason,
                     ).model_dump(),
                 }
@@ -1827,6 +1839,7 @@ class TwoStageOrchestrator:
                             status="unavailable_input",
                             official_path="none",
                             requested_vpa_mode=configured_mode,
+                            effective_vpa_mode=mode,
                             reason=str(exc),
                         ).model_dump(),
                     }
@@ -1852,9 +1865,12 @@ class TwoStageOrchestrator:
         vpa_client, vpa_isolated = self._clone_role_client(
             role_settings.provider
         )
-        joint_client, joint_isolated = self._clone_role_client(
-            role_settings.provider
-        )
+        joint_client: Any | None = None
+        joint_isolated = True
+        if mode == "soft" and self._allow_research_joint:
+            joint_client, joint_isolated = self._clone_role_client(
+                role_settings.provider
+            )
 
         def relay_baseline_event(event: OrchestratorEvent) -> None:
             if event != OrchestratorEvent.RecordSaved:
@@ -1873,6 +1889,7 @@ class TwoStageOrchestrator:
             call_arm="pa",
             allow_provider_fallback=False,
             defer_execution_policy=True,
+            allow_research_joint=False,
         )
         baseline = baseline_runner.submit(
             frame,
@@ -1896,6 +1913,7 @@ class TwoStageOrchestrator:
                             status="cancelled",
                             official_path="none",
                             requested_vpa_mode=configured_mode,
+                            effective_vpa_mode=mode,
                             reason="cancelled_during_pa",
                         ).model_dump()
                     }
@@ -1923,6 +1941,7 @@ class TwoStageOrchestrator:
                             status=baseline_status,
                             official_path="none",
                             requested_vpa_mode=configured_mode,
+                            effective_vpa_mode=mode,
                             reason=(
                                 str(baseline_outcome.get("reason") or "")
                                 or "PA framework or PA-only decision failed"
@@ -1936,7 +1955,7 @@ class TwoStageOrchestrator:
 
         stage1 = copy.deepcopy(baseline.stage1_diagnosis or {})
         baseline_stage2 = copy.deepcopy(baseline.stage2_decision or {})
-        hypotheses = PaHypothesisSet.from_stage1(stage1, baseline_stage2)
+        hypotheses = compile_pa_handoff(stage1, baseline_stage2, frame)
         hypotheses_dict = hypotheses.model_dump()
         catalog = (
             copy.deepcopy(frozen_vpa_catalog)
@@ -1951,6 +1970,18 @@ class TwoStageOrchestrator:
         role_calls: list[dict[str, Any]] = []
         role_audit: list[dict[str, Any]] = []
         role_replies: list[Any] = []
+        if configured_mode == "soft" and mode == "shadow":
+            role_audit.append(
+                {
+                    "stage": "runtime_policy",
+                    "arm": "production",
+                    "code": "soft_not_promoted",
+                    "severity": "warning",
+                    "owner": "runtime_policy",
+                    "retry_policy": "never",
+                    "message": "Soft is research-only; production executed Shadow.",
+                }
+            )
         thinking, effort = self._thinking_params()
 
         def execute_role(
@@ -2083,6 +2114,7 @@ class TwoStageOrchestrator:
                         status="cancelled",
                         official_path="none",
                         requested_vpa_mode=configured_mode,
+                        effective_vpa_mode=mode,
                         reason=reason,
                     ).model_dump(),
                     "usage_total": _accumulate_usage_calls(
@@ -2126,12 +2158,13 @@ class TwoStageOrchestrator:
                 official_stage2,
                 threshold,
             )
+            research_joint = bool(self._allow_research_joint and mode == "soft")
             joint_stage2 = (
                 copy.deepcopy(joint_envelope.get("stage2_decision") or {})
-                if isinstance(joint_envelope, dict)
+                if research_joint and isinstance(joint_envelope, dict)
                 else None
             )
-            joint_semantic = copy.deepcopy(joint_envelope)
+            joint_semantic = copy.deepcopy(joint_envelope) if research_joint else None
             if isinstance(joint_semantic, dict):
                 joint_semantic.pop("stage2_decision", None)
             completed_status = _completed_run_status(
@@ -2153,13 +2186,14 @@ class TwoStageOrchestrator:
                     vpa_result,
                     applicable=True,
                     failed=degradation_stage == "vpa_evidence",
-                ),
-                "joint": _role_execution_status(
+                )
+            }
+            if research_joint:
+                role_statuses["joint"] = _role_execution_status(
                     joint_result,
                     applicable=joint_applicable,
                     failed=degradation_stage == "joint_arbiter",
-                ),
-            }
+                )
             authority_violations = sorted(
                 {
                     str(violation)
@@ -2170,10 +2204,15 @@ class TwoStageOrchestrator:
                 }
             )
             role_runtime = {
-                "design": "pa_vpa_joint_v1",
+                "design": (
+                    "pa_vpa_joint_research_v1"
+                    if research_joint
+                    else "pa_vpa_shadow_v2"
+                ),
                 "same_frozen_input": True,
                 "snapshot_hash": snapshot_hash,
                 "pa_source_digest": hypotheses.source_digest,
+                "entry_attempt_applicable": bool(hypotheses.candidate_ids),
                 "official_path": official_path,
                 "client_instances_isolated": bool(
                     baseline_isolated and vpa_isolated and joint_isolated
@@ -2189,13 +2228,16 @@ class TwoStageOrchestrator:
                 status=effective_status,
                 official_path=official_path,
                 requested_vpa_mode=configured_mode,
+                effective_vpa_mode=mode,
                 degradation_stage=degradation_stage,
                 reason=degradation_reason,
             ).model_dump()
             record = baseline.model_copy(
                 update={
                     "stage2_decision": executable_stage2,
-                    "pa_baseline_stage2": copy.deepcopy(baseline_stage2),
+                    "pa_baseline_stage2": (
+                        copy.deepcopy(baseline_stage2) if research_joint else None
+                    ),
                     "joint_stage2": copy.deepcopy(joint_stage2),
                     "pa_hypotheses": copy.deepcopy(hypotheses_dict),
                     "vpa_catalog": copy.deepcopy(catalog),
@@ -2205,7 +2247,11 @@ class TwoStageOrchestrator:
                     "role_runtime": role_runtime,
                     "role_responses": {
                         "vpa_evidence": role_response_payload(vpa_result),
-                        "joint_arbiter": role_response_payload(joint_result),
+                        **(
+                            {"joint_arbiter": role_response_payload(joint_result)}
+                            if research_joint
+                            else {}
+                        ),
                     },
                     "run_outcome": outcome,
                     "usage_total": usage,
@@ -2248,7 +2294,7 @@ class TwoStageOrchestrator:
             return finish_cancelled("cancelled_during_vpa_evidence")
         if vpa_failure is not None or vpa_result is None or not vpa_result.ok:
             return finish(
-                status="degraded_pa_only",
+                status="completed_with_warnings",
                 official_path="pa_only",
                 official_stage2=baseline_stage2,
                 vpa_result=vpa_result,
@@ -2265,6 +2311,17 @@ class TwoStageOrchestrator:
         assert vpa_result.obj is not None
         vpa_report_obj = copy.deepcopy(vpa_result.obj["vpa_report"])
         vpa_report = VpaEvidenceReport.model_validate(vpa_report_obj)
+        if mode != "soft" or not self._allow_research_joint:
+            return finish(
+                status="completed",
+                official_path="pa_only",
+                official_stage2=baseline_stage2,
+                vpa_result=vpa_result,
+                vpa_report_obj=vpa_report_obj,
+                joint_result=None,
+                joint_envelope=None,
+            )
+
         gate_result = str(stage1.get("gate_result") or "unknown")
         if (
             gate_result != "proceed"
@@ -2293,6 +2350,7 @@ class TwoStageOrchestrator:
                 False,
             )
         )
+        assert joint_client is not None
         joint_result, joint_failure = execute_role(
             role="joint_arbiter",
             client=joint_client,

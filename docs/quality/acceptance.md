@@ -22,19 +22,22 @@
 ## 性能
 
 - PA-only 无重试 Prompt 的 p95 token 不超过迁移前匹配基线的 60%。
-- Soft 总 token 不超过同 Snapshot PA-only 的 1.35 倍。
+- 研究 B 臂总 token 不超过同 Snapshot PA-only 的 1.35 倍；生产 Shadow 不调用 Joint。
 - Prompt 压缩不得删除 Background、八态频谱、Always In、Setup、竞争假设、HTF、Gate 或核心 VPA 证据域。
 - 20 个资产并发排队时无丢失、重复、跨资产身份污染或重复数据库记录。
 - GUI 连续 1000 次取消、切换品种与关闭，不发生 `QThread` 生命周期崩溃。
 
 ## 交易与研究
 
-- 数字胜率未完成样本外校准前，只记录不 Gate。
-- Soft 发布前至少收集 300 个独立 Snapshot 与 100 个有明确结果的匹配样本；
+- PA `estimated_win_rate` 是明确标注为未校准的 Setup 主观先验，可参与 Brooks Trader
+  Equation；不得伪装成历史统计。VPA、外部固定阈值或单次样本不得修改它或建立第二道数字 Gate。
+- 任何 Joint 生产晋级提案前至少收集 300 个独立 Snapshot 与 100 个有明确结果的匹配样本；
   最终样本量按预注册效应量和统计功效重新计算。
 - 相比 PA-only，触发频率下降超过 15% 时，必须由扣除成本后的 EV、MAE 或回撤改善支持。
 - 生产环境保持禁止逆势订单；MTR/反转候选仅进入 Shadow 研究。
 - A/A/B/B 需要臂顺序平衡，同时报告 intention-to-treat 与 per-protocol。
+- 定向修复必须同时保留首次失败与最终接受状态：首次失败计入 first-pass 指标；最终已验证
+  输出进入 grounding/status 指标；所有尝试均计入 token 与 latency，不得重复惩罚或隐去成本。
 
 ## 每阶段完成条件
 
