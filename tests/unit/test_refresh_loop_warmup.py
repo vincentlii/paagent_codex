@@ -1,47 +1,23 @@
-"""RefreshLoop must fetch enough bars for indicator warmup."""
+"""RefreshLoop fetch policy keeps warmup and optional history bounded."""
 from __future__ import annotations
 
-import ast
-from pathlib import Path
+from pa_agent.data.refresh_loop import RefreshLoop
 
 
 def test_refresh_loop_snapshot_count_includes_indicator_warmup() -> None:
-    src = Path(__file__).resolve().parents[2] / "pa_agent" / "data" / "refresh_loop.py"
-    tree = ast.parse(src.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not (
-            isinstance(func, ast.Attribute)
-            and func.attr == "latest_snapshot"
-            and isinstance(func.value, ast.Attribute)
-            and func.value.attr == "_source"
-        ):
-            continue
-        assert len(node.args) == 1
-        arg = node.args[0]
-        assert isinstance(arg, ast.BinOp)
-        assert isinstance(arg.op, ast.Add)
-        break
-    else:
-        raise AssertionError("latest_snapshot call not found")
+    loop = RefreshLoop(object(), 20)
+    assert loop._next_fetch_count() == 75
 
-    # n_bars + INDICATOR_WARMUP_BARS + 5
-    assert isinstance(arg.left, ast.BinOp)
-    assert isinstance(arg.left.op, ast.Add)
-    assert isinstance(arg.left.left, ast.Attribute)
-    assert arg.left.left.attr == "_n_bars"
+
+def test_refresh_loop_uses_large_history_only_for_initial_backfill() -> None:
+    loop = RefreshLoop(object(), 20, initial_fetch_bars=800)
+    assert loop._next_fetch_count() == 800
+    merged = loop._snapshot_with_history([])
+    assert merged == []
+    assert loop._next_fetch_count() == 800
 
 
 def test_refresh_loop_exposes_pause_control_before_fetching() -> None:
-    src = Path(__file__).resolve().parents[2] / "pa_agent" / "data" / "refresh_loop.py"
-    tree = ast.parse(src.read_text(encoding="utf-8"))
-    methods = {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-    }
-
-    assert "set_paused" in methods
-    assert "_paused" in ast.unparse(methods["run"])
+    loop = RefreshLoop(object(), 20)
+    loop.set_paused(True)
+    assert loop._paused.is_set()

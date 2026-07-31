@@ -128,6 +128,27 @@ def test_comparator_binds_an_explicit_evidence_id() -> None:
     assert any("vpa-e001" in error and "conflicts" in error for error in errors)
 
 
+def test_contextual_window_rejects_only_an_explicit_direction_restatement() -> None:
+    errors = validate_vpa_comparator_narrative(
+        "vpa-w005: K5-K1（反弹段） versus K10-K6（上涨段）。",
+        evidence_items=[
+            {
+                "evidence_id": "vpa-w005",
+                "bar_range": "K10-K1",
+                "facts": {
+                    "current_window": "K5-K1",
+                    "prior_window": "K10-K6",
+                    "current_progress_direction": "negative",
+                    "prior_progress_direction": "positive",
+                },
+            }
+        ],
+        path="vpa_report.observations[0].interpretation",
+    )
+
+    assert any("current window direction claim" in item for item in errors)
+
+
 def test_capability_guard_distinguishes_claim_from_disclaimer() -> None:
     capabilities = {
         "actor_attribution": False,

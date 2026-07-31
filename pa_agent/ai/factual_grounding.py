@@ -690,9 +690,9 @@ def classify_vpa_comparator_narrative(
     for item in items:
         evidence_id = str(item.get("evidence_id") or "").strip()
         facts = item.get("facts") if isinstance(item.get("facts"), dict) else {}
-        if not evidence_id.lower().startswith("vpa-c") or not _mentioned_vpa_evidence_ids(
-            value, (evidence_id,)
-        ):
+        if not evidence_id.lower().startswith(
+            ("vpa-c", "vpa-w")
+        ) or not _mentioned_vpa_evidence_ids(value, (evidence_id,)):
             continue
         for prefix in ("current", "prior"):
             window = str(facts.get(f"{prefix}_window") or "").strip()

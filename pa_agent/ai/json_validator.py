@@ -536,6 +536,11 @@ class JsonValidator:
         paths: list[str] = []
         if stage == "stage1":
             paths.extend(["support_levels", "resistance_levels"])
+            before_signals = before.get("key_signals")
+            after_signals = after.get("key_signals")
+            if isinstance(before_signals, list) and isinstance(after_signals, list):
+                for index in range(min(len(before_signals), len(after_signals))):
+                    paths.append(f"key_signals.{index}")
             before_bars = before.get("bar_by_bar_summary")
             after_bars = after.get("bar_by_bar_summary")
             if isinstance(before_bars, list) and isinstance(after_bars, list):

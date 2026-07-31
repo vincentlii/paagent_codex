@@ -24,8 +24,9 @@ The rescue release keeps the project principle unchanged:
    leaves the application through `pa_agent.records.codec`. Runtime projections,
    including GUI VPA summaries and aggregate usage, are derived and are not stored
    as competing sources of truth.
-2. VPA provider output is a `VpaObservationDraft`. The program may validate cited
-   evidence IDs and materialize their exact `bar_range`; it must not manufacture a
+2. VPA provider output is a `VpaObservationDraft`. The program validates only evidence
+   IDs visible in that invocation and materializes `catalog_id`, `data_status`, exact
+   `bar_range` and `requires_closed_bar`; it must not manufacture a
    Wyckoff label, market conclusion or missing evidence. Unknown non-authoritative
    Draft fields are whitelist-normalized with an audit event; reserved PA, order,
    confidence and execution fields remain authority violations at any nesting depth.
@@ -73,7 +74,10 @@ The rescue release keeps the project principle unchanged:
     - deterministic normalization is allowed only where the declared state or supplied
       numbers imply one representation, and every material change is audited;
     - professional wording, non-unique PA/VPA interpretation and terminology quality are
-    warnings. They never trigger a model retry or discard an otherwise valid analysis.
+      warnings. They never trigger a model retry or discard an otherwise valid analysis.
+    A JSON object emitted inside the Stage 1 free-text `key_signals` list is serialized
+    losslessly as a canonical JSON string and audited as representation normalization;
+    the program does not reinterpret, translate or discard any part of the signal.
     A VPA `sequence_claim` whose two evidence windows overlap is deterministically removed
     with normalization plus warning because it cannot express an ordered response; the
     containing observation remains usable. A strictly reversed claim remains a hard error.
@@ -96,14 +100,23 @@ The rescue release keeps the project principle unchanged:
     A repaired first attempt remains visible and fails `first_pass_clean`, but an earlier
     error does not reclassify a later validated final call as a current PA/VPA semantic
     failure or failed call status. Latency and token totals still include every attempt.
-18. Citation and relation normalization may use only identities already implied by the
-    frozen catalog. An explicit `K#` can be bound to one unique single-bar evidence item;
+18. Citation and relation materialization may use only identities already implied by the
+    frozen catalog. An explicit `K#` can be auto-bound to one unique single-bar evidence item
+    without mutating the model's declared citations or counting that binding as independent
+    volume evidence;
     unknown or ambiguous references remain hard failures. When no PA Entry Attempt exists,
     VPA timing is normalized to `insufficient_data` without suppressing background evidence.
     Adjacent-window net direction is derived at render/validation time from existing facts,
     not persisted into the catalog, so historical catalog identities remain stable. Explicit
     same/opposite window claims and HTF upper/lower spatial claims are frozen-fact checks;
     leg names, support/resistance meaning and Wyckoff interpretation remain model-owned.
+19. Raw seasonality history is not copied into records. Its exact causal sample set and
+    boundary metadata are represented by a frozen hash in compact snapshot context; replay
+    restores that identity together with volume provenance and still revalidates the catalog
+    hash. Missing payload bytes are never regenerated or guessed.
+20. The audit database projects VPA observations, declared versus auto-bound evidence,
+    hypothesis assessments and typed failures into normalized tables. JSON remains the source
+    artifact; the database is a rebuildable review index, not a second semantic authority.
 
 ## Migration and Failure Policy
 

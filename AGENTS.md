@@ -1,6 +1,7 @@
 # AGENTS
 
 - 回应与生成文件优先使用中文；代码、API、错误信息、产品名保留英文。
+- 修改、调试、优化、审查或部署本项目前，必须读取并遵循 `.agents/skills/paagent-change-guardrails/SKILL.md`。
 - 修改 PA / Wyckoff VPA 融合链路或运行时前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0009`。
 - 每个实现 Phase 必须按 `docs/quality/acceptance.md` 完成测试、临时文件清理和独立提交；机器阈值以 `config/quality_contract.toml` 为准。
 - VPA 必须保持开关化：以 `resolve_vpa_mode(...) == "off"` 为准，VPA prompt、测量块及历史 `vpa_*` / `wyckoff_*` 字段不得进入原 PA 链路。
@@ -12,13 +13,14 @@
 - 普通 PA Stage 1/Stage 2 必须保持 price-only；VPA 只经独立 Evidence Analyst 进入。Joint Decision Arbiter 仅存在于隔离的 A/A/B/B 研究 B 臂，只输出有界 `decision_patch`，不得复制完整 Stage 2、订单价格、胜率、PA trace 或预测。
 - 生产不得采用 Joint 或 `soft` 决策。旧配置请求 `soft` 时必须显式记录 requested=`soft`、effective=`shadow`；只有研究 executor 可授权 effective=`soft`。所有模式都不得让 VPA 创建 Setup、翻转方向或修改 `estimated_win_rate`。
 - VPA observation 的 `bar_range` 由程序根据 evidence ID 生成。解释字段不得复写 OHLC/volume/RVOL 等数值或声明无明确窗口的新高/新低；基础事实只能引用程序目录。
-- VPA 解释中明确出现的 `K#` 若能唯一映射到单棒 evidence，程序可补入该 evidence ID 并记录 normalization；已被窗口 evidence 覆盖时不得重复补，未知或歧义引用仍是 hard error。没有 PA Entry Attempt 时，`entry_timing_relation` 必须由程序收敛为 `insufficient_data`，但 VPA 背景观察与独立后续条件可保留。
+- VPA 解释中明确出现的 `K#` 若能唯一映射到单棒 evidence，程序可写入独立 `auto_bound_evidence_ids` 并进入结构化审计；不得修改模型声明的 `evidence_ids`，也不得把常规自动绑定算作模型 normalization 或独立量价信息。已被窗口 evidence 覆盖时不得重复补，未知或歧义引用仍是 hard error。没有 PA Entry Attempt 时，`entry_timing_relation` 必须由程序收敛为 `insufficient_data`，但 VPA 背景观察与独立后续条件可保留。
 - 相邻窗口净推进方向与 HTF 点位相对当前 K1.close 的上/下方属于程序事实。程序只校验明确的同向/反向、窗口方向标签和空间词矛盾，不据此命名 leg、磁力位、支撑阻力、Test 或 Absorption。
 - VPA `sequence_claim` 倒序是 hard error；证据窗口重叠时只删除该 claim 并记录 normalization + warning，保留 observation 与 PA 正式结果。
 - §9.0P 计划型限价只由程序校验 entry 相对 K1.close 的正确一侧；不得因 K1 影线历史触价、推测 tick size 或自由文本而自动判失效、改价或改单。
 - `analysis_outcomes` 只保存人工核验的真实执行结果；`counterfactual_outcomes` 只保存闭盘 OHLC 对计划的反事实回放。两者不得混为真实 PnL、胜率或训练标签。
 - PA/VPA 增量只能用离线 `pa_vpa_aabb_v1` 四臂协议估计：模型调用前登记 A1/A2/B1/B2，使用同一冻结输入、四个独立客户端及 ABBA/BAAB 顺序，并同时报告 ITT、per-protocol、A/A 与 B/B 分歧。生产 Shadow 不得自称 A/B；每条 record 的反事实只回放自己的正式订单。market order、同 K 入场与出场、同 K 同触止损与目标、突破跳空越价必须保留为 unsupported/ambiguous。同 timestamp OHLC 冲突时拒绝历史，原始快照滚出窗口时停止推进，不得猜测成交路径。
 - A/A/B/B 统计以 `market_snapshot_hash` 为独立样本，以 `cohort_id` 隔离 Provider/settings/源码/Prompt 版本；重复臂、重跑和同一行情的跨版本复核不得重复计样，质量门禁不得混合 cohort。
+- A/A/B/B 收益主结论使用 episode-level ITT：`no_order` / `entry_not_triggered` 计 `0R`，pending/ambiguous 为 censored，缺失 arm 保留在 coverage 并阻止验收；重叠前向窗口先合并 episode。per-protocol 仅为处理交付诊断，不得取代 ITT。
 - 自动回放目标周期由 `general.counterfactual_horizon_bars` 配置，但单条记录不得超过 `analysis_bar_count - 1`；分析最少需要 20 根已收盘 K 线。
 - 多资产队列只能接收已冻结 Snapshot；同资产必须 FIFO 单飞、全局并发与 pending 数必须有界。每个任务使用独立 client/orchestrator，任务身份必须绑定 source、venue、symbol、timeframe、snapshot 与 cohort，禁止静默丢弃或复用 GUI 的共享 client。
 - Linux Headless 入口不得导入 Qt；`PROJECT_ROOT/PROMPT_DIR` 为只读资源，配置、日志、records、audit 与 experience 必须写入 `PA_AGENT_HOME`。只有已落盘的成功分析进入去重历史，Provider/持久化失败按同一 task ID 有界退避重试。

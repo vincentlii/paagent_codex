@@ -11,6 +11,7 @@ _FORMAT_PREFIXES: tuple[str, ...] = (
     "decision_trace",
     "bar_by_bar_summary",
     "bar_range",
+    "key_signals",
     "incremental",
     "next_bar_prediction",
     "next_cycle_prediction",

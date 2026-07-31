@@ -125,5 +125,12 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 - VPA 明确 K 引用只能绑定到唯一单棒 evidence，或被已引用窗口覆盖；程序只补引用元数据，
   不替模型生成解释。相邻窗口的 `same/opposite/flat_or_unavailable` 由现有 facts 临时派生，
   不写回冻结 catalog，避免破坏历史 catalog identity。
+- 成交量可用性由 Provider provenance 与逐 bar `volume_state` 明确表达；真实观测零与缺失/歧义零
+  不得合并。Seasonality 只使用严格早于分析窗的精确同槽历史，原始样本不写入 record，但其冻结
+  hash 与边界摘要必须支持 catalog 身份重放。
+- 新 VPA 窗口事实只对 PA 已引用的 `PA.WINDOW.K#` 注入，代码测量成交量覆盖、推进、路径、效率与
+  重叠，不命名 leg、Spring、UTAD、Absorption、Exhaustion 或交易信号。
+- A/A/B/B 的主收益比较是 episode-level ITT：无下单/未触发为 `0R`，pending/ambiguous censored，
+  缺失 arm 保留并阻止验收；per-protocol 只作处理交付诊断。
 - E2E/fixture 不得触发正式交易 CSV、通知或其他生产副作用；复盘连续性读写必须使用同一个
   `PA_AGENT_HOME` 派生目录。

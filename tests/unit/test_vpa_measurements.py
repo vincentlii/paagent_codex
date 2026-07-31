@@ -7,6 +7,7 @@ from pa_agent.ai.vpa_measurements import (
     build_vpa_evidence_catalog,
     compute_vpa_measurements,
     net_close_progress_direction_relation,
+    pa_window_fact_refs,
     render_vpa_measurements,
 )
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
@@ -72,7 +73,7 @@ def test_vpa_measurements_render_facts_without_trade_conclusions() -> None:
     assert "seasonality" in text
     assert "OHLC" in text
     assert "prior_5" in text
-    assert "volume_relation=above" in text
+    assert "1.222/above" in text
     assert "above" in text
     assert data["seasonality_context"]["seasonality_available"] is False
     assert data["seasonality_context"]["comparison"] == "history_not_provided"
@@ -115,12 +116,13 @@ def test_non_positive_bar_volume_is_not_treated_as_low_activity() -> None:
     assert data["status"] == "limited"
     assert data["volume_coverage"] == {
         "bar_count": 8,
+        "observed_volume_count": 7,
         "positive_volume_count": 7,
         "complete": False,
     }
     assert catalog["evidence"][0]["source"] == "price"
     assert catalog["comparators"]["volume_coverage"]["complete"] is False
-    sequence = next(item for item in catalog["evidence"] if item["evidence_id"] == "vpa-c001")
+    sequence = next(item for item in catalog["evidence"] if item["evidence_id"] == "vpa-w005")
     assert sequence["source"] == "price"
     assert sequence["facts"]["volume_comparison_available"] is False
     assert sequence["facts"]["current_total_volume"] is None
@@ -209,21 +211,53 @@ def test_vpa_snapshot_identity_covers_raw_seasonality_history() -> None:
 
 
 def test_vpa_uses_close_to_close_progress_and_sequence_comparison() -> None:
-    data = compute_vpa_measurements(_frame([100, 120, 140, 80, 90, 110, 100]))
+    frame = _frame([100, 120, 140, 160, 180, 80, 90, 110, 130, 150])
+    data = compute_vpa_measurements(frame)
 
     # The fixture's K1 close is 1.0 below K2 close and ATR is 3.0.
-    assert data["recent_bars"][0]["directional_progress_atr"] == -0.333
+    assert data["recent_bars"][0]["directional_progress_atr"] == -0.333333
     assert data["recent_bars"][0]["body_atr"] == 0.5
-    comparison = data["sequence_comparisons"][0]
-    assert comparison["bar_range"] == "K6-K1"
-    assert comparison["facts"]["current_window"] == "K3-K1"
-    assert comparison["facts"]["prior_window"] == "K6-K4"
+    comparison = data["measurement_slices"][0]
+    assert comparison["bar_range"] == "K10-K1"
+    assert comparison["facts"]["source_fact_id"] == "PA.WINDOW.K5"
+    assert comparison["facts"]["current_window"] == "K5-K1"
+    assert comparison["facts"]["prior_window"] == "K10-K6"
     assert comparison["facts"]["current_vs_prior_volume_relation"] == "above"
     assert comparison["facts"]["current_progress_direction"] == "negative"
     assert net_close_progress_direction_relation(comparison["facts"]) == "same"
     assert "net_progress_direction_relation=same" in render_vpa_measurements(
-        _frame([100, 120, 140, 80, 90, 110, 100])
+        frame,
+        selected_fact_refs={"PA.WINDOW.K5"},
     )
+
+
+def test_vpa_window_slices_are_injected_only_for_pa_declared_windows() -> None:
+    frame = _frame([100 + index for index in range(20)])
+    catalog = build_vpa_evidence_catalog(frame)
+
+    no_window = render_vpa_measurements(catalog=catalog)
+    selected = render_vpa_measurements(
+        catalog=catalog,
+        selected_fact_refs={"PA.WINDOW.K5"},
+    )
+
+    assert "vpa-w005" not in no_window
+    assert "vpa-w005" in selected
+    assert "vpa-w008" not in selected
+    assert all(
+        not str(item["evidence_id"]).startswith("vpa-c")
+        for item in catalog["evidence"]
+    )
+
+
+def test_pa_window_fact_selection_reads_frozen_handoff_only() -> None:
+    assert pa_window_fact_refs(
+        {
+            "primary": {"fact_refs": ["PA.WINDOW.K5", "PA.BAR.K1"]},
+            "alternative": {"fact_refs": ["PA.WINDOW.K8"]},
+            "setup_candidates": [{"fact_refs": ["PA.WINDOW.K5"]}],
+        }
+    ) == {"PA.WINDOW.K5", "PA.WINDOW.K8"}
 
 
 def test_vpa_sequence_direction_relation_is_exact_and_non_semantic() -> None:
@@ -250,7 +284,10 @@ def test_vpa_seasonality_requires_adapter_supplied_same_slot_history() -> None:
         indicators=frame.indicators,
         snapshot_ts_local_ms=frame.snapshot_ts_local_ms,
         data_metadata={
-            "seasonality_samples": {"Tuesday|22:00": [100, 100, 100, 100, 100]},
+            "seasonality_samples": {"Tuesday|22:13": [100, 100, 100, 100, 100]},
+            "seasonality_slot_scheme": "local_clock_exact",
+            "seasonality_history_end_ts_open": 1_699_998_000_000,
+            "seasonality_history_is_causal": True,
             "seasonality_min_samples": 5,
         },
     )
@@ -258,6 +295,33 @@ def test_vpa_seasonality_requires_adapter_supplied_same_slot_history() -> None:
 
     assert data["seasonality_context"]["seasonality_available"] is True
     assert data["recent_bars"][0]["seasonality_relative_volume"] == 1.5
+
+
+def test_vpa_seasonality_reports_insufficient_exact_slot_samples() -> None:
+    frame = _frame([150] * 12)
+    frame = KlineFrame(
+        symbol=frame.symbol,
+        timeframe=frame.timeframe,
+        bars=frame.bars,
+        indicators=frame.indicators,
+        snapshot_ts_local_ms=frame.snapshot_ts_local_ms,
+        data_metadata={
+            "seasonality_samples": {"Tuesday|22:13": [100] * 5},
+            "seasonality_slot_scheme": "local_clock_exact",
+            "seasonality_history_end_ts_open": 1_699_998_000_000,
+            "seasonality_history_is_causal": True,
+            "seasonality_min_samples": 8,
+        },
+    )
+
+    data = compute_vpa_measurements(frame)
+    context = data["seasonality_context"]
+
+    assert context["seasonality_available"] is False
+    assert context["comparison"] == "insufficient_same_slot_samples"
+    assert context["reason"] == "insufficient_same_slot_samples"
+    assert context["sample_key"] == "Tuesday|22:13"
+    assert data["recent_bars"][0]["seasonality_sample_count"] == 5
 
 
 def test_time_bucket_is_converted_to_declared_timezone(monkeypatch) -> None:
@@ -275,5 +339,5 @@ def test_time_bucket_is_converted_to_declared_timezone(monkeypatch) -> None:
         market_session="",
     )
 
-    assert context["time_bucket"] == "06:00"
+    assert context["time_bucket"] == "06:13"
     assert context["timezone_basis"] == "Asia/Shanghai"

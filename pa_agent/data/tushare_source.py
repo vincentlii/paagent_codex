@@ -16,6 +16,7 @@ from pa_agent.data.base import (
     KlineBar,
     normalize_kline_bar,
 )
+from pa_agent.data.volume_context import normalize_provider_volume
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,10 @@ def _df_to_bars_newest_first(df: Any, n: int) -> list[KlineBar]:
     out = df.sort_values(time_col, ascending=False).reset_index(drop=True)
     bars: list[KlineBar] = []
     for i, row in out.head(n).iterrows():
-        vol = _number(row, "vol")
+        vol, volume_state = normalize_provider_volume(
+            row.get("vol"),
+            zero_is_observed=True,
+        )
         ts_open = (
             _trade_time_to_ts_ms(row[time_col])
             if time_col == "trade_time"
@@ -130,6 +134,7 @@ def _df_to_bars_newest_first(df: Any, n: int) -> list[KlineBar]:
                     low=_number(row, "low"),
                     close=_number(row, "close"),
                     volume=vol,
+                    volume_state=volume_state,
                     closed=True,
                 )
             )

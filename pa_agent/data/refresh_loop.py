@@ -10,6 +10,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from pa_agent.data.base import DataSource, DataSourceTransientError
 from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
+from pa_agent.data.volume_context import merge_bar_history
 
 if TYPE_CHECKING:
     from pa_agent.util.threading import CancelToken
@@ -38,12 +39,21 @@ class RefreshLoop(QThread):
         data_source: DataSource,
         n_bars: int,
         interval_ms: int = 1000,
+        initial_fetch_bars: int | None = None,
         cancel_token: "CancelToken | None" = None,
         parent: "QObject | None" = None,
     ) -> None:
         super().__init__(parent)
         self._source = data_source
         self._n_bars = n_bars
+        self._steady_fetch_bars = n_bars + INDICATOR_WARMUP_BARS + 5
+        self._initial_fetch_bars = max(
+            self._steady_fetch_bars,
+            int(initial_fetch_bars or self._steady_fetch_bars),
+        )
+        self._retain_history = self._initial_fetch_bars > self._steady_fetch_bars
+        self._history_backfill_done = False
+        self._history_cache: list[object] = []
         self._interval_ms = interval_ms
         self._cancel_token = cancel_token
         self._consecutive_failures = 0
@@ -64,6 +74,28 @@ class RefreshLoop(QThread):
             return not self._cancel_token.wait(max(0.0, seconds))
         time.sleep(max(0.0, seconds))
         return True
+
+    def _next_fetch_count(self) -> int:
+        return (
+            self._steady_fetch_bars
+            if self._history_backfill_done
+            else self._initial_fetch_bars
+        )
+
+    def _snapshot_with_history(self, bars: list[object]) -> list[object]:
+        if not bars:
+            return []
+        if not self._retain_history:
+            self._history_backfill_done = True
+            return bars
+        merged = merge_bar_history(
+            bars,
+            self._history_cache,
+            limit=self._initial_fetch_bars,
+        )
+        self._history_cache = merged
+        self._history_backfill_done = True
+        return merged
 
     def run(self) -> None:  # noqa: C901
         """Main loop — runs on the worker thread."""
@@ -91,16 +123,14 @@ class RefreshLoop(QThread):
             self._in_flight = True
             try:
                 try:
-                    bars = self._source.latest_snapshot(
-                        self._n_bars + INDICATOR_WARMUP_BARS + 5
-                    )
+                    bars = self._source.latest_snapshot(self._next_fetch_count())
                     if self._consecutive_failures > 0:
                         # Clear any previous error message from the status bar.
                         self.status_changed.emit("")
                     self._consecutive_failures = 0
                     failure_start = None
                     if bars:
-                        self.frame_ready.emit(bars)
+                        self.frame_ready.emit(self._snapshot_with_history(bars))
 
                 except DataSourceTransientError as exc:
                     logger.debug("RefreshLoop transient error: %s", exc)

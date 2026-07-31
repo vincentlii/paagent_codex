@@ -22,6 +22,7 @@ class KlineBar:
     amount: float = 0.0   # turnover amount (成交额); 0 when unavailable
     pct_chg: float | None = None  # daily change % from API when available
     closed: bool = True   # False for the currently-forming bar
+    volume_state: str | None = None
 
 
 def normalize_kline_bar(bar: KlineBar) -> KlineBar:
@@ -39,6 +40,7 @@ def normalize_kline_bar(bar: KlineBar) -> KlineBar:
         low=bar.low,
         close=bar.close,
         volume=bar.volume,
+        volume_state=getattr(bar, "volume_state", None),
         amount=getattr(bar, "amount", 0.0),
         pct_chg=getattr(bar, "pct_chg", None),
         closed=bar.closed,

@@ -152,9 +152,21 @@ def volume_metadata_for_source(
         "volume_kind": "unknown",
         "volume_quality": "unknown",
         "timezone_basis": "UTC",
+        "volume_provenance": {
+            "provider": normalized,
+            "field": "volume",
+            "basis": "provider_ohlcv_field",
+            "zero_semantics": "provider_declared",
+            "comparison_scope": "same_provider_same_instrument",
+        },
     }
     if normalized == "mt5":
         metadata.update(volume_kind="tick", volume_quality="proxy")
+        metadata["volume_provenance"].update(
+            field="tick_volume",
+            basis="quote_change_count",
+            zero_semantics="observed_zero",
+        )
     elif normalized == "tradingview":
         # Auto-probe may resolve a venue different from the user request.  Keep
         # both concepts separate: provenance needs the resolved venue, while
@@ -164,6 +176,18 @@ def volume_metadata_for_source(
             or getattr(source, "exchange", "")
             or ""
         ).upper()
+        metadata["volume_provenance"].update(
+            zero_semantics="ambiguous_zero_or_unavailable",
+        )
+    elif normalized in {"eastmoney", "akshare", "tushare", "yfinance"}:
+        metadata["volume_provenance"].update(
+            field=(
+                "vol"
+                if normalized == "tushare"
+                else "Volume" if normalized == "yfinance" else "volume"
+            ),
+            zero_semantics="observed_zero",
+        )
     if resolved is not None:
         metadata.update(resolved.to_metadata())
     if type(source).__name__ in {"TradingViewSource", "MT5Source"}:

@@ -729,6 +729,9 @@ class MainWindow(QMainWindow):
             return
 
         from pa_agent.data.refresh_loop import RefreshLoop
+        from pa_agent.config.vpa import vpa_is_enabled
+        from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
+        from pa_agent.data.volume_context import snapshot_fetch_count
         from pa_agent.util.threading import CancelToken
 
         settings = getattr(self._ctx, "settings", None)
@@ -744,12 +747,21 @@ class MainWindow(QMainWindow):
             interval_ms,
             timeframe=self._tf_combo.currentText(),
         )
+        initial_fetch_bars = snapshot_fetch_count(
+            n_bars,
+            timeframe=self._tf_combo.currentText(),
+            indicator_warmup_bars=INDICATOR_WARMUP_BARS,
+            vpa_enabled=vpa_is_enabled(
+                getattr(settings, "prompt", None) if settings is not None else None
+            ),
+        )
 
         self._refresh_cancel_token = CancelToken()
         self._refresh_loop = RefreshLoop(
             data_source=data_source,
             n_bars=n_bars,
             interval_ms=interval_ms,
+            initial_fetch_bars=initial_fetch_bars,
             cancel_token=self._refresh_cancel_token,
         )
 
@@ -1533,9 +1545,19 @@ class MainWindow(QMainWindow):
         fresh = self._last_frame_ready_bars
         if not fresh or not self._bars_sufficient_for_analysis(fresh, bar_count):
             return None
+        from pa_agent.config.vpa import vpa_is_enabled
         from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
+        from pa_agent.data.volume_context import snapshot_fetch_count
 
-        need = bar_count + INDICATOR_WARMUP_BARS + 5
+        settings = getattr(self._ctx, "settings", None)
+        need = snapshot_fetch_count(
+            bar_count,
+            timeframe=self._tf_combo.currentText(),
+            indicator_warmup_bars=INDICATOR_WARMUP_BARS,
+            vpa_enabled=vpa_is_enabled(
+                getattr(settings, "prompt", None) if settings is not None else None
+            ),
+        )
         return list(fresh[:need]) if len(fresh) >= need else list(fresh)
 
     def _pull_chart_frame_from_source(
@@ -2759,10 +2781,21 @@ class MainWindow(QMainWindow):
         from pa_agent.gui.snapshot_worker import SnapshotFetchWorker
 
         self._status_bar.showMessage("正在后台获取K线…")
+        from pa_agent.config.vpa import vpa_is_enabled
         from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
+        from pa_agent.data.volume_context import snapshot_fetch_count
 
+        settings = getattr(self._ctx, "settings", None)
+        fetch_count = snapshot_fetch_count(
+            bar_count,
+            timeframe=timeframe,
+            indicator_warmup_bars=INDICATOR_WARMUP_BARS,
+            vpa_enabled=vpa_is_enabled(
+                getattr(settings, "prompt", None) if settings is not None else None
+            ),
+        )
         worker = SnapshotFetchWorker(
-            data_source, bar_count + INDICATOR_WARMUP_BARS + 5, parent=None
+            data_source, fetch_count, parent=None
         )
         # Use a generation token so that stale callbacks from a cancelled
         # worker are silently ignored (closures can't easily be disconnected).

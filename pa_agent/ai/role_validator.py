@@ -36,9 +36,12 @@ from pa_agent.ai.role_contracts import (
     VpaEvidenceEnvelopeDraft,
     VpaEvidenceReport,
 )
-from pa_agent.ai.vpa_measurements import evidence_has_relative_volume_comparison
+from pa_agent.ai.vpa_measurements import (
+    evidence_has_relative_volume_comparison,
+    prompt_vpa_evidence_ids,
+)
 from pa_agent.ai.vpa_sanitizer import (
-    bind_explicit_vpa_k_references,
+    materialize_vpa_reference_bindings,
     materialize_vpa_report_observation_ranges,
 )
 from pa_agent.config.settings import ValidationSettings
@@ -359,14 +362,14 @@ def _validate_vpa_report_grounding(
         validate_inference(
             observation.interpretation,
             path=f"vpa_report.observations[{index}].interpretation",
-            cited_ids=set(observation.evidence_ids),
+            cited_ids=observation.effective_evidence_ids,
             check_k_references=True,
         )
     for index, assessment in enumerate(report.hypothesis_assessments):
         validate_inference(
             assessment.reason,
             path=f"vpa_report.hypothesis_assessments[{index}].reason",
-            cited_ids=set(assessment.evidence_ids),
+            cited_ids=assessment.effective_evidence_ids,
             check_k_references=True,
         )
 
@@ -507,8 +510,7 @@ def validate_vpa_evidence(
 
     normalizations: list[dict[str, Any]] = []
     if "vpa_report" not in outer and {
-        "catalog_id",
-        "data_status",
+        "summary",
         "observations",
         "background_relation",
         "entry_timing_relation",
@@ -523,10 +525,15 @@ def validate_vpa_evidence(
         )
 
     report_obj = outer.get("vpa_report")
+    allowed_evidence_ids = prompt_vpa_evidence_ids(
+        catalog,
+        pa_hypotheses.model_dump(mode="python"),
+    )
     evidence_items = {
         str(item.get("evidence_id")): item
         for item in catalog.get("evidence", [])
         if isinstance(item, dict) and item.get("evidence_id")
+        and str(item.get("evidence_id")) in allowed_evidence_ids
     }
     known_ids = set(evidence_items)
     cited_before_materialization = {
@@ -561,11 +568,16 @@ def validate_vpa_evidence(
         if isinstance(report_obj, dict)
         else []
     )
-    raw_assessed_hypotheses = {
+    raw_assessment_ids = [
         str(item.get("hypothesis_id"))
         for item in raw_assessments
         if isinstance(item, dict) and item.get("hypothesis_id")
-    }
+    ]
+    raw_assessed_hypotheses = set(raw_assessment_ids)
+    if len(raw_assessment_ids) != len(raw_assessed_hypotheses):
+        pre_schema_errors.append(
+            "hypothesis_assessments must contain exactly one assessment per hypothesis"
+        )
     if raw_assessed_hypotheses != pa_hypotheses.hypothesis_ids:
         pre_schema_errors.append(
             "hypothesis_assessments must cover exactly: "
@@ -616,11 +628,24 @@ def validate_vpa_evidence(
     report_obj = outer["vpa_report"]
 
     assert isinstance(report_obj, dict)
-    report_obj, binding_normalizations = bind_explicit_vpa_k_references(
+    report_obj["catalog_id"] = str(catalog.get("catalog_id") or "")
+    report_obj["data_status"] = str(catalog.get("data_status") or "unavailable")
+    confirmation_obj = report_obj.get("next_confirmation")
+    if isinstance(confirmation_obj, dict):
+        confirmation_obj["requires_closed_bar"] = (
+            confirmation_obj.get("state") == "pending_closed_bar"
+        )
+    for section_name in ("observations", "hypothesis_assessments"):
+        section = report_obj.get(section_name)
+        if not isinstance(section, list):
+            continue
+        for item in section:
+            if isinstance(item, dict):
+                item["auto_bound_evidence_ids"] = []
+    report_obj, _binding_audit = materialize_vpa_reference_bindings(
         report_obj,
         catalog,
     )
-    normalizations.extend(binding_normalizations)
     applicability_warnings: list[str] = []
     if (
         not pa_hypotheses.candidate_ids
@@ -640,6 +665,36 @@ def validate_vpa_evidence(
             "entry_timing_relation normalized to insufficient_data because "
             "there is no PA setup candidate"
         )
+    if report_obj.get("data_status") == "unavailable":
+        for field in ("background_relation", "entry_timing_relation"):
+            before = report_obj.get(field)
+            if before != "insufficient_data":
+                report_obj[field] = "insufficient_data"
+                normalizations.append(
+                    {
+                        "path": f"vpa_report.{field}",
+                        "before": before,
+                        "after": "insufficient_data",
+                        "reason": "program_data_unavailable",
+                    }
+                )
+        for index, assessment in enumerate(
+            report_obj.get("hypothesis_assessments", [])
+        ):
+            if not isinstance(assessment, dict):
+                continue
+            before = assessment.get("relation")
+            if before == "insufficient_data":
+                continue
+            assessment["relation"] = "insufficient_data"
+            normalizations.append(
+                {
+                    "path": f"vpa_report.hypothesis_assessments[{index}].relation",
+                    "before": before,
+                    "after": "insufficient_data",
+                    "reason": "program_data_unavailable",
+                }
+            )
     report_obj = materialize_vpa_report_observation_ranges(
         report_obj,
         catalog,
@@ -714,9 +769,9 @@ def validate_vpa_evidence(
     if (
         report.background_relation in {"supports", "challenges"}
         or report.entry_timing_relation in {"supports", "challenges"}
-    ) and not (report.evidence_ids & relative_ids):
+    ) and not (report.declared_evidence_ids & relative_ids):
         errors.append(
-            "supports/challenges requires cited program relative-volume evidence"
+            "supports/challenges requires declared program relative-volume evidence"
         )
     for index, assessment in enumerate(report.hypothesis_assessments):
         if assessment.relation in {"supports", "challenges"}:

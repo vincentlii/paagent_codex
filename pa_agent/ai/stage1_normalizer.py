@@ -7,6 +7,7 @@ is deterministic audit metadata derived from explicit K references.
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 from pa_agent.ai.pattern_routing import normalize_detected_patterns
@@ -48,6 +49,7 @@ def normalize_stage1(
         out["detected_patterns"] = normalize_detected_patterns(
             out["detected_patterns"]
         )
+    _normalize_key_signals(out)
     _normalize_closed_enum_aliases(out)
     _normalize_structure_level_order(out)
     normalize_stage1_traces(out, default_max_seq=_max_bar_seq(kline_frame))
@@ -57,6 +59,26 @@ def normalize_stage1(
         previous_stage1=incremental_previous_stage1,
     )
     return out
+
+
+def _normalize_key_signals(out: dict[str, Any]) -> None:
+    """Preserve structured summaries as canonical strings for the text-only field."""
+    signals = out.get("key_signals")
+    if not isinstance(signals, list):
+        return
+    normalized = [
+        json.dumps(
+            signal,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if isinstance(signal, dict)
+        else signal
+        for signal in signals
+    ]
+    if normalized != signals:
+        out["key_signals"] = normalized
 
 
 def _normalize_closed_enum_aliases(out: dict[str, Any]) -> None:

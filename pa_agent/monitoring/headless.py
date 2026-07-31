@@ -12,6 +12,7 @@ from typing import Any
 
 from pa_agent.config.paths import RuntimePaths
 from pa_agent.config.settings import MonitoringAssetSettings, Settings
+from pa_agent.config.vpa import vpa_is_enabled
 from pa_agent.data.factory import (
     resolved_identity_for_source,
     volume_metadata_for_source,
@@ -22,6 +23,7 @@ from pa_agent.data.higher_timeframe import (
 )
 from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS, build_display_frame
 from pa_agent.data.snapshot_bundle import build_snapshot_bundle
+from pa_agent.data.volume_context import merge_bar_history, snapshot_fetch_count
 from pa_agent.monitoring.scheduler import AnalysisTask, JobCompletion
 from pa_agent.monitoring.task_factory import create_frozen_analysis_task
 from pa_agent.records.analysis_history import (
@@ -57,6 +59,8 @@ class _AssetState:
     last_analysis_status: str | None = None
     prepared_task: AnalysisTask | None = None
     prepared_closed_bar_ts: int | None = None
+    history_backfill_done: bool = False
+    history_cache: list[Any] | None = None
 
 
 class HeadlessMonitor:
@@ -222,12 +226,29 @@ class HeadlessMonitor:
         asset = state.config
         source = self._ensure_source(state)
         now_ms = self._wall_time_ms()
-        fetch_count = (
-            int(self._settings.general.analysis_bar_count)
-            + INDICATOR_WARMUP_BARS
-            + 5
+        analysis_bars = int(self._settings.general.analysis_bar_count)
+        steady_fetch_count = snapshot_fetch_count(
+            analysis_bars,
+            timeframe=asset.timeframe,
+            indicator_warmup_bars=INDICATOR_WARMUP_BARS,
+            vpa_enabled=False,
         )
+        initial_fetch_count = snapshot_fetch_count(
+            analysis_bars,
+            timeframe=asset.timeframe,
+            indicator_warmup_bars=INDICATOR_WARMUP_BARS,
+            vpa_enabled=vpa_is_enabled(self._settings.prompt),
+        )
+        fetch_count = steady_fetch_count if state.history_backfill_done else initial_fetch_count
         raw = source.latest_snapshot(fetch_count)
+        if initial_fetch_count > steady_fetch_count and raw:
+            raw = merge_bar_history(
+                raw,
+                state.history_cache or [],
+                limit=initial_fetch_count,
+            )
+            state.history_cache = raw
+            state.history_backfill_done = True
         identity = resolved_identity_for_source(
             asset.source,
             source,
@@ -241,7 +262,7 @@ class HeadlessMonitor:
         )
         frame = build_display_frame(
             raw,
-            int(self._settings.general.analysis_bar_count),
+            analysis_bars,
             asset.symbol,
             asset.timeframe,
             now_ms=now_ms,

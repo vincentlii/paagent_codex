@@ -1,0 +1,4 @@
+interface:
+  display_name: "PA Agent 变更守则"
+  short_description: "以三角色、根因证据和适度校验守护 PA/VPA 项目变更"
+  default_prompt: "请按 PA Agent 变更守则审查并实现本次修复或优化。"

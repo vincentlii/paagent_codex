@@ -232,6 +232,8 @@ def test_stage1_output_reminder_present(assembler: PromptAssembler):
     assert "cycle_position" in user
     assert "diagnosis_confidence" in user
     assert "bar_by_bar_summary" in user
+    assert '"key_signals": ["K4：强阴线收盘近低点，但属于逆主流方向信号"]' in user
+    assert "`key_signals` 的每个元素必须是字符串" in user
     assert (
         "`pause_or_pullback_present` 时，`transition_risk` 必须从 "
         "`high|medium|low` 中选择"
@@ -299,6 +301,23 @@ def test_vpa_evidence_role_loads_modules_from_frozen_brooks_context(
     assert "entry_timing_relation=insufficient_data" in prompt
 
 
+def test_vpa_module_profile_uses_only_explicit_pa_context() -> None:
+    from pa_agent.ai.vpa_context_profile import build_vpa_knowledge_context
+
+    explicit = build_vpa_knowledge_context(
+        {
+            "cycle_position": "spike",
+            "detected_patterns": ["H2", "breakout_pullback"],
+        }
+    )
+    absent = build_vpa_knowledge_context(
+        {"cycle_position": "spike", "detected_patterns": ["unknown_label"]}
+    )
+
+    assert explicit.module_names == ("core", "trend_pullback", "breakout_retest")
+    assert absent.module_names == ("core",)
+
+
 def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:
     core = (
         Path(__file__).resolve().parents[2]
@@ -313,7 +332,7 @@ def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:
     assert "`finding_kind`" in core
     assert "`epistemic_status`" in core
     assert "`sequence_claims`" in core
-    assert "`requires_closed_bar` is true only" in core
+    assert "The program derives `requires_closed_bar`" in core
     assert "with exactly: `alignment`" not in core
 
 
@@ -390,7 +409,7 @@ def test_joint_prompt_injects_only_referenced_program_comparators(
         },
         {
             "summary": "Independent sequence evidence.",
-            "observations": [{"evidence_ids": ["vpa-c001"]}],
+                "observations": [{"evidence_ids": ["vpa-w005"]}],
             "hypothesis_assessments": [],
             "entry_timing_relation": "neutral",
         },
@@ -398,8 +417,8 @@ def test_joint_prompt_injects_only_referenced_program_comparators(
     prompt = "\n".join(item["content"] for item in messages)
 
     assert "REFERENCED_PROGRAM_COMPARATORS" in prompt
-    assert '"evidence_id": "vpa-c001"' in prompt
-    assert '"net_close_progress_direction_relation": "same"' in prompt
+    assert '"evidence_id": "vpa-w005"' in prompt
+    assert '"net_progress_direction_relation": "same"' in prompt
     assert '"evidence_id": "vpa-e001"' not in prompt
 
 
@@ -1050,7 +1069,8 @@ def test_explicit_vpa_role_matches_schema_and_grounding_contract(
     assert "reason 可引用程序表中已提供的数值" not in prompt
     assert "下一根已收盘 K 线" in prompt
     assert "K0" in prompt
-    assert "opposite directions" in prompt
+    assert "`net_progress_direction_relation`" in prompt
+    assert "when it is `opposite`" in prompt
     assert "Stage 1 MUST output `vpa_context`" not in prompt
     assert "Stage 2 MUST output `vpa_impact`" not in prompt
 

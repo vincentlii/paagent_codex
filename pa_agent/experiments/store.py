@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pa_agent.data.bar_close_wait import timeframe_to_seconds
+
 logger = logging.getLogger(__name__)
 
 _EXECUTABLE_ORDER_TYPES = frozenset(
@@ -26,6 +28,22 @@ _EXECUTABLE_ORDER_TYPES = frozenset(
         "\u5e02\u4ef7\u5355",
     }
 )
+_NO_ORDER_TYPES = frozenset({"no_order", "none", "not_applicable", "\u4e0d\u4e0b\u5355"})
+_ZERO_RETURN_STATUSES = frozenset({"entry_not_triggered", "no_order"})
+_ZERO_RETURN_ENTRY_STATUSES = frozenset({"not_triggered", "untriggered"})
+_CENSORED_STATUSES = frozenset(
+    {
+        "pending",
+        "pending_entry",
+        "pending_exit",
+        "ambiguous",
+        "ambiguous_entry",
+        "ambiguous_exit",
+        "ambiguous_entry_and_exit",
+    }
+)
+_CENSORED_OUTCOMES = frozenset({"pending", "unresolved", "ambiguous"})
+_TRADE_OUTCOMES = frozenset({"win", "loss", "breakeven"})
 
 
 def _is_executable_order(value: object) -> bool:
@@ -36,6 +54,31 @@ def _is_executable_order(value: object) -> bool:
 class ExperimentWriteResult:
     ok: bool
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class _ArmOutcome:
+    state: str
+    raw_return_r: float | None
+    adjusted_return_r: float | None
+    traded: bool
+    won: bool | None
+    integrity_conflict: bool = False
+
+
+def _row_value(row: sqlite3.Row, key: str, default: Any = None) -> Any:
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
+
+
+def _finite_float(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 class AnalysisExperimentStore:
@@ -350,58 +393,76 @@ class AnalysisExperimentStore:
             cost_per_trade_r=cost_per_trade_r,
         )
         cohort_ids = sorted({str(row["cohort_id"] or "") for row in rows})
-        decisive_by_input: dict[str, dict[str, set[str]]] = {}
-        for row in self._protocol_rows(rows, per_protocol=True):
-            if row["outcome"] not in {"win", "loss"}:
-                continue
-            market_hash = str(row["market_snapshot_hash"])
-            row_cohort = str(row["cohort_id"] or "")
-            decisive_by_input.setdefault(market_hash, {}).setdefault(row_cohort, set()).add(
-                str(row["group_name"])
-            )
-        matched = sum(
-            any(groups == {"A", "B"} for groups in by_cohort.values())
-            for by_cohort in decisive_by_input.values()
+        itt_comparison = self._matched_outcome_comparison(
+            rows,
+            per_protocol=False,
+            cost_per_trade_r=cost_per_trade_r,
+        )
+        per_protocol_comparison = self._matched_outcome_comparison(
+            rows,
+            per_protocol=True,
+            cost_per_trade_r=cost_per_trade_r,
         )
         if len(cohort_ids) == 1:
-            matched_comparison = self._matched_outcome_comparison(
-                rows,
-                per_protocol=True,
-                cost_per_trade_r=cost_per_trade_r,
-            )
-            matched = int(matched_comparison["matched_decisive_snapshots"])
+            matched_comparison = itt_comparison
+            matched = int(itt_comparison["matched_episodes"])
+            legacy_matched = int(itt_comparison["matched_decisive_snapshots"])
         else:
             matched_comparison = {
+                **itt_comparison,
                 "status": "mixed_cohorts_not_comparable",
-                "matched_decisive_snapshots": matched,
                 "mean_return_r_delta": None,
+                "raw_mean_return_r_delta": None,
                 "win_rate_delta": None,
                 "directional_sign_test_p": None,
             }
+            per_protocol_comparison = {
+                **per_protocol_comparison,
+                "status": "mixed_cohorts_not_comparable",
+                "mean_return_r_delta": None,
+                "raw_mean_return_r_delta": None,
+                "win_rate_delta": None,
+                "directional_sign_test_p": None,
+            }
+            matched = int(itt_comparison["matched_episodes"])
+            legacy_matched = int(itt_comparison["unique_matched_market_snapshots"])
+        missing_runs = int(itt_comparison["missing_runs"])
         return {
             "status": "counterfactual_only",
-            "protocol_version": "pa_vpa_aabb_v1",
+            "protocol_version": "pa_vpa_aabb_outcomes_v2",
             "statistically_reviewable": (
-                len(cohort_ids) == 1 and matched >= max(1, int(min_decisive_snapshots))
+                len(cohort_ids) == 1
+                and missing_runs == 0
+                and int(itt_comparison["integrity_conflict_runs"]) == 0
+                and matched >= max(1, int(min_decisive_snapshots))
             ),
-            "matched_decisive_snapshots": matched,
+            "matched_decisive_snapshots": legacy_matched,
+            "matched_evaluable_snapshots": int(
+                itt_comparison["matched_evaluable_snapshots"]
+            ),
+            "matched_episodes": matched,
             "minimum_matched_snapshots": max(1, int(min_decisive_snapshots)),
+            "minimum_matched_episodes": max(1, int(min_decisive_snapshots)),
             "cost_per_trade_r": max(0.0, float(cost_per_trade_r)),
             "assigned_arms": len(rows),
             "unpersisted_arms": sum(not bool(row["persisted"]) for row in rows),
+            "missing_outcome_arms": missing_runs,
             "cohort_count": len(cohort_ids),
             "cohort_ids": cohort_ids,
             "intention_to_treat": itt,
             "per_protocol": per_protocol,
             "matched_comparison": matched_comparison,
+            "per_protocol_matched_comparison": per_protocol_comparison,
             "ready_for_soft": False,
             "limitations": [
                 "Closed OHLC evaluates plans, not broker fills or live PnL.",
-                "Ambiguous same-bar paths and unsupported market fills remain excluded.",
-                "Repeated runs on one market snapshot are not independent samples.",
+                "No-order and untriggered-entry arms contribute 0R under intention-to-treat.",
+                "Pending and ambiguous paths are censored; missing assigned arms remain in coverage.",
+                "Replicates are averaged within snapshots and overlapping forward windows are "
+                "grouped into episodes before inference.",
                 "Fees and slippage are represented only by the explicit cost_per_trade_r input.",
-                "Matched return deltas condition on both groups having decisive replay outcomes; "
-                "trade-frequency effects remain a separate report.",
+                "Trade win rate remains conditional on completed trades; ITT return includes "
+                "the frequency effect through 0R no-action outcomes.",
             ],
         }
 
@@ -473,11 +534,57 @@ class AnalysisExperimentStore:
                 self._ensure_schema(connection)
                 connection.row_factory = sqlite3.Row
                 has_outcomes = self._table_exists(connection, "counterfactual_outcomes")
-                outcome_select = (
-                    "c.status AS cf_status, c.entry_status, c.outcome, " "c.realized_return_r"
+                outcome_columns = (
+                    self._table_columns(connection, "counterfactual_outcomes")
                     if has_outcomes
-                    else "NULL AS cf_status, NULL AS entry_status, NULL AS outcome, "
-                    "NULL AS realized_return_r"
+                    else set()
+                )
+                has_analysis_runs = self._table_exists(connection, "analysis_runs")
+                run_columns = (
+                    self._table_columns(connection, "analysis_runs")
+                    if has_analysis_runs
+                    else set()
+                )
+
+                def selected_column(
+                    table_alias: str,
+                    columns: set[str],
+                    column: str,
+                    alias: str | None = None,
+                ) -> str:
+                    output_name = alias or column
+                    if column in columns:
+                        return f"{table_alias}.{column} AS {output_name}"
+                    return f"NULL AS {output_name}"
+
+                outcome_select = ", ".join(
+                    selected_column("c", outcome_columns, column, alias)
+                    for column, alias in (
+                        ("status", "cf_status"),
+                        ("entry_status", None),
+                        ("outcome", None),
+                        ("realized_return_r", None),
+                        ("horizon_bars", None),
+                        ("entry_bar_ts", None),
+                        ("exit_bar_ts", None),
+                        ("evaluated_through_ts", None),
+                    )
+                )
+                run_select = ", ".join(
+                    (
+                        selected_column(
+                            "r",
+                            run_columns,
+                            "order_type",
+                            "indexed_order_type",
+                        ),
+                        selected_column(
+                            "r",
+                            run_columns,
+                            "snapshot_latest_ts_open",
+                        ),
+                        selected_column("r", run_columns, "bar_count"),
+                    )
                 )
                 outcome_join = (
                     " LEFT JOIN counterfactual_outcomes c ON c.run_id = a.run_id "
@@ -485,12 +592,20 @@ class AnalysisExperimentStore:
                     if has_outcomes
                     else ""
                 )
+                run_join = (
+                    " LEFT JOIN analysis_runs r ON r.run_id = a.run_id"
+                    if has_analysis_runs
+                    else ""
+                )
                 query = (
                     "SELECT e.frozen_input_hash, e.market_snapshot_hash, e.cohort_id, "
+                    "e.symbol AS experiment_symbol, e.timeframe AS experiment_timeframe, "
+                    "e.created_at_ms AS experiment_created_at_ms, "
                     "e.experiment_id, e.status AS experiment_status, e.protocol_valid, "
-                    f"a.*, {outcome_select} FROM experiment_arms a "
+                    f"a.*, {run_select}, {outcome_select} FROM experiment_arms a "
                     "JOIN analysis_experiments e ON e.experiment_id = a.experiment_id"
-                    f"{outcome_join}" + (" WHERE " + " AND ".join(clauses) if clauses else "")
+                    f"{run_join}{outcome_join}"
+                    + (" WHERE " + " AND ".join(clauses) if clauses else "")
                 )
                 return connection.execute(
                     query,
@@ -542,6 +657,237 @@ class AnalysisExperimentStore:
         return result
 
     @classmethod
+    def _arm_outcome(
+        cls,
+        row: sqlite3.Row,
+        *,
+        cost_per_trade_r: float,
+    ) -> _ArmOutcome:
+        if not bool(_row_value(row, "persisted")) or not str(
+            _row_value(row, "run_id") or ""
+        ):
+            return _ArmOutcome("missing", None, None, False, None)
+
+        order_type = str(_row_value(row, "indexed_order_type") or "").strip().lower()
+        status = str(_row_value(row, "cf_status") or "").strip().lower()
+        entry_status = str(_row_value(row, "entry_status") or "").strip().lower()
+        outcome = str(_row_value(row, "outcome") or "").strip().lower()
+        recorded_trade = outcome in _TRADE_OUTCOMES
+        if order_type in _NO_ORDER_TYPES:
+            if recorded_trade:
+                return _ArmOutcome(
+                    "missing",
+                    None,
+                    None,
+                    False,
+                    None,
+                    integrity_conflict=True,
+                )
+            return _ArmOutcome(
+                "zero_return",
+                0.0,
+                0.0,
+                False,
+                None,
+            )
+        if status in _ZERO_RETURN_STATUSES or entry_status in _ZERO_RETURN_ENTRY_STATUSES:
+            if recorded_trade:
+                return _ArmOutcome(
+                    "missing",
+                    None,
+                    None,
+                    False,
+                    None,
+                    integrity_conflict=True,
+                )
+            return _ArmOutcome(
+                "zero_return",
+                0.0,
+                0.0,
+                False,
+                None,
+            )
+        if recorded_trade:
+            realized = _finite_float(_row_value(row, "realized_return_r"))
+            if realized is None:
+                return _ArmOutcome("missing", None, None, False, None)
+            tolerance = 1e-12
+            return_conflict = (
+                (outcome == "win" and realized <= tolerance)
+                or (outcome == "loss" and realized >= -tolerance)
+                or (outcome == "breakeven" and abs(realized) > tolerance)
+            )
+            if return_conflict:
+                return _ArmOutcome(
+                    "missing",
+                    None,
+                    None,
+                    False,
+                    None,
+                    integrity_conflict=True,
+                )
+            cost = max(0.0, float(cost_per_trade_r))
+            won = True if outcome == "win" else False if outcome == "loss" else None
+            return _ArmOutcome(
+                "trade",
+                realized,
+                realized - cost,
+                True,
+                won,
+            )
+        if status in _CENSORED_STATUSES or outcome in _CENSORED_OUTCOMES:
+            return _ArmOutcome("censored", None, None, False, None)
+        return _ArmOutcome("missing", None, None, False, None)
+
+    @classmethod
+    def _snapshot_outcomes(
+        cls,
+        rows: list[sqlite3.Row],
+        *,
+        cost_per_trade_r: float,
+    ) -> list[dict[str, Any]]:
+        grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
+        for row in rows:
+            key = (
+                str(_row_value(row, "cohort_id") or ""),
+                str(_row_value(row, "market_snapshot_hash") or ""),
+            )
+            grouped.setdefault(key, []).append(row)
+
+        snapshots: list[dict[str, Any]] = []
+        for (cohort_id, market_hash), snapshot_rows in grouped.items():
+            start_ms, end_ms = cls._snapshot_interval(snapshot_rows)
+            groups: dict[str, dict[str, Any]] = {}
+            for group_name in ("A", "B"):
+                arm_rows = [
+                    row
+                    for row in snapshot_rows
+                    if str(_row_value(row, "group_name") or "") == group_name
+                ]
+                outcomes = [
+                    cls._arm_outcome(row, cost_per_trade_r=cost_per_trade_r)
+                    for row in arm_rows
+                ]
+                evaluable = [
+                    item for item in outcomes if item.state in {"trade", "zero_return"}
+                ]
+                complete = bool(outcomes) and len(evaluable) == len(outcomes)
+                trades = [item for item in outcomes if item.traded]
+                groups[group_name] = {
+                    "assigned_arms": len(outcomes),
+                    "complete": complete,
+                    "raw_return_r": (
+                        sum(float(item.raw_return_r) for item in evaluable) / len(evaluable)
+                        if complete
+                        else None
+                    ),
+                    "adjusted_return_r": (
+                        sum(float(item.adjusted_return_r) for item in evaluable)
+                        / len(evaluable)
+                        if complete
+                        else None
+                    ),
+                    "trade_count": len(trades),
+                    "trade_win_rate": (
+                        sum(item.won is True for item in trades) / len(trades)
+                        if trades
+                        else None
+                    ),
+                    "zero_return_arms": sum(
+                        item.state == "zero_return" for item in outcomes
+                    ),
+                    "censored_arms": sum(item.state == "censored" for item in outcomes),
+                    "missing_arms": sum(item.state == "missing" for item in outcomes),
+                    "integrity_conflicts": sum(
+                        item.integrity_conflict for item in outcomes
+                    ),
+                }
+            first = snapshot_rows[0]
+            snapshots.append(
+                {
+                    "cohort_id": cohort_id,
+                    "market_snapshot_hash": market_hash,
+                    "symbol": str(_row_value(first, "experiment_symbol") or ""),
+                    "timeframe": str(_row_value(first, "experiment_timeframe") or ""),
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "groups": groups,
+                }
+            )
+        return snapshots
+
+    @staticmethod
+    def _snapshot_interval(rows: list[sqlite3.Row]) -> tuple[int | None, int | None]:
+        starts = [
+            int(value)
+            for row in rows
+            if (value := _row_value(row, "snapshot_latest_ts_open")) is not None
+        ]
+        if not starts:
+            return None, None
+        start = min(starts)
+        ends = [
+            int(value)
+            for row in rows
+            for key in ("evaluated_through_ts", "exit_bar_ts")
+            if (value := _row_value(row, key)) is not None and int(value) >= start
+        ]
+        if ends:
+            return start, max(ends)
+        timeframe = str(_row_value(rows[0], "experiment_timeframe") or "")
+        duration_s = timeframe_to_seconds(timeframe) or 1
+        horizons = [
+            max(1, int(value))
+            for row in rows
+            if (value := _row_value(row, "horizon_bars")) is not None
+        ]
+        horizon = max(horizons) if horizons else 1
+        return start, start + duration_s * 1000 * horizon
+
+    @staticmethod
+    def _episode_groups(
+        snapshots: list[dict[str, Any]],
+    ) -> list[list[dict[str, Any]]]:
+        buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        unknown: list[dict[str, Any]] = []
+        for snapshot in snapshots:
+            if snapshot.get("start_ms") is None or snapshot.get("end_ms") is None:
+                unknown.append(snapshot)
+                continue
+            key = (
+                str(snapshot.get("cohort_id") or ""),
+                str(snapshot.get("symbol") or ""),
+                str(snapshot.get("timeframe") or ""),
+            )
+            buckets.setdefault(key, []).append(snapshot)
+
+        episodes: list[list[dict[str, Any]]] = [[item] for item in unknown]
+        for bucket in buckets.values():
+            ordered = sorted(
+                bucket,
+                key=lambda item: (
+                    int(item["start_ms"]),
+                    str(item.get("market_snapshot_hash") or ""),
+                ),
+            )
+            current: list[dict[str, Any]] = []
+            current_end: int | None = None
+            for snapshot in ordered:
+                start = int(snapshot["start_ms"])
+                end = int(snapshot["end_ms"])
+                if current and current_end is not None and start < current_end:
+                    current.append(snapshot)
+                    current_end = max(current_end, end)
+                    continue
+                if current:
+                    episodes.append(current)
+                current = [snapshot]
+                current_end = end
+            if current:
+                episodes.append(current)
+        return episodes
+
+    @classmethod
     def _outcome_summary(
         cls,
         rows: list[sqlite3.Row],
@@ -550,42 +896,97 @@ class AnalysisExperimentStore:
         cost_per_trade_r: float,
     ) -> dict[str, Any]:
         selected = cls._protocol_rows(rows, per_protocol=per_protocol)
+        snapshots = cls._snapshot_outcomes(
+            selected,
+            cost_per_trade_r=cost_per_trade_r,
+        )
+        episodes = cls._episode_groups(snapshots)
         result: dict[str, Any] = {}
-        cost = max(0.0, float(cost_per_trade_r))
         for group in ("A", "B"):
             group_rows = [row for row in selected if str(row["group_name"]) == group]
-            decisive = [row for row in group_rows if row["outcome"] in {"win", "loss"}]
-            decisive_by_snapshot: dict[str, list[sqlite3.Row]] = {}
-            for row in decisive:
-                decisive_by_snapshot.setdefault(str(row["market_snapshot_hash"]), []).append(row)
-            snapshot_returns = [
-                sum(float(row["realized_return_r"]) for row in values) / len(values)
-                for values in decisive_by_snapshot.values()
+            arm_outcomes = [
+                cls._arm_outcome(row, cost_per_trade_r=cost_per_trade_r)
+                for row in group_rows
             ]
-            snapshot_win_rates = [
-                sum(row["outcome"] == "win" for row in values) / len(values)
-                for values in decisive_by_snapshot.values()
+            group_snapshots = [
+                snapshot["groups"][group]
+                for snapshot in snapshots
+                if snapshot["groups"][group]["assigned_arms"]
             ]
-            adjusted = [value - cost for value in snapshot_returns]
+            complete_snapshots = [item for item in group_snapshots if item["complete"]]
+            episode_returns: list[float] = []
+            episode_adjusted_returns: list[float] = []
+            episode_win_rates: list[float] = []
+            for episode in episodes:
+                values = [
+                    snapshot["groups"][group]
+                    for snapshot in episode
+                    if snapshot["groups"][group]["complete"]
+                ]
+                if values:
+                    episode_returns.append(
+                        sum(float(item["raw_return_r"]) for item in values) / len(values)
+                    )
+                    episode_adjusted_returns.append(
+                        sum(float(item["adjusted_return_r"]) for item in values)
+                        / len(values)
+                    )
+                win_rates = [
+                    float(item["trade_win_rate"])
+                    for item in values
+                    if item["trade_win_rate"] is not None
+                ]
+                if win_rates:
+                    episode_win_rates.append(sum(win_rates) / len(win_rates))
+            trades = [item for item in arm_outcomes if item.traded]
+            evaluable = [
+                item for item in arm_outcomes if item.state in {"trade", "zero_return"}
+            ]
             result[group] = {
                 "runs": len(group_rows),
-                "decisive_runs": len(decisive),
-                "decisive_snapshots": len(decisive_by_snapshot),
-                "unresolved_runs": len(group_rows) - len(decisive),
-                "wins": sum(row["outcome"] == "win" for row in decisive),
-                "losses": sum(row["outcome"] == "loss" for row in decisive),
+                "evaluable_runs": len(evaluable),
+                "zero_return_runs": sum(
+                    item.state == "zero_return" for item in arm_outcomes
+                ),
+                "decisive_runs": len(trades),
+                "trade_outcome_runs": len(trades),
+                "censored_runs": sum(item.state == "censored" for item in arm_outcomes),
+                "missing_runs": sum(item.state == "missing" for item in arm_outcomes),
+                "unresolved_runs": sum(
+                    item.state in {"censored", "missing"} for item in arm_outcomes
+                ),
+                "outcome_coverage": (
+                    round(len(evaluable) / len(group_rows), 4) if group_rows else None
+                ),
+                "evaluable_snapshots": len(complete_snapshots),
+                "decisive_snapshots": sum(
+                    item["complete"] and item["trade_count"] > 0
+                    for item in group_snapshots
+                ),
+                "evaluable_episodes": len(episode_returns),
+                "wins": sum(item.won is True for item in trades),
+                "losses": sum(item.won is False for item in trades),
+                "breakeven": sum(item.won is None for item in trades),
                 "win_rate": (
-                    round(sum(snapshot_win_rates) / len(snapshot_win_rates), 4)
-                    if snapshot_win_rates
+                    round(sum(episode_win_rates) / len(episode_win_rates), 4)
+                    if episode_win_rates
                     else None
                 ),
                 "mean_return_r": (
-                    round(sum(snapshot_returns) / len(snapshot_returns), 4)
-                    if snapshot_returns
+                    round(sum(episode_returns) / len(episode_returns), 4)
+                    if episode_returns
                     else None
                 ),
                 "cost_adjusted_mean_return_r": (
-                    round(sum(adjusted) / len(adjusted), 4) if adjusted else None
+                    round(
+                        sum(episode_adjusted_returns) / len(episode_adjusted_returns),
+                        4,
+                    )
+                    if episode_adjusted_returns
+                    else None
+                ),
+                "integrity_conflict_runs": sum(
+                    item.integrity_conflict for item in arm_outcomes
                 ),
             }
         return result
@@ -599,59 +1000,130 @@ class AnalysisExperimentStore:
         cost_per_trade_r: float,
     ) -> dict[str, Any]:
         selected = cls._protocol_rows(rows, per_protocol=per_protocol)
-        grouped: dict[str, dict[str, list[sqlite3.Row]]] = {}
-        for row in selected:
-            if row["outcome"] not in {"win", "loss"}:
+        snapshots = cls._snapshot_outcomes(
+            selected,
+            cost_per_trade_r=cost_per_trade_r,
+        )
+        episodes = cls._episode_groups(snapshots)
+        complete_pairs = [
+            snapshot
+            for snapshot in snapshots
+            if snapshot["groups"]["A"]["complete"]
+            and snapshot["groups"]["B"]["complete"]
+        ]
+        paired: list[dict[str, float | None]] = []
+        for episode in episodes:
+            pairs = [
+                snapshot
+                for snapshot in episode
+                if snapshot["groups"]["A"]["complete"]
+                and snapshot["groups"]["B"]["complete"]
+            ]
+            if not pairs:
                 continue
-            grouped.setdefault(str(row["market_snapshot_hash"]), {}).setdefault(
-                str(row["group_name"]), []
-            ).append(row)
-
-        cost = max(0.0, float(cost_per_trade_r))
-        paired: list[dict[str, float]] = []
-        for market_hash, groups in grouped.items():
-            if not groups.get("A") or not groups.get("B"):
-                continue
-            a_return = (
-                sum(float(row["realized_return_r"]) for row in groups["A"]) / len(groups["A"])
-                - cost
-            )
-            b_return = (
-                sum(float(row["realized_return_r"]) for row in groups["B"]) / len(groups["B"])
-                - cost
-            )
-            a_win_rate = sum(row["outcome"] == "win" for row in groups["A"]) / len(groups["A"])
-            b_win_rate = sum(row["outcome"] == "win" for row in groups["B"]) / len(groups["B"])
+            a_return = sum(
+                float(item["groups"]["A"]["adjusted_return_r"])
+                for item in pairs
+            ) / len(pairs)
+            b_return = sum(
+                float(item["groups"]["B"]["adjusted_return_r"])
+                for item in pairs
+            ) / len(pairs)
+            a_raw_return = sum(
+                float(item["groups"]["A"]["raw_return_r"]) for item in pairs
+            ) / len(pairs)
+            b_raw_return = sum(
+                float(item["groups"]["B"]["raw_return_r"]) for item in pairs
+            ) / len(pairs)
+            win_deltas = [
+                float(item["groups"]["B"]["trade_win_rate"])
+                - float(item["groups"]["A"]["trade_win_rate"])
+                for item in pairs
+                if item["groups"]["A"]["trade_win_rate"] is not None
+                and item["groups"]["B"]["trade_win_rate"] is not None
+            ]
             paired.append(
                 {
-                    "market_snapshot_hash": market_hash,
-                    "a_return_r": a_return,
-                    "b_return_r": b_return,
                     "return_delta_r": b_return - a_return,
-                    "win_rate_delta": b_win_rate - a_win_rate,
+                    "raw_return_delta_r": b_raw_return - a_raw_return,
+                    "win_rate_delta": (
+                        sum(win_deltas) / len(win_deltas) if win_deltas else None
+                    ),
                 }
             )
 
         tolerance = 1e-12
-        improved = sum(item["return_delta_r"] > tolerance for item in paired)
-        worsened = sum(item["return_delta_r"] < -tolerance for item in paired)
+        improved = sum(float(item["return_delta_r"]) > tolerance for item in paired)
+        worsened = sum(float(item["return_delta_r"]) < -tolerance for item in paired)
         unchanged = len(paired) - improved - worsened
+        arm_outcomes = [
+            cls._arm_outcome(row, cost_per_trade_r=cost_per_trade_r)
+            for row in selected
+        ]
+        win_rate_deltas = [
+            float(item["win_rate_delta"])
+            for item in paired
+            if item["win_rate_delta"] is not None
+        ]
         return {
-            "status": "paired_closed_ohlc",
-            "matched_decisive_snapshots": len(paired),
+            "status": (
+                "paired_closed_ohlc_episode_per_protocol"
+                if per_protocol
+                else "paired_closed_ohlc_episode_itt"
+            ),
+            "assigned_snapshots": len(snapshots),
+            "matched_evaluable_snapshots": len(complete_pairs),
+            "matched_decisive_snapshots": sum(
+                item["groups"]["A"]["trade_count"] > 0
+                and item["groups"]["B"]["trade_count"] > 0
+                for item in complete_pairs
+            ),
+            "unique_matched_market_snapshots": len(
+                {str(item["market_snapshot_hash"]) for item in complete_pairs}
+            ),
+            "matched_episodes": len(paired),
+            "assigned_episodes": len(episodes),
+            "paired_snapshot_coverage": (
+                round(len(complete_pairs) / len(snapshots), 4) if snapshots else None
+            ),
+            "incomplete_snapshots": len(snapshots) - len(complete_pairs),
+            "missing_runs": sum(item.state == "missing" for item in arm_outcomes),
+            "censored_runs": sum(item.state == "censored" for item in arm_outcomes),
+            "zero_return_runs": sum(
+                item.state == "zero_return" for item in arm_outcomes
+            ),
+            "integrity_conflict_runs": sum(
+                item.integrity_conflict for item in arm_outcomes
+            ),
             "mean_return_r_delta": (
-                round(sum(item["return_delta_r"] for item in paired) / len(paired), 4)
+                round(
+                    sum(float(item["return_delta_r"]) for item in paired) / len(paired),
+                    4,
+                )
+                if paired
+                else None
+            ),
+            "raw_mean_return_r_delta": (
+                round(
+                    sum(float(item["raw_return_delta_r"]) for item in paired)
+                    / len(paired),
+                    4,
+                )
                 if paired
                 else None
             ),
             "win_rate_delta": (
-                round(sum(item["win_rate_delta"] for item in paired) / len(paired), 4)
-                if paired
+                round(sum(win_rate_deltas) / len(win_rate_deltas), 4)
+                if win_rate_deltas
                 else None
             ),
+            "matched_trade_win_rate_episodes": len(win_rate_deltas),
             "improved_snapshots": improved,
             "worsened_snapshots": worsened,
             "unchanged_snapshots": unchanged,
+            "improved_episodes": improved,
+            "worsened_episodes": worsened,
+            "unchanged_episodes": unchanged,
             "directional_sign_test_p": _two_sided_sign_test(improved, worsened),
         }
 
@@ -669,6 +1141,13 @@ class AnalysisExperimentStore:
             (table_name,),
         ).fetchone()
         return row is not None
+
+    @staticmethod
+    def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
+        return {
+            str(row[1])
+            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
 
     @staticmethod
     def _ensure_schema(connection: sqlite3.Connection) -> None:

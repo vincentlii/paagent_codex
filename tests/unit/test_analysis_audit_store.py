@@ -129,8 +129,21 @@ def _record(
             "observations": [
                 {
                     "evidence_ids": ["vpa-e001"],
+                    "auto_bound_evidence_ids": ["vpa-e002"],
                     "finding_kind": "effort_result",
+                    "interpretation_label": "effort/result candidate",
+                    "epistemic_status": "candidate",
+                    "bar_range": "K2-K1",
                     "interpretation": "Relative activity adds independent context.",
+                }
+            ],
+            "hypothesis_assessments": [
+                {
+                    "hypothesis_id": "pa-primary",
+                    "relation": "supports",
+                    "evidence_ids": ["vpa-e001"],
+                    "auto_bound_evidence_ids": [],
+                    "reason": "Relative activity supports the frozen hypothesis.",
                 }
             ],
             "background_relation": "supports",
@@ -173,7 +186,16 @@ def _record(
                 "message": "Non-blocking review note.",
                 "missing_fields": [],
                 "invalid_fields": [],
-            }
+            },
+            {
+                "stage": "vpa_evidence",
+                "code": "vpa_measurement_render_failed",
+                "category": "local_prompt_build",
+                "severity": "error",
+                "owner": "vpa_evidence",
+                "retry_policy": "never",
+                "message": "Synthetic typed failure.",
+            },
         ],
     )
 
@@ -217,6 +239,15 @@ def test_audit_store_indexes_official_run_and_manual_outcome(tmp_path: Path) -> 
     assert review["vpa_impact"]["decision_effect"] == "prefer_retest"
     assert json.loads(run["authority_violations_json"]) == []
     assert store.get_calls("run-audit-test")[0]["cached_prompt_tokens"] == 25
+    observations = store.get_vpa_observations("run-audit-test")
+    assert observations[0]["bar_range"] == "K2-K1"
+    assert observations[0]["epistemic_status"] == "candidate"
+    assessments = store.get_vpa_assessments("run-audit-test")
+    assert assessments[0]["relation"] == "supports"
+    bindings = store.get_vpa_evidence_bindings("run-audit-test")
+    assert {item["binding_source"] for item in bindings} == {"declared", "auto"}
+    failures = store.get_failures("run-audit-test")
+    assert failures[0]["code"] == "vpa_measurement_render_failed"
 
     assert store.record_outcome(
         "run-audit-test",

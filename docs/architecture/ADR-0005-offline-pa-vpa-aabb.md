@@ -29,6 +29,14 @@ path、持久化与失败状态。四条 record 由程序外部提取决策签�
 A1/A2、B1/B2，以及同一行情在不同分析版本下的重跑均不得增加独立样本数。质量门禁只能在单一
 `cohort_id` 内计算；默认选择最近一个已完成且协议有效的 cohort，跨 cohort 汇总仅供描述。
 
+反事实收益的主比较采用 intention-to-treat。`no_order` 与 `entry_not_triggered` 以 `0R` 保留交易
+频率效应；pending/ambiguous 为 censored；未持久化或缺少结果的已分配 arm 为 missing，并继续留在
+coverage denominator 中且阻止统计验收。重复 arm 先在同一 `market_snapshot_hash` 内平均；前向
+观察区间重叠的 Snapshot 再合并为 episode 后做均值与 sign test。per-protocol 配对独立输出，
+只用于诊断实际收到处理后的结果，不得取代 ITT 主结论。交易胜率只对已完成交易计算，不能替代
+包含 `0R` 无动作的 ITT 回报。订单状态、outcome 标签与 realized R 明确冲突时按 missing +
+integrity conflict 保存，不得任选一个字段纳入统计。
+
 ## 后果
 
 - 单次生产 Shadow 或研究 Soft 不再被误报为 A/B，也不能直接证明 VPA 增益。
@@ -44,3 +52,4 @@ A1/A2、B1/B2，以及同一行情在不同分析版本下的重跑均不得增�
 - 持久化 record 必须可重算同一个 `frozen_input_hash`。
 - 同一行情跨分析版本必须保持相同 `market_snapshot_hash`、产生不同 `cohort_id`，且不得重复计样。
 - 质量与结果报告必须区分 ITT、per-protocol、A/A 分歧和 B/B 分歧。
+- ITT 缺失 arm 不得被 per-protocol 筛选掩盖；重叠观察窗口不得重复计为独立 episode。

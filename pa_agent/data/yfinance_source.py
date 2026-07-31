@@ -17,6 +17,7 @@ from pa_agent.data.base import (
     normalize_kline_bar,
 )
 from pa_agent.data.datetime_ts import datetime_to_ts_ms
+from pa_agent.data.volume_context import normalize_provider_volume
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,10 @@ class YFinanceSource(DataSource):
         bars: list[KlineBar] = []
         for i, row in enumerate(df.itertuples(index=False)):
             ts_ms = _row_ts_ms(row)
+            volume, volume_state = normalize_provider_volume(
+                getattr(row, "Volume", None),
+                zero_is_observed=True,
+            )
             # bars[0] is the forming (most recent, possibly unclosed) bar
             bars.append(
                 normalize_kline_bar(
@@ -164,7 +169,8 @@ class YFinanceSource(DataSource):
                         high=float(row.High),
                         low=float(row.Low),
                         close=float(row.Close),
-                        volume=float(getattr(row, "Volume", 0.0)),
+                        volume=volume,
+                        volume_state=volume_state,
                         closed=(i != 0),
                     )
                 )

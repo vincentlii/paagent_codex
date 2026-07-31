@@ -42,7 +42,7 @@ class AuditRebuildResult:
 class AnalysisAuditStore:
     """Index completed or partial analysis records without owning their source data."""
 
-    _SCHEMA_VERSION: ClassVar[int] = 8
+    _SCHEMA_VERSION: ClassVar[int] = 9
     _ENTRY_STATUSES: ClassVar[frozenset[str]] = frozenset(
         {"not_traded", "pending", "filled", "expired", "cancelled"}
     )
@@ -169,6 +169,7 @@ class AnalysisAuditStore:
                     fields,
                 )
                 self._replace_calls(connection, record)
+                self._replace_vpa_details(connection, record)
                 self._update_counterfactual_outcomes(connection, record)
             return AuditWriteResult(ok=True)
         except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
@@ -257,6 +258,41 @@ class AnalysisAuditStore:
         except (OSError, sqlite3.Error) as exc:
             logger.warning("Analysis call ledger query failed: %s", exc)
             return []
+
+    def get_vpa_observations(self, run_id: str) -> list[dict[str, Any]]:
+        return self._many(
+            "SELECT * FROM vpa_observations WHERE run_id = ? "
+            "ORDER BY observation_index",
+            (run_id,),
+        )
+
+    def get_vpa_assessments(self, run_id: str) -> list[dict[str, Any]]:
+        return self._many(
+            "SELECT * FROM vpa_hypothesis_assessments WHERE run_id = ? "
+            "ORDER BY hypothesis_id",
+            (run_id,),
+        )
+
+    def get_vpa_evidence_bindings(self, run_id: str) -> list[dict[str, Any]]:
+        return self._many(
+            """
+            SELECT 'observation' AS scope, CAST(observation_index AS TEXT) AS owner_id,
+                   evidence_id, binding_source
+            FROM vpa_observation_evidence WHERE run_id = ?
+            UNION ALL
+            SELECT 'assessment' AS scope, hypothesis_id AS owner_id,
+                   evidence_id, binding_source
+            FROM vpa_assessment_evidence WHERE run_id = ?
+            ORDER BY scope, owner_id, evidence_id, binding_source
+            """,
+            (run_id, run_id),
+        )
+
+    def get_failures(self, run_id: str) -> list[dict[str, Any]]:
+        return self._many(
+            "SELECT * FROM analysis_failures WHERE run_id = ? ORDER BY failure_index",
+            (run_id,),
+        )
 
     def get_counterfactual_outcome(
         self,
@@ -461,6 +497,17 @@ class AnalysisAuditStore:
             logger.warning("Analysis audit query failed: %s", exc)
             return None
 
+    def _many(self, query: str, values: tuple[Any, ...]) -> list[dict[str, Any]]:
+        try:
+            with self._connect() as connection:
+                self._ensure_schema(connection)
+                connection.row_factory = sqlite3.Row
+                rows = connection.execute(query, values).fetchall()
+            return [dict(row) for row in rows]
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning("Analysis audit query failed: %s", exc)
+            return []
+
     def _connect(self) -> sqlite3.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._db_path, timeout=5.0)
@@ -560,6 +607,65 @@ class AnalysisAuditStore:
             )
             """)
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS vpa_observations (
+                run_id TEXT NOT NULL REFERENCES analysis_runs(run_id) ON DELETE CASCADE,
+                observation_index INTEGER NOT NULL,
+                finding_kind TEXT,
+                interpretation_label TEXT,
+                epistemic_status TEXT,
+                bar_range TEXT,
+                interpretation TEXT,
+                PRIMARY KEY (run_id, observation_index)
+            )
+            """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS vpa_observation_evidence (
+                run_id TEXT NOT NULL,
+                observation_index INTEGER NOT NULL,
+                evidence_id TEXT NOT NULL,
+                binding_source TEXT NOT NULL,
+                PRIMARY KEY (run_id, observation_index, evidence_id, binding_source),
+                FOREIGN KEY (run_id, observation_index)
+                    REFERENCES vpa_observations(run_id, observation_index)
+                    ON DELETE CASCADE
+            )
+            """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS vpa_hypothesis_assessments (
+                run_id TEXT NOT NULL REFERENCES analysis_runs(run_id) ON DELETE CASCADE,
+                hypothesis_id TEXT NOT NULL,
+                relation TEXT,
+                reason TEXT,
+                PRIMARY KEY (run_id, hypothesis_id)
+            )
+            """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS vpa_assessment_evidence (
+                run_id TEXT NOT NULL,
+                hypothesis_id TEXT NOT NULL,
+                evidence_id TEXT NOT NULL,
+                binding_source TEXT NOT NULL,
+                PRIMARY KEY (run_id, hypothesis_id, evidence_id, binding_source),
+                FOREIGN KEY (run_id, hypothesis_id)
+                    REFERENCES vpa_hypothesis_assessments(run_id, hypothesis_id)
+                    ON DELETE CASCADE
+            )
+            """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_failures (
+                run_id TEXT NOT NULL REFERENCES analysis_runs(run_id) ON DELETE CASCADE,
+                failure_index INTEGER NOT NULL,
+                stage TEXT,
+                code TEXT,
+                category TEXT,
+                severity TEXT,
+                owner TEXT,
+                retry_policy TEXT,
+                message TEXT,
+                PRIMARY KEY (run_id, failure_index)
+            )
+            """)
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS counterfactual_outcomes (
                 run_id TEXT NOT NULL REFERENCES analysis_runs(run_id) ON DELETE CASCADE,
                 arm TEXT NOT NULL,
@@ -598,6 +704,18 @@ class AnalysisAuditStore:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_analysis_calls_stage_latency "
             "ON analysis_calls(arm, stage, latency_ms)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_vpa_observation_evidence_id "
+            "ON vpa_observation_evidence(evidence_id, binding_source)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_vpa_assessment_relation "
+            "ON vpa_hypothesis_assessments(relation)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_failures_stage "
+            "ON analysis_failures(stage, code)"
         )
         connection.execute(f"PRAGMA user_version = {self._SCHEMA_VERSION}")
 
@@ -674,6 +792,146 @@ class AnalysisAuditStore:
                     int(raw.get("created_at_ms") or cls._now_ms()),
                 ),
             )
+
+    @classmethod
+    def _replace_vpa_details(
+        cls,
+        connection: sqlite3.Connection,
+        record: AnalysisRecord,
+    ) -> None:
+        """Project canonical VPA semantics and typed failures into query tables."""
+        run_id = record.meta.run_id
+        connection.execute("DELETE FROM vpa_observations WHERE run_id = ?", (run_id,))
+        connection.execute(
+            "DELETE FROM vpa_hypothesis_assessments WHERE run_id = ?",
+            (run_id,),
+        )
+        connection.execute("DELETE FROM analysis_failures WHERE run_id = ?", (run_id,))
+
+        report = record.vpa_evidence if isinstance(record.vpa_evidence, dict) else {}
+        for index, observation in enumerate(report.get("observations", [])):
+            if not isinstance(observation, dict):
+                continue
+            connection.execute(
+                """
+                INSERT INTO vpa_observations (
+                    run_id, observation_index, finding_kind, interpretation_label,
+                    epistemic_status, bar_range, interpretation
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    index,
+                    observation.get("finding_kind"),
+                    observation.get("interpretation_label"),
+                    observation.get("epistemic_status"),
+                    observation.get("bar_range"),
+                    observation.get("interpretation"),
+                ),
+            )
+            cls._insert_vpa_bindings(
+                connection,
+                table="vpa_observation_evidence",
+                key_values=(run_id, index),
+                declared=observation.get("evidence_ids"),
+                auto_bound=observation.get("auto_bound_evidence_ids"),
+            )
+
+        for assessment in report.get("hypothesis_assessments", []):
+            if not isinstance(assessment, dict):
+                continue
+            hypothesis_id = str(assessment.get("hypothesis_id") or "")
+            if not hypothesis_id:
+                continue
+            connection.execute(
+                """
+                INSERT INTO vpa_hypothesis_assessments (
+                    run_id, hypothesis_id, relation, reason
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    hypothesis_id,
+                    assessment.get("relation"),
+                    assessment.get("reason"),
+                ),
+            )
+            cls._insert_vpa_bindings(
+                connection,
+                table="vpa_assessment_evidence",
+                key_values=(run_id, hypothesis_id),
+                declared=assessment.get("evidence_ids"),
+                auto_bound=assessment.get("auto_bound_evidence_ids"),
+            )
+
+        failures = cls._failure_projection(record)
+        for index, failure in enumerate(failures):
+            connection.execute(
+                """
+                INSERT INTO analysis_failures (
+                    run_id, failure_index, stage, code, category, severity,
+                    owner, retry_policy, message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    index,
+                    failure.get("stage"),
+                    failure.get("code"),
+                    failure.get("category"),
+                    failure.get("severity"),
+                    failure.get("owner"),
+                    failure.get("retry_policy"),
+                    failure.get("message"),
+                ),
+            )
+
+    @staticmethod
+    def _insert_vpa_bindings(
+        connection: sqlite3.Connection,
+        *,
+        table: str,
+        key_values: tuple[Any, Any],
+        declared: object,
+        auto_bound: object,
+    ) -> None:
+        for source, values in (("declared", declared), ("auto", auto_bound)):
+            if not isinstance(values, list):
+                continue
+            for evidence_id in dict.fromkeys(str(item) for item in values if str(item)):
+                connection.execute(
+                    f"INSERT OR IGNORE INTO {table} VALUES (?, ?, ?, ?)",
+                    (*key_values, evidence_id, source),
+                )
+
+    @staticmethod
+    def _failure_projection(record: AnalysisRecord) -> list[dict[str, Any]]:
+        failures: list[dict[str, Any]] = []
+        for event in record.validation_audit:
+            if not isinstance(event, dict):
+                continue
+            severity = str(event.get("severity") or "")
+            category = str(event.get("category") or "")
+            if severity in {"warning", "normalization"} or category in {
+                "warning",
+                "normalization",
+            }:
+                continue
+            failures.append(copy.deepcopy(event))
+        exception = record.exception if isinstance(record.exception, dict) else {}
+        if exception:
+            failures.append(
+                {
+                    "stage": exception.get("stage"),
+                    "code": exception.get("failed_check") or exception.get("type"),
+                    "category": exception.get("type"),
+                    "severity": "error",
+                    "owner": exception.get("stage"),
+                    "retry_policy": "recorded",
+                    "message": exception.get("message"),
+                }
+            )
+        return failures
 
     @classmethod
     def _run_fields(

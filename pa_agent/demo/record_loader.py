@@ -119,6 +119,7 @@ def frame_from_record_klines(
                     low=b["low"],
                     close=b["close"],
                     volume=b.get("volume", 0),
+                    volume_state=b.get("volume_state"),
                     amount=b.get("amount", 0) or 0,
                     pct_chg=b.get("pct_chg"),
                     closed=bool(b.get("closed", True)),

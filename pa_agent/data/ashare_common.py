@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from pa_agent.data.base import KlineBar, normalize_kline_bar
 from pa_agent.data.datetime_ts import datetime_to_ts_ms
+from pa_agent.data.volume_context import normalize_provider_volume
 
 _CN_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -355,6 +356,10 @@ def rows_to_kline_bars(rows_newest_first: list[dict[str, Any]], n: int) -> list[
     bars: list[KlineBar] = []
     for i, row in enumerate(rows_newest_first[:n]):
         ts_ms = int(row["ts_open"])
+        volume, volume_state = normalize_provider_volume(
+            row.get("volume"),
+            zero_is_observed=True,
+        )
         bars.append(
             normalize_kline_bar(
                 KlineBar(
@@ -364,7 +369,8 @@ def rows_to_kline_bars(rows_newest_first: list[dict[str, Any]], n: int) -> list[
                     high=row["high"],
                     low=row["low"],
                     close=row["close"],
-                    volume=row["volume"],
+                    volume=volume,
+                    volume_state=volume_state,
                     amount=float(row.get("amount", 0.0) or 0.0),
                     pct_chg=row.get("pct_chg"),
                     closed=row.get("closed", i != 0),
@@ -390,6 +396,7 @@ def rows_to_kline_bars(rows_newest_first: list[dict[str, Any]], n: int) -> list[
                     low=bar.low,
                     close=bar.close,
                     volume=bar.volume,
+                    volume_state=bar.volume_state,
                     amount=bar.amount,
                     pct_chg=pct,
                     closed=bar.closed,

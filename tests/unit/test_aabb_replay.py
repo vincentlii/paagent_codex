@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 
 import pytest
 
-from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
+from pa_agent.ai.vpa_measurements import (
+    build_vpa_evidence_catalog,
+    validate_frozen_vpa_catalog,
+)
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
+from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.experiments.replay import frozen_input_from_record
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
 from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
@@ -116,3 +122,62 @@ def test_replay_allows_disabled_htf_without_bars() -> None:
 
     assert htf_context["status"] == "disabled"
     assert "frame" not in htf_context
+
+
+def test_replay_preserves_volume_and_seasonality_snapshot_identity() -> None:
+    identity = ResolvedInstrumentIdentity(
+        provider="tradingview",
+        requested_symbol="XAUUSD",
+        resolved_symbol="XAUUSD",
+        venue="OANDA",
+        market="fx",
+        volume_kind="tick",
+        volume_quality="proxy",
+    )
+    base_frame = make_frame()
+    frame = replace(
+        base_frame,
+        bars=tuple(
+            replace(
+                bar,
+                ts_open=1_700_000_000_000 - index * 3_600_000,
+            )
+            for index, bar in enumerate(base_frame.bars)
+        ),
+        data_metadata={
+            **identity.to_metadata(),
+            "volume_provenance": {
+                "provider": "tradingview",
+                "field": "volume",
+                "basis": "provider_ohlcv_field",
+                "zero_semantics": "ambiguous_zero_or_unavailable",
+                "comparison_scope": "same_provider_same_instrument",
+            },
+            "seasonality_samples": {"22:00": [100.0] * 8},
+            "seasonality_history_bars": 8,
+            "seasonality_slot_scheme": "local_clock_exact",
+            "seasonality_history_start_ts_open": 1_699_000_000_000,
+            "seasonality_history_end_ts_open": 1_699_900_000_000,
+            "seasonality_history_is_causal": True,
+            "seasonality_min_samples": 8,
+        },
+    )
+    catalog = build_vpa_evidence_catalog(frame)
+    source = _source_record(htf_available=False, with_htf_bars=False).model_copy(
+        update={
+            "kline_data": serialize_frame_bars(frame),
+            "vpa_catalog": catalog,
+            "snapshot_context": {
+                **compact_snapshot_context(frame),
+                "snapshot_ts_local_ms": frame.snapshot_ts_local_ms,
+            },
+        }
+    )
+
+    replayed_frame, _htf_context, replayed_catalog = frozen_input_from_record(source)
+
+    assert "seasonality_samples" not in replayed_frame.data_metadata
+    assert replayed_frame.data_metadata["volume_provenance"] == frame.data_metadata[
+        "volume_provenance"
+    ]
+    assert validate_frozen_vpa_catalog(replayed_frame, replayed_catalog) == catalog

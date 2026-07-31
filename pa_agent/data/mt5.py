@@ -21,6 +21,7 @@ from pa_agent.data.base import (
     KlineBar,
     normalize_kline_bar,
 )
+from pa_agent.data.volume_context import normalize_provider_volume
 
 logger = logging.getLogger(__name__)
 
@@ -253,12 +254,16 @@ class MT5Source(DataSource):
             # rate fields: time, open, high, low, close, tick_volume, spread, real_volume
             ts_ms = int(rate["time"]) * 1000  # MT5 gives UTC seconds
             try:
-                vol = float(rate["tick_volume"])
-            except (ValueError, KeyError):
+                raw_volume = rate["tick_volume"]
+            except (ValueError, KeyError, TypeError):
                 try:
-                    vol = float(rate["real_volume"])
-                except (ValueError, KeyError):
-                    vol = 0.0
+                    raw_volume = rate["real_volume"]
+                except (ValueError, KeyError, TypeError):
+                    raw_volume = None
+            vol, volume_state = normalize_provider_volume(
+                raw_volume,
+                zero_is_observed=True,
+            )
 
             if i == 0:
                 # Position 0 is the newest (potentially forming) bar in MT5.
@@ -280,6 +285,7 @@ class MT5Source(DataSource):
                         low=float(rate["low"]),
                         close=float(rate["close"]),
                         volume=vol,
+                        volume_state=volume_state,
                         closed=not is_forming,
                     )
                 )

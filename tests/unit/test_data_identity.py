@@ -11,6 +11,7 @@ import pytest
 from pa_agent.data.base import DataSourceTransientError
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
+from pa_agent.data.snapshot_identity import canonical_market_snapshot_hash
 from pa_agent.data.tradingview import TradingViewSource
 from tests.integration.conftest import make_frame
 
@@ -109,10 +110,41 @@ def test_frame_bar_serialization_is_explicit_and_lossless() -> None:
     frame = make_frame()
     serialized = serialize_frame_bars(frame)
 
-    assert serialized == [bar.__dict__ for bar in frame.bars]
+    expected = []
+    for bar in frame.bars:
+        payload = dict(bar.__dict__)
+        payload.pop("volume_state", None)
+        expected.append(payload)
+    assert serialized == expected
     assert serialize_frame_bars(SimpleNamespace(bars=({"open": 1.0},))) == [{"open": 1.0}]
     with pytest.raises(TypeError, match="unsupported bar type"):
         serialize_frame_bars(SimpleNamespace(bars=(1,)))
+
+
+def test_snapshot_identity_treats_absent_and_null_volume_state_as_equivalent() -> None:
+    common = {
+        "symbol": "XAUUSD",
+        "timeframe": "1h",
+        "snapshot_context": {},
+        "htf_context": None,
+        "htf_kline_data": [],
+    }
+
+    absent = canonical_market_snapshot_hash(
+        **common,
+        kline_data=[{"seq": 1, "close": 100.0}],
+    )
+    explicit_null = canonical_market_snapshot_hash(
+        **common,
+        kline_data=[{"seq": 1, "close": 100.0, "volume_state": None}],
+    )
+    observed = canonical_market_snapshot_hash(
+        **common,
+        kline_data=[{"seq": 1, "close": 100.0, "volume_state": "observed"}],
+    )
+
+    assert absent == explicit_null
+    assert observed != absent
 
 
 def test_compact_snapshot_context_keeps_identity_without_seasonality_payload() -> None:

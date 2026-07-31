@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pa_agent.config.settings import GeneralSettings
+from pa_agent.data.eastmoney_source import EastMoneySource
 from pa_agent.data.factory import (
     DATA_SOURCE_CHOICES,
     create_data_source,
@@ -10,10 +11,9 @@ from pa_agent.data.factory import (
     normalize_data_source_kind,
     volume_metadata_for_source,
 )
-from pa_agent.data.eastmoney_source import EastMoneySource
 from pa_agent.data.mt5 import MT5Source
-from pa_agent.data.tushare_source import TushareSource
 from pa_agent.data.tradingview import TradingViewSource
+from pa_agent.data.tushare_source import TushareSource
 
 
 def test_normalize_data_source_kind_defaults_unknown():
@@ -81,6 +81,20 @@ def test_volume_metadata_prefers_resolved_tradingview_venue() -> None:
     metadata = volume_metadata_for_source("tradingview", source)
 
     assert metadata["venue"] == "FOREXCOM"
+
+
+def test_volume_metadata_matches_adapter_zero_and_field_semantics() -> None:
+    expected_fields = {
+        "eastmoney": "volume",
+        "akshare": "volume",
+        "tushare": "vol",
+        "yfinance": "Volume",
+    }
+
+    for source_kind, field in expected_fields.items():
+        provenance = volume_metadata_for_source(source_kind)["volume_provenance"]
+        assert provenance["field"] == field
+        assert provenance["zero_semantics"] == "observed_zero"
 
 
 def test_general_settings_last_data_source_default():

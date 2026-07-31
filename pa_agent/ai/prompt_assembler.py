@@ -21,9 +21,11 @@ from pa_agent.ai.pattern_routing import (
     STAGE1_DETECTED_PATTERNS_GUIDE,
     STAGE1_PATTERN_BRIEFS_BLOCK,
 )
+from pa_agent.ai.vpa_context_profile import build_vpa_knowledge_context
 from pa_agent.ai.vpa_measurements import (
     build_vpa_evidence_catalog,
     net_close_progress_direction_relation,
+    pa_window_fact_refs,
     render_vpa_measurements,
 )
 from pa_agent.ai.vpa_sanitizer import (
@@ -37,6 +39,14 @@ from pa_agent.data.datetime_ts import format_epoch_for_display
 from pa_agent.records.schema import AnalysisRecord
 
 logger = logging.getLogger(__name__)
+
+
+class VpaPromptBuildError(RuntimeError):
+    """Typed local failure raised before any VPA provider call is attempted."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 VPA_KNOWLEDGE_MODULES = {
     "core": "wyckoff_vpa/core.txt",
@@ -248,6 +258,7 @@ _STAGE1_OUTPUT_REMINDER = """
 **思考过程与 JSON 内所有说明性文字必须使用简体中文**（仅 JSON 键名与规定枚举除外）。
 禁止用 markdown 代码围栏（不要写 ```json 或结尾的 ```），只输出裸 JSON 对象。
 JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
+`key_signals` 的每个元素必须是字符串，不得输出对象或数组。
 
 ```json
 {
@@ -260,7 +271,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
   "market_phase": "stable|transitioning",
   "transition_risk": "high|medium|low|null",
   "detected_patterns": [],
-  "key_signals": [],
+  "key_signals": ["K4：强阴线收盘近低点，但属于逆主流方向信号"],
   "htf_context": "",
   "entry_setup": "",
   "support_levels": ["5402", "5119"],
@@ -978,38 +989,12 @@ class PromptAssembler:
         This is a prompt-budget selector, not a strategy router or a Wyckoff
         event classifier.  The original Brooks Router remains authoritative.
         """
-        modules = ["core"] if include_core else []
-        if not isinstance(stage1_json, dict):
-            return modules
-        cycles = {
-            str(stage1_json.get(key, "") or "").lower()
-            for key in ("cycle_position", "alternative_cycle_position")
-        }
-        patterns = {
-            str(item).strip().lower()
-            for item in stage1_json.get("detected_patterns", []) or []
-        }
-        if cycles.intersection(
-            {"micro_channel", "tight_channel", "normal_channel", "broad_channel", "trending_tr"}
-        ):
-            modules.append("trend_pullback")
-        if patterns.intersection(
-            {
-                "breakout_test",
-                "breakout_pullback",
-                "breakout_failure",
-                "failed_breakout",
-            }
-        ):
-            modules.append("breakout_retest")
-        if cycles.intersection({"trading_range", "trending_tr", "extreme_tr"}):
-            modules.append("trading_range_events")
-        if (
-            str(stage1_json.get("climax_risk", "") or "").lower() in {"warning", "triggered"}
-            or str(stage1_json.get("spike_stage", "") or "").lower() in {"ending", "transitioning"}
-        ):
-            modules.append("climax_absorption_exhaustion")
-        return modules
+        return list(
+            build_vpa_knowledge_context(
+                stage1_json,
+                include_core=include_core,
+            ).module_names
+        )
 
     def _load_vpa_rule_prompt(
         self,
@@ -1030,17 +1015,29 @@ class PromptAssembler:
         content.extend(self._load(VPA_KNOWLEDGE_MODULES[name]) for name in module_names)
         return wrap_vpa_prompt_block("\n\n---\n\n".join(part for part in content if part))
 
-    def _render_vpa_measurements_block(self, frame: KlineFrame) -> str:
+    def _render_vpa_measurements_block(
+        self,
+        frame: KlineFrame,
+        pa_hypotheses: dict[str, Any] | None = None,
+    ) -> str:
         if not self._vpa_enabled():
             return ""
         try:
             catalog = self._vpa_evidence_catalog
             if catalog is None:
                 catalog = build_vpa_evidence_catalog(frame)
-            return wrap_vpa_prompt_block(render_vpa_measurements(catalog=catalog))
-        except Exception as exc:  # noqa: BLE001
+            return wrap_vpa_prompt_block(
+                render_vpa_measurements(
+                    catalog=catalog,
+                    selected_fact_refs=pa_window_fact_refs(pa_hypotheses),
+                )
+            )
+        except Exception as exc:
             logger.warning("render_vpa_measurements failed: %s", exc)
-            return ""
+            raise VpaPromptBuildError(
+                "vpa_measurement_render_failed",
+                f"VPA program evidence could not be rendered: {exc}",
+            ) from exc
 
     @staticmethod
     def _entry_attempt_context(pa_hypotheses: dict[str, Any]) -> dict[str, Any]:
@@ -1080,7 +1077,9 @@ class PromptAssembler:
             if not isinstance(item, dict):
                 continue
             evidence_id = str(item.get("evidence_id") or "")
-            if evidence_id not in cited_ids or not evidence_id.startswith("vpa-c"):
+            if evidence_id not in cited_ids or not evidence_id.startswith(
+                ("vpa-w", "vpa-c")
+            ):
                 continue
             facts = item.get("facts") if isinstance(item.get("facts"), dict) else {}
             projected.append(
@@ -1090,7 +1089,7 @@ class PromptAssembler:
                     "prior_window": facts.get("prior_window"),
                     "current_progress_direction": facts.get("current_progress_direction"),
                     "prior_progress_direction": facts.get("prior_progress_direction"),
-                    "net_close_progress_direction_relation": (
+                    "net_progress_direction_relation": (
                         net_close_progress_direction_relation(facts)
                     ),
                     "volume_relation": facts.get("current_vs_prior_volume_relation"),
@@ -1353,7 +1352,7 @@ class PromptAssembler:
             else {}
         )
         knowledge = self._load_vpa_rule_prompt(stage1_json=stage1_json)
-        measurements = self._render_vpa_measurements_block(frame)
+        measurements = self._render_vpa_measurements_block(frame, pa_hypotheses)
         entry_attempt_context = self._entry_attempt_context(pa_hypotheses)
         user_content = (
             "## VPA_EVIDENCE_ANALYSIS_TASK\n\n"
@@ -1378,8 +1377,6 @@ class PromptAssembler:
             + """输出且只输出：
 {
   "vpa_report": {
-    "catalog_id": "逐字复制程序 catalog_id",
-    "data_status": "逐字复制程序 data_status",
     "summary": "核心量价解释、竞争解释与不确定性，不复写数字",
     "observations": [{
       "evidence_ids": ["仅使用目录中的 ID"],
@@ -1403,8 +1400,7 @@ class PromptAssembler:
     "entry_timing_relation": "supports | neutral | challenges | insufficient_data",
     "next_confirmation": {
       "state": "pending_closed_bar | not_applicable",
-      "trigger": "pending_closed_bar 时填写下一根已收盘 K 线需要验证的 acceptance/rejection；not_applicable 时为 null",
-      "requires_closed_bar": "pending_closed_bar 时为 true；not_applicable 时为 false"
+      "trigger": "pending_closed_bar 时填写下一根已收盘 K 线需要验证的 acceptance/rejection；not_applicable 时为 null"
     }
   }
 }

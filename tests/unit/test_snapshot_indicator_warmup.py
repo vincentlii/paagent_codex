@@ -20,7 +20,7 @@ def _bars_newest_first(closes: list[float]) -> list[KlineBar]:
         out.append(
             KlineBar(
                 seq=seq,
-                ts_open=float(seq),
+                ts_open=float(1_700_000_000 - i * 60),
                 open=close - 0.1,
                 high=close + 0.2,
                 low=close - 0.2,
@@ -75,10 +75,11 @@ def test_seasonality_samples_use_only_history_older_than_analysis_window() -> No
     )
 
     assert frame is not None
-    assert frame.data_metadata["seasonality_history_bars"] == INDICATOR_WARMUP_BARS
+    expected_history_bars = len(bars_raw) - 20
+    assert frame.data_metadata["seasonality_history_bars"] == expected_history_bars
     samples = frame.data_metadata["seasonality_samples"]
     assert sum(len(values) for key, values in samples.items() if "|" not in key) == (
-        INDICATOR_WARMUP_BARS
+        expected_history_bars
     )
 
 

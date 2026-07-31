@@ -24,6 +24,10 @@ def seasonality_context_hash(metadata: object) -> str | None:
         payload = {
             "samples": samples,
             "history_bars": int(values.get("seasonality_history_bars", 0) or 0),
+            "history_start_ts_open": values.get("seasonality_history_start_ts_open"),
+            "history_end_ts_open": values.get("seasonality_history_end_ts_open"),
+            "history_is_causal": values.get("seasonality_history_is_causal"),
+            "slot_scheme": values.get("seasonality_slot_scheme"),
             "minimum_samples": int(values.get("seasonality_min_samples", 8) or 8),
             "timezone_basis": values.get("timezone_basis", "UTC"),
         }
@@ -48,13 +52,16 @@ def serialize_frame_bars(frame: Any | None) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for bar in tuple(getattr(frame, "bars", ()) or ()):
         if dataclasses.is_dataclass(bar) and not isinstance(bar, type):
-            result.append(dataclasses.asdict(bar))
+            payload = dataclasses.asdict(bar)
         elif isinstance(bar, Mapping):
-            result.append(dict(bar))
+            payload = dict(bar)
         elif hasattr(bar, "__dict__"):
-            result.append(dict(vars(bar)))
+            payload = dict(vars(bar))
         else:
             raise TypeError(f"unsupported bar type: {type(bar).__name__}")
+        if payload.get("volume_state") is None:
+            payload.pop("volume_state", None)
+        result.append(payload)
     return result
 
 
@@ -99,9 +106,20 @@ def compact_snapshot_context(frame: Any) -> dict[str, Any]:
         "venue": metadata.get("venue"),
         "volume_kind": metadata.get("volume_kind", "unknown"),
         "volume_quality": metadata.get("volume_quality", "unknown"),
+        "volume_provenance": metadata.get("volume_provenance"),
         "timezone_basis": metadata.get("timezone_basis", "UTC"),
         "continuous_market": metadata.get("continuous_market"),
         "seasonality_history_bars": int(metadata.get("seasonality_history_bars", 0) or 0),
+        "seasonality_slot_scheme": metadata.get("seasonality_slot_scheme"),
+        "seasonality_history_start_ts_open": metadata.get(
+            "seasonality_history_start_ts_open"
+        ),
+        "seasonality_history_end_ts_open": metadata.get(
+            "seasonality_history_end_ts_open"
+        ),
+        "seasonality_history_is_causal": metadata.get(
+            "seasonality_history_is_causal"
+        ),
         "seasonality_context_hash": seasonality_context_hash(metadata),
         "snapshot_ts_local_ms": getattr(frame, "snapshot_ts_local_ms", None),
         "latest_closed_ts_open": bars[0].ts_open if bars else None,

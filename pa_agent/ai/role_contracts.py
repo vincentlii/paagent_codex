@@ -172,7 +172,12 @@ class VpaObservation(VpaObservationDraft):
     model_config = ConfigDict(extra="forbid")
 
     sequence_claims: list[VpaSequenceClaim] = Field(default_factory=list)
+    auto_bound_evidence_ids: list[str] = Field(default_factory=list)
     bar_range: str
+
+    @property
+    def effective_evidence_ids(self) -> set[str]:
+        return set(self.evidence_ids) | set(self.auto_bound_evidence_ids)
 
 
 class VpaHypothesisAssessment(BaseModel):
@@ -183,13 +188,23 @@ class VpaHypothesisAssessment(BaseModel):
     hypothesis_id: str
     relation: Relation
     evidence_ids: list[str]
+    auto_bound_evidence_ids: list[str] = Field(default_factory=list)
     reason: str
 
+    @property
+    def effective_evidence_ids(self) -> set[str]:
+        return set(self.evidence_ids) | set(self.auto_bound_evidence_ids)
 
-class VpaHypothesisAssessmentDraft(VpaHypothesisAssessment):
+
+class VpaHypothesisAssessmentDraft(BaseModel):
     """Provider-facing assessment with whitelist normalization."""
 
     model_config = ConfigDict(extra="ignore")
+
+    hypothesis_id: str
+    relation: Relation
+    evidence_ids: list[str]
+    reason: str
 
 
 class VpaNextConfirmation(BaseModel):
@@ -202,10 +217,13 @@ class VpaNextConfirmation(BaseModel):
     requires_closed_bar: bool
 
 
-class VpaNextConfirmationDraft(VpaNextConfirmation):
+class VpaNextConfirmationDraft(BaseModel):
     """Provider-facing confirmation with whitelist normalization."""
 
     model_config = ConfigDict(extra="ignore")
+
+    state: Literal["pending_closed_bar", "not_applicable"]
+    trigger: str | None
 
 
 class VpaEvidenceReport(BaseModel):
@@ -227,12 +245,12 @@ class VpaEvidenceReport(BaseModel):
         ids = {
             evidence_id
             for item in self.observations
-            for evidence_id in item.evidence_ids
+            for evidence_id in item.effective_evidence_ids
         }
         ids.update(
             evidence_id
             for item in self.hypothesis_assessments
-            for evidence_id in item.evidence_ids
+            for evidence_id in item.effective_evidence_ids
         )
         ids.update(
             evidence_id
@@ -245,14 +263,26 @@ class VpaEvidenceReport(BaseModel):
         )
         return ids
 
+    @property
+    def declared_evidence_ids(self) -> set[str]:
+        ids = {
+            evidence_id
+            for item in self.observations
+            for evidence_id in item.evidence_ids
+        }
+        ids.update(
+            evidence_id
+            for item in self.hypothesis_assessments
+            for evidence_id in item.evidence_ids
+        )
+        return ids
+
 
 class VpaEvidenceReportDraft(BaseModel):
     """Provider-facing report without program-owned observation ranges."""
 
     model_config = ConfigDict(extra="ignore")
 
-    catalog_id: str
-    data_status: Literal["available", "limited", "unavailable"]
     summary: str
     observations: list[VpaObservationDraft]
     hypothesis_assessments: list[VpaHypothesisAssessmentDraft]

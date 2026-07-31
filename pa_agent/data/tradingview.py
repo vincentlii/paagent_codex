@@ -23,6 +23,7 @@ from pa_agent.data.market_defaults import (
 )
 from pa_agent.data.tradingview_errors import format_tradingview_fetch_error
 from pa_agent.data.tv_symbol_lookup import TvSymbolNotFoundError
+from pa_agent.data.volume_context import normalize_provider_volume
 
 logger = logging.getLogger(__name__)
 
@@ -525,6 +526,12 @@ class TradingViewSource(DataSource):
         bars: list[KlineBar] = []
         for i, row in enumerate(df.itertuples(index=False)):
             ts_ms = _row_ts_ms(row)
+            volume, volume_state = normalize_provider_volume(
+                getattr(row, "volume", None),
+                # TradingView can expose zero for unavailable volume; the
+                # feed does not distinguish that from a true zero print.
+                zero_is_observed=False,
+            )
             bar = KlineBar(
                 seq=i + 1,
                 ts_open=ts_ms,
@@ -532,7 +539,8 @@ class TradingViewSource(DataSource):
                 high=float(row.high),
                 low=float(row.low),
                 close=float(row.close),
-                volume=float(getattr(row, "volume", 0.0)),
+                volume=volume,
+                volume_state=volume_state,
                 closed=True,
             )
             if i == 0:
@@ -548,6 +556,7 @@ class TradingViewSource(DataSource):
                     low=bar.low,
                     close=bar.close,
                     volume=bar.volume,
+                    volume_state=bar.volume_state,
                     closed=False,
                 )
                 still_forming = is_bar_still_forming(
@@ -564,6 +573,7 @@ class TradingViewSource(DataSource):
                     low=bar.low,
                     close=bar.close,
                     volume=bar.volume,
+                    volume_state=bar.volume_state,
                     closed=not still_forming,
                 )
             bars.append(normalize_kline_bar(bar))

@@ -2271,12 +2271,46 @@ class TwoStageOrchestrator:
             on_event(OrchestratorEvent.RecordSaved)
             return record
 
-        vpa_messages = role_assembler.build_vpa_evidence_report(
-            frame,
-            stage1,
-            hypotheses_dict,
-            htf_context=htf_context,
-        )
+        from pa_agent.ai.prompt_assembler import VpaPromptBuildError
+
+        try:
+            vpa_messages = role_assembler.build_vpa_evidence_report(
+                frame,
+                stage1,
+                hypotheses_dict,
+                htf_context=htf_context,
+            )
+        except Exception as exc:  # VPA is optional after the official PA result.
+            code = (
+                exc.code
+                if isinstance(exc, VpaPromptBuildError)
+                else "vpa_prompt_build_failed"
+            )
+            if not isinstance(exc, VpaPromptBuildError):
+                logger.exception("Unexpected VPA prompt build failure")
+            role_audit.append(
+                {
+                    "stage": "vpa_evidence",
+                    "arm": "vpa_evidence",
+                    "code": code,
+                    "category": "local_prompt_build",
+                    "severity": "error",
+                    "owner": "vpa_evidence",
+                    "retry_policy": "never",
+                    "message": str(exc),
+                }
+            )
+            return finish(
+                status="completed_with_warnings",
+                official_path="pa_only",
+                official_stage2=baseline_stage2,
+                vpa_result=None,
+                vpa_report_obj=None,
+                joint_result=None,
+                joint_envelope=None,
+                degradation_stage="vpa_evidence",
+                degradation_reason=f"{code}: {exc}",
+            )
         vpa_result, vpa_failure = execute_role(
             role="vpa_evidence",
             client=vpa_client,
@@ -2338,11 +2372,37 @@ class TwoStageOrchestrator:
                 joint_envelope=None,
             )
 
-        joint_messages = role_assembler.build_joint_decision(
-            baseline_stage2,
-            hypotheses_dict,
-            vpa_report_obj,
-        )
+        try:
+            joint_messages = role_assembler.build_joint_decision(
+                baseline_stage2,
+                hypotheses_dict,
+                vpa_report_obj,
+            )
+        except Exception as exc:  # Research Joint must not invalidate the PA arm.
+            logger.exception("Unexpected Joint prompt build failure")
+            role_audit.append(
+                {
+                    "stage": "joint_arbiter",
+                    "arm": "joint_arbiter",
+                    "code": "joint_prompt_build_failed",
+                    "category": "local_prompt_build",
+                    "severity": "error",
+                    "owner": "joint_arbiter",
+                    "retry_policy": "never",
+                    "message": str(exc),
+                }
+            )
+            return finish(
+                status="degraded_pa_only",
+                official_path="pa_only",
+                official_stage2=baseline_stage2,
+                vpa_result=vpa_result,
+                vpa_report_obj=vpa_report_obj,
+                joint_result=None,
+                joint_envelope=None,
+                degradation_stage="joint_arbiter",
+                degradation_reason=f"joint_prompt_build_failed: {exc}",
+            )
         enable_next_bar = bool(
             getattr(
                 getattr(self._settings, "general", None),

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pa_agent.ai.prompt_assembler import PromptAssembler
+from pa_agent.ai.prompt_assembler import PromptAssembler, VpaPromptBuildError
 from pa_agent.ai.router import route_strategy_files
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
 from pa_agent.config.paths import PROMPT_DIR
@@ -222,6 +222,49 @@ def test_vpa_failure_degrades_to_pa_only_without_failing_analysis() -> None:
     assert writer.save_full.call_count == 1
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected_code"),
+    (
+        (
+            VpaPromptBuildError(
+                "vpa_measurement_render_failed",
+                "synthetic local render failure",
+            ),
+            "vpa_measurement_render_failed",
+        ),
+        (RuntimeError("synthetic unexpected prompt failure"), "vpa_prompt_build_failed"),
+    ),
+)
+def test_local_vpa_prompt_failure_skips_provider_call_and_preserves_pa(
+    monkeypatch,
+    failure: Exception,
+    expected_code: str,
+) -> None:
+    def fail_render(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(PromptAssembler, "_render_vpa_measurements_block", fail_render)
+    orchestrator, _client, writer = _orchestrator(
+        "shadow",
+        vpa_replies=[make_reply(_vpa_report())],
+        joint_replies=[],
+    )
+
+    record = orchestrator.submit(make_frame(), CancelToken(), lambda _event: None)
+
+    assert record.run_outcome["status"] == "completed_with_warnings"
+    assert record.run_outcome["official_path"] == "pa_only"
+    assert record.stage2_decision["decision"]["trade_confidence"] == 70
+    assert len(record.call_attempts) == 2
+    assert all(item["arm"] == "pa" for item in record.call_attempts)
+    assert any(
+        event.get("code") == expected_code
+        and event.get("category") == "local_prompt_build"
+        for event in record.validation_audit
+    )
+    writer.save_full.assert_called_once()
+
+
 def test_production_soft_is_explicitly_constrained_to_shadow() -> None:
     orchestrator, client, _writer = _orchestrator(
         "soft",
@@ -300,6 +343,36 @@ def test_joint_failure_degrades_to_pa_only_without_losing_vpa_report() -> None:
     assert record.vpa_evidence is not None
     assert record.joint_decision is None
     assert writer.save_full.call_count == 1
+
+
+def test_local_joint_prompt_failure_skips_provider_call_and_preserves_pa(
+    monkeypatch,
+) -> None:
+    def fail_build(*_args, **_kwargs):
+        raise RuntimeError("synthetic Joint prompt failure")
+
+    monkeypatch.setattr(PromptAssembler, "build_joint_decision", fail_build)
+    orchestrator, _client, writer = _orchestrator(
+        "soft",
+        vpa_replies=[make_reply(_vpa_report())],
+        joint_replies=[make_reply(_joint_lower_confidence())],
+    )
+
+    record = orchestrator.submit(make_frame(), CancelToken(), lambda _event: None)
+
+    assert record.exception is None
+    assert record.run_outcome["status"] == "degraded_pa_only"
+    assert record.run_outcome["official_path"] == "pa_only"
+    assert record.vpa_evidence is not None
+    assert record.joint_decision is None
+    assert len(record.call_attempts) == 3
+    assert all(item["stage"] != "joint_arbiter" for item in record.call_attempts)
+    assert any(
+        event.get("code") == "joint_prompt_build_failed"
+        and event.get("category") == "local_prompt_build"
+        for event in record.validation_audit
+    )
+    writer.save_full.assert_called_once()
 
 
 def test_vpa_prose_warning_is_audited_without_retry_or_degradation() -> None:

@@ -107,3 +107,33 @@ def test_stage1_validator_audits_level_order_normalization() -> None:
         "support_levels",
         "resistance_levels",
     }
+
+
+def test_stage1_validator_canonicalizes_structured_key_signal_losslessly() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    structured_signal = {
+        "bar": "K4",
+        "direction": "bearish",
+        "quality": "medium",
+        "reason": "强阴线收盘近低点，但逆主流方向，仅作参考",
+    }
+    stage1["key_signals"] = [structured_signal]
+
+    result = JsonValidator().validate("stage1", json.dumps(stage1, ensure_ascii=False))
+
+    assert isinstance(result, Ok)
+    assert result.obj["key_signals"] == [
+        json.dumps(
+            structured_signal,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    ]
+    assert result.normalization_events == [
+        {
+            "path": "key_signals.0",
+            "before": structured_signal,
+            "after": result.obj["key_signals"][0],
+        }
+    ]

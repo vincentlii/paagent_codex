@@ -8,6 +8,16 @@ from typing import Any
 SNAPSHOT_HASH_ALGORITHM = "v5-canonical-json"
 
 
+def _canonical_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    canonical: list[dict[str, Any]] = []
+    for bar in bars:
+        payload = dict(bar)
+        if payload.get("volume_state") is None:
+            payload.pop("volume_state", None)
+        canonical.append(payload)
+    return canonical
+
+
 def canonical_market_snapshot_hash(
     *,
     symbol: str,
@@ -21,10 +31,10 @@ def canonical_market_snapshot_hash(
         "algorithm": SNAPSHOT_HASH_ALGORITHM,
         "symbol": symbol,
         "timeframe": timeframe,
-        "kline_data": kline_data,
+        "kline_data": _canonical_bars(kline_data),
         "snapshot_context": snapshot_context or {},
         "htf_context": htf_context,
-        "htf_kline_data": htf_kline_data,
+        "htf_kline_data": _canonical_bars(htf_kline_data),
     }
     encoded = json.dumps(
         payload,

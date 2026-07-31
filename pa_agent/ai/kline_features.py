@@ -49,6 +49,8 @@ class KlineGeometryFeature:
     close_zone: str
     atr14: float | None
     range_atr_ratio: float | None
+    signed_body_atr: float | None
+    close_progress_atr: float | None
     ema20: float | None
     close_minus_ema: float | None
     close_minus_ema_atr: float | None
@@ -111,6 +113,14 @@ def _measure_bar(
         close_zone=classify_close_position_zone(close_position),
         atr14=_round_optional(atr),
         range_atr_ratio=_round_optional(full_range / atr if atr and atr > 0 else None),
+        signed_body_atr=_round_optional(
+            (close - open_) / atr if atr and atr > 0 else None
+        ),
+        close_progress_atr=_round_optional(
+            (close - float(previous.close)) / atr
+            if previous is not None and atr and atr > 0
+            else None
+        ),
         ema20=_round_optional(ema),
         close_minus_ema=_round_optional(close_minus_ema),
         close_minus_ema_atr=_round_optional(

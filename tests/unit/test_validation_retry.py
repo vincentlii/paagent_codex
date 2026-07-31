@@ -49,6 +49,13 @@ def test_retry_policy_allows_one_trade_metric_reconsideration() -> None:
     )
 
 
+def test_retry_policy_treats_key_signal_shape_as_format_only() -> None:
+    settings = _settings()
+
+    assert should_retry("c", ["key_signals.0"], [], attempt=0, settings=settings)
+    assert not should_retry("c", ["key_signals.0"], [], attempt=1, settings=settings)
+
+
 def test_trade_metric_retry_can_reject_order_but_cannot_reprice_it() -> None:
     before = {
         "decision": {

@@ -18,8 +18,6 @@ from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
 def _vpa_payload(catalog: dict, hypotheses: PaHypothesisSet) -> dict:
     return {
         "vpa_report": {
-            "catalog_id": catalog["catalog_id"],
-            "data_status": catalog["data_status"],
             "summary": "Mixed effort and result near the current PA location.",
             "observations": [
                 {
@@ -47,7 +45,6 @@ def _vpa_payload(catalog: dict, hypotheses: PaHypothesisSet) -> dict:
             "next_confirmation": {
                 "state": "pending_closed_bar",
                 "trigger": "Wait for the next closed bar to test the K4 high.",
-                "requires_closed_bar": True,
             },
         }
     }

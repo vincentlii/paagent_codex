@@ -42,9 +42,11 @@ Normalizer 只能复制白名单字段和规范无语义记号。它不得补市
 `hard_error`；市场日历或历史来源未知造成的缺口/陈旧只能先记为 `warning`，不能把周末或休市
 机械判为断流。真实 TradingView/MT5 快照同时校验 K1 理论收盘时间。
 
-Volume seasonality 使用数据层提供的、早于当前分析窗口的同源历史样本。时间桶先把 UTC epoch
-转换到明确的 `timezone_basis`；时区无效或样本不足时必须标记 unavailable，不得用当前窗口自身
-构造看似充分的季节性基线。
+Volume seasonality 使用数据层提供的、严格早于当前分析窗口的同源历史样本。时间桶先把 UTC
+epoch 转换到明确的 `timezone_basis`，再按精确 `HH:MM` 对齐；优先 weekday-slot，样本不足时才
+退到 all-days-slot。时区无效、因果边界无法验证或同槽样本不足时必须分别标记 unavailable，
+不得用当前窗口自身构造基线。VPA 开启时只在首次抓取中回填有界历史，后续刷新合并同源缓存；
+VPA 关闭时保持原 PA 请求量。
 
 ## 3. 运行模式
 
@@ -95,8 +97,11 @@ VPA 失败不会使 PA 分析伪装失败；记录标记 `completed_with_warning
 降级的真实系统效应；per-protocol 只比较协议完整、成功持久化且确实收到指定处理的 arm。
 单次组间差异不能归因于 VPA，必须先用 A/A、B/B 估计模型随机波动，并跨独立 Snapshot 复核。
 统计抽样单位是独立 `market_snapshot_hash`；arm、重复运行和不同 cohort 下的同一行情都不增加样本数。
-反事实结果在每个 Snapshot 内先平均重复臂，再报告 matched A/B 的 R 差、胜率差和 exact sign test；
-它只覆盖双方都有明确 closed-OHLC 结果的 Snapshot，必须与交易频率报告及成本后样本外验证一起解释。
+反事实结果在每个 Snapshot 内先平均重复臂；相互重叠的前向观察区间再合并为 episode，避免把同一
+行情路径伪装成独立样本。主配对结论使用 ITT：`no_order` 与未触发入场计 `0R`，pending/ambiguous
+保持 censored，未持久化或没有结果的已分配 arm 保持 missing 并阻止统计验收。per-protocol 配对只作
+处理实际交付后的诊断。订单状态、outcome 标签与 realized R 的明确冲突同样按 missing 处理。R 差、
+条件交易胜率差和 exact sign test 必须与交易频率、成本和样本外表现一起解释。
 
 ## 5. VPA 理论底座
 
@@ -127,20 +132,25 @@ VPA 失败不会使 PA 分析伪装失败；记录标记 `completed_with_warning
 - `body_atr` 描述实体；`directional_progress_atr` 描述相对上一根收盘的实际推进，二者不得互换。
 - 因果 RVOL、百分位和均值只使用当前 K 线之前的已收盘样本，绝不回看未来 bar。
 - 因果基线只有在 `baseline_sample_count >= baseline_min_samples` 时可用；当前最低样本为 8。样本不足是 `unavailable`，不是低量。
-- 单棒 volume 缺失或非正时标记 `volume_available=false`，不参与 volume 比较，也不能支持 `supports/challenges`。
+- 每根 bar 通过 `volume_state` 区分 `observed`、`zero_observed`、`missing`、`unsupported` 与
+  `legacy_unknown`。Provider 明确观测到的零可以进入同源比较；TradingView 等无法区分“真零/无数据”
+  的零保持 `legacy_unknown`，不得描述为低量。
 - `source=volume` 只说明该 evidence 含有量字段，不等于存在 VPA 信息增量。至少一个因果基线、前棒、seasonality 或相邻序列比较关系必须为程序实际算出的 `above/equal/below`；只有 raw volume、比较器均为 `unavailable` 时必须按证据不足处理。
 - `real`、`tick`、`proxy`、`unknown` 按数据源元数据解释。tick/proxy 只能做同源相对比较，unknown 不得声称真实成交量。
-- `vpa-c` 只提供相邻三棒窗口的原始比较，不自动切分 wave 或生成信号。
-- `vpa-c` 的两个窗口会临时派生 `net_progress_direction_relation=same|opposite|flat_or_unavailable`，
-  仅防止把同向净推进写成反向或把负向净推进窗口直接标成反弹段。该字段不写回冻结 catalog，
-  也不判断两个窗口是否构成可比的 Brooks leg。
-- Seasonality 仅在数据层提供同品种、同来源、同时间桶的足量历史时可用。当前快照没有该历史时明确记录 `history_not_provided`。
+- `vpa-w###` 是仅针对冻结 PA handoff 已引用 `PA.WINDOW.K#` 注入的中性测量切片，提供成交量覆盖、
+  因果 RVOL、净推进、累计 spread、路径长度、效率和重叠；它不自动检测 leg、phase 或事件。
+  `vpa-c` 仅为旧冻结 catalog 的可重放兼容格式，新运行不再生成。
+- PA-window 切片临时派生 `net_progress_direction_relation=same|opposite|flat_or_unavailable`，仅防止
+  明确方向反述；它不判断两个窗口是否构成可比的 Brooks leg。
+- Seasonality 仅在精确同槽、因果边界和最小样本均成立时可用。无历史、样本不足、当前 volume
+  不可用与 1D/1W 不适用必须使用不同状态，不得互相冒充。
 
-VPA Evidence Analyst 必须逐字复制 `catalog_id`，只能引用目录中存在的 evidence ID。
-`observations[].bar_range` 由程序根据 evidence ID 并集生成，模型不得填写。放量、缩量、扩张、
-收缩等表述必须给出明确比较对象，并与程序关系一致。
-解释中出现的明确 `K#` 若唯一对应单棒 evidence，程序会补入该 evidence ID 并记录
-normalization；若已被所引窗口覆盖则不重复补。不存在、歧义或无法覆盖的 K 引用仍拒绝。
+VPA Evidence Analyst 只能引用本次 Prompt 实际可见的 evidence ID。程序从冻结 catalog 写入
+`catalog_id`、`data_status`，根据 evidence 并集生成 `observations[].bar_range`，并从
+`next_confirmation.state` 生成 `requires_closed_bar`；模型不得复制这些事实字段。放量、缩量、
+扩张、收缩等表述必须给出明确比较对象，并与程序关系一致。解释中出现的明确 `K#` 若唯一对应
+单棒 evidence，程序写入独立 `auto_bound_evidence_ids`；它不篡改模型声明的 `evidence_ids`，也不把
+自动绑定当成独立量价信息。不存在、歧义或无法覆盖的 K 引用仍拒绝。
 
 ## 7. VPA Schema 与权限
 
@@ -182,10 +192,10 @@ Joint 模型不复制完整 Stage 2。Validator 在冻结 PA baseline 上确定�
 VPA 字段。
 
 `next_confirmation.state` 只允许 `pending_closed_bar` / `not_applicable`。前者使用非空
-`trigger` 与 `requires_closed_bar=true`，并明确等待下一根已收盘 K 线，把
+`trigger`，程序派生 `requires_closed_bar=true`，并明确等待下一根已收盘 K 线，把
 acceptance/rejection 锚定到具体 `K#` 高低点或已命名结构；若提及未来量能变化，还必须写明
 因果基线、前一根已收盘棒或其他程序可复算比较器。后者使用 `trigger=null` 与
-`requires_closed_bar=false`，适用于没有独立 VPA 后续验证条件的场景，包括 neutral、
+程序派生 `requires_closed_bar=false`，适用于没有独立 VPA 后续验证条件的场景，包括 neutral、
 insufficient_data 或没有 PA Entry Attempt。中文 `K线` /
 `K 线` 的空白差异只属于语法差异，不得改变语义判定。
 
@@ -267,7 +277,7 @@ assistant turn，并要求只修复反馈列出的字段或引用、其余值逐
 
 ## 10. Records、数据库与复盘
 
-JSON record 是完整审计源；SQLite `records/audit/analysis.sqlite3` 是可重建索引，当前 schema version 为 8。
+JSON record 是完整审计源；SQLite `records/audit/analysis.sqlite3` 是可重建索引，当前 schema version 为 9。
 
 索引保存：
 
@@ -275,6 +285,8 @@ JSON record 是完整审计源；SQLite `records/audit/analysis.sqlite3` 是可�
 - `PaHypothesisSet`、`VpaEvidenceReport` 与明确 `RunOutcome`；`JointDecisionProposal` 仅存在于研究 record。
 - 离线实验 manifest、冻结输入 hash、ABBA/BAAB 顺序，以及四臂的 assignment、处理接收、first-pass、持久化和失败状态。
 - 每次调用的 arm、stage、attempt、request/response hash、latency、tokens 和 validator status。
+- VPA observations、模型声明/程序自动绑定的 evidence、逐 PA hypothesis assessment，以及结构化
+  `analysis_failures`；复盘不再依赖扫描 JSON prose。
 - 每次失败或兼容归一化的原始响应、字段路径、合法枚举、实际重试提示和 normalization before/after。
 - 人工真实结果 `analysis_outcomes`。
 - 闭盘 OHLC 反事实结果 `counterfactual_outcomes`。

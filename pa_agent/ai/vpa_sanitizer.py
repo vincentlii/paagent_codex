@@ -86,7 +86,10 @@ def materialize_vpa_report_observation_ranges(
             continue
         bounds = [
             parsed
-            for evidence_id in observation.get("evidence_ids", [])
+            for evidence_id in [
+                *observation.get("evidence_ids", []),
+                *observation.get("auto_bound_evidence_ids", []),
+            ]
             for parsed in (
                 _range_bounds((evidence.get(str(evidence_id)) or {}).get("bar_range")),
             )
@@ -102,11 +105,11 @@ def materialize_vpa_report_observation_ranges(
     return out
 
 
-def bind_explicit_vpa_k_references(
+def materialize_vpa_reference_bindings(
     report_obj: dict[str, Any],
     evidence_catalog: dict[str, Any] | None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Bind explicit K# prose to a unique single-bar evidence item when possible.
+    """Materialize unique K# bindings without mutating declared citations.
 
     This is citation normalization, not interpretation. References already
     covered by a cited range are unchanged; unknown or ambiguous references
@@ -141,10 +144,13 @@ def bind_explicit_vpa_k_references(
 
     events: list[dict[str, Any]] = []
     for path, item, text_key in targets:
-        cited = [str(value) for value in item.get("evidence_ids", [])]
-        before = list(cited)
+        declared = [str(value) for value in item.get("evidence_ids", [])]
+        auto_bound = [
+            str(value) for value in item.get("auto_bound_evidence_ids", [])
+        ]
+        before = list(auto_bound)
         covered: set[int] = set()
-        for evidence_id in cited:
+        for evidence_id in [*declared, *auto_bound]:
             bounds = ranges_by_id.get(evidence_id)
             if bounds is not None:
                 covered.update(range(bounds[0], bounds[1] + 1))
@@ -156,17 +162,17 @@ def bind_explicit_vpa_k_references(
             if len(candidates) != 1:
                 continue
             evidence_id = candidates[0]
-            if evidence_id not in cited:
-                cited.append(evidence_id)
+            if evidence_id not in declared and evidence_id not in auto_bound:
+                auto_bound.append(evidence_id)
             covered.add(seq)
-        if cited == before:
+        if auto_bound == before:
             continue
-        item["evidence_ids"] = cited
+        item["auto_bound_evidence_ids"] = auto_bound
         events.append(
             {
-                "path": f"{path}.evidence_ids",
+                "path": f"{path}.auto_bound_evidence_ids",
                 "before": before,
-                "after": list(cited),
+                "after": list(auto_bound),
                 "reason": "bound_unique_explicit_k_reference",
             }
         )

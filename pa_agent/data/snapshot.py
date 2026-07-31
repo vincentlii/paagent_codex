@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import math
-from collections import defaultdict
-from datetime import UTC, datetime
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_agent.data.bar_close_wait import has_forming_bar_at_head
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, normalize_kline_bar
+from pa_agent.data.volume_context import build_seasonality_metadata
 from pa_agent.util.timefmt import now_local_ms
 
 # Extra closed bars fetched before the AI window so EMA20/ATR14 can warm up.
@@ -204,6 +202,7 @@ def build_live_frame(
                     low=b.low,
                     close=b.close,
                     volume=b.volume,
+                    volume_state=getattr(b, "volume_state", None),
                     amount=getattr(b, "amount", 0.0),
                     pct_chg=getattr(b, "pct_chg", None),
                     closed=not is_forming,
@@ -231,6 +230,7 @@ def _rebase_closed_bars(closed_raw: list[KlineBar]) -> list[KlineBar]:
                 low=b.low,
                 close=b.close,
                 volume=b.volume,
+                volume_state=getattr(b, "volume_state", None),
                 amount=getattr(b, "amount", 0.0),
                 pct_chg=getattr(b, "pct_chg", None),
                 closed=True,
@@ -238,33 +238,6 @@ def _rebase_closed_bars(closed_raw: list[KlineBar]) -> list[KlineBar]:
         )
         for i, b in enumerate(closed_raw)
     ]
-
-
-def _historical_seasonality_samples(
-    bars: list[KlineBar],
-    *,
-    timezone_basis: str,
-) -> dict[str, list[float]]:
-    """Group older provider bars by local clock slot without market labels."""
-    try:
-        zone = UTC if timezone_basis.upper() == "UTC" else ZoneInfo(timezone_basis)
-    except (ZoneInfoNotFoundError, ValueError):
-        zone = UTC
-    grouped: dict[str, list[float]] = defaultdict(list)
-    for bar in bars:
-        try:
-            volume = float(bar.volume)
-            moment = datetime.fromtimestamp(float(bar.ts_open) / 1000, tz=UTC)
-        except (OSError, OverflowError, TypeError, ValueError):
-            continue
-        if not math.isfinite(volume) or volume <= 0:
-            continue
-        local = moment.astimezone(zone)
-        bucket = f"{local.hour:02d}:00"
-        day = local.strftime("%A")
-        grouped[bucket].append(volume)
-        grouped[f"{day}|{bucket}"].append(volume)
-    return {key: values for key, values in grouped.items() if values}
 
 
 def build_analysis_frame(
@@ -315,14 +288,23 @@ def build_analysis_frame(
         atr14=indicators_all.atr14[:n],
     )
     metadata = dict(data_metadata or {})
-    historical = rebased_all[n:]
-    if "seasonality_samples" not in metadata and historical:
-        timezone_basis = str(metadata.get("timezone_basis") or "UTC")
-        metadata["seasonality_samples"] = _historical_seasonality_samples(
-            historical,
-            timezone_basis=timezone_basis,
+    historical_raw = _newest_closed_slice(
+        bars_raw,
+        avail_closed,
+        timeframe=timeframe,
+        symbol=symbol,
+        now_ms=now_ms,
+    ) or []
+    historical = [normalize_kline_bar(item) for item in historical_raw[n:]]
+    if "seasonality_samples" not in metadata:
+        metadata.update(
+            build_seasonality_metadata(
+                historical,
+                timeframe=timeframe,
+                timezone_basis=str(metadata.get("timezone_basis") or "UTC"),
+                oldest_analysis_ts_open=rebased[-1].ts_open,
+            )
         )
-        metadata["seasonality_history_bars"] = len(historical)
         metadata.setdefault("seasonality_min_samples", 8)
     return KlineFrame(
         symbol=symbol,

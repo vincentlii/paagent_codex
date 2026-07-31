@@ -27,8 +27,6 @@ def _vpa_payload(
 ) -> dict:
     return {
         "vpa_report": {
-            "catalog_id": catalog["catalog_id"],
-            "data_status": catalog["data_status"],
             "summary": "Relative activity adds independent timing evidence.",
             "observations": [
                 {
@@ -54,7 +52,6 @@ def _vpa_payload(
             "next_confirmation": {
                 "state": "pending_closed_bar",
                 "trigger": "Wait for the next closed bar to test acceptance.",
-                "requires_closed_bar": True,
             },
         }
     }
@@ -98,6 +95,7 @@ def test_vpa_report_requires_exact_hypothesis_coverage_and_known_evidence() -> N
 
     assert result.ok
     assert result.obj is not None
+    assert result.normalizations == ()
     observation = result.obj["vpa_report"]["observations"][0]
     assert observation["bar_range"] == "K1"
 
@@ -113,6 +111,45 @@ def test_vpa_report_requires_exact_hypothesis_coverage_and_known_evidence() -> N
     assert any(
         "must cover exactly" in item for item in invalid.hard_errors
     )
+
+
+def test_vpa_report_rejects_duplicate_hypothesis_assessments() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    payload["vpa_report"]["hypothesis_assessments"].append(
+        copy.deepcopy(payload["vpa_report"]["hypothesis_assessments"][0])
+    )
+
+    result = validate_vpa_evidence(
+        json.dumps(payload),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert not result.ok
+    assert any("exactly one assessment" in item for item in result.hard_errors)
+
+
+def test_vpa_program_fields_are_materialized_instead_of_copied_by_model() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    payload["vpa_report"]["catalog_id"] = "model-invented"
+    payload["vpa_report"]["data_status"] = "unavailable"
+    payload["vpa_report"]["next_confirmation"]["requires_closed_bar"] = False
+
+    result = validate_vpa_evidence(
+        json.dumps(payload),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert result.ok
+    report = result.obj["vpa_report"]
+    assert report["catalog_id"] == catalog["catalog_id"]
+    assert report["data_status"] == catalog["data_status"]
+    assert report["next_confirmation"]["requires_closed_bar"] is True
 
 
 def test_vpa_draft_drops_harmless_extra_fields_but_rejects_authority_fields() -> None:
@@ -177,10 +214,10 @@ def test_vpa_overlapping_sequence_claim_is_dropped_without_failing_report() -> N
     catalog = build_vpa_evidence_catalog(make_frame())
     payload = _vpa_payload(catalog, hypotheses)
     observation = payload["vpa_report"]["observations"][0]
-    observation["evidence_ids"] = ["vpa-c001", "vpa-e001"]
+    observation["evidence_ids"] = ["vpa-w005", "vpa-e001"]
     observation["sequence_claims"] = [
         {
-            "earlier_evidence_id": "vpa-c001",
+            "earlier_evidence_id": "vpa-w005",
             "later_evidence_id": "vpa-e001",
             "relation": "follow_through",
         }
@@ -333,15 +370,10 @@ def test_vpa_role_rejects_unclosed_confirmation_and_unavailable_k_reference() ->
         pa_hypotheses=hypotheses,
     )
     assert uncited_result.ok
-    assert uncited_result.obj["vpa_report"]["observations"][0]["evidence_ids"] == [
-        "vpa-e001",
-        "vpa-e002",
-    ]
-    assert any(
-        item["path"] == "vpa_report.observations[0].evidence_ids"
-        and item["after"] == ["vpa-e001", "vpa-e002"]
-        for item in uncited_result.normalizations
-    )
+    normalized_observation = uncited_result.obj["vpa_report"]["observations"][0]
+    assert normalized_observation["evidence_ids"] == ["vpa-e001"]
+    assert normalized_observation["auto_bound_evidence_ids"] == ["vpa-e002"]
+    assert uncited_result.normalizations == ()
 
     unavailable = _vpa_payload(catalog, hypotheses)
     unavailable["vpa_report"]["observations"][0]["interpretation"] = (
@@ -364,7 +396,7 @@ def test_vpa_k_reference_already_covered_by_range_is_not_duplicated() -> None:
     catalog = build_vpa_evidence_catalog(make_frame())
     payload = _vpa_payload(catalog, hypotheses)
     observation = payload["vpa_report"]["observations"][0]
-    observation["evidence_ids"] = ["vpa-c001"]
+    observation["evidence_ids"] = ["vpa-w005"]
     observation["interpretation"] = (
         "K5 is already covered by the cited sequence comparison."
     )
@@ -377,8 +409,11 @@ def test_vpa_k_reference_already_covered_by_range_is_not_duplicated() -> None:
 
     assert result.ok
     assert result.obj["vpa_report"]["observations"][0]["evidence_ids"] == [
-        "vpa-c001"
+        "vpa-w005"
     ]
+    assert result.obj["vpa_report"]["observations"][0][
+        "auto_bound_evidence_ids"
+    ] == []
 
 
 def test_vpa_no_entry_candidate_normalizes_timing_relation_without_retry() -> None:
@@ -407,9 +442,9 @@ def test_vpa_rejects_only_explicit_sequence_direction_fact_contradiction() -> No
     catalog = build_vpa_evidence_catalog(make_frame())
     payload = _vpa_payload(catalog, hypotheses)
     observation = payload["vpa_report"]["observations"][0]
-    observation["evidence_ids"] = ["vpa-c001"]
+    observation["evidence_ids"] = ["vpa-w005"]
     observation["interpretation"] = (
-        "vpa-c001 shows that the two windows have opposite net progress directions."
+        "vpa-w005 shows that the two windows have opposite net progress directions."
     )
 
     conflict = validate_vpa_evidence(
@@ -426,8 +461,7 @@ def test_vpa_rejects_only_explicit_sequence_direction_fact_contradiction() -> No
     )
 
     payload["vpa_report"]["observations"][0]["interpretation"] = (
-        "vpa-c001 对比 K3-K1（下跌段）与 K6-K4（反弹段），"
-        "但因两窗口方向相反，直接动量比较需谨慎。"
+        "vpa-w005: the two windows have opposite net close progress directions."
     )
     chinese_conflict = validate_vpa_evidence(
         json.dumps(payload, ensure_ascii=False),
@@ -442,7 +476,7 @@ def test_vpa_rejects_only_explicit_sequence_direction_fact_contradiction() -> No
     )
 
     payload["vpa_report"]["observations"][0]["interpretation"] = (
-        "vpa-c001 may contain rebound bars, while both windows retain positive "
+        "vpa-w005 may contain rebound bars, while both windows retain positive "
         "net progress."
     )
     contextual = validate_vpa_evidence(

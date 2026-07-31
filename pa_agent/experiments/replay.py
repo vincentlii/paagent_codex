@@ -18,9 +18,14 @@ def _current_metadata(record: AnalysisRecord) -> dict[str, Any]:
             "venue",
             "volume_kind",
             "volume_quality",
+            "volume_provenance",
             "timezone_basis",
             "continuous_market",
             "seasonality_history_bars",
+            "seasonality_slot_scheme",
+            "seasonality_history_start_ts_open",
+            "seasonality_history_end_ts_open",
+            "seasonality_history_is_causal",
             "seasonality_context_hash",
         )
         if context.get(key) is not None
