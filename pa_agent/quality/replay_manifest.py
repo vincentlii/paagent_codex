@@ -7,7 +7,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from pa_agent.data.snapshot_identity import canonical_market_snapshot_hash
+from pa_agent.data.snapshot_identity import (
+    LEGACY_SNAPSHOT_HASH_ALGORITHM,
+    canonical_market_snapshot_hash,
+)
 from pa_agent.records.codec import load_record
 
 
@@ -24,6 +27,11 @@ def _canonical_hash(value: Any) -> str:
 
 def _snapshot_identity(record: dict[str, Any]) -> str:
     meta = record.get("meta") if isinstance(record.get("meta"), dict) else {}
+    experiment = (
+        record.get("experiment_context")
+        if isinstance(record.get("experiment_context"), dict)
+        else {}
+    )
     return canonical_market_snapshot_hash(
         symbol=str(meta.get("symbol") or ""),
         timeframe=str(meta.get("timeframe") or ""),
@@ -31,6 +39,10 @@ def _snapshot_identity(record: dict[str, Any]) -> str:
         snapshot_context=record.get("snapshot_context") or {},
         htf_context=record.get("htf_context"),
         htf_kline_data=record.get("htf_kline_data") or [],
+        algorithm=str(
+            experiment.get("market_snapshot_hash_algorithm")
+            or LEGACY_SNAPSHOT_HASH_ALGORITHM
+        ),
     )
 
 

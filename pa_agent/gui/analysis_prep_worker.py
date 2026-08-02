@@ -66,7 +66,7 @@ class AnalysisPrepWorker(QThread):
             from pa_agent.data.snapshot import build_display_frame
             from pa_agent.records.analysis_history import (
                 compute_incremental_bar_delta,
-                find_latest_successful_record,
+                find_latest_successful_record_for_frame,
                 format_bar_ts,
             )
 
@@ -128,10 +128,7 @@ class AnalysisPrepWorker(QThread):
             incremental_detail: str | None = None
 
             if self._force_incremental or self._incremental_threshold > 0:
-                previous = find_latest_successful_record(
-                    symbol=self._symbol,
-                    timeframe=self._timeframe,
-                )
+                previous = find_latest_successful_record_for_frame(frame)
                 if previous is not None:
                     delta = compute_incremental_bar_delta(frame, previous)
                     if delta is not None:

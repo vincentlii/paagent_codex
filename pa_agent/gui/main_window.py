@@ -912,6 +912,20 @@ class MainWindow(QMainWindow):
     def _current_data_source_kind(self) -> str:
         return getattr(self, "_active_data_source_kind", "mt5")
 
+    def _current_resolved_identity(self, symbol: str) -> Any | None:
+        """Return the provider-resolved identity; never infer it from display text."""
+        try:
+            from pa_agent.data.factory import resolved_identity_for_source
+
+            return resolved_identity_for_source(
+                self._current_data_source_kind(),
+                getattr(self._ctx, "data_source", None),
+                symbol=symbol,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Resolved instrument identity unavailable: %s", exc)
+            return None
+
     def _tv_exchange_text(self) -> str:
         combo = getattr(self, "_tv_exchange_combo", None)
         if combo is None:
@@ -1923,11 +1937,17 @@ class MainWindow(QMainWindow):
         if threshold <= 0:
             return
 
+        identity = self._current_resolved_identity(symbol)
+        if identity is None:
+            return
+
         try:
             from pa_agent.records.analysis_history import find_latest_successful_record
 
             previous = find_latest_successful_record(
-                symbol=symbol, timeframe=timeframe
+                symbol=symbol,
+                timeframe=timeframe,
+                identity=identity,
             )
             if previous is None:
                 return
@@ -3150,6 +3170,10 @@ class MainWindow(QMainWindow):
         if not force_incremental and threshold <= 0:
             return None, None, None
 
+        identity = self._current_resolved_identity(symbol)
+        if identity is None:
+            return None, None, None
+
         try:
             from pa_agent.records.analysis_history import (
                 compute_incremental_bar_delta,
@@ -3157,7 +3181,11 @@ class MainWindow(QMainWindow):
                 format_bar_ts,
             )
 
-            previous = find_latest_successful_record(symbol=symbol, timeframe=timeframe)
+            previous = find_latest_successful_record(
+                symbol=symbol,
+                timeframe=timeframe,
+                identity=identity,
+            )
             if previous is None:
                 return None, None, None
 
@@ -3203,13 +3231,20 @@ class MainWindow(QMainWindow):
         timeframe: str,
     ) -> str:
         """Explain why forced incremental analysis cannot start."""
+        identity = self._current_resolved_identity(symbol)
+        if identity is None:
+            return "无法强制增量分析：当前数据源尚未解析出稳定的品种身份，请使用完整分析。"
         try:
             from pa_agent.records.analysis_history import (
                 compute_incremental_bar_delta,
                 find_latest_successful_record,
             )
 
-            previous = find_latest_successful_record(symbol=symbol, timeframe=timeframe)
+            previous = find_latest_successful_record(
+                symbol=symbol,
+                timeframe=timeframe,
+                identity=identity,
+            )
             if previous is None:
                 return (
                     f"无法强制增量分析：未找到 {symbol} {timeframe} 的成功分析记录。"
@@ -4311,7 +4346,15 @@ class MainWindow(QMainWindow):
             if frame is None:
                 raise ValueError("frame is None")
 
-            previous = find_latest_successful_record(symbol=symbol, timeframe=timeframe)
+            identity = self._current_resolved_identity(symbol)
+            if identity is None:
+                raise ValueError("resolved instrument identity unavailable")
+
+            previous = find_latest_successful_record(
+                symbol=symbol,
+                timeframe=timeframe,
+                identity=identity,
+            )
             if previous is None:
                 raise ValueError("no prior record")
 

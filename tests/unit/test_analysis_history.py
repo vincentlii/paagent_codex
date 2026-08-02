@@ -8,6 +8,7 @@ from pa_agent.records.analysis_history import (
     compute_incremental_bar_delta,
     count_new_bars_since_record,
     find_latest_successful_record,
+    find_latest_successful_record_for_frame,
     invalidate_latest_record_cache,
 )
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
@@ -232,3 +233,37 @@ def test_latest_successful_record_rejects_legacy_identity_when_identity_is_requi
     )
 
     assert found is None
+
+
+def test_frame_history_lookup_fails_closed_without_resolved_identity(tmp_path):
+    (tmp_path / "legacy.json").write_text(
+        _record_with_latest(1000.0).model_dump_json(),
+        encoding="utf-8",
+    )
+    invalidate_latest_record_cache()
+
+    assert find_latest_successful_record_for_frame(_frame([1000.0]), directory=tmp_path) is None
+
+
+def test_frame_history_lookup_uses_resolved_identity(tmp_path):
+    record = _with_identity(_record_with_latest(1000.0), venue="OANDA")
+    (tmp_path / "oanda.json").write_text(record.model_dump_json(), encoding="utf-8")
+    frame = _frame([1000.0])
+    frame = KlineFrame(
+        symbol=frame.symbol,
+        timeframe=frame.timeframe,
+        bars=frame.bars,
+        indicators=frame.indicators,
+        snapshot_ts_local_ms=frame.snapshot_ts_local_ms,
+        data_metadata={
+            "source_identity": ResolvedInstrumentIdentity(
+                provider="tradingview",
+                requested_symbol="XAUUSD",
+                resolved_symbol="XAUUSD",
+                venue="OANDA",
+            ).to_dict()
+        },
+    )
+    invalidate_latest_record_cache()
+
+    assert find_latest_successful_record_for_frame(frame, directory=tmp_path) is not None

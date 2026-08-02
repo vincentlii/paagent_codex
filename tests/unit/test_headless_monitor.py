@@ -375,6 +375,24 @@ def test_shutdown_disconnects_sources_and_closes_service(tmp_path) -> None:
     assert service.closed is True
 
 
+def test_shutdown_closes_sources_before_waiting_on_data_workers(tmp_path) -> None:
+    monitor, source, _audit, _service, _clock = _monitor(tmp_path)
+    monitor.poll_once()
+    observed: list[int] = []
+
+    class _Executor:
+        def shutdown(self, *, wait, cancel_futures):
+            assert wait is False
+            assert cancel_futures is True
+            observed.append(source.disconnected)
+
+    monitor._data_executor = _Executor()
+
+    monitor.shutdown()
+
+    assert observed == [1]
+
+
 def test_subscribe_failure_disconnects_the_partially_connected_source(tmp_path) -> None:
     source = _SubscribeFailSource()
     monitor, _source, _audit, service, _clock = _monitor(tmp_path, source=source)
@@ -411,8 +429,8 @@ def test_zero_new_bars_never_reuses_incremental_context(tmp_path, monkeypatch) -
     monitor, _source, _audit, _service, _clock = _monitor(tmp_path)
     previous = SimpleNamespace()
     monkeypatch.setattr(
-        "pa_agent.monitoring.headless.find_latest_successful_record",
-        lambda **_kwargs: previous,
+        "pa_agent.monitoring.headless.find_latest_successful_record_for_frame",
+        lambda *_args, **_kwargs: previous,
     )
     monkeypatch.setattr(
         "pa_agent.monitoring.headless.compute_incremental_bar_delta",

@@ -24,7 +24,11 @@ from pa_agent.ai.vpa_measurements import (
     vpa_catalog_id,
 )
 from pa_agent.data.base import KlineFrame
-from pa_agent.data.snapshot_identity import canonical_market_snapshot_hash
+from pa_agent.data.snapshot_identity import (
+    LEGACY_SNAPSHOT_HASH_ALGORITHM,
+    SNAPSHOT_HASH_ALGORITHM,
+    canonical_market_snapshot_hash,
+)
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.quality.runtime_fingerprint import (
     analysis_runtime_fingerprint as _shared_runtime_fingerprint,
@@ -134,6 +138,7 @@ class FrozenExperimentInput:
     vpa_catalog: dict[str, Any]
     frozen_input_hash: str
     market_snapshot_hash: str
+    market_snapshot_hash_algorithm: str
     cohort_id: str
     snapshot_hash: str
     htf_hash: str
@@ -161,6 +166,7 @@ class FrozenExperimentInput:
             "experiment_id": experiment_id,
             "frozen_input_hash": self.frozen_input_hash,
             "market_snapshot_hash": self.market_snapshot_hash,
+            "market_snapshot_hash_algorithm": self.market_snapshot_hash_algorithm,
             "cohort_id": self.cohort_id,
             "snapshot_hash": self.snapshot_hash,
             "htf_hash": self.htf_hash,
@@ -227,6 +233,7 @@ def freeze_experiment_input(
         snapshot_context=snapshot_context,
         htf_context=htf_snapshot,
         htf_kline_data=htf_bars,
+        algorithm=SNAPSHOT_HASH_ALGORITHM,
     )
     cohort_id = _cohort_id(
         provider_fingerprint=provider_fingerprint,
@@ -246,6 +253,7 @@ def freeze_experiment_input(
         vpa_catalog=frozen_catalog,
         frozen_input_hash=frozen_hash,
         market_snapshot_hash=market_snapshot_hash,
+        market_snapshot_hash_algorithm=SNAPSHOT_HASH_ALGORITHM,
         cohort_id=cohort_id,
         snapshot_hash=str(frozen_catalog["snapshot_hash"]),
         htf_hash=htf_hash,
@@ -271,6 +279,11 @@ def _record_frozen_input_hash(record: AnalysisRecord) -> str:
 
 
 def _record_market_snapshot_hash(record: AnalysisRecord) -> str:
+    context = record.experiment_context or {}
+    algorithm = str(
+        context.get("market_snapshot_hash_algorithm")
+        or LEGACY_SNAPSHOT_HASH_ALGORITHM
+    )
     return canonical_market_snapshot_hash(
         symbol=record.meta.symbol,
         timeframe=record.meta.timeframe,
@@ -278,6 +291,7 @@ def _record_market_snapshot_hash(record: AnalysisRecord) -> str:
         snapshot_context=record.snapshot_context,
         htf_context=record.htf_context,
         htf_kline_data=record.htf_kline_data,
+        algorithm=algorithm,
     )
 
 
@@ -408,6 +422,7 @@ def validate_aabb_records(records: list[AnalysisRecord]) -> dict[str, Any]:
         "experiment_id",
         "frozen_input_hash",
         "market_snapshot_hash",
+        "market_snapshot_hash_algorithm",
         "cohort_id",
         "snapshot_hash",
         "htf_hash",

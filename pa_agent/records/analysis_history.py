@@ -98,6 +98,25 @@ def find_latest_successful_record(
     return result
 
 
+def find_latest_successful_record_for_frame(
+    frame: KlineFrame,
+    *,
+    directory: Path | None = None,
+) -> AnalysisRecord | None:
+    """Identity-safe lookup for a frozen frame; missing identity disables reuse."""
+    identity = ResolvedInstrumentIdentity.from_value(
+        getattr(frame, "data_metadata", {}) or {}
+    )
+    if identity is None:
+        return None
+    return find_latest_successful_record(
+        symbol=frame.symbol,
+        timeframe=frame.timeframe,
+        identity=identity,
+        directory=directory,
+    )
+
+
 _LATEST_RECORD_CACHE: dict[
     tuple[str, str, str, str, str, str],
     tuple[float, AnalysisRecord | None],

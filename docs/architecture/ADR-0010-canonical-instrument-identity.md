@@ -25,15 +25,19 @@ like different samples.
    identity are not guessed or backfilled from the display symbol.
 3. The derived SQLite audit index stores `source_provider` and
    `resolved_symbol`; schema version 10 migrates existing databases in place.
-4. `market_snapshot_hash` excludes observation-time metadata such as
-   `captured_at_ms` and `snapshot_ts_local_ms`, while retaining bars, source
-   identity, HTF market context, and volume provenance.
+4. New experiments use the explicit `v6-market-facts-json` hash algorithm,
+   which excludes observation-time metadata such as `captured_at_ms` and
+   `snapshot_ts_local_ms`, while retaining bars, source identity, HTF market
+   context, and volume provenance. Unversioned historical experiments are
+   replayed with `v5-canonical-json`; hash semantics are never changed in place.
 5. Prepared-task caching uses a hash of current-frame facts. A provider revision
    at the same bar timestamp invalidates the cache and produces a new task.
 
 ## Consequences
 
 - Old records remain readable under AnalysisRecord v5.
+- A/A/B/B records persist `market_snapshot_hash_algorithm`; absence means the
+  legacy v5 algorithm.
 - Legacy rows without resolved identity remain pending for deterministic replay;
   this is preferable to manufacturing outcomes from a different market.
 - Display aliases may still be shared, but they cannot merge samples.

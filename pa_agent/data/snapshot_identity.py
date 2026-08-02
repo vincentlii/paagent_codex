@@ -5,7 +5,11 @@ import hashlib
 import json
 from typing import Any
 
-SNAPSHOT_HASH_ALGORITHM = "v5-canonical-json"
+LEGACY_SNAPSHOT_HASH_ALGORITHM = "v5-canonical-json"
+SNAPSHOT_HASH_ALGORITHM = "v6-market-facts-json"
+_SUPPORTED_ALGORITHMS = frozenset(
+    {LEGACY_SNAPSHOT_HASH_ALGORITHM, SNAPSHOT_HASH_ALGORITHM}
+)
 _VOLATILE_CONTEXT_FIELDS = frozenset({"captured_at_ms", "snapshot_ts_local_ms"})
 
 
@@ -40,14 +44,25 @@ def canonical_market_snapshot_hash(
     snapshot_context: dict[str, Any] | None,
     htf_context: dict[str, Any] | None,
     htf_kline_data: list[dict[str, Any]],
+    algorithm: str = SNAPSHOT_HASH_ALGORITHM,
 ) -> str:
+    normalized_algorithm = str(algorithm or "").strip()
+    if normalized_algorithm not in _SUPPORTED_ALGORITHMS:
+        raise ValueError(f"unsupported market snapshot hash algorithm: {algorithm}")
+    market_facts_only = normalized_algorithm == SNAPSHOT_HASH_ALGORITHM
     payload = {
-        "algorithm": SNAPSHOT_HASH_ALGORITHM,
+        "algorithm": normalized_algorithm,
         "symbol": symbol,
         "timeframe": timeframe,
         "kline_data": _canonical_bars(kline_data),
-        "snapshot_context": _canonical_context(snapshot_context or {}),
-        "htf_context": _canonical_context(htf_context),
+        "snapshot_context": (
+            _canonical_context(snapshot_context or {})
+            if market_facts_only
+            else snapshot_context or {}
+        ),
+        "htf_context": (
+            _canonical_context(htf_context) if market_facts_only else htf_context
+        ),
         "htf_kline_data": _canonical_bars(htf_kline_data),
     }
     encoded = json.dumps(

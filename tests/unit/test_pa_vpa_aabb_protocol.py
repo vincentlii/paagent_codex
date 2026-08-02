@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
 from pa_agent.config.settings import Settings
+from pa_agent.data.snapshot_identity import (
+    LEGACY_SNAPSHOT_HASH_ALGORITHM,
+    SNAPSHOT_HASH_ALGORITHM,
+    canonical_market_snapshot_hash,
+)
 from pa_agent.experiments.pa_vpa_aabb import (
     AABB_PROTOCOL_VERSION,
     ArmExecution,
@@ -223,6 +230,7 @@ def test_frozen_input_hash_covers_htf_catalog_provider_and_settings() -> None:
     assert len(frozen.settings_fingerprint) == 64
     assert frozen.analysis_fingerprint == "a" * 64
     assert len(frozen.market_snapshot_hash) == 64
+    assert frozen.market_snapshot_hash_algorithm == SNAPSHOT_HASH_ALGORITHM
     assert len(frozen.cohort_id) == 64
     assert (
         freeze_experiment_input(
@@ -244,6 +252,61 @@ def test_frozen_input_hash_covers_htf_catalog_provider_and_settings() -> None:
     assert changed_runtime.frozen_input_hash != frozen.frozen_input_hash
     assert changed_runtime.market_snapshot_hash == frozen.market_snapshot_hash
     assert changed_runtime.cohort_id != frozen.cohort_id
+
+
+def test_protocol_validator_replays_legacy_unversioned_market_hash() -> None:
+    frame = make_frame()
+    settings = Settings()
+    catalog = build_vpa_evidence_catalog(frame)
+    frozen = freeze_experiment_input(frame, None, settings, catalog=catalog)
+    sequence = balanced_arm_sequence(frozen.frozen_input_hash)
+    legacy_market_hash = canonical_market_snapshot_hash(
+        symbol=frame.symbol,
+        timeframe=frame.timeframe,
+        kline_data=[bar.__dict__ for bar in frame.bars],
+        snapshot_context=frozen.snapshot_context,
+        htf_context=None,
+        htf_kline_data=[],
+        algorithm=LEGACY_SNAPSHOT_HASH_ALGORITHM,
+    )
+    legacy_frozen_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "market_snapshot_hash": legacy_market_hash,
+                "catalog_id": frozen.catalog_id,
+                "cohort_id": frozen.cohort_id,
+            },
+            ensure_ascii=True,
+            default=str,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    records: list[AnalysisRecord] = []
+    for position, arm_id in enumerate(sequence, start=1):
+        mode = "off" if arm_id.startswith("A") else "soft"
+        context = frozen.arm_context(
+            experiment_id="legacy-aabb",
+            arm_id=arm_id,
+            sequence=sequence,
+            sequence_position=position,
+            client_instance_token=f"legacy-{arm_id}",
+            stage1_request_hash="1" * 64,
+        )
+        context.pop("market_snapshot_hash_algorithm")
+        context["market_snapshot_hash"] = legacy_market_hash
+        context["frozen_input_hash"] = legacy_frozen_hash
+        context["first_pass_clean"] = True
+        records.append(
+            _record(f"legacy-{arm_id}", mode=mode, catalog=catalog).model_copy(
+                update={
+                    "snapshot_context": copy.deepcopy(frozen.snapshot_context),
+                    "experiment_context": context,
+                }
+            )
+        )
+
+    assert validate_aabb_records(records)["valid"] is True
 
 
 def test_protocol_validator_rejects_leakage_hash_drift_and_catalog_drift() -> None:

@@ -13,7 +13,6 @@ from typing import Any
 from pa_agent.config.paths import RuntimePaths
 from pa_agent.config.settings import MonitoringAssetSettings, Settings
 from pa_agent.config.vpa import vpa_is_enabled
-from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.factory import (
     resolved_identity_for_source,
     volume_metadata_for_source,
@@ -29,7 +28,7 @@ from pa_agent.monitoring.scheduler import AnalysisTask, JobCompletion
 from pa_agent.monitoring.task_factory import create_frozen_analysis_task, frame_snapshot_hash
 from pa_agent.records.analysis_history import (
     compute_incremental_bar_delta,
-    find_latest_successful_record,
+    find_latest_successful_record_for_frame,
 )
 
 logger = logging.getLogger(__name__)
@@ -204,11 +203,7 @@ class HeadlessMonitor:
                 return
             self._closed = True
             self._stop.set()
-        self._data_executor.shutdown(wait=True, cancel_futures=True)
         self._service.shutdown(wait=False)
-        timeout = float(self._settings.monitoring.shutdown_timeout_seconds)
-        idle = bool(self._service.wait_idle(timeout))
-        self._service.shutdown(wait=idle)
         for state in self._states:
             source = state.source
             if source is None or not state.connected:
@@ -223,6 +218,10 @@ class HeadlessMonitor:
                 )
             finally:
                 state.connected = False
+        self._data_executor.shutdown(wait=False, cancel_futures=True)
+        timeout = float(self._settings.monitoring.shutdown_timeout_seconds)
+        idle = bool(self._service.wait_idle(timeout))
+        self._service.shutdown(wait=idle)
 
     def _prepare_task(self, state: _AssetState) -> AnalysisTask:
         asset = state.config
@@ -353,12 +352,8 @@ class HeadlessMonitor:
         threshold = int(self._settings.general.incremental_max_new_bars)
         if threshold <= 0:
             return None, None
-        previous = find_latest_successful_record(
-            symbol=frame.symbol,
-            timeframe=frame.timeframe,
-            identity=ResolvedInstrumentIdentity.from_value(
-                getattr(frame, "data_metadata", {}) or {}
-            ),
+        previous = find_latest_successful_record_for_frame(
+            frame,
             directory=self._paths.records_pending_dir,
         )
         if previous is None:

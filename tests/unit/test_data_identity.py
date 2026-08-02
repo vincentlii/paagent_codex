@@ -11,7 +11,11 @@ import pytest
 from pa_agent.data.base import DataSourceTransientError
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
-from pa_agent.data.snapshot_identity import canonical_market_snapshot_hash
+from pa_agent.data.snapshot_identity import (
+    LEGACY_SNAPSHOT_HASH_ALGORITHM,
+    SNAPSHOT_HASH_ALGORITHM,
+    canonical_market_snapshot_hash,
+)
 from pa_agent.data.tradingview import TradingViewSource
 from tests.integration.conftest import make_frame
 
@@ -167,6 +171,35 @@ def test_market_snapshot_identity_ignores_capture_wall_clock() -> None:
     )
 
     assert first == second
+
+
+def test_legacy_snapshot_identity_remains_replayable() -> None:
+    common = {
+        "symbol": "XAUUSD",
+        "timeframe": "1h",
+        "kline_data": [{"seq": 1, "ts_open": 1000, "close": 100.0}],
+        "htf_context": None,
+        "htf_kline_data": [],
+    }
+
+    legacy_first = canonical_market_snapshot_hash(
+        **common,
+        snapshot_context={"snapshot_ts_local_ms": 1001},
+        algorithm=LEGACY_SNAPSHOT_HASH_ALGORITHM,
+    )
+    legacy_second = canonical_market_snapshot_hash(
+        **common,
+        snapshot_context={"snapshot_ts_local_ms": 9999},
+        algorithm=LEGACY_SNAPSHOT_HASH_ALGORITHM,
+    )
+    current = canonical_market_snapshot_hash(
+        **common,
+        snapshot_context={"snapshot_ts_local_ms": 1001},
+        algorithm=SNAPSHOT_HASH_ALGORITHM,
+    )
+
+    assert legacy_first != legacy_second
+    assert current != legacy_first
 
 
 def test_compact_snapshot_context_keeps_identity_without_seasonality_payload() -> None:
