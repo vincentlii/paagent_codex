@@ -58,6 +58,11 @@ def test_limit_plan_without_entry_rule_compiles_one_structured_candidate() -> No
     assert candidate.trade_math.risk == 10.0
     assert candidate.trade_math.reward_to_tp1 == 20.0
     assert candidate.trade_math.reward_risk_ratio == 2.0
+    assert candidate.trade_math.reward_to_tp2 == 35.0
+    assert candidate.trade_math.reward_risk_ratio_tp2 == 3.5
+    assert candidate.trade_math.risk_atr == 1.0
+    assert candidate.trade_math.entry_distance_from_current_close_atr == 0.8
+    assert candidate.trade_math.risk_pct_of_entry == pytest.approx(1000 / 2035)
     assert candidate.trade_math.break_even_win_rate_pct == pytest.approx(100 / 3)
     assert candidate.trade_math.estimated_expectancy == pytest.approx(6.5)
     assert candidate.trade_math.win_rate_provenance == "llm_subjective_prior"
@@ -170,4 +175,5 @@ def test_compiled_order_facts_reach_the_vpa_prompt() -> None:
 
     assert '"entry_price": 2035.0' in prompt
     assert '"win_rate_provenance": "llm_subjective_prior"' in prompt
+    assert '"risk_atr": 1.0' in prompt
     assert '"fact_id": "PA.WINDOW.K5"' in prompt

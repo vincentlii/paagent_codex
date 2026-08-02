@@ -231,6 +231,26 @@ def test_vpa_uses_close_to_close_progress_and_sequence_comparison() -> None:
     )
 
 
+def test_pa_window_comparison_includes_causal_rvol_on_both_windows() -> None:
+    frame = _frame([200] * 5 + [100] * 20)
+    data = compute_vpa_measurements(frame)
+    comparison = next(
+        item
+        for item in data["measurement_slices"]
+        if item["facts"]["source_fact_id"] == "PA.WINDOW.K5"
+    )
+    facts = comparison["facts"]
+
+    assert facts["current_median_causal_relative_volume"] == 2.0
+    assert facts["prior_median_causal_relative_volume"] == 1.0
+    assert facts["current_vs_prior_causal_rvol_ratio"] == 2.0
+    assert facts["current_vs_prior_causal_rvol_relation"] == "above"
+    assert "causal_rvol_comparison=2.0/above" in render_vpa_measurements(
+        frame,
+        selected_fact_refs={"PA.WINDOW.K5"},
+    )
+
+
 def test_vpa_window_slices_are_injected_only_for_pa_declared_windows() -> None:
     frame = _frame([100 + index for index in range(20)])
     catalog = build_vpa_evidence_catalog(frame)

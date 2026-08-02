@@ -116,7 +116,7 @@ def _window_context(
     return result
 
 
-def _trade_math(decision: dict[str, Any]) -> PaTradeMath:
+def _trade_math(decision: dict[str, Any], frame: KlineFrame) -> PaTradeMath:
     rr = compute_risk_reward(
         decision.get("entry_price"),
         decision.get("take_profit_price"),
@@ -133,12 +133,27 @@ def _trade_math(decision: dict[str, Any]) -> PaTradeMath:
         )
     risk = float(rr["risk"])
     reward = float(rr["reward"])
+    entry = float(decision["entry_price"])
+    tp1 = float(decision["take_profit_price"])
+    tp2 = float(decision["take_profit_price_2"])
+    reward_tp2 = tp2 - entry if tp1 > entry else entry - tp2
+    atr = _finite(frame.indicators.atr14[0]) if frame.indicators.atr14 else None
+    current_close = _finite(frame.bars[0].close) if frame.bars else None
     win_rate = int(win_rate_raw)
     probability = win_rate / 100.0
     return PaTradeMath(
         risk=risk,
         reward_to_tp1=reward,
         reward_risk_ratio=float(rr["ratio"]),
+        reward_to_tp2=reward_tp2,
+        reward_risk_ratio_tp2=reward_tp2 / risk,
+        risk_atr=risk / atr if atr is not None and atr > 0 else None,
+        entry_distance_from_current_close_atr=(
+            abs(entry - current_close) / atr
+            if current_close is not None and atr is not None and atr > 0
+            else None
+        ),
+        risk_pct_of_entry=(100.0 * risk / abs(entry) if entry != 0 else None),
         break_even_win_rate_pct=100.0 * risk / (risk + reward),
         pa_estimated_win_rate_pct=win_rate,
         estimated_expectancy=probability * reward - (1.0 - probability) * risk,
@@ -156,6 +171,7 @@ def _candidate(
     fact_refs: list[str],
     theory_ids: list[str],
     catalog: AnalysisFactCatalog,
+    frame: KlineFrame,
 ) -> PaSetupCandidate | None:
     order_type = str(decision.get("order_type") or "")
     if order_type not in _EXECUTABLE_ORDER_TYPES:
@@ -219,7 +235,7 @@ def _candidate(
         take_profit_price=float(decision["take_profit_price"]),
         take_profit_price_2=float(decision["take_profit_price_2"]),
         invalidation=invalidation,
-        trade_math=_trade_math(decision),
+        trade_math=_trade_math(decision, frame),
         window_context=_window_context(
             fact_refs=fact_refs,
             catalog=catalog,
@@ -292,6 +308,7 @@ def compile_pa_handoff(
             fact_refs=fact_refs,
             theory_ids=theory_ids,
             catalog=catalog,
+            frame=frame,
         )
         if gate == "proceed"
         else None

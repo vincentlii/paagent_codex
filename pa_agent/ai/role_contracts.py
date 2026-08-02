@@ -44,6 +44,11 @@ class PaTradeMath(BaseModel):
     risk: float
     reward_to_tp1: float
     reward_risk_ratio: float
+    reward_to_tp2: float
+    reward_risk_ratio_tp2: float
+    risk_atr: float | None
+    entry_distance_from_current_close_atr: float | None
+    risk_pct_of_entry: float | None
     break_even_win_rate_pct: float
     pa_estimated_win_rate_pct: int
     estimated_expectancy: float

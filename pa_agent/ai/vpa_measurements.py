@@ -32,7 +32,7 @@ from pa_agent.data.volume_context import resolve_volume_observation
 class VpaMeasurementSpec:
     """Versioned measurement policy; values select data, never market meaning."""
 
-    version: str = "2.0"
+    version: str = "2.1"
     recent_limit: int = 8
     baseline_lookback: int = 20
     minimum_baseline_samples: int = 8
@@ -82,8 +82,6 @@ def evidence_has_relative_volume_comparison(item: Mapping[str, Any] | None) -> b
     facts = item.get("facts")
     if not isinstance(facts, Mapping):
         return False
-    if facts.get("volume_comparison_available") is True:
-        return facts.get("current_vs_prior_volume_relation") in _AVAILABLE_RELATIONS
     return any(
         facts.get(field) in _AVAILABLE_RELATIONS
         for field in (
@@ -91,6 +89,7 @@ def evidence_has_relative_volume_comparison(item: Mapping[str, Any] | None) -> b
             "volume_vs_previous_relation",
             "volume_vs_seasonality_relation",
             "current_volume_vs_causal_baseline_relation",
+            "current_vs_prior_causal_rvol_relation",
         )
     )
 
@@ -405,6 +404,12 @@ def _pa_window_slices(
         prior_progress = _finite(prior.get("net_close_progress_atr")) if prior else None
         current_spread = _finite(current.get("cumulative_spread_atr"))
         prior_spread = _finite(prior.get("cumulative_spread_atr")) if prior else None
+        current_causal_rvol = _finite(
+            current.get("median_causal_relative_volume")
+        )
+        prior_causal_rvol = (
+            _finite(prior.get("median_causal_relative_volume")) if prior else None
+        )
         volume_comparison_available = bool(
             prior
             and current.get("volume_complete")
@@ -442,6 +447,23 @@ def _pa_window_slices(
             "current_volume_vs_causal_baseline_relation": current[
                 "volume_vs_causal_baseline_relation"
             ],
+            "prior_median_causal_relative_volume": (
+                prior["median_causal_relative_volume"] if prior else None
+            ),
+            "prior_volume_vs_causal_baseline_relation": (
+                prior["volume_vs_causal_baseline_relation"] if prior else "unavailable"
+            ),
+            "current_vs_prior_causal_rvol_ratio": _round(
+                current_causal_rvol / prior_causal_rvol
+                if current_causal_rvol is not None
+                and prior_causal_rvol is not None
+                and prior_causal_rvol > 0
+                else None
+            ),
+            "current_vs_prior_causal_rvol_relation": _comparison_label(
+                current_causal_rvol,
+                prior_causal_rvol,
+            ),
             "current_net_close_progress_atr": current["net_close_progress_atr"],
             "prior_net_close_progress_atr": (
                 prior["net_close_progress_atr"] if prior else None
@@ -1006,7 +1028,7 @@ def build_vpa_evidence_catalog(
         ),
     }
     catalog_core = {
-        "catalog_version": "2.0",
+        "catalog_version": "2.1",
         "measurement_spec": {
             "version": DEFAULT_VPA_MEASUREMENT_SPEC.version,
             "recent_limit": recent_limit,
@@ -1126,6 +1148,9 @@ def render_vpa_measurements(
                 f"median_causal_rvol={facts.get('current_median_causal_relative_volume')}; "
                 "causal_rvol_relation="
                 f"{facts.get('current_volume_vs_causal_baseline_relation')}; "
+                "causal_rvol_comparison="
+                f"{facts.get('current_vs_prior_causal_rvol_ratio')}/"
+                f"{facts.get('current_vs_prior_causal_rvol_relation')}; "
                 f"progress_atr={facts.get('current_net_close_progress_atr')}/"
                 f"{facts.get('current_progress_direction')} vs "
                 f"{facts.get('prior_net_close_progress_atr')}/"

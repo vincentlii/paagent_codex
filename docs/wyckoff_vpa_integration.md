@@ -130,7 +130,7 @@ VPA 失败不会使 PA 分析伪装失败；记录标记 `completed_with_warning
 
 - 每根近期 K 线提供 raw volume、volume availability、spread/body、close location、close-to-close progress、相对前棒关系和程序比较结果。
 - `body_atr` 描述实体；`directional_progress_atr` 描述相对上一根收盘的实际推进，二者不得互换。
-- 因果 RVOL、百分位和均值只使用当前 K 线之前的已收盘样本，绝不回看未来 bar。
+- 因果 RVOL、百分位和均值只使用当前 K 线之前的已收盘样本，绝不回看未来 bar。PA 选定窗口与其前一等长窗口同时输出各自的因果 RVOL 中位数及两窗关系；raw volume 仍保留为事实，但不得替代时段归一化比较。
 - 因果基线只有在 `baseline_sample_count >= baseline_min_samples` 时可用；当前最低样本为 8。样本不足是 `unavailable`，不是低量。
 - 每根 bar 通过 `volume_state` 区分 `observed`、`zero_observed`、`missing`、`unsupported` 与
   `legacy_unknown`。Provider 明确观测到的零可以进入同源比较；TradingView 等无法区分“真零/无数据”
@@ -158,7 +158,7 @@ PA 链先固化为 `PaHypothesisSet`：
 
 - `primary` 与 `alternative`
 - `setup_candidates`：真实 `order_type`、方向、entry/stop/TP、可选 Setup/trigger/invalidation
-- `trade_math`：程序复算 risk、TP1 reward、RR、盈亏平衡胜率、PA 主观先验和期望值
+- `trade_math`：程序复算 risk、TP1/TP2 reward、两级 RR、风险与入场距离的 ATR 尺度、风险占 entry 百分比、盈亏平衡胜率、PA 主观先验和期望值
 - `window_context`：仅对 Stage 1 已引用 `PA.WINDOW` 输出 high/low、极值 K 线及各价格从低点起的数值位置，不生成“上沿/中部”标签
 - `cycle_position`、`direction`、`gate_result`
 - 冻结价格 snapshot hash 与完整 handoff digest
