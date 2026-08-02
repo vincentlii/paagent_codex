@@ -30,6 +30,7 @@ class RuntimePaths:
     crash_log_path: Path
     analysis_audit_db_path: Path
     monitoring_audit_db_path: Path
+    paper_trading_db_path: Path
 
 
 def resolve_runtime_paths(
@@ -71,6 +72,7 @@ def resolve_runtime_paths(
         crash_log_path=logs / "crash.log",
         analysis_audit_db_path=records / "audit" / "analysis.sqlite3",
         monitoring_audit_db_path=records / "audit" / "monitoring.sqlite3",
+        paper_trading_db_path=state / "trade_records" / "paper.sqlite3",
     )
 
 
@@ -92,3 +94,4 @@ LOG_FILE_PATH: Path = RUNTIME_PATHS.log_file_path
 CRASH_LOG_PATH: Path = RUNTIME_PATHS.crash_log_path
 ANALYSIS_AUDIT_DB_PATH: Path = RUNTIME_PATHS.analysis_audit_db_path
 MONITORING_AUDIT_DB_PATH: Path = RUNTIME_PATHS.monitoring_audit_db_path
+PAPER_TRADING_DB_PATH: Path = RUNTIME_PATHS.paper_trading_db_path

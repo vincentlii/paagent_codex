@@ -13,7 +13,9 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DecisionStance = Literal["conservative", "balanced", "aggressive", "extreme_aggressive"]
-DataSourceKind = Literal["mt5", "tradingview", "akshare", "eastmoney", "tushare"]
+DataSourceKind = Literal[
+    "mt5", "tradingview", "akshare", "eastmoney", "tushare", "binance_usdm"
+]
 VpaMode = Literal["off", "shadow", "soft"]
 MIN_ANALYSIS_BARS = 20
 
@@ -234,6 +236,20 @@ class MonitoringSettings(BaseModel):
         return self
 
 
+class PaperTradingSettings(BaseModel):
+    """Local simulation settings; this never authorizes private venue orders."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    initial_equity: float = Field(default=10_000.0, gt=0)
+    risk_fraction: float = Field(default=0.01, gt=0, le=1)
+    max_portfolio_risk_fraction: float = Field(default=0.03, gt=0, le=1)
+    max_leverage: float = Field(default=3.0, gt=0, le=100)
+    fee_bps: float = Field(default=5.0, ge=0, le=1000)
+    slippage_bps: float = Field(default=2.0, ge=0, le=1000)
+
+
 _FEISHU_CONFIG_KEYS = (
     "enabled",
     "webhook_url",
@@ -285,6 +301,7 @@ class Settings(BaseModel):
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     validation: ValidationSettings = Field(default_factory=ValidationSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
+    paper_trading: PaperTradingSettings = Field(default_factory=PaperTradingSettings)
     feishu: FeishuSettings = Field(default_factory=FeishuSettings)
     pushplus: PushPlusSettings = Field(default_factory=PushPlusSettings)
     tushare: TushareSettings = Field(default_factory=TushareSettings)

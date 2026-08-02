@@ -95,6 +95,7 @@ def test_identity_round_trip_and_comparison_are_case_insensitive() -> None:
         requested_symbol="xauusd",
         resolved_symbol="XAUUSD",
         venue="pepperstone",
+        instrument_type="spot",
     )
     restored = ResolvedInstrumentIdentity.from_value(identity.to_metadata())
 
@@ -106,6 +107,16 @@ def test_identity_round_trip_and_comparison_are_case_insensitive() -> None:
             requested_symbol="XAUUSD",
             resolved_symbol="xauusd",
             venue="PEPPERSTONE",
+            instrument_type="SPOT",
+        )
+    )
+    assert not restored.same_instrument(
+        ResolvedInstrumentIdentity(
+            provider="tradingview",
+            requested_symbol="XAUUSD",
+            resolved_symbol="XAUUSD",
+            venue="PEPPERSTONE",
+            instrument_type="perpetual",
         )
     )
 

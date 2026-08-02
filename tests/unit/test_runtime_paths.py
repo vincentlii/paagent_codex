@@ -26,6 +26,7 @@ def test_runtime_paths_separate_read_only_assets_from_writable_state(tmp_path) -
     assert paths.analysis_audit_db_path == state_root.resolve() / "records" / "audit" / "analysis.sqlite3"
     assert paths.monitoring_audit_db_path == state_root.resolve() / "records" / "audit" / "monitoring.sqlite3"
     assert paths.trade_records_dir == state_root.resolve() / "trade_records"
+    assert paths.paper_trading_db_path == state_root.resolve() / "trade_records" / "paper.sqlite3"
 
 
 def test_runtime_paths_preserve_checkout_layout_without_overrides(tmp_path) -> None:

@@ -37,6 +37,10 @@ def test_defaults(tmp_path):
     assert s.monitoring.enabled is False
     assert s.monitoring.max_concurrency == 2
     assert s.monitoring.max_pending_jobs == 100
+    assert s.paper_trading.enabled is False
+    assert s.paper_trading.risk_fraction == 0.01
+    assert s.paper_trading.max_portfolio_risk_fraction == 0.03
+    assert s.paper_trading.max_leverage == 3.0
     assert p.exists(), "defaults should be written to disk"
 
 

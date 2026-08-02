@@ -18,13 +18,15 @@ like different samples.
 ## Decision
 
 1. Persisted and runtime instrument identity is
-   `provider + venue + resolved_symbol`; timeframe remains an explicit query
-   dimension.
+   `provider + venue + resolved_symbol + instrument_type`; timeframe remains an
+   explicit query dimension. Empty `instrument_type` preserves legacy records,
+   but is never treated as an identified spot or derivative contract.
 2. When a resolved identity is available, incremental history and
    counterfactual replay require an exact identity match. Legacy records without
    identity are not guessed or backfilled from the display symbol.
 3. The derived SQLite audit index stores `source_provider` and
-   `resolved_symbol`; schema version 10 migrates existing databases in place.
+   `resolved_symbol` and `instrument_type`; schema version 11 migrates existing
+   databases in place.
 4. New experiments use the explicit `v6-market-facts-json` hash algorithm,
    which excludes observation-time metadata such as `captured_at_ms` and
    `snapshot_ts_local_ms`, while retaining bars, source identity, HTF market

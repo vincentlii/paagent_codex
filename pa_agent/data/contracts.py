@@ -17,6 +17,7 @@ class ResolvedInstrumentIdentity:
     resolved_symbol: str
     venue: str = ""
     market: str = ""
+    instrument_type: str = ""
     timezone_basis: str = "UTC"
     volume_kind: str = "unknown"
     volume_quality: str = "unknown"
@@ -36,6 +37,11 @@ class ResolvedInstrumentIdentity:
         object.__setattr__(self, "market", str(self.market or "").strip().lower())
         object.__setattr__(
             self,
+            "instrument_type",
+            str(self.instrument_type or "").strip().lower(),
+        )
+        object.__setattr__(
+            self,
             "timezone_basis",
             str(self.timezone_basis or "UTC").strip() or "UTC",
         )
@@ -51,11 +57,12 @@ class ResolvedInstrumentIdentity:
         )
 
     @property
-    def key(self) -> tuple[str, str, str]:
+    def key(self) -> tuple[str, str, str, str]:
         return (
             self.provider.casefold(),
             self.venue.casefold(),
             self.resolved_symbol.casefold(),
+            self.instrument_type.casefold(),
         )
 
     def same_instrument(self, other: ResolvedInstrumentIdentity) -> bool:
@@ -68,6 +75,7 @@ class ResolvedInstrumentIdentity:
             "resolved_symbol": self.resolved_symbol,
             "venue": self.venue,
             "market": self.market,
+            "instrument_type": self.instrument_type,
             "timezone_basis": self.timezone_basis,
             "volume_kind": self.volume_kind,
             "volume_quality": self.volume_quality,
@@ -113,6 +121,7 @@ class ResolvedInstrumentIdentity:
             resolved_symbol=resolved,
             venue=str(raw.get("venue") or ""),
             market=str(raw.get("market") or ""),
+            instrument_type=str(raw.get("instrument_type") or ""),
             timezone_basis=str(raw.get("timezone_basis") or "UTC"),
             volume_kind=str(raw.get("volume_kind") or "unknown"),
             volume_quality=str(raw.get("volume_quality") or "unknown"),

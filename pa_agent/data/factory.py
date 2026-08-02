@@ -18,12 +18,14 @@ DataSourceKind = Literal[
     "eastmoney",
     "tushare",
     "yfinance",
+    "binance_usdm",
 ]
 
 # UI-visible sources only — ``eastmoney`` is config/programmatic, not listed here.
 DATA_SOURCE_CHOICES: tuple[tuple[DataSourceKind, str], ...] = (
     ("tradingview", "TradingView"),
     ("mt5", "MT5"),
+    ("binance_usdm", "Binance USD-M"),
 )
 
 _HIDDEN_KINDS: frozenset[DataSourceKind] = frozenset(
@@ -37,6 +39,7 @@ _DEFAULT_SYMBOLS: dict[DataSourceKind, str] = {
     "eastmoney": A_SHARE_DEFAULT_SYMBOL,
     "tushare": A_SHARE_DEFAULT_SYMBOL,
     "yfinance": "GC=F",
+    "binance_usdm": "XAUUSDT",
 }
 
 
@@ -67,6 +70,8 @@ def data_source_label(kind: str | None) -> str:
         return "AkShare"
     if normalized == "yfinance":
         return "YFinance"
+    if normalized == "binance_usdm":
+        return "Binance USD-M"
     return "MT5"
 
 
@@ -94,6 +99,7 @@ def resolved_identity_for_source(
             resolved_symbol=identity.resolved_symbol,
             venue=identity.venue,
             market=identity.market,
+            instrument_type=identity.instrument_type,
             timezone_basis=identity.timezone_basis,
             volume_kind=identity.volume_kind,
             volume_quality=identity.volume_quality,
@@ -188,9 +194,16 @@ def volume_metadata_for_source(
             ),
             zero_semantics="observed_zero",
         )
+    elif normalized == "binance_usdm":
+        metadata.update(volume_kind="real", volume_quality="exchange")
+        metadata["volume_provenance"].update(
+            field="volume",
+            basis="exchange_contract_volume",
+            zero_semantics="observed_zero",
+        )
     if resolved is not None:
         metadata.update(resolved.to_metadata())
-    if type(source).__name__ in {"TradingViewSource", "MT5Source"}:
+    if type(source).__name__ in {"TradingViewSource", "MT5Source", "BinanceUsdmSource"}:
         metadata["strict_close_time"] = True
     return metadata
 
@@ -206,6 +219,10 @@ def create_data_source(kind: str | None, *, settings: Any | None = None) -> Data
         from pa_agent.data.tradingview import TradingViewSource
 
         return TradingViewSource()
+    if normalized == "binance_usdm":
+        from pa_agent.data.binance_usdm import BinanceUsdmSource
+
+        return BinanceUsdmSource()
     if normalized == "eastmoney":
         from pa_agent.data.eastmoney_source import EastMoneySource
 

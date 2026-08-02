@@ -43,7 +43,7 @@ class AuditRebuildResult:
 class AnalysisAuditStore:
     """Index completed or partial analysis records without owning their source data."""
 
-    _SCHEMA_VERSION: ClassVar[int] = 10
+    _SCHEMA_VERSION: ClassVar[int] = 11
     _ENTRY_STATUSES: ClassVar[frozenset[str]] = frozenset(
         {"not_traded", "pending", "filled", "expired", "cancelled"}
     )
@@ -87,7 +87,7 @@ class AnalysisAuditStore:
                     """
                     INSERT INTO analysis_runs (
                         run_id, record_path, timestamp_local_ms, symbol, timeframe,
-                        source_provider, resolved_symbol, bar_count,
+                        source_provider, resolved_symbol, instrument_type, bar_count,
                         decision_stance, model_name, run_status, error_type, partial_reason,
                         stage1_cycle_position, stage1_direction, stage1_gate_result,
                         order_type, order_direction, trade_confidence, estimated_win_rate,
@@ -105,7 +105,7 @@ class AnalysisAuditStore:
                         validation_audit_json, joint_diff_json, usage_json, indexed_at_ms
                     ) VALUES (
                         :run_id, :record_path, :timestamp_local_ms, :symbol, :timeframe,
-                        :source_provider, :resolved_symbol, :bar_count,
+                        :source_provider, :resolved_symbol, :instrument_type, :bar_count,
                         :decision_stance, :model_name, :run_status, :error_type, :partial_reason,
                         :stage1_cycle_position, :stage1_direction, :stage1_gate_result,
                         :order_type, :order_direction, :trade_confidence, :estimated_win_rate,
@@ -126,6 +126,7 @@ class AnalysisAuditStore:
                         record_path = excluded.record_path,
                         source_provider = excluded.source_provider,
                         resolved_symbol = excluded.resolved_symbol,
+                        instrument_type = excluded.instrument_type,
                         run_status = excluded.run_status,
                         error_type = excluded.error_type,
                         partial_reason = excluded.partial_reason,
@@ -377,6 +378,7 @@ class AnalysisAuditStore:
         rows = connection.execute(
             "SELECT * FROM analysis_runs WHERE symbol = ? AND timeframe = ? "
             "AND source_provider = ? AND venue = ? AND resolved_symbol = ? "
+            "AND instrument_type = ? "
             "AND run_status = 'completed' AND snapshot_latest_ts_open IS NOT NULL "
             "AND snapshot_latest_ts_open <= ?",
             (
@@ -385,6 +387,7 @@ class AnalysisAuditStore:
                 identity.provider,
                 identity.venue,
                 identity.resolved_symbol,
+                identity.instrument_type,
                 latest_ts,
             ),
         ).fetchall()
@@ -541,6 +544,7 @@ class AnalysisAuditStore:
                 timeframe TEXT NOT NULL,
                 source_provider TEXT,
                 resolved_symbol TEXT,
+                instrument_type TEXT,
                 bar_count INTEGER NOT NULL,
                 decision_stance TEXT NOT NULL,
                 model_name TEXT,
@@ -716,7 +720,7 @@ class AnalysisAuditStore:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_analysis_runs_instrument_time "
-            "ON analysis_runs(source_provider, venue, resolved_symbol, timeframe, "
+            "ON analysis_runs(source_provider, venue, resolved_symbol, instrument_type, timeframe, "
             "timestamp_local_ms DESC)"
         )
         connection.execute("DROP INDEX IF EXISTS idx_analysis_runs_vpa_pair")
@@ -751,6 +755,7 @@ class AnalysisAuditStore:
         required = {
             "source_provider": "TEXT",
             "resolved_symbol": "TEXT",
+            "instrument_type": "TEXT",
             "htf_status": "TEXT",
             "htf_timeframe": "TEXT",
             "htf_reason": "TEXT",
@@ -1058,6 +1063,9 @@ class AnalysisAuditStore:
             "source_provider": identity.provider if identity is not None else None,
             "resolved_symbol": (
                 identity.resolved_symbol if identity is not None else None
+            ),
+            "instrument_type": (
+                identity.instrument_type if identity is not None else None
             ),
             "bar_count": record.meta.bar_count,
             "decision_stance": record.meta.decision_stance,

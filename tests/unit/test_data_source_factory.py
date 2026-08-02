@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pa_agent.config.settings import GeneralSettings
 from pa_agent.data.eastmoney_source import EastMoneySource
+from pa_agent.data.binance_usdm import BinanceUsdmSource
 from pa_agent.data.factory import (
     DATA_SOURCE_CHOICES,
     create_data_source,
@@ -44,6 +45,7 @@ def test_create_data_source_returns_expected_types():
     assert isinstance(create_data_source("tradingview"), TradingViewSource)
     assert isinstance(create_data_source("eastmoney"), EastMoneySource)
     assert isinstance(create_data_source("tushare"), TushareSource)
+    assert isinstance(create_data_source("binance_usdm"), BinanceUsdmSource)
 
 
 def test_default_symbols_per_kind():
@@ -51,6 +53,14 @@ def test_default_symbols_per_kind():
     assert default_symbol_for_kind("tradingview") == "XAUUSD"
     assert default_symbol_for_kind("eastmoney") == "000001"
     assert default_symbol_for_kind("tushare") == "000001"
+    assert default_symbol_for_kind("binance_usdm") == "XAUUSDT"
+
+
+def test_binance_usdm_is_an_explicit_ui_source_with_exchange_volume() -> None:
+    assert "binance_usdm" in {kind for kind, _ in DATA_SOURCE_CHOICES}
+    metadata = volume_metadata_for_source("binance_usdm")
+    assert metadata["volume_kind"] == "real"
+    assert metadata["volume_quality"] == "exchange"
 
 
 def test_default_tradingview_exchange_is_auto():

@@ -125,6 +125,7 @@ def _record(
                 "resolved_symbol": "BTCUSDT",
                 "venue": "BINANCE",
                 "market": "crypto",
+                "instrument_type": "perpetual",
                 "timezone_basis": "UTC",
                 "volume_kind": "real",
                 "volume_quality": "high",
@@ -243,6 +244,7 @@ def test_audit_store_indexes_official_run_and_manual_outcome(tmp_path: Path) -> 
     assert run["symbol"] == "BTCUSDT"
     assert run["source_provider"] == "tradingview"
     assert run["resolved_symbol"] == "BTCUSDT"
+    assert run["instrument_type"] == "perpetual"
     assert run["vpa_mode"] == "soft"
     assert run["vpa_effect"] == "prefer_retest"
     assert run["baseline_order_type"] == "limit"
@@ -400,6 +402,29 @@ def test_counterfactual_does_not_advance_from_another_venue(tmp_path: Path) -> N
     ).model_copy(
         update={"snapshot_context": {"source_identity": other_identity}}
     )
+    assert store.record_analysis(later, record_path=tmp_path / "later.json").ok
+
+    outcome = store.get_counterfactual_outcome("run-audit-test")
+    assert outcome is not None
+    assert outcome["outcome"] == "pending"
+
+
+def test_counterfactual_does_not_advance_from_another_instrument_type(tmp_path: Path) -> None:
+    store = AnalysisAuditStore(tmp_path / "audit.sqlite3", simulation_horizon_bars=10)
+    first = _record(bars=[_bar(1_000)])
+    assert store.record_analysis(first, record_path=tmp_path / "first.json").ok
+
+    other_identity = dict(first.snapshot_context["source_identity"])
+    other_identity["instrument_type"] = "spot"
+    later = _record(
+        run_id="run-other-instrument-type",
+        bars=[
+            _bar(3_000, open_=102.0, high=111.0, low=101.0, close=109.0),
+            _bar(2_000, open_=103.0, high=104.0, low=99.0, close=102.0),
+            _bar(1_000),
+        ],
+        order_type="no_trade",
+    ).model_copy(update={"snapshot_context": {"source_identity": other_identity}})
     assert store.record_analysis(later, record_path=tmp_path / "later.json").ok
 
     outcome = store.get_counterfactual_outcome("run-audit-test")

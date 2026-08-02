@@ -58,7 +58,7 @@ def find_latest_successful_record(
 ) -> AnalysisRecord | None:
     """Find the newest successful record for one resolved instrument."""
     root = directory or RECORDS_PENDING_DIR
-    identity_key = identity.key if identity is not None else ("", "", "")
+    identity_key = identity.key if identity is not None else ("", "", "", "")
     cache_key = (str(root.resolve()), symbol, timeframe, *identity_key)
     try:
         dir_mtime = root.stat().st_mtime if root.is_dir() else 0.0
@@ -118,7 +118,7 @@ def find_latest_successful_record_for_frame(
 
 
 _LATEST_RECORD_CACHE: dict[
-    tuple[str, str, str, str, str, str],
+    tuple[str, str, str, str, str, str, str],
     tuple[float, AnalysisRecord | None],
 ] = {}
 
