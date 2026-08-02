@@ -147,6 +147,28 @@ def test_snapshot_identity_treats_absent_and_null_volume_state_as_equivalent() -
     assert observed != absent
 
 
+def test_market_snapshot_identity_ignores_capture_wall_clock() -> None:
+    common = {
+        "symbol": "XAUUSD",
+        "timeframe": "1h",
+        "kline_data": [{"seq": 1, "ts_open": 1000, "close": 100.0}],
+        "htf_kline_data": [],
+    }
+
+    first = canonical_market_snapshot_hash(
+        **common,
+        snapshot_context={"snapshot_ts_local_ms": 1001, "source": "tradingview"},
+        htf_context={"status": "disabled", "captured_at_ms": 1001},
+    )
+    second = canonical_market_snapshot_hash(
+        **common,
+        snapshot_context={"snapshot_ts_local_ms": 9999, "source": "tradingview"},
+        htf_context={"status": "disabled", "captured_at_ms": 9999},
+    )
+
+    assert first == second
+
+
 def test_compact_snapshot_context_keeps_identity_without_seasonality_payload() -> None:
     identity = ResolvedInstrumentIdentity(
         provider="tradingview",

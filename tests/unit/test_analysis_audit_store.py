@@ -118,6 +118,18 @@ def _record(
             "official_path": "joint",
             "requested_vpa_mode": "soft",
         },
+        snapshot_context={
+            "source_identity": {
+                "provider": "tradingview",
+                "requested_symbol": "BTCUSDT",
+                "resolved_symbol": "BTCUSDT",
+                "venue": "BINANCE",
+                "market": "crypto",
+                "timezone_basis": "UTC",
+                "volume_kind": "real",
+                "volume_quality": "high",
+            }
+        },
         vpa_catalog={
             "catalog_id": "vpa-catalog-test",
             "data_status": "limited",
@@ -229,6 +241,8 @@ def test_audit_store_indexes_official_run_and_manual_outcome(tmp_path: Path) -> 
     run = store.get_run("run-audit-test")
     assert run is not None
     assert run["symbol"] == "BTCUSDT"
+    assert run["source_provider"] == "tradingview"
+    assert run["resolved_symbol"] == "BTCUSDT"
     assert run["vpa_mode"] == "soft"
     assert run["vpa_effect"] == "prefer_retest"
     assert run["baseline_order_type"] == "limit"
@@ -362,6 +376,31 @@ def test_counterfactual_waits_when_origin_bar_has_rolled_out(tmp_path: Path) -> 
         order_type="no_trade",
     )
     assert store.record_analysis(history_gap, record_path=tmp_path / "gap.json").ok
+
+    outcome = store.get_counterfactual_outcome("run-audit-test")
+    assert outcome is not None
+    assert outcome["outcome"] == "pending"
+
+
+def test_counterfactual_does_not_advance_from_another_venue(tmp_path: Path) -> None:
+    store = AnalysisAuditStore(tmp_path / "audit.sqlite3", simulation_horizon_bars=10)
+    first = _record(bars=[_bar(1_000)])
+    assert store.record_analysis(first, record_path=tmp_path / "first.json").ok
+
+    other_identity = dict(first.snapshot_context["source_identity"])
+    other_identity["venue"] = "OKX"
+    later = _record(
+        run_id="run-other-venue",
+        bars=[
+            _bar(3_000, open_=102.0, high=111.0, low=101.0, close=109.0),
+            _bar(2_000, open_=103.0, high=104.0, low=99.0, close=102.0),
+            _bar(1_000),
+        ],
+        order_type="no_trade",
+    ).model_copy(
+        update={"snapshot_context": {"source_identity": other_identity}}
+    )
+    assert store.record_analysis(later, record_path=tmp_path / "later.json").ok
 
     outcome = store.get_counterfactual_outcome("run-audit-test")
     assert outcome is not None

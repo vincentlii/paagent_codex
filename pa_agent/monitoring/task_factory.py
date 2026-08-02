@@ -68,6 +68,11 @@ def _frame_identity_payload(frame: KlineFrame) -> dict[str, Any]:
     }
 
 
+def frame_snapshot_hash(frame: KlineFrame) -> str:
+    """Hash current-frame market facts for cache invalidation."""
+    return _stable_hash(_frame_identity_payload(frame))
+
+
 def _snapshot_hash(
     frame: KlineFrame,
     htf_context: dict[str, Any] | None,

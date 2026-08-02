@@ -13,6 +13,7 @@ from typing import Any
 from pa_agent.config.paths import RuntimePaths
 from pa_agent.config.settings import MonitoringAssetSettings, Settings
 from pa_agent.config.vpa import vpa_is_enabled
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.factory import (
     resolved_identity_for_source,
     volume_metadata_for_source,
@@ -25,7 +26,7 @@ from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS, build_display_frame
 from pa_agent.data.snapshot_bundle import build_snapshot_bundle
 from pa_agent.data.volume_context import merge_bar_history, snapshot_fetch_count
 from pa_agent.monitoring.scheduler import AnalysisTask, JobCompletion
-from pa_agent.monitoring.task_factory import create_frozen_analysis_task
+from pa_agent.monitoring.task_factory import create_frozen_analysis_task, frame_snapshot_hash
 from pa_agent.records.analysis_history import (
     compute_incremental_bar_delta,
     find_latest_successful_record,
@@ -59,6 +60,7 @@ class _AssetState:
     last_analysis_status: str | None = None
     prepared_task: AnalysisTask | None = None
     prepared_closed_bar_ts: int | None = None
+    prepared_frame_hash: str | None = None
     history_backfill_done: bool = False
     history_cache: list[Any] | None = None
 
@@ -271,10 +273,12 @@ class HeadlessMonitor:
         if frame is None:
             raise ValueError("insufficient closed bars for analysis")
         latest_closed_bar_ts = max(int(bar.ts_open) for bar in frame.bars)
+        current_frame_hash = frame_snapshot_hash(frame)
         with self._lock:
             if (
                 state.prepared_task is not None
                 and state.prepared_closed_bar_ts == latest_closed_bar_ts
+                and state.prepared_frame_hash == current_frame_hash
             ):
                 state.fetch_failures = 0
                 state.next_fetch_at = 0.0
@@ -321,6 +325,7 @@ class HeadlessMonitor:
             state.next_fetch_at = 0.0
             state.prepared_task = task
             state.prepared_closed_bar_ts = latest_closed_bar_ts
+            state.prepared_frame_hash = current_frame_hash
         return task
 
     def _ensure_source(self, state: _AssetState) -> Any:
@@ -351,6 +356,9 @@ class HeadlessMonitor:
         previous = find_latest_successful_record(
             symbol=frame.symbol,
             timeframe=frame.timeframe,
+            identity=ResolvedInstrumentIdentity.from_value(
+                getattr(frame, "data_metadata", {}) or {}
+            ),
             directory=self._paths.records_pending_dir,
         )
         if previous is None:

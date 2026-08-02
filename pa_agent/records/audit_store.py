@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.records.codec import load_record
 from pa_agent.records.projection import pa_joint_comparison, usage_from_call_attempts
 from pa_agent.records.schema import AnalysisRecord
@@ -42,7 +43,7 @@ class AuditRebuildResult:
 class AnalysisAuditStore:
     """Index completed or partial analysis records without owning their source data."""
 
-    _SCHEMA_VERSION: ClassVar[int] = 9
+    _SCHEMA_VERSION: ClassVar[int] = 10
     _ENTRY_STATUSES: ClassVar[frozenset[str]] = frozenset(
         {"not_traded", "pending", "filled", "expired", "cancelled"}
     )
@@ -85,7 +86,8 @@ class AnalysisAuditStore:
                 connection.execute(
                     """
                     INSERT INTO analysis_runs (
-                        run_id, record_path, timestamp_local_ms, symbol, timeframe, bar_count,
+                        run_id, record_path, timestamp_local_ms, symbol, timeframe,
+                        source_provider, resolved_symbol, bar_count,
                         decision_stance, model_name, run_status, error_type, partial_reason,
                         stage1_cycle_position, stage1_direction, stage1_gate_result,
                         order_type, order_direction, trade_confidence, estimated_win_rate,
@@ -102,7 +104,8 @@ class AnalysisAuditStore:
                         authority_violations_json, review_context_json,
                         validation_audit_json, joint_diff_json, usage_json, indexed_at_ms
                     ) VALUES (
-                        :run_id, :record_path, :timestamp_local_ms, :symbol, :timeframe, :bar_count,
+                        :run_id, :record_path, :timestamp_local_ms, :symbol, :timeframe,
+                        :source_provider, :resolved_symbol, :bar_count,
                         :decision_stance, :model_name, :run_status, :error_type, :partial_reason,
                         :stage1_cycle_position, :stage1_direction, :stage1_gate_result,
                         :order_type, :order_direction, :trade_confidence, :estimated_win_rate,
@@ -121,6 +124,8 @@ class AnalysisAuditStore:
                     )
                     ON CONFLICT(run_id) DO UPDATE SET
                         record_path = excluded.record_path,
+                        source_provider = excluded.source_provider,
+                        resolved_symbol = excluded.resolved_symbol,
                         run_status = excluded.run_status,
                         error_type = excluded.error_type,
                         partial_reason = excluded.partial_reason,
@@ -365,12 +370,23 @@ class AnalysisAuditStore:
         latest_ts = self._latest_closed_ts(current_record.kline_data)
         if latest_ts is None:
             return
+        identity = ResolvedInstrumentIdentity.from_value(current_record.snapshot_context)
+        if identity is None:
+            return
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             "SELECT * FROM analysis_runs WHERE symbol = ? AND timeframe = ? "
+            "AND source_provider = ? AND venue = ? AND resolved_symbol = ? "
             "AND run_status = 'completed' AND snapshot_latest_ts_open IS NOT NULL "
             "AND snapshot_latest_ts_open <= ?",
-            (current_record.meta.symbol, current_record.meta.timeframe, latest_ts),
+            (
+                current_record.meta.symbol,
+                current_record.meta.timeframe,
+                identity.provider,
+                identity.venue,
+                identity.resolved_symbol,
+                latest_ts,
+            ),
         ).fetchall()
         bars = [bar for bar in current_record.kline_data if isinstance(bar, dict)]
         bar_timestamps = {
@@ -523,6 +539,8 @@ class AnalysisAuditStore:
                 timestamp_local_ms INTEGER NOT NULL,
                 symbol TEXT NOT NULL,
                 timeframe TEXT NOT NULL,
+                source_provider TEXT,
+                resolved_symbol TEXT,
                 bar_count INTEGER NOT NULL,
                 decision_stance TEXT NOT NULL,
                 model_name TEXT,
@@ -696,6 +714,11 @@ class AnalysisAuditStore:
             "CREATE INDEX IF NOT EXISTS idx_analysis_runs_symbol_tf_time "
             "ON analysis_runs(symbol, timeframe, timestamp_local_ms DESC)"
         )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_runs_instrument_time "
+            "ON analysis_runs(source_provider, venue, resolved_symbol, timeframe, "
+            "timestamp_local_ms DESC)"
+        )
         connection.execute("DROP INDEX IF EXISTS idx_analysis_runs_vpa_pair")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_counterfactual_arm_outcome "
@@ -726,6 +749,8 @@ class AnalysisAuditStore:
             str(row[1]) for row in connection.execute("PRAGMA table_info(analysis_runs)").fetchall()
         }
         required = {
+            "source_provider": "TEXT",
+            "resolved_symbol": "TEXT",
             "htf_status": "TEXT",
             "htf_timeframe": "TEXT",
             "htf_reason": "TEXT",
@@ -954,6 +979,7 @@ class AnalysisAuditStore:
         catalog = catalog if isinstance(catalog, dict) else {}
         provenance = catalog.get("provenance") if isinstance(catalog, dict) else {}
         provenance = provenance if isinstance(provenance, dict) else {}
+        identity = ResolvedInstrumentIdentity.from_value(record.snapshot_context)
         arbitration = canonical_joint.get("joint_arbitration")
         arbitration = arbitration if isinstance(arbitration, dict) else {}
         impact = {
@@ -1029,6 +1055,10 @@ class AnalysisAuditStore:
             "timestamp_local_ms": record.meta.timestamp_local_ms,
             "symbol": record.meta.symbol,
             "timeframe": record.meta.timeframe,
+            "source_provider": identity.provider if identity is not None else None,
+            "resolved_symbol": (
+                identity.resolved_symbol if identity is not None else None
+            ),
             "bar_count": record.meta.bar_count,
             "decision_stance": record.meta.decision_stance,
             "model_name": provider.get("model", ""),
@@ -1055,7 +1085,9 @@ class AnalysisAuditStore:
             "snapshot_hash": catalog.get("snapshot_hash"),
             "catalog_id": catalog.get("catalog_id"),
             "volume_kind": provenance.get("volume_kind"),
-            "venue": provenance.get("venue"),
+            "venue": (
+                identity.venue if identity is not None else provenance.get("venue")
+            ),
             "vpa_data_status": catalog.get("data_status"),
             "vpa_background_relation": impact.get("background_relation"),
             "vpa_timing_relation": impact.get("entry_timing_relation"),

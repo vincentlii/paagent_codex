@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pa_agent.config.paths import RECORDS_PENDING_DIR
 from pa_agent.data.base import KlineFrame
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.datetime_ts import format_epoch_for_display, ts_open_to_ms
 from pa_agent.records.codec import load_record as load_record_file
 from pa_agent.records.schema import AnalysisRecord
@@ -52,11 +53,13 @@ def find_latest_successful_record(
     *,
     symbol: str,
     timeframe: str,
+    identity: ResolvedInstrumentIdentity | None = None,
     directory: Path | None = None,
 ) -> AnalysisRecord | None:
-    """Find the newest full successful record for a symbol/timeframe."""
+    """Find the newest successful record for one resolved instrument."""
     root = directory or RECORDS_PENDING_DIR
-    cache_key = (str(root.resolve()), symbol, timeframe)
+    identity_key = identity.key if identity is not None else ("", "", "")
+    cache_key = (str(root.resolve()), symbol, timeframe, *identity_key)
     try:
         dir_mtime = root.stat().st_mtime if root.is_dir() else 0.0
     except OSError:
@@ -72,6 +75,12 @@ def find_latest_successful_record(
             continue
         if record.meta.symbol != symbol or record.meta.timeframe != timeframe:
             continue
+        if identity is not None:
+            record_identity = ResolvedInstrumentIdentity.from_value(
+                record.snapshot_context
+            )
+            if record_identity is None or not record_identity.same_instrument(identity):
+                continue
         if record.exception is not None:
             continue
         outcome = record.run_outcome if isinstance(record.run_outcome, dict) else {}
@@ -89,7 +98,10 @@ def find_latest_successful_record(
     return result
 
 
-_LATEST_RECORD_CACHE: dict[tuple[str, str, str], tuple[float, AnalysisRecord | None]] = {}
+_LATEST_RECORD_CACHE: dict[
+    tuple[str, str, str, str, str, str],
+    tuple[float, AnalysisRecord | None],
+] = {}
 
 
 def invalidate_latest_record_cache() -> None:

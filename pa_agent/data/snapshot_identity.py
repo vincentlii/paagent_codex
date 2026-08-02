@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 SNAPSHOT_HASH_ALGORITHM = "v5-canonical-json"
+_VOLATILE_CONTEXT_FIELDS = frozenset({"captured_at_ms", "snapshot_ts_local_ms"})
 
 
 def _canonical_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -16,6 +17,19 @@ def _canonical_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
             payload.pop("volume_state", None)
         canonical.append(payload)
     return canonical
+
+
+def _canonical_context(value: Any) -> Any:
+    """Remove observation-time metadata that is not a market fact."""
+    if isinstance(value, dict):
+        return {
+            key: _canonical_context(item)
+            for key, item in value.items()
+            if key not in _VOLATILE_CONTEXT_FIELDS
+        }
+    if isinstance(value, list):
+        return [_canonical_context(item) for item in value]
+    return value
 
 
 def canonical_market_snapshot_hash(
@@ -32,8 +46,8 @@ def canonical_market_snapshot_hash(
         "symbol": symbol,
         "timeframe": timeframe,
         "kline_data": _canonical_bars(kline_data),
-        "snapshot_context": snapshot_context or {},
-        "htf_context": htf_context,
+        "snapshot_context": _canonical_context(snapshot_context or {}),
+        "htf_context": _canonical_context(htf_context),
         "htf_kline_data": _canonical_bars(htf_kline_data),
     }
     encoded = json.dumps(

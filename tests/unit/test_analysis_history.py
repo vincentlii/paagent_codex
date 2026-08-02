@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.records.analysis_history import (
     compute_incremental_bar_delta,
     count_new_bars_since_record,
@@ -50,6 +51,24 @@ def _record_with_latest(ts_open: float) -> AnalysisRecord:
             "official_path": "pa_only",
             "requested_vpa_mode": "off",
         },
+    )
+
+
+def _with_identity(
+    record: AnalysisRecord,
+    *,
+    provider: str = "tradingview",
+    venue: str = "OANDA",
+    resolved_symbol: str = "XAUUSD",
+) -> AnalysisRecord:
+    identity = ResolvedInstrumentIdentity(
+        provider=provider,
+        requested_symbol="XAUUSD",
+        resolved_symbol=resolved_symbol,
+        venue=venue,
+    )
+    return record.model_copy(
+        update={"snapshot_context": {"source_identity": identity.to_dict()}}
     )
 
 
@@ -166,3 +185,50 @@ def test_latest_successful_record_rejects_missing_explicit_run_outcome(tmp_path)
         )
         is None
     )
+
+
+def test_latest_successful_record_does_not_cross_resolved_instrument_identity(tmp_path):
+    oanda = _with_identity(_record_with_latest(1000.0), venue="OANDA")
+    pepperstone = _with_identity(_record_with_latest(2000.0), venue="PEPPERSTONE")
+    oanda_path = tmp_path / "oanda.json"
+    pepperstone_path = tmp_path / "pepperstone.json"
+    oanda_path.write_text(oanda.model_dump_json(), encoding="utf-8")
+    pepperstone_path.write_text(pepperstone.model_dump_json(), encoding="utf-8")
+    os.utime(oanda_path, (100.0, 100.0))
+    os.utime(pepperstone_path, (200.0, 200.0))
+    invalidate_latest_record_cache()
+
+    found = find_latest_successful_record(
+        symbol="XAUUSD",
+        timeframe="1h",
+        identity=ResolvedInstrumentIdentity(
+            provider="tradingview",
+            requested_symbol="XAUUSD",
+            resolved_symbol="XAUUSD",
+            venue="OANDA",
+        ),
+        directory=tmp_path,
+    )
+
+    assert found is not None
+    assert found.kline_data[0]["ts_open"] == 1000.0
+
+
+def test_latest_successful_record_rejects_legacy_identity_when_identity_is_required(tmp_path):
+    legacy = _record_with_latest(1000.0)
+    (tmp_path / "legacy.json").write_text(legacy.model_dump_json(), encoding="utf-8")
+    invalidate_latest_record_cache()
+
+    found = find_latest_successful_record(
+        symbol="XAUUSD",
+        timeframe="1h",
+        identity=ResolvedInstrumentIdentity(
+            provider="tradingview",
+            requested_symbol="XAUUSD",
+            resolved_symbol="XAUUSD",
+            venue="OANDA",
+        ),
+        directory=tmp_path,
+    )
+
+    assert found is None

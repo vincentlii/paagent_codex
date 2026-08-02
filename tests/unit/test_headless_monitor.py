@@ -307,6 +307,34 @@ def test_same_closed_bar_reuses_frozen_task_without_refetching_htf(
     assert len(service.submitted) == 1
 
 
+def test_same_timestamp_market_revision_invalidates_prepared_task(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monitor, source, _audit, service, _clock = _monitor(tmp_path)
+    monitor._settings.general.higher_timeframe_enabled = True
+    calls: list[int] = []
+    monkeypatch.setattr(
+        "pa_agent.monitoring.headless.fetch_higher_timeframe_context",
+        lambda **_kwargs: (
+            calls.append(1)
+            or disabled_higher_timeframe_context("1h")
+        ),
+    )
+
+    monitor.poll_once()
+    first = service.submitted[-1]
+    service.on_completion(
+        _completion(first, status="completed", success=True, retryable=False)
+    )
+    source.revise_latest()
+    monitor.poll_once()
+
+    assert calls == [1, 1]
+    assert len(service.submitted) == 2
+    assert service.submitted[-1].task_id != first.task_id
+
+
 def test_restart_uses_persistent_success_dedupe(tmp_path) -> None:
     first_monitor, _source, audit, first_service, _clock = _monitor(tmp_path)
     first_monitor.poll_once()
