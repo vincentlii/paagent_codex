@@ -76,6 +76,7 @@ class HeadlessMonitor:
         source_factory: Callable[[MonitoringAssetSettings], Any],
         service_factory: Callable[[Callable[[JobCompletion], None]], Any],
         analysis_fingerprint: str,
+        paper_execution: Any | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         wall_time_ms: Callable[[], int] | None = None,
     ) -> None:
@@ -84,11 +85,13 @@ class HeadlessMonitor:
         self._scheduler_audit = scheduler_audit
         self._source_factory = source_factory
         self._analysis_fingerprint = analysis_fingerprint
+        self._paper_execution = paper_execution
         self._monotonic = monotonic
         self._wall_time_ms = wall_time_ms or (lambda: int(time.time() * 1000))
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._closed = False
+        self._paper_reconcile_needed = False
         self._states = [
             _AssetState(config=asset)
             for asset in settings.monitoring.assets
@@ -112,6 +115,7 @@ class HeadlessMonitor:
         """Fetch every eligible asset once and enqueue accepted snapshots."""
         if self._closed:
             raise RuntimeError("headless monitor is closed")
+        self._retry_paper_reconciliation()
         now = self._monotonic()
         eligible = [state for state in self._states if now >= state.next_fetch_at]
         futures = {
@@ -165,6 +169,7 @@ class HeadlessMonitor:
 
     def handle_completion(self, completion: JobCompletion) -> None:
         """Update retry state after scheduler and analysis outcomes are known."""
+        paper_submission: tuple[Any, Any, str] | None = None
         with self._lock:
             state = self._task_to_state.pop(completion.task.task_id, None)
             if state is None:
@@ -182,19 +187,60 @@ class HeadlessMonitor:
             if success:
                 state.successful_task_id = completion.task.task_id
                 state.next_retry_at = float("inf")
-                return
-            retryable = completion.status == "failed" or bool(
-                getattr(result, "retryable", False)
-            )
-            maximum_attempts = 1 + int(self._settings.monitoring.max_analysis_retries)
-            if retryable and state.attempts < maximum_attempts:
-                exponent = max(0, state.attempts - 1)
-                state.next_retry_at = self._monotonic() + min(
-                    float(self._settings.monitoring.retry_backoff_seconds) * (2**exponent),
-                    3600.0,
-                )
+                payload = getattr(completion.task, "payload", None)
+                frozen_spec = getattr(payload, "instrument_spec", None)
+                if (
+                    self._paper_execution is not None
+                    and bool(getattr(result, "record_persisted", False))
+                    and bool(getattr(result, "audit_ok", False))
+                    and frozen_spec is not None
+                ):
+                    paper_submission = (
+                        result.record,
+                        frozen_spec,
+                        completion.task.task_id,
+                    )
             else:
-                state.next_retry_at = float("inf")
+                retryable = completion.status == "failed" or bool(
+                    getattr(result, "retryable", False)
+                )
+                maximum_attempts = 1 + int(self._settings.monitoring.max_analysis_retries)
+                if retryable and state.attempts < maximum_attempts:
+                    exponent = max(0, state.attempts - 1)
+                    state.next_retry_at = self._monotonic() + min(
+                        float(self._settings.monitoring.retry_backoff_seconds) * (2**exponent),
+                        3600.0,
+                    )
+                else:
+                    state.next_retry_at = float("inf")
+        if paper_submission is not None:
+            record, spec, task_id = paper_submission
+            try:
+                self._paper_execution.submit_official(
+                    record,
+                    spec,
+                    task_id=task_id,
+                )
+            except Exception:
+                self._paper_reconcile_needed = True
+                logger.exception(
+                    "Paper execution failed after persisted analysis %s",
+                    task_id,
+                )
+
+    def _retry_paper_reconciliation(self) -> None:
+        if not self._paper_reconcile_needed or self._paper_execution is None:
+            return
+        list_jobs = getattr(self._scheduler_audit, "list_successful_jobs", None)
+        reconcile = getattr(self._paper_execution, "reconcile_official", None)
+        if not callable(list_jobs) or not callable(reconcile):
+            return
+        try:
+            reconcile(list_jobs(), self._paths.records_pending_dir)
+        except Exception:
+            logger.exception("Paper reconciliation retry failed; will retry next poll")
+            return
+        self._paper_reconcile_needed = False
 
     def shutdown(self) -> None:
         """Cancel work, wait within the configured bound, and disconnect feeds."""
@@ -271,6 +317,28 @@ class HeadlessMonitor:
         )
         if frame is None:
             raise ValueError("insufficient closed bars for analysis")
+        paper_enabled = self._paper_execution is not None and bool(
+            getattr(self._paper_execution, "enabled", False)
+        )
+        current_spec = getattr(source, "current_instrument_spec", None)
+        spec = current_spec() if paper_enabled and callable(current_spec) else None
+        if paper_enabled:
+            if spec is None:
+                logger.error(
+                    "Paper execution unavailable for %s %s: provider constraints missing; "
+                    "PA analysis continues",
+                    frame.symbol,
+                    frame.timeframe,
+                )
+            else:
+                try:
+                    self._paper_execution.observe_official(spec, frame.timeframe, frame.bars)
+                except Exception:
+                    logger.exception(
+                        "Paper market observation failed for %s %s; PA analysis continues",
+                        frame.symbol,
+                        frame.timeframe,
+                    )
         latest_closed_bar_ts = max(int(bar.ts_open) for bar in frame.bars)
         current_frame_hash = frame_snapshot_hash(frame)
         with self._lock:
@@ -318,6 +386,7 @@ class HeadlessMonitor:
             previous_record=previous,
             incremental_new_bar_count=new_count,
             created_at_ms=now_ms,
+            instrument_spec=spec,
         )
         with self._lock:
             state.fetch_failures = 0

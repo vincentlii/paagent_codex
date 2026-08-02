@@ -279,6 +279,26 @@ def test_handler_does_not_retry_exhausted_model_contract_failure() -> None:
     assert result.retryable is False
 
 
+def test_handler_does_not_mark_analysis_success_when_record_audit_failed() -> None:
+    class _Orchestrator:
+        def submit(self, _frame, _token, on_event, **_kwargs):
+            on_event(OrchestratorEvent.RecordAuditFailed)
+            on_event(OrchestratorEvent.RecordSaved)
+            return SimpleNamespace(
+                meta=SimpleNamespace(run_id="run-record-audit-failed"),
+                run_outcome={"status": "completed", "official_path": "pa_only"},
+            )
+
+    result = IndependentAnalysisHandler(lambda _task: _Orchestrator())(
+        _task("XAUUSD"),
+        SimpleNamespace(),
+    )
+
+    assert result.analysis_success is False
+    assert result.audit_ok is False
+    assert result.retryable is True
+
+
 def test_logical_analysis_failure_can_retry_and_success_is_restart_deduped(tmp_path) -> None:
     outcomes = iter(("unavailable_provider", "degraded_pa_only"))
 
@@ -318,6 +338,9 @@ def test_logical_analysis_failure_can_retry_and_success_is_restart_deduped(tmp_p
             (task.task_id,),
         ).fetchone()
     assert row == (3, "degraded_pa_only", 1)
+    assert store.list_successful_jobs() == [
+        {"task_id": task.task_id, "run_id": "run-degraded_pa_only"}
+    ]
 
 
 def test_scheduler_success_lookup_failure_is_fail_open_for_retry(tmp_path, monkeypatch) -> None:

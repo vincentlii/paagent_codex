@@ -10,6 +10,7 @@ import pytest
 
 from pa_agent.data.base import DataSourceTransientError
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
+from pa_agent.data.instrument import InstrumentSpec
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.data.snapshot_identity import (
     LEGACY_SNAPSHOT_HASH_ALGORITHM,
@@ -134,6 +135,26 @@ def test_frame_bar_serialization_is_explicit_and_lossless() -> None:
     assert serialize_frame_bars(SimpleNamespace(bars=({"open": 1.0},))) == [{"open": 1.0}]
     with pytest.raises(TypeError, match="unsupported bar type"):
         serialize_frame_bars(SimpleNamespace(bars=(1,)))
+
+
+def test_compact_snapshot_persists_provider_declared_instrument_spec() -> None:
+    frame = make_frame()
+    spec = InstrumentSpec(
+        provider="binance_usdm",
+        venue="BINANCE",
+        symbol="XAUUSDT",
+        instrument_type="tradifi_perpetual",
+        tick_size=0.01,
+        quantity_step=0.001,
+        minimum_quantity=0.001,
+        maximum_quantity=1000.0,
+        minimum_notional=5.0,
+    )
+    frame = replace(frame, data_metadata={"instrument_spec": spec.to_dict()})
+
+    context = compact_snapshot_context(frame)
+
+    assert InstrumentSpec.from_value(context["instrument_spec"]) == spec
 
 
 def test_snapshot_identity_treats_absent_and_null_volume_state_as_equivalent() -> None:

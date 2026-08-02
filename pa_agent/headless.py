@@ -99,6 +99,14 @@ def validate_headless_configuration(
         paths.analysis_audit_db_path.parent,
         paths.experience_dir,
     }
+    if settings.paper_trading.enabled:
+        writable_dirs.add(paths.paper_trading_db_path.parent)
+        unsupported = [asset for asset in assets if asset.source != "binance_usdm"]
+        if unsupported:
+            errors.append(
+                "paper trading requires a native source with provider-declared "
+                "instrument constraints; currently supported: binance_usdm"
+            )
     for directory in sorted(writable_dirs, key=str):
         try:
             directory.mkdir(parents=True, exist_ok=True)
@@ -119,6 +127,7 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
     from pa_agent.monitoring.production import ProductionOrchestratorFactory
     from pa_agent.monitoring.service import MultiAssetAnalysisService
     from pa_agent.monitoring.task_factory import analysis_runtime_fingerprint
+    from pa_agent.execution.coordinator import PaperExecutionCoordinator
     from pa_agent.records.pending_writer import PendingWriter
 
     pending_writer = PendingWriter(
@@ -135,6 +144,20 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
     )
     handler = IndependentAnalysisHandler(orchestrator_factory)
     scheduler_audit = SchedulerAuditStore(paths.monitoring_audit_db_path)
+    paper_execution = PaperExecutionCoordinator(
+        paths.paper_trading_db_path,
+        settings.paper_trading,
+    )
+    if paper_execution.enabled:
+        try:
+            paper_execution.reconcile_official(
+                scheduler_audit.list_successful_jobs(),
+                paths.records_pending_dir,
+            )
+        except Exception:
+            logging.getLogger("pa_agent").exception(
+                "Paper execution reconciliation failed; analysis startup continues"
+            )
 
     def service_factory(on_completion):
         monitoring = settings.monitoring
@@ -161,6 +184,7 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
             project_root=paths.project_root,
             prompt_dir=paths.prompt_dir,
         ),
+        paper_execution=paper_execution,
     )
 
 

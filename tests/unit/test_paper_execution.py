@@ -97,13 +97,19 @@ def test_paper_broker_persists_limit_fill_and_tp1_full_exit(tmp_path: Path) -> N
     )
     order = broker.submit(_plan(), _spec())
 
-    broker.on_closed_bar(
-        "XAUUSDT",
+    broker.observe_market(
+        _spec(),
+        "1h",
+        [
         _bar(2000, open_=2005.0, high=2008.0, low=1998.0, close=2004.0),
+        ],
     )
-    broker.on_closed_bar(
-        "XAUUSDT",
+    broker.observe_market(
+        _spec(),
+        "1h",
+        [
         _bar(3000, open_=2004.0, high=2021.0, low=2001.0, close=2018.0),
+        ],
     )
 
     snapshot = broker.account_snapshot()
@@ -134,9 +140,12 @@ def test_same_bar_stop_and_target_uses_conservative_stop_first(tmp_path: Path) -
         slippage_bps=0.0,
     )
     order = broker.submit(_plan(), _spec())
-    broker.on_closed_bar(
-        "XAUUSDT",
+    broker.observe_market(
+        _spec(),
+        "1h",
+        [
         _bar(2000, open_=2001.0, high=2025.0, low=1985.0, close=2005.0),
+        ],
     )
 
     saved = broker.order(order.order_id)
@@ -159,15 +168,21 @@ def test_breakout_and_stop_gap_use_open_instead_of_optimistic_trigger_price(
     )
     plan = _plan().__class__(**{**_plan().__dict__, "order_type": "breakout"})
     order = broker.submit(plan, _spec())
-    broker.on_closed_bar(
-        "XAUUSDT",
+    broker.observe_market(
+        _spec(),
+        "1h",
+        [
         _bar(2000, open_=2005.0, high=2008.0, low=2001.0, close=2004.0),
+        ],
     )
     assert broker.order(order.order_id)["fill_price"] == pytest.approx(2005.0)
 
-    broker.on_closed_bar(
-        "XAUUSDT",
+    broker.observe_market(
+        _spec(),
+        "1h",
+        [
         _bar(3000, open_=1980.0, high=1988.0, low=1975.0, close=1982.0),
+        ],
     )
     saved = broker.order(order.order_id)
     assert saved is not None
@@ -204,3 +219,106 @@ def test_broker_caps_aggregate_pending_and_open_risk(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="minimum quantity"):
         broker.submit(_plan(run_id="run-3"), _spec())
+
+
+def test_market_observation_is_persistent_idempotent_and_timeframe_scoped(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "paper.sqlite3"
+    broker = PaperBroker(
+        db,
+        account_id="pa-official",
+        initial_equity=10_000.0,
+        risk_policy=RiskPolicy(risk_fraction=0.01, max_leverage=3.0),
+    )
+    order = broker.submit(_plan(), _spec())
+    bars = [_bar(2000, open_=2005.0, high=2008.0, low=1998.0, close=2004.0)]
+
+    assert broker.observe_market(_spec(), "4h", bars) == 1
+    assert broker.order(order.order_id)["status"] == "pending"
+    assert broker.observe_market(_spec(), "1h", bars) == 1
+    assert broker.order(order.order_id)["status"] == "open"
+    assert broker.observe_market(_spec(), "1h", bars) == 0
+
+    restarted = PaperBroker(
+        db,
+        account_id="pa-official",
+        initial_equity=1.0,
+        risk_policy=RiskPolicy(risk_fraction=0.01, max_leverage=3.0),
+    )
+    assert restarted.observe_market(_spec(), "1h", bars) == 0
+
+
+def test_late_decision_replays_already_observed_closed_bars_once(tmp_path: Path) -> None:
+    broker = PaperBroker(
+        tmp_path / "paper.sqlite3",
+        account_id="pa-official",
+        initial_equity=10_000.0,
+        risk_policy=RiskPolicy(risk_fraction=0.01, max_leverage=3.0),
+    )
+    future = _bar(2000, open_=2005.0, high=2008.0, low=1998.0, close=2004.0)
+    assert broker.observe_market(_spec(), "1h", [future]) == 1
+
+    order = broker.submit(_plan(), _spec())
+
+    assert broker.order(order.order_id)["status"] == "open"
+    event_count = len(broker.events(order.order_id))
+    assert broker.observe_market(_spec(), "1h", [future]) == 0
+    assert len(broker.events(order.order_id)) == event_count
+
+
+def test_same_market_timestamp_with_different_facts_is_rejected(tmp_path: Path) -> None:
+    broker = PaperBroker(
+        tmp_path / "paper.sqlite3",
+        account_id="pa-official",
+        initial_equity=10_000.0,
+        risk_policy=RiskPolicy(risk_fraction=0.01, max_leverage=3.0),
+    )
+    first = _bar(2000, open_=2005.0, high=2008.0, low=1998.0, close=2004.0)
+    revised = _bar(2000, open_=2005.0, high=2009.0, low=1998.0, close=2004.0)
+    broker.observe_market(_spec(), "1h", [first])
+
+    with pytest.raises(ValueError, match="conflicting closed bar"):
+        broker.observe_market(_spec(), "1h", [revised])
+
+
+def test_new_analysis_supersedes_only_unfilled_older_plan(tmp_path: Path) -> None:
+    broker = PaperBroker(
+        tmp_path / "paper.sqlite3",
+        account_id="pa-official",
+        initial_equity=10_000.0,
+        risk_policy=RiskPolicy(risk_fraction=0.01, max_leverage=3.0),
+    )
+    stale = _plan().__class__(
+        **{**_plan().__dict__, "entry_price": 1900.0, "stop_price": 1890.0,
+           "take_profit_price": 1920.0, "take_profit_price_2": 1930.0}
+    )
+    stale_order = broker.submit(stale, _spec())
+    broker.observe_market(
+        _spec(),
+        "1h",
+        [_bar(2000, open_=2005.0, high=2008.0, low=1998.0, close=2004.0)],
+    )
+
+    cancelled = broker.supersede_pending(
+        _spec(),
+        "1h",
+        as_of_bar_ts=2000,
+        excluding_dedupe_key="new-task",
+    )
+
+    assert cancelled == 1
+    assert broker.order(stale_order.order_id)["status"] == "cancelled"
+
+
+def test_paper_plan_rejects_price_off_venue_tick(tmp_path: Path) -> None:
+    broker = PaperBroker(
+        tmp_path / "paper.sqlite3",
+        account_id="pa-official",
+        initial_equity=10_000.0,
+        risk_policy=RiskPolicy(risk_fraction=0.01, max_leverage=3.0),
+    )
+    invalid = _plan().__class__(**{**_plan().__dict__, "entry_price": 2000.005})
+
+    with pytest.raises(ValueError, match="tick size"):
+        broker.submit(invalid, _spec())

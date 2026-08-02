@@ -192,6 +192,7 @@ def create_frozen_analysis_task(
     venue: str | None = None,
     previous_record: Any | None = None,
     incremental_new_bar_count: int | None = None,
+    instrument_spec: Any | None = None,
     created_at_ms: int | None = None,
 ) -> AnalysisTask:
     """Deep-freeze one validated snapshot before it enters the scheduler."""
@@ -218,6 +219,7 @@ def create_frozen_analysis_task(
         htf_context=frozen_htf or {},
         previous_record=frozen_previous,
         incremental_new_bar_count=incremental_count,
+        instrument_spec=copy.deepcopy(instrument_spec),
     )
     return AnalysisTask.create(
         source=source,

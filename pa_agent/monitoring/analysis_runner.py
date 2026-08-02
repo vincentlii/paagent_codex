@@ -38,6 +38,7 @@ class FrozenAnalysisPayload:
     htf_context: Mapping[str, Any] = field(default_factory=dict)
     previous_record: Any | None = field(default=None, compare=False, repr=False)
     incremental_new_bar_count: int | None = None
+    instrument_spec: Any | None = field(default=None, compare=True, repr=False)
 
 
 class IndependentAnalysisHandler:
@@ -77,6 +78,7 @@ class IndependentAnalysisHandler:
             status in _SUCCESSFUL_ANALYSIS_STATUSES
             and persisted
             and not save_failed
+            and OrchestratorEvent.RecordAuditFailed not in events
         )
         return AnalysisRunResult(
             record=record,

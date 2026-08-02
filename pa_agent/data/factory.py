@@ -203,6 +203,14 @@ def volume_metadata_for_source(
         )
     if resolved is not None:
         metadata.update(resolved.to_metadata())
+    current_spec = getattr(source, "current_instrument_spec", None)
+    if normalized == "binance_usdm" and callable(current_spec):
+        try:
+            spec = current_spec()
+        except (AttributeError, TypeError, ValueError):
+            spec = None
+        if spec is not None and callable(getattr(spec, "to_dict", None)):
+            metadata["instrument_spec"] = spec.to_dict()
     if type(source).__name__ in {"TradingViewSource", "MT5Source", "BinanceUsdmSource"}:
         metadata["strict_close_time"] = True
     return metadata

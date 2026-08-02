@@ -53,6 +53,7 @@ class PaperTradePlan:
     take_profit_price: float
     take_profit_price_2: float | None
     created_bar_ts: int
+    dedupe_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,8 +142,10 @@ class PaperBroker:
             connection.commit()
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                "SELECT * FROM paper_orders WHERE account_id = ? AND run_id = ? AND arm = ?",
-                (self._account_id, plan.run_id, plan.arm),
+                "SELECT * FROM paper_orders WHERE account_id = ? AND arm = ? "
+                "AND ((dedupe_key IS NOT NULL AND dedupe_key = ?) "
+                "OR (dedupe_key IS NULL AND run_id = ?))",
+                (self._account_id, plan.arm, plan.dedupe_key, plan.run_id),
             ).fetchone()
             if existing is not None:
                 return self._paper_order(existing)
@@ -164,36 +167,129 @@ class PaperBroker:
                 INSERT INTO paper_orders(
                     order_id, account_id, run_id, arm, provider, venue, instrument_type,
                     symbol, timeframe, side, order_type, entry_price, stop_price,
-                    take_profit_price, take_profit_price_2, created_bar_ts, quantity, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                    take_profit_price, take_profit_price_2, created_bar_ts, dedupe_key,
+                    quantity, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     order_id, self._account_id, plan.run_id, plan.arm, spec.provider,
                     spec.venue, spec.instrument_type, spec.symbol, plan.timeframe, plan.side,
                     plan.order_type, plan.entry_price, plan.stop_price, plan.take_profit_price,
-                    plan.take_profit_price_2, int(plan.created_bar_ts), sized.quantity,
+                    plan.take_profit_price_2, int(plan.created_bar_ts), plan.dedupe_key,
+                    sized.quantity,
                 ),
             )
             self._event(connection, order_id, "submitted", None, {"sizing": asdict(sized)})
+            self._replay_stored_bars(connection, order_id)
             row = connection.execute(
                 "SELECT * FROM paper_orders WHERE order_id = ?", (order_id,)
             ).fetchone()
             return self._paper_order(row)
 
-    def on_closed_bar(self, symbol: str, bar: KlineBar) -> None:
-        if not bar.closed:
-            return
+    def _replay_stored_bars(
+        self,
+        connection: sqlite3.Connection,
+        order_id: str,
+    ) -> None:
+        order = connection.execute(
+            "SELECT * FROM paper_orders WHERE order_id = ?", (order_id,)
+        ).fetchone()
+        evaluated = (
+            int(order["evaluated_through_ts"])
+            if order["evaluated_through_ts"] is not None
+            else int(order["created_bar_ts"])
+        )
+        bars = connection.execute(
+            "SELECT * FROM paper_market_bars WHERE provider = ? AND venue = ? "
+            "AND instrument_type = ? AND symbol = ? AND timeframe = ? AND ts_open > ? "
+            "ORDER BY ts_open",
+            (
+                order["provider"], order["venue"], order["instrument_type"],
+                order["symbol"], order["timeframe"], evaluated,
+            ),
+        ).fetchall()
+        for raw in bars:
+            order = connection.execute(
+                "SELECT * FROM paper_orders WHERE order_id = ?", (order_id,)
+            ).fetchone()
+            if order["status"] not in {"pending", "open"}:
+                break
+            self._advance(
+                connection,
+                order,
+                KlineBar(
+                    seq=1,
+                    ts_open=int(raw["ts_open"]),
+                    open=float(raw["open"]),
+                    high=float(raw["high"]),
+                    low=float(raw["low"]),
+                    close=float(raw["close"]),
+                    volume=float(raw["volume"]),
+                    amount=float(raw["amount"]),
+                    closed=True,
+                ),
+            )
+            connection.execute(
+                "UPDATE paper_orders SET evaluated_through_ts = ? WHERE order_id = ?",
+                (int(raw["ts_open"]), order_id),
+            )
+
+    def observe_market(
+        self,
+        spec: InstrumentSpec,
+        timeframe: str,
+        bars: list[KlineBar] | tuple[KlineBar, ...],
+    ) -> int:
+        """Persist and advance one exact market in chronological closed-bar order."""
+        closed = sorted(
+            (bar for bar in bars if bar.closed),
+            key=lambda bar: int(bar.ts_open),
+        )
+        if not closed:
+            return 0
         with self._connect() as connection:
             self._ensure_schema(connection)
             connection.commit()
             connection.execute("BEGIN IMMEDIATE")
-            rows = connection.execute(
-                "SELECT * FROM paper_orders WHERE account_id = ? AND symbol = ? "
+            market_key = (
+                spec.provider, spec.venue, spec.instrument_type, spec.symbol,
+                str(timeframe),
+            )
+            observed = 0
+            for bar in closed:
+                bar_ts = int(bar.ts_open)
+                existing = connection.execute(
+                    "SELECT open, high, low, close, volume, amount FROM paper_market_bars "
+                    "WHERE provider = ? AND venue = ? AND instrument_type = ? "
+                    "AND symbol = ? AND timeframe = ? AND ts_open = ?",
+                    (*market_key, bar_ts),
+                ).fetchone()
+                facts = (
+                    float(bar.open), float(bar.high), float(bar.low), float(bar.close),
+                    float(bar.volume), float(getattr(bar, "amount", 0.0)),
+                )
+                if existing is not None:
+                    if tuple(float(value) for value in existing) != facts:
+                        raise ValueError(
+                            "conflicting closed bar for paper market identity and timestamp"
+                        )
+                    continue
+                connection.execute(
+                    "INSERT INTO paper_market_bars(provider, venue, instrument_type, "
+                    "symbol, timeframe, ts_open, open, high, low, close, volume, amount) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (*market_key, bar_ts, *facts),
+                )
+                observed += 1
+            orders = connection.execute(
+                "SELECT order_id FROM paper_orders WHERE account_id = ? AND provider = ? "
+                "AND venue = ? AND instrument_type = ? AND symbol = ? AND timeframe = ? "
                 "AND status IN ('pending', 'open') ORDER BY created_bar_ts, order_id",
-                (self._account_id, str(symbol).strip().upper()),
+                (self._account_id, *market_key),
             ).fetchall()
-            for row in rows:
-                self._advance(connection, row, bar)
+            for order in orders:
+                self._replay_stored_bars(connection, str(order["order_id"]))
+            return observed
 
     def account_snapshot(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -225,6 +321,68 @@ class PaperBroker:
                 "SELECT * FROM paper_events WHERE order_id = ? ORDER BY event_id", (order_id,)
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def record_rejection(
+        self,
+        plan: PaperTradePlan,
+        spec: InstrumentSpec,
+        reason: str,
+    ) -> None:
+        """Persist a non-executed candidate without changing analysis status."""
+        with self._connect() as connection:
+            self._ensure_schema(connection)
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO paper_rejections(
+                    account_id, run_id, arm, dedupe_key, provider, venue,
+                    instrument_type, symbol, timeframe, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self._account_id, plan.run_id, plan.arm, plan.dedupe_key,
+                    spec.provider, spec.venue, spec.instrument_type, spec.symbol,
+                    plan.timeframe, str(reason),
+                ),
+            )
+
+    def supersede_pending(
+        self,
+        spec: InstrumentSpec,
+        timeframe: str,
+        *,
+        as_of_bar_ts: int,
+        excluding_dedupe_key: str,
+    ) -> int:
+        """Cancel stale unfilled plans after later market bars were replayed."""
+        with self._connect() as connection:
+            self._ensure_schema(connection)
+            connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT order_id FROM paper_orders WHERE account_id = ? "
+                "AND provider = ? AND venue = ? AND instrument_type = ? "
+                "AND symbol = ? AND timeframe = ? AND status = 'pending' "
+                "AND created_bar_ts <= ? AND COALESCE(dedupe_key, '') != ?",
+                (
+                    self._account_id, spec.provider, spec.venue,
+                    spec.instrument_type, spec.symbol, str(timeframe),
+                    int(as_of_bar_ts), str(excluding_dedupe_key),
+                ),
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    "UPDATE paper_orders SET status = 'cancelled', "
+                    "exit_reason = 'superseded_by_new_analysis' WHERE order_id = ?",
+                    (row["order_id"],),
+                )
+                self._event(
+                    connection,
+                    str(row["order_id"]),
+                    "cancelled",
+                    int(as_of_bar_ts),
+                    {"reason": "superseded_by_new_analysis"},
+                )
+            return len(rows)
 
     def _advance(self, connection: sqlite3.Connection, row: sqlite3.Row, bar: KlineBar) -> None:
         if int(bar.ts_open) <= int(row["created_bar_ts"]):
@@ -338,6 +496,10 @@ class PaperBroker:
                 raise ValueError("long second target cannot be below first target")
             if plan.side == "short" and tp2 > plan.take_profit_price:
                 raise ValueError("short second target cannot be above first target")
+        for price in prices:
+            units = float(price) / spec.tick_size
+            if abs(units - round(units)) > 1e-7:
+                raise ValueError("paper trade price is not aligned to venue tick size")
 
     def _connect(self) -> sqlite3.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -375,9 +537,10 @@ class PaperBroker:
                 side TEXT NOT NULL, order_type TEXT NOT NULL, entry_price REAL NOT NULL,
                 stop_price REAL NOT NULL, take_profit_price REAL NOT NULL,
                 take_profit_price_2 REAL, created_bar_ts INTEGER NOT NULL,
-                quantity REAL NOT NULL, status TEXT NOT NULL, fill_price REAL,
+                dedupe_key TEXT, quantity REAL NOT NULL, status TEXT NOT NULL, fill_price REAL,
                 fill_bar_ts INTEGER, exit_price REAL, exit_bar_ts INTEGER,
                 exit_reason TEXT, realized_pnl REAL, fees REAL,
+                evaluated_through_ts INTEGER,
                 UNIQUE(account_id, run_id, arm)
             )
         """)
@@ -387,9 +550,44 @@ class PaperBroker:
                 event_type TEXT NOT NULL, bar_ts INTEGER, details_json TEXT NOT NULL
             )
         """)
+        existing = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(paper_orders)").fetchall()
+        }
+        if "dedupe_key" not in existing:
+            connection.execute("ALTER TABLE paper_orders ADD COLUMN dedupe_key TEXT")
+        if "evaluated_through_ts" not in existing:
+            connection.execute(
+                "ALTER TABLE paper_orders ADD COLUMN evaluated_through_ts INTEGER"
+            )
+        connection.execute("DROP TABLE IF EXISTS paper_market_progress")
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS paper_market_bars(
+                provider TEXT NOT NULL, venue TEXT NOT NULL,
+                instrument_type TEXT NOT NULL, symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL, ts_open INTEGER NOT NULL,
+                open REAL NOT NULL, high REAL NOT NULL, low REAL NOT NULL,
+                close REAL NOT NULL, volume REAL NOT NULL, amount REAL NOT NULL,
+                PRIMARY KEY(provider, venue, instrument_type, symbol, timeframe, ts_open)
+            )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS paper_rejections(
+                rejection_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id TEXT NOT NULL, run_id TEXT NOT NULL, arm TEXT NOT NULL,
+                dedupe_key TEXT, provider TEXT NOT NULL, venue TEXT NOT NULL,
+                instrument_type TEXT NOT NULL, symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL, reason TEXT NOT NULL,
+                UNIQUE(account_id, arm, dedupe_key)
+            )
+        """)
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_paper_orders_active "
             "ON paper_orders(account_id, symbol, status, created_bar_ts)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_orders_dedupe "
+            "ON paper_orders(account_id, arm, dedupe_key) WHERE dedupe_key IS NOT NULL"
         )
 
     @staticmethod
@@ -412,6 +610,7 @@ class PaperBroker:
             take_profit_price_2=(float(row["take_profit_price_2"])
                                  if row["take_profit_price_2"] is not None else None),
             created_bar_ts=int(row["created_bar_ts"]),
+            dedupe_key=row["dedupe_key"],
         )
         return PaperOrder(
             order_id=row["order_id"], status=row["status"],

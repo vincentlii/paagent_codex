@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -14,12 +15,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from pa_agent.config.paths import (  # noqa: E402
     EXPERIENCE_DIR,
+    PAPER_TRADING_DB_PATH,
     PROMPT_DIR,
     RECORDS_PENDING_DIR,
     SETTINGS_JSON_PATH,
 )
 from pa_agent.config.settings import load_settings  # noqa: E402
 from pa_agent.demo.record_loader import load_analysis_record  # noqa: E402
+from pa_agent.execution.coordinator import PaperExecutionCoordinator  # noqa: E402
+from pa_agent.execution.plans import instrument_spec_from_record  # noqa: E402
 from pa_agent.experiments.executor import OrchestratorArmExecutor  # noqa: E402
 from pa_agent.experiments.pa_vpa_aabb import (  # noqa: E402
     PaVpaAabbRunner,
@@ -40,6 +44,7 @@ def main() -> int:
     parser.add_argument("--settings", type=Path, default=SETTINGS_JSON_PATH)
     parser.add_argument("--pending-dir", type=Path, default=RECORDS_PENDING_DIR)
     parser.add_argument("--db", type=Path)
+    parser.add_argument("--paper-db", type=Path, default=PAPER_TRADING_DB_PATH)
     args = parser.parse_args()
 
     source_path = args.source_record.resolve()
@@ -80,6 +85,21 @@ def main() -> int:
         source_run_id=source.meta.run_id,
         source_record_path=str(source_path),
     )
+    paper_actions = []
+    paper_error = None
+    if settings.paper_trading.enabled and result.status == "completed":
+        spec = instrument_spec_from_record(source)
+        if spec is None:
+            paper_error = "source record has no provider-declared instrument spec"
+        else:
+            try:
+                actions = PaperExecutionCoordinator(
+                    args.paper_db,
+                    settings.paper_trading,
+                ).record_aabb(result, frozen, spec)
+                paper_actions = [action.__dict__ for action in actions]
+            except (OSError, sqlite3.Error, ValueError) as exc:
+                paper_error = str(exc)
     print(
         json.dumps(
             {
@@ -89,12 +109,14 @@ def main() -> int:
                 "protocol": result.protocol_report,
                 "external_comparison": result.external_comparison,
                 "db_path": str(db_path),
+                "paper_actions": paper_actions,
+                "paper_error": paper_error,
             },
             ensure_ascii=False,
             indent=2,
         )
     )
-    return 0 if result.status == "completed" else 1
+    return 0 if result.status == "completed" and paper_error is None else 1
 
 
 if __name__ == "__main__":

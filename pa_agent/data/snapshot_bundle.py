@@ -100,7 +100,7 @@ def compact_snapshot_context(frame: Any) -> dict[str, Any]:
     metadata = metadata if isinstance(metadata, dict) else {}
     identity = ResolvedInstrumentIdentity.from_value(metadata)
     bars = tuple(getattr(frame, "bars", ()) or ())
-    return {
+    context = {
         "source_identity": identity.to_dict() if identity is not None else None,
         "source": metadata.get("source"),
         "venue": metadata.get("venue"),
@@ -124,3 +124,6 @@ def compact_snapshot_context(frame: Any) -> dict[str, Any]:
         "snapshot_ts_local_ms": getattr(frame, "snapshot_ts_local_ms", None),
         "latest_closed_ts_open": bars[0].ts_open if bars else None,
     }
+    if isinstance(metadata.get("instrument_spec"), Mapping):
+        context["instrument_spec"] = dict(metadata["instrument_spec"])
+    return context

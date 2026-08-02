@@ -191,6 +191,22 @@ class SchedulerAuditStore:
             logger.warning("Scheduler success lookup failed: %s", exc)
             return False
 
+    def list_successful_jobs(self, *, limit: int = 10_000) -> list[dict[str, Any]]:
+        """Return persisted task/run links for non-LLM execution reconciliation."""
+        try:
+            with self._lock, self._connect() as connection:
+                connection.row_factory = sqlite3.Row
+                rows = connection.execute(
+                    "SELECT task_id, run_id FROM monitoring_jobs "
+                    "WHERE completion_status = 'completed' AND analysis_success = 1 "
+                    "AND run_id IS NOT NULL ORDER BY completed_at_ms DESC LIMIT ?",
+                    (max(1, min(int(limit), 1_000_000)),),
+                ).fetchall()
+            return [dict(row) for row in rows]
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            logger.warning("Scheduler reconciliation query failed: %s", exc)
+            return []
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._db_path, timeout=5.0)
         connection.execute("PRAGMA busy_timeout = 5000")

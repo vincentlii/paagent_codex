@@ -7,6 +7,7 @@ from pa_agent.config.paths import resolve_runtime_paths
 from pa_agent.config.settings import MonitoringSettings, Settings
 from pa_agent.data.base import KlineBar
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
+from pa_agent.data.instrument import InstrumentSpec
 from pa_agent.data.higher_timeframe import disabled_higher_timeframe_context
 from pa_agent.monitoring.analysis_runner import AnalysisRunResult
 from pa_agent.monitoring.headless import HeadlessMonitor
@@ -96,6 +97,48 @@ class _SubscribeFailSource(_Source):
         raise RuntimeError("subscription rejected")
 
 
+class _PaperSource(_Source):
+    def current_instrument_spec(self):
+        return InstrumentSpec(
+            provider="tradingview",
+            venue="OANDA",
+            symbol="XAUUSD",
+            instrument_type="spot",
+            tick_size=0.01,
+            quantity_step=0.01,
+            minimum_quantity=0.01,
+            maximum_quantity=1000.0,
+            minimum_notional=1.0,
+        )
+
+
+class _PaperExecution:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.observed = []
+        self.submitted = []
+
+    def observe_official(self, spec, timeframe, bars):
+        self.observed.append((spec, timeframe, bars))
+
+    def submit_official(self, record, spec, *, task_id):
+        self.submitted.append((record, spec, task_id))
+
+
+class _FailOncePaperExecution(_PaperExecution):
+    def __init__(self) -> None:
+        super().__init__()
+        self.reconciled = 0
+
+    def submit_official(self, record, spec, *, task_id):
+        del record, spec, task_id
+        raise OSError("paper database temporarily unavailable")
+
+    def reconcile_official(self, _jobs, _records_dir):
+        self.reconciled += 1
+
+
 class _FailingFetchSource(_Source):
     def __init__(self) -> None:
         super().__init__()
@@ -115,6 +158,9 @@ class _Audit:
         if self.fail_reads:
             raise OSError("audit database unavailable")
         return task_id in self.successful
+
+    def list_successful_jobs(self):
+        return [{"task_id": "task", "run_id": "run"}]
 
 
 class _Service:
@@ -175,6 +221,7 @@ def _monitor(
     run_on_startup: bool = True,
     source=None,
     audit=None,
+    paper_execution=None,
 ):
     source = source or _Source()
     audit = audit or _Audit()
@@ -198,18 +245,26 @@ def _monitor(
         analysis_fingerprint="d" * 64,
         monotonic=clock.monotonic,
         wall_time_ms=clock.now_ms,
+        paper_execution=paper_execution,
     )
     return monitor, source, audit, holder["service"], clock
 
 
-def _completion(task, *, status: str, success: bool, retryable: bool):
+def _completion(
+    task,
+    *,
+    status: str,
+    success: bool,
+    retryable: bool,
+    audit_ok: bool = True,
+):
     result = AnalysisRunResult(
         record=SimpleNamespace(meta=SimpleNamespace(run_id=f"run-{status}")),
         analysis_status=status,
         analysis_success=success,
         retryable=retryable,
         record_persisted=success,
-        audit_ok=True,
+        audit_ok=audit_ok,
     )
     return JobCompletion(task=task, status="completed", result=result)
 
@@ -246,6 +301,67 @@ def test_provider_failure_retries_same_snapshot_after_backoff_then_dedupes_succe
     monitor.poll_once()
     assert len(service.submitted) == 2
     assert source.connected == 1
+
+
+def test_paper_execution_observes_market_then_submits_only_persisted_success(tmp_path) -> None:
+    paper = _PaperExecution()
+    monitor, _source, _audit, service, _clock = _monitor(
+        tmp_path,
+        source=_PaperSource(),
+        paper_execution=paper,
+    )
+
+    monitor.poll_once()
+    task = service.submitted[-1]
+    assert len(paper.observed) == 1
+    service.on_completion(
+        _completion(task, status="completed", success=True, retryable=False)
+    )
+
+    assert len(paper.submitted) == 1
+    assert paper.submitted[0][2] == task.task_id
+
+
+def test_paper_execution_does_not_submit_when_analysis_audit_failed(tmp_path) -> None:
+    paper = _PaperExecution()
+    monitor, _source, _audit, service, _clock = _monitor(
+        tmp_path,
+        source=_PaperSource(),
+        paper_execution=paper,
+    )
+    monitor.poll_once()
+    task = service.submitted[-1]
+
+    service.on_completion(
+        _completion(
+            task,
+            status="completed",
+            success=True,
+            retryable=False,
+            audit_ok=False,
+        )
+    )
+
+    assert paper.submitted == []
+
+
+def test_paper_failure_reconciles_on_next_poll_without_resubmitting_analysis(tmp_path) -> None:
+    paper = _FailOncePaperExecution()
+    monitor, _source, _audit, service, _clock = _monitor(
+        tmp_path,
+        source=_PaperSource(),
+        paper_execution=paper,
+    )
+    monitor.poll_once()
+    task = service.submitted[-1]
+    service.on_completion(
+        _completion(task, status="completed", success=True, retryable=False)
+    )
+
+    monitor.poll_once()
+
+    assert paper.reconciled == 1
+    assert len(service.submitted) == 1
 
 
 def test_new_closed_bar_is_submitted_after_previous_snapshot_succeeds(tmp_path) -> None:

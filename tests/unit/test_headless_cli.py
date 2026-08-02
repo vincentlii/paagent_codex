@@ -167,3 +167,31 @@ def test_headless_check_smoke_uses_real_prompts_and_tradingview_adapter(
 
     assert exit_code == 0
     assert "Headless configuration OK" in capsys.readouterr().out
+
+
+def test_headless_check_rejects_paper_execution_without_native_constraints(
+    tmp_path,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    settings = Settings()
+    settings.provider.api_key = "test-key"
+    settings.paper_trading.enabled = True
+    settings.monitoring = MonitoringSettings(
+        enabled=True,
+        assets=[
+            {
+                "source": "tradingview",
+                "exchange": "OANDA",
+                "symbol": "XAUUSD",
+                "timeframe": "1h",
+            }
+        ],
+    )
+    paths = resolve_runtime_paths(
+        project_root=root,
+        environ={"PA_AGENT_HOME": str(tmp_path / "state")},
+    )
+
+    errors = validate_headless_configuration(settings, paths, platform_name="linux")
+
+    assert any("provider-declared instrument constraints" in error for error in errors)
