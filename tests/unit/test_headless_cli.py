@@ -195,3 +195,30 @@ def test_headless_check_rejects_paper_execution_without_native_constraints(
     errors = validate_headless_configuration(settings, paths, platform_name="linux")
 
     assert any("provider-declared instrument constraints" in error for error in errors)
+
+
+def test_headless_check_accepts_three_native_xau_paper_sources(tmp_path) -> None:
+    root = Path(__file__).resolve().parents[2]
+    settings = Settings()
+    settings.provider.api_key = "test-key"
+    settings.paper_trading.enabled = True
+    settings.monitoring = MonitoringSettings(
+        enabled=True,
+        assets=[
+            {"source": "binance_usdm", "symbol": "XAUUSDT", "timeframe": "1h"},
+            {"source": "okx_swap", "symbol": "XAU-USDT-SWAP", "timeframe": "1h"},
+            {
+                "source": "bitget_usdt_futures",
+                "symbol": "XAUUSDT",
+                "timeframe": "1h",
+            },
+        ],
+    )
+    paths = resolve_runtime_paths(
+        project_root=root,
+        environ={"PA_AGENT_HOME": str(tmp_path / "state")},
+    )
+
+    errors = validate_headless_configuration(settings, paths, platform_name="linux")
+
+    assert not any("provider-declared instrument constraints" in error for error in errors)

@@ -14,7 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 DecisionStance = Literal["conservative", "balanced", "aggressive", "extreme_aggressive"]
 DataSourceKind = Literal[
-    "mt5", "tradingview", "akshare", "eastmoney", "tushare", "binance_usdm"
+    "mt5", "tradingview", "akshare", "eastmoney", "tushare", "binance_usdm",
+    "okx_swap", "bitget_usdt_futures",
 ]
 VpaMode = Literal["off", "shadow", "soft"]
 MIN_ANALYSIS_BARS = 20

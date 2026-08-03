@@ -28,6 +28,21 @@ def _spec() -> InstrumentSpec:
     )
 
 
+def _contract_spec() -> InstrumentSpec:
+    return InstrumentSpec(
+        provider="okx_swap",
+        venue="OKX",
+        symbol="XAU-USDT-SWAP",
+        instrument_type="linear_swap",
+        tick_size=0.1,
+        quantity_step=1.0,
+        minimum_quantity=1.0,
+        maximum_quantity=100_000.0,
+        minimum_notional=0.0,
+        contract_multiplier=0.01,
+    )
+
+
 def _plan(*, run_id: str = "run-1") -> PaperTradePlan:
     return PaperTradePlan(
         run_id=run_id,
@@ -41,6 +56,15 @@ def _plan(*, run_id: str = "run-1") -> PaperTradePlan:
         take_profit_price=2020.0,
         take_profit_price_2=2030.0,
         created_bar_ts=1000,
+    )
+
+
+def _contract_plan(*, run_id: str = "run-1") -> PaperTradePlan:
+    return PaperTradePlan(
+        **{
+            **_plan(run_id=run_id).__dict__,
+            "symbol": "XAU-USDT-SWAP",
+        }
     )
 
 
@@ -70,6 +94,58 @@ def test_position_size_uses_stop_risk_then_caps_leverage() -> None:
     assert sized.quantity == pytest.approx(10.0)
     assert sized.notional == pytest.approx(20_000.0)
     assert sized.leverage == pytest.approx(2.0)
+
+
+def test_position_size_converts_contracts_to_base_exposure() -> None:
+    sized = size_for_structural_stop(
+        equity=10_000.0,
+        entry_price=2000.0,
+        stop_price=1990.0,
+        spec=_contract_spec(),
+        policy=RiskPolicy(risk_fraction=0.01, max_leverage=3.0),
+    )
+
+    assert sized.quantity == pytest.approx(1000.0)
+    assert sized.structural_risk == pytest.approx(100.0)
+    assert sized.notional == pytest.approx(20_000.0)
+    assert sized.leverage == pytest.approx(2.0)
+
+
+def test_contract_multiplier_round_trips_through_instrument_spec() -> None:
+    restored = InstrumentSpec.from_value(_contract_spec().to_dict())
+
+    assert restored == _contract_spec()
+    assert InstrumentSpec.from_value(_spec().to_dict()).contract_multiplier == 1.0
+
+
+def test_paper_broker_applies_contract_multiplier_to_exposure_and_pnl(
+    tmp_path: Path,
+) -> None:
+    broker = PaperBroker(
+        tmp_path / "paper.sqlite3",
+        account_id="pa-official",
+        initial_equity=10_000.0,
+        risk_policy=RiskPolicy(
+            risk_fraction=0.01,
+            max_portfolio_risk_fraction=0.03,
+            max_leverage=10.0,
+        ),
+        fee_bps=0.0,
+        slippage_bps=0.0,
+    )
+
+    first = broker.submit(_contract_plan(run_id="run-1"), _contract_spec())
+    second = broker.submit(_contract_plan(run_id="run-2"), _contract_spec())
+    assert first.quantity == pytest.approx(1000.0)
+    assert second.quantity == pytest.approx(1000.0)
+
+    broker.observe_market(
+        _contract_spec(),
+        "1h",
+        [_bar(2000, open_=2000.0, high=2021.0, low=1999.0, close=2020.0)],
+    )
+
+    assert broker.account_snapshot()["equity"] == pytest.approx(10_400.0)
 
 
 def test_position_size_rejects_untradable_minimum_notional() -> None:

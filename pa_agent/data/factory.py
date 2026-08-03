@@ -19,6 +19,8 @@ DataSourceKind = Literal[
     "tushare",
     "yfinance",
     "binance_usdm",
+    "okx_swap",
+    "bitget_usdt_futures",
 ]
 
 # UI-visible sources only — ``eastmoney`` is config/programmatic, not listed here.
@@ -26,7 +28,15 @@ DATA_SOURCE_CHOICES: tuple[tuple[DataSourceKind, str], ...] = (
     ("tradingview", "TradingView"),
     ("mt5", "MT5"),
     ("binance_usdm", "Binance USD-M"),
+    ("okx_swap", "OKX Swap"),
+    ("bitget_usdt_futures", "Bitget USDT Futures"),
 )
+
+NATIVE_PERPETUAL_KINDS: frozenset[DataSourceKind] = frozenset({
+    "binance_usdm",
+    "okx_swap",
+    "bitget_usdt_futures",
+})
 
 _HIDDEN_KINDS: frozenset[DataSourceKind] = frozenset(
     {"akshare", "eastmoney", "tushare", "yfinance"}
@@ -40,11 +50,13 @@ _DEFAULT_SYMBOLS: dict[DataSourceKind, str] = {
     "tushare": A_SHARE_DEFAULT_SYMBOL,
     "yfinance": "GC=F",
     "binance_usdm": "XAUUSDT",
+    "okx_swap": "XAU-USDT-SWAP",
+    "bitget_usdt_futures": "XAUUSDT",
 }
 
 
 def default_tradingview_exchange() -> str:
-    """Empty string = UI «（自动）» — probe all TV preset venues."""
+    """Empty string means automatic TradingView venue probing."""
     return ""
 
 
@@ -72,6 +84,10 @@ def data_source_label(kind: str | None) -> str:
         return "YFinance"
     if normalized == "binance_usdm":
         return "Binance USD-M"
+    if normalized == "okx_swap":
+        return "OKX Swap"
+    if normalized == "bitget_usdt_futures":
+        return "Bitget USDT Futures"
     return "MT5"
 
 
@@ -194,7 +210,7 @@ def volume_metadata_for_source(
             ),
             zero_semantics="observed_zero",
         )
-    elif normalized == "binance_usdm":
+    elif normalized in NATIVE_PERPETUAL_KINDS:
         metadata.update(volume_kind="real", volume_quality="exchange")
         metadata["volume_provenance"].update(
             field="volume",
@@ -204,14 +220,17 @@ def volume_metadata_for_source(
     if resolved is not None:
         metadata.update(resolved.to_metadata())
     current_spec = getattr(source, "current_instrument_spec", None)
-    if normalized == "binance_usdm" and callable(current_spec):
+    if normalized in NATIVE_PERPETUAL_KINDS and callable(current_spec):
         try:
             spec = current_spec()
         except (AttributeError, TypeError, ValueError):
             spec = None
         if spec is not None and callable(getattr(spec, "to_dict", None)):
             metadata["instrument_spec"] = spec.to_dict()
-    if type(source).__name__ in {"TradingViewSource", "MT5Source", "BinanceUsdmSource"}:
+    if type(source).__name__ in {
+        "TradingViewSource", "MT5Source", "BinanceUsdmSource", "OkxSwapSource",
+        "BitgetUsdtFuturesSource",
+    }:
         metadata["strict_close_time"] = True
     return metadata
 
@@ -231,6 +250,14 @@ def create_data_source(kind: str | None, *, settings: Any | None = None) -> Data
         from pa_agent.data.binance_usdm import BinanceUsdmSource
 
         return BinanceUsdmSource()
+    if normalized == "okx_swap":
+        from pa_agent.data.okx_swap import OkxSwapSource
+
+        return OkxSwapSource()
+    if normalized == "bitget_usdt_futures":
+        from pa_agent.data.bitget_usdt_futures import BitgetUsdtFuturesSource
+
+        return BitgetUsdtFuturesSource()
     if normalized == "eastmoney":
         from pa_agent.data.eastmoney_source import EastMoneySource
 

@@ -16,6 +16,7 @@ class InstrumentSpec:
     minimum_quantity: float
     maximum_quantity: float
     minimum_notional: float
+    contract_multiplier: float = 1.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "provider", str(self.provider).strip().lower())
@@ -34,6 +35,8 @@ class InstrumentSpec:
             raise ValueError("instrument quantity bounds are invalid")
         if self.minimum_notional < 0:
             raise ValueError("instrument minimum notional cannot be negative")
+        if self.contract_multiplier <= 0:
+            raise ValueError("instrument contract multiplier must be positive")
 
     def to_dict(self) -> dict[str, str | float]:
         return {
@@ -46,6 +49,7 @@ class InstrumentSpec:
             "minimum_quantity": self.minimum_quantity,
             "maximum_quantity": self.maximum_quantity,
             "minimum_notional": self.minimum_notional,
+            "contract_multiplier": self.contract_multiplier,
         }
 
     @classmethod
@@ -65,6 +69,7 @@ class InstrumentSpec:
                 minimum_quantity=float(value["minimum_quantity"]),
                 maximum_quantity=float(value["maximum_quantity"]),
                 minimum_notional=float(value["minimum_notional"]),
+                contract_multiplier=float(value.get("contract_multiplier", 1.0)),
             )
         except (KeyError, TypeError, ValueError):
             return None

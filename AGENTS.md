@@ -2,7 +2,7 @@
 
 - 回应与生成文件优先使用中文；代码、API、错误信息、产品名保留英文。
 - 修改、调试、优化、审查或部署本项目前，必须读取并遵循 `.agents/skills/paagent-change-guardrails/SKILL.md`。
-- 修改 PA / Wyckoff VPA 融合链路或运行时前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0012`。
+- 修改 PA / Wyckoff VPA 融合链路或运行时前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0013`。
 - 每个实现 Phase 必须按 `docs/quality/acceptance.md` 完成测试、临时文件清理和独立提交；机器阈值以 `config/quality_contract.toml` 为准。
 - VPA 必须保持开关化：以 `resolve_vpa_mode(...) == "off"` 为准，VPA prompt、测量块及历史 `vpa_*` / `wyckoff_*` 字段不得进入原 PA 链路。
 - 程序只拥有可确定、可复算、无歧义的事实测量、Schema、引用范围、订单数学和执行安全；趋势、周期、Setup、位置、信号质量及 Wyckoff 解释属于 LLM。

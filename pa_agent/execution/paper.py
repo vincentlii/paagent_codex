@@ -76,7 +76,7 @@ def size_for_structural_stop(
     stop_price = float(stop_price)
     if equity <= 0 or entry_price <= 0:
         raise ValueError("equity and entry price must be positive")
-    unit_risk = abs(entry_price - stop_price)
+    unit_risk = abs(entry_price - stop_price) * spec.contract_multiplier
     if unit_risk <= 0:
         raise ValueError("structural stop must differ from entry")
     if spec.quantity_step <= 0:
@@ -89,12 +89,12 @@ def size_for_structural_stop(
         leverage_notional = min(leverage_notional, max(0.0, float(notional_limit)))
     raw_quantity = min(
         risk_budget / unit_risk,
-        leverage_notional / entry_price,
+        leverage_notional / (entry_price * spec.contract_multiplier),
         spec.maximum_quantity,
     )
     quantity = math.floor((raw_quantity + 1e-12) / spec.quantity_step) * spec.quantity_step
     quantity = round(quantity, 12)
-    notional = quantity * entry_price
+    notional = quantity * spec.contract_multiplier * entry_price
     if quantity < spec.minimum_quantity:
         raise ValueError("position is below minimum quantity")
     if notional < spec.minimum_notional:
@@ -168,15 +168,15 @@ class PaperBroker:
                     order_id, account_id, run_id, arm, provider, venue, instrument_type,
                     symbol, timeframe, side, order_type, entry_price, stop_price,
                     take_profit_price, take_profit_price_2, created_bar_ts, dedupe_key,
-                    quantity, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                    quantity, contract_multiplier, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     order_id, self._account_id, plan.run_id, plan.arm, spec.provider,
                     spec.venue, spec.instrument_type, spec.symbol, plan.timeframe, plan.side,
                     plan.order_type, plan.entry_price, plan.stop_price, plan.take_profit_price,
                     plan.take_profit_price_2, int(plan.created_bar_ts), plan.dedupe_key,
-                    sized.quantity,
+                    sized.quantity, spec.contract_multiplier,
                 ),
             )
             self._event(connection, order_id, "submitted", None, {"sizing": asdict(sized)})
@@ -407,8 +407,12 @@ class PaperBroker:
         assert fill_price is not None
         quantity = float(row["quantity"])
         direction = 1.0 if row["side"] == "long" else -1.0
-        gross_pnl = direction * (exit_price - fill_price) * quantity
-        fees = (abs(fill_price * quantity) + abs(exit_price * quantity)) * self._fee_bps / 10_000.0
+        multiplier = float(row["contract_multiplier"])
+        gross_pnl = direction * (exit_price - fill_price) * quantity * multiplier
+        fees = (
+            abs(fill_price * quantity * multiplier)
+            + abs(exit_price * quantity * multiplier)
+        ) * self._fee_bps / 10_000.0
         net_pnl = gross_pnl - fees
         connection.execute(
             "UPDATE paper_orders SET status = 'closed', exit_price = ?, exit_bar_ts = ?, "
@@ -510,16 +514,18 @@ class PaperBroker:
 
     def _active_exposure(self, connection: sqlite3.Connection) -> tuple[float, float]:
         rows = connection.execute(
-            "SELECT quantity, entry_price, stop_price FROM paper_orders "
+            "SELECT quantity, contract_multiplier, entry_price, stop_price FROM paper_orders "
             "WHERE account_id = ? AND status IN ('pending', 'open')",
             (self._account_id,),
         ).fetchall()
         risk = sum(
-            float(row["quantity"]) * abs(float(row["entry_price"]) - float(row["stop_price"]))
+            float(row["quantity"]) * float(row["contract_multiplier"])
+            * abs(float(row["entry_price"]) - float(row["stop_price"]))
             for row in rows
         )
         notional = sum(
-            float(row["quantity"]) * float(row["entry_price"]) for row in rows
+            float(row["quantity"]) * float(row["contract_multiplier"])
+            * float(row["entry_price"]) for row in rows
         )
         return risk, notional
 
@@ -538,6 +544,7 @@ class PaperBroker:
                 stop_price REAL NOT NULL, take_profit_price REAL NOT NULL,
                 take_profit_price_2 REAL, created_bar_ts INTEGER NOT NULL,
                 dedupe_key TEXT, quantity REAL NOT NULL, status TEXT NOT NULL, fill_price REAL,
+                contract_multiplier REAL NOT NULL DEFAULT 1.0,
                 fill_bar_ts INTEGER, exit_price REAL, exit_bar_ts INTEGER,
                 exit_reason TEXT, realized_pnl REAL, fees REAL,
                 evaluated_through_ts INTEGER,
@@ -559,6 +566,11 @@ class PaperBroker:
         if "evaluated_through_ts" not in existing:
             connection.execute(
                 "ALTER TABLE paper_orders ADD COLUMN evaluated_through_ts INTEGER"
+            )
+        if "contract_multiplier" not in existing:
+            connection.execute(
+                "ALTER TABLE paper_orders ADD COLUMN contract_multiplier "
+                "REAL NOT NULL DEFAULT 1.0"
             )
         connection.execute("DROP TABLE IF EXISTS paper_market_progress")
         connection.execute("""

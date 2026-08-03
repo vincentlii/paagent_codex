@@ -100,12 +100,15 @@ def validate_headless_configuration(
         paths.experience_dir,
     }
     if settings.paper_trading.enabled:
+        from pa_agent.data.factory import NATIVE_PERPETUAL_KINDS
+
         writable_dirs.add(paths.paper_trading_db_path.parent)
-        unsupported = [asset for asset in assets if asset.source != "binance_usdm"]
+        unsupported = [asset for asset in assets if asset.source not in NATIVE_PERPETUAL_KINDS]
         if unsupported:
             errors.append(
                 "paper trading requires a native source with provider-declared "
-                "instrument constraints; currently supported: binance_usdm"
+                "instrument constraints; currently supported: "
+                + ", ".join(sorted(NATIVE_PERPETUAL_KINDS))
             )
     for directory in sorted(writable_dirs, key=str):
         try:
@@ -121,13 +124,13 @@ def validate_headless_configuration(
 def build_headless_monitor(settings: Settings, paths: RuntimePaths):
     """Wire the production scheduler without importing any Qt component."""
     from pa_agent.data.factory import create_data_source
+    from pa_agent.execution.coordinator import PaperExecutionCoordinator
     from pa_agent.monitoring.analysis_runner import IndependentAnalysisHandler
     from pa_agent.monitoring.audit import SchedulerAuditStore
     from pa_agent.monitoring.headless import HeadlessMonitor
     from pa_agent.monitoring.production import ProductionOrchestratorFactory
     from pa_agent.monitoring.service import MultiAssetAnalysisService
     from pa_agent.monitoring.task_factory import analysis_runtime_fingerprint
-    from pa_agent.execution.coordinator import PaperExecutionCoordinator
     from pa_agent.records.pending_writer import PendingWriter
 
     pending_writer = PendingWriter(
