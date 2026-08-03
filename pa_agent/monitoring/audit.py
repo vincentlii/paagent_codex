@@ -199,7 +199,8 @@ class SchedulerAuditStore:
                 rows = connection.execute(
                     "SELECT task_id, run_id FROM monitoring_jobs "
                     "WHERE completion_status = 'completed' AND analysis_success = 1 "
-                    "AND run_id IS NOT NULL ORDER BY completed_at_ms DESC LIMIT ?",
+                    "AND run_id IS NOT NULL "
+                    "ORDER BY task_created_at_ms ASC, completed_at_ms ASC LIMIT ?",
                     (max(1, min(int(limit), 1_000_000)),),
                 ).fetchall()
             return [dict(row) for row in rows]

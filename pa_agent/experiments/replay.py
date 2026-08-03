@@ -27,6 +27,7 @@ def _current_metadata(record: AnalysisRecord) -> dict[str, Any]:
             "seasonality_history_end_ts_open",
             "seasonality_history_is_causal",
             "seasonality_context_hash",
+            "instrument_spec",
         )
         if context.get(key) is not None
     }

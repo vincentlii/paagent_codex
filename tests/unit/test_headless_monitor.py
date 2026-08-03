@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -7,8 +8,8 @@ from pa_agent.config.paths import resolve_runtime_paths
 from pa_agent.config.settings import MonitoringSettings, Settings
 from pa_agent.data.base import KlineBar
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
-from pa_agent.data.instrument import InstrumentSpec
 from pa_agent.data.higher_timeframe import disabled_higher_timeframe_context
+from pa_agent.data.instrument import InstrumentSpec
 from pa_agent.monitoring.analysis_runner import AnalysisRunResult
 from pa_agent.monitoring.headless import HeadlessMonitor
 from pa_agent.monitoring.scheduler import JobCompletion, SubmissionResult
@@ -220,6 +221,7 @@ def _monitor(
     *,
     run_on_startup: bool = True,
     source=None,
+    source_factory=None,
     audit=None,
     paper_execution=None,
 ):
@@ -240,7 +242,7 @@ def _monitor(
             environ={"PA_AGENT_HOME": str(tmp_path / "state")},
         ),
         scheduler_audit=audit,
-        source_factory=lambda _asset: source,
+        source_factory=source_factory or (lambda _asset: source),
         service_factory=service_factory,
         analysis_fingerprint="d" * 64,
         monotonic=clock.monotonic,
@@ -322,6 +324,24 @@ def test_paper_execution_observes_market_then_submits_only_persisted_success(tmp
     assert paper.submitted[0][2] == task.task_id
 
 
+def test_same_snapshot_does_not_repeat_paper_market_observation(tmp_path) -> None:
+    paper = _PaperExecution()
+    monitor, _source, _audit, service, _clock = _monitor(
+        tmp_path,
+        source=_PaperSource(),
+        paper_execution=paper,
+    )
+
+    monitor.poll_once()
+    task = service.submitted[-1]
+    service.on_completion(
+        _completion(task, status="completed", success=True, retryable=False)
+    )
+    monitor.poll_once()
+
+    assert len(paper.observed) == 1
+
+
 def test_paper_execution_does_not_submit_when_analysis_audit_failed(tmp_path) -> None:
     paper = _PaperExecution()
     monitor, _source, _audit, service, _clock = _monitor(
@@ -360,7 +380,7 @@ def test_paper_failure_reconciles_on_next_poll_without_resubmitting_analysis(tmp
 
     monitor.poll_once()
 
-    assert paper.reconciled == 1
+    assert paper.reconciled == 2
     assert len(service.submitted) == 1
 
 
@@ -491,7 +511,7 @@ def test_shutdown_disconnects_sources_and_closes_service(tmp_path) -> None:
     assert service.closed is True
 
 
-def test_shutdown_closes_sources_before_waiting_on_data_workers(tmp_path) -> None:
+def test_shutdown_waits_for_data_workers_before_closing_sources(tmp_path) -> None:
     monitor, source, _audit, _service, _clock = _monitor(tmp_path)
     monitor.poll_once()
     observed: list[int] = []
@@ -506,7 +526,32 @@ def test_shutdown_closes_sources_before_waiting_on_data_workers(tmp_path) -> Non
 
     monitor.shutdown()
 
-    assert observed == [1]
+    assert observed == [0]
+    assert source.disconnected == 1
+
+
+def test_shutdown_bounds_active_data_future_before_forced_disconnect(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monitor, source, _audit, _service, _clock = _monitor(tmp_path)
+    monitor.poll_once()
+    active = Future()
+    monitor._data_futures.add(active)
+    observed: dict[str, object] = {}
+
+    def bounded_wait(futures, *, timeout):
+        observed["futures"] = tuple(futures)
+        observed["timeout"] = timeout
+        return set(), set(futures)
+
+    monkeypatch.setattr("pa_agent.monitoring.headless.wait", bounded_wait)
+
+    monitor.shutdown()
+
+    assert observed["futures"] == (active,)
+    assert observed["timeout"] == 60.0
+    assert source.disconnected == 1
 
 
 def test_subscribe_failure_disconnects_the_partially_connected_source(tmp_path) -> None:
@@ -519,6 +564,29 @@ def test_subscribe_failure_disconnects_the_partially_connected_source(tmp_path) 
     assert source.connected == 1
     assert source.disconnected == 1
     assert service.submitted == []
+
+
+def test_fetch_failure_discards_closed_source_and_recreates_it_after_backoff(
+    tmp_path,
+) -> None:
+    failed = _FailingFetchSource()
+    recovered = _Source()
+    sources = iter((failed, recovered))
+    monitor, _source, _audit, service, clock = _monitor(
+        tmp_path,
+        source=failed,
+        source_factory=lambda _asset: next(sources),
+    )
+
+    first = monitor.poll_once()
+    clock.monotonic_value += 31
+    second = monitor.poll_once()
+
+    assert first.failed == 1
+    assert failed.disconnected == 1
+    assert second.accepted == 1
+    assert recovered.connected == 1
+    assert len(service.submitted) == 1
 
 
 def test_repeated_market_data_failures_use_exponential_backoff(tmp_path) -> None:

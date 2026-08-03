@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
+from pa_agent.experiments.pa_vpa_aabb import AABB_PROTOCOL_VERSION
 from pa_agent.experiments.store import AnalysisExperimentStore
 from tests.integration.conftest import make_frame
 from tests.unit.test_pa_vpa_aabb_protocol import _record
@@ -91,6 +92,7 @@ def test_reports_use_assigned_treatment_for_itt_and_received_treatment_for_per_p
     db_path = tmp_path / "analysis.sqlite3"
     store = AnalysisExperimentStore(db_path)
     manifest = _manifest("aabb-report")
+    manifest["protocol_version"] = AABB_PROTOCOL_VERSION
     assert store.start_experiment(manifest).ok
     arms = [
         _arm("A1", "run-A1"),
@@ -143,6 +145,8 @@ def test_reports_use_assigned_treatment_for_itt_and_received_treatment_for_per_p
         )
 
     frequency = store.frequency_report(min_unique_snapshots=1)
+    assert frequency["protocol_version"] == AABB_PROTOCOL_VERSION
+    assert frequency["protocol_versions"] == [AABB_PROTOCOL_VERSION]
     assert frequency["intention_to_treat"]["A"]["runs"] == 2
     assert frequency["intention_to_treat"]["B"]["runs"] == 2
     assert frequency["per_protocol"]["B"]["runs"] == 1

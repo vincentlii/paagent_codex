@@ -145,6 +145,7 @@ def _research_summary(connection: sqlite3.Connection) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "cohorts": 0,
         "complete_aabb_cohorts": 0,
+        "complete_aabb_snapshots": 0,
         "unit_of_analysis": "paired_market_snapshot",
         "descriptive_only": True,
     }
@@ -154,15 +155,21 @@ def _research_summary(connection: sqlite3.Connection) -> dict[str, Any]:
         "SELECT COUNT(DISTINCT cohort_id) FROM paper_decisions "
         "WHERE cohort_id IS NOT NULL AND cohort_id != ''"
     ).fetchone()[0])
-    summary["complete_aabb_cohorts"] = int(connection.execute("""
-        SELECT COUNT(*) FROM (
-            SELECT cohort_id FROM paper_decisions
+    complete_groups = """
+        SELECT cohort_id, market_snapshot_hash FROM paper_decisions
             WHERE cohort_id IS NOT NULL AND cohort_id != ''
-            GROUP BY cohort_id
-            HAVING COUNT(DISTINCT arm) = 4
+              AND market_snapshot_hash IS NOT NULL AND market_snapshot_hash != ''
+            GROUP BY cohort_id, market_snapshot_hash
+            HAVING COUNT(*) = 4
+               AND COUNT(DISTINCT arm) = 4
                AND SUM(CASE WHEN arm IN ('A1', 'A2', 'B1', 'B2') THEN 1 ELSE 0 END) = 4
-        )
-    """).fetchone()[0])
+    """
+    summary["complete_aabb_snapshots"] = int(connection.execute(
+        f"SELECT COUNT(*) FROM ({complete_groups})"
+    ).fetchone()[0])
+    summary["complete_aabb_cohorts"] = int(connection.execute(
+        f"SELECT COUNT(DISTINCT cohort_id) FROM ({complete_groups})"
+    ).fetchone()[0])
     return summary
 
 

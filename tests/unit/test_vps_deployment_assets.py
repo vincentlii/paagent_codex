@@ -42,4 +42,6 @@ def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     assert "systemctl enable" not in installer
     assert "YOUR_API_KEY" not in installer
     assert 'cd "$APP_DIR"' in installer
+    assert "${APP_DIR:-" not in installer
+    assert "${STATE_DIR:-" not in installer
     assert "*.sh text eol=lf" in attributes

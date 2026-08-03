@@ -266,6 +266,38 @@ def test_breakout_and_stop_gap_use_open_instead_of_optimistic_trigger_price(
     assert saved["exit_reason"] == "protective_stop"
 
 
+def test_gap_fill_reduces_quantity_to_preserve_structural_risk(tmp_path: Path) -> None:
+    broker = PaperBroker(
+        tmp_path / "paper.sqlite3",
+        account_id="pa-official",
+        initial_equity=10_000.0,
+        risk_policy=RiskPolicy(
+            risk_fraction=0.01,
+            max_portfolio_risk_fraction=0.02,
+            max_leverage=3.0,
+        ),
+        fee_bps=0.0,
+        slippage_bps=0.0,
+    )
+    plan = _plan().__class__(**{**_plan().__dict__, "order_type": "breakout"})
+    order = broker.submit(plan, _spec())
+
+    changed_live_spec = _spec().__class__(
+        **{**_spec().__dict__, "maximum_quantity": 1.0}
+    )
+    broker.observe_market(
+        changed_live_spec,
+        "1h",
+        [_bar(2000, open_=2010.0, high=2012.0, low=2001.0, close=2008.0)],
+    )
+
+    saved = broker.order(order.order_id)
+    assert saved["status"] == "open"
+    assert saved["fill_price"] == pytest.approx(2010.0)
+    assert saved["quantity"] == pytest.approx(5.0)
+    assert saved["quantity"] * (saved["fill_price"] - saved["stop_price"]) <= 100.0
+
+
 def test_broker_deduplicates_same_run_and_arm(tmp_path: Path) -> None:
     broker = PaperBroker(
         tmp_path / "paper.sqlite3",

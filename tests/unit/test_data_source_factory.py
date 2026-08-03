@@ -81,6 +81,19 @@ def test_native_perpetual_sources_are_explicit_exchange_volume_sources() -> None
         assert metadata["volume_quality"] == "exchange"
 
 
+def test_native_perpetual_volume_provenance_matches_base_asset_fields() -> None:
+    expected_fields = {
+        "binance_usdm": "volume",
+        "okx_swap": "volCcy",
+        "bitget_usdt_futures": "baseVolume",
+    }
+
+    for kind, field in expected_fields.items():
+        provenance = volume_metadata_for_source(kind)["volume_provenance"]
+        assert provenance["field"] == field
+        assert provenance["basis"] == "exchange_base_asset_volume"
+
+
 def test_default_tradingview_exchange_is_auto():
     assert default_tradingview_exchange() == ""
 

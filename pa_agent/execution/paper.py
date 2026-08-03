@@ -168,8 +168,8 @@ class PaperBroker:
                     order_id, account_id, run_id, arm, provider, venue, instrument_type,
                     symbol, timeframe, side, order_type, entry_price, stop_price,
                     take_profit_price, take_profit_price_2, created_bar_ts, dedupe_key,
-                    quantity, contract_multiplier, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                    quantity, contract_multiplier, instrument_spec_json, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     order_id, self._account_id, plan.run_id, plan.arm, spec.provider,
@@ -177,10 +177,11 @@ class PaperBroker:
                     plan.order_type, plan.entry_price, plan.stop_price, plan.take_profit_price,
                     plan.take_profit_price_2, int(plan.created_bar_ts), plan.dedupe_key,
                     sized.quantity, spec.contract_multiplier,
+                    json.dumps(spec.to_dict(), sort_keys=True, separators=(",", ":")),
                 ),
             )
             self._event(connection, order_id, "submitted", None, {"sizing": asdict(sized)})
-            self._replay_stored_bars(connection, order_id)
+            self._replay_stored_bars(connection, order_id, spec)
             row = connection.execute(
                 "SELECT * FROM paper_orders WHERE order_id = ?", (order_id,)
             ).fetchone()
@@ -190,6 +191,7 @@ class PaperBroker:
         self,
         connection: sqlite3.Connection,
         order_id: str,
+        spec: InstrumentSpec,
     ) -> None:
         order = connection.execute(
             "SELECT * FROM paper_orders WHERE order_id = ?", (order_id,)
@@ -228,6 +230,7 @@ class PaperBroker:
                     amount=float(raw["amount"]),
                     closed=True,
                 ),
+                spec,
             )
             connection.execute(
                 "UPDATE paper_orders SET evaluated_through_ts = ? WHERE order_id = ?",
@@ -288,7 +291,7 @@ class PaperBroker:
                 (self._account_id, *market_key),
             ).fetchall()
             for order in orders:
-                self._replay_stored_bars(connection, str(order["order_id"]))
+                self._replay_stored_bars(connection, str(order["order_id"]), spec)
             return observed
 
     def account_snapshot(self) -> dict[str, Any]:
@@ -384,9 +387,23 @@ class PaperBroker:
                 )
             return len(rows)
 
-    def _advance(self, connection: sqlite3.Connection, row: sqlite3.Row, bar: KlineBar) -> None:
+    def _advance(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        bar: KlineBar,
+        spec: InstrumentSpec,
+    ) -> None:
         if int(bar.ts_open) <= int(row["created_bar_ts"]):
             return
+        stored_spec = spec
+        if row["instrument_spec_json"]:
+            try:
+                stored_spec = InstrumentSpec.from_value(
+                    json.loads(str(row["instrument_spec_json"]))
+                ) or spec
+            except (TypeError, ValueError, json.JSONDecodeError):
+                stored_spec = spec
         fill_price = float(row["fill_price"]) if row["fill_price"] is not None else None
         filled_this_bar = row["status"] == "pending"
         if filled_this_bar:
@@ -394,18 +411,41 @@ class PaperBroker:
             if fill_price is None:
                 self._event(connection, row["order_id"], "bar_observed", int(bar.ts_open), {"status": "pending"})
                 return
+            quantity = self._quantity_at_fill(connection, row, fill_price, stored_spec)
+            if quantity is None:
+                connection.execute(
+                    "UPDATE paper_orders SET status = 'cancelled', "
+                    "exit_reason = 'fill_risk_limits' WHERE order_id = ?",
+                    (row["order_id"],),
+                )
+                self._event(
+                    connection,
+                    row["order_id"],
+                    "cancelled",
+                    int(bar.ts_open),
+                    {"reason": "fill_risk_limits", "attempted_fill_price": fill_price},
+                )
+                return
             connection.execute(
-                "UPDATE paper_orders SET status = 'open', fill_price = ?, fill_bar_ts = ? WHERE order_id = ?",
-                (fill_price, int(bar.ts_open), row["order_id"]),
+                "UPDATE paper_orders SET status = 'open', fill_price = ?, fill_bar_ts = ?, "
+                "quantity = ? WHERE order_id = ?",
+                (fill_price, int(bar.ts_open), quantity, row["order_id"]),
             )
-            self._event(connection, row["order_id"], "filled", int(bar.ts_open), {"price": fill_price})
+            self._event(
+                connection,
+                row["order_id"],
+                "filled",
+                int(bar.ts_open),
+                {"price": fill_price, "quantity": quantity},
+            )
+        else:
+            quantity = float(row["quantity"])
         exit_fill = self._exit_fill(row, bar, filled_this_bar=filled_this_bar)
         if exit_fill is None:
             self._event(connection, row["order_id"], "bar_observed", int(bar.ts_open), {"status": "open"})
             return
         exit_price, reason = exit_fill
         assert fill_price is not None
-        quantity = float(row["quantity"])
         direction = 1.0 if row["side"] == "long" else -1.0
         multiplier = float(row["contract_multiplier"])
         gross_pnl = direction * (exit_price - fill_price) * quantity * multiplier
@@ -479,6 +519,43 @@ class PaperBroker:
         sign = 1.0 if buy else -1.0
         return float(price) * (1.0 + sign * self._slippage_bps / 10_000.0)
 
+    def _quantity_at_fill(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        fill_price: float,
+        spec: InstrumentSpec,
+    ) -> float | None:
+        stop = float(row["stop_price"])
+        side = str(row["side"])
+        if (side == "long" and fill_price <= stop) or (
+            side == "short" and fill_price >= stop
+        ):
+            return None
+        equity = float(connection.execute(
+            "SELECT equity FROM paper_accounts WHERE account_id = ?",
+            (self._account_id,),
+        ).fetchone()[0])
+        active_risk, active_notional = self._active_exposure(
+            connection,
+            exclude_order_id=str(row["order_id"]),
+        )
+        try:
+            sized = size_for_structural_stop(
+                equity=equity,
+                entry_price=fill_price,
+                stop_price=stop,
+                spec=spec,
+                policy=self._policy,
+                risk_budget_limit=(
+                    equity * self._policy.max_portfolio_risk_fraction - active_risk
+                ),
+                notional_limit=(equity * self._policy.max_leverage - active_notional),
+            )
+        except ValueError:
+            return None
+        return min(float(row["quantity"]), sized.quantity)
+
     @staticmethod
     def _validate_plan(plan: PaperTradePlan, spec: InstrumentSpec) -> None:
         if not plan.run_id or not plan.arm or not plan.symbol or not plan.timeframe:
@@ -512,20 +589,32 @@ class PaperBroker:
         connection.execute("PRAGMA busy_timeout = 5000")
         return connection
 
-    def _active_exposure(self, connection: sqlite3.Connection) -> tuple[float, float]:
+    def _active_exposure(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        exclude_order_id: str | None = None,
+    ) -> tuple[float, float]:
+        exclusion = " AND order_id != ?" if exclude_order_id is not None else ""
+        parameters = (
+            (self._account_id, exclude_order_id)
+            if exclude_order_id is not None
+            else (self._account_id,)
+        )
         rows = connection.execute(
-            "SELECT quantity, contract_multiplier, entry_price, stop_price FROM paper_orders "
-            "WHERE account_id = ? AND status IN ('pending', 'open')",
-            (self._account_id,),
+            "SELECT quantity, contract_multiplier, COALESCE(fill_price, entry_price) "
+            "AS exposure_price, stop_price FROM paper_orders "
+            "WHERE account_id = ? AND status IN ('pending', 'open')" + exclusion,
+            parameters,
         ).fetchall()
         risk = sum(
             float(row["quantity"]) * float(row["contract_multiplier"])
-            * abs(float(row["entry_price"]) - float(row["stop_price"]))
+            * abs(float(row["exposure_price"]) - float(row["stop_price"]))
             for row in rows
         )
         notional = sum(
             float(row["quantity"]) * float(row["contract_multiplier"])
-            * float(row["entry_price"]) for row in rows
+            * float(row["exposure_price"]) for row in rows
         )
         return risk, notional
 
@@ -545,6 +634,7 @@ class PaperBroker:
                 take_profit_price_2 REAL, created_bar_ts INTEGER NOT NULL,
                 dedupe_key TEXT, quantity REAL NOT NULL, status TEXT NOT NULL, fill_price REAL,
                 contract_multiplier REAL NOT NULL DEFAULT 1.0,
+                instrument_spec_json TEXT,
                 fill_bar_ts INTEGER, exit_price REAL, exit_bar_ts INTEGER,
                 exit_reason TEXT, realized_pnl REAL, fees REAL,
                 evaluated_through_ts INTEGER,
@@ -571,6 +661,10 @@ class PaperBroker:
             connection.execute(
                 "ALTER TABLE paper_orders ADD COLUMN contract_multiplier "
                 "REAL NOT NULL DEFAULT 1.0"
+            )
+        if "instrument_spec_json" not in existing:
+            connection.execute(
+                "ALTER TABLE paper_orders ADD COLUMN instrument_spec_json TEXT"
             )
         connection.execute("DROP TABLE IF EXISTS paper_market_progress")
         connection.execute("""

@@ -285,17 +285,6 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
         paths.paper_trading_db_path,
         settings.paper_trading,
     )
-    if paper_execution.enabled:
-        try:
-            paper_execution.reconcile_official(
-                scheduler_audit.list_successful_jobs(),
-                paths.records_pending_dir,
-            )
-        except Exception:
-            logging.getLogger("pa_agent").exception(
-                "Paper execution reconciliation failed; analysis startup continues"
-            )
-
     def service_factory(on_completion):
         monitoring = settings.monitoring
         return MultiAssetAnalysisService(

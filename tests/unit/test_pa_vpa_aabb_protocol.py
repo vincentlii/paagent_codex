@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from pa_agent.data.snapshot_identity import (
 )
 from pa_agent.experiments.pa_vpa_aabb import (
     AABB_PROTOCOL_VERSION,
+    LEGACY_AABB_PROTOCOL_VERSION,
     ArmExecution,
     PaVpaAabbRunner,
     balanced_arm_sequence,
@@ -24,8 +26,8 @@ from pa_agent.experiments.pa_vpa_aabb import (
 )
 from pa_agent.experiments.store import AnalysisExperimentStore
 from pa_agent.records.audit_store import AnalysisAuditStore
-from pa_agent.records.pending_writer import PendingWriter
 from pa_agent.records.codec import dump_record
+from pa_agent.records.pending_writer import PendingWriter
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
 from pa_agent.util.threading import CancelToken
 from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
@@ -254,6 +256,36 @@ def test_frozen_input_hash_covers_htf_catalog_provider_and_settings() -> None:
     assert changed_runtime.cohort_id != frozen.cohort_id
 
 
+def test_frozen_input_hash_covers_instrument_execution_constraints() -> None:
+    frame = make_frame()
+    base_spec = {
+        "provider": "okx_swap",
+        "venue": "OKX",
+        "symbol": frame.symbol,
+        "instrument_type": "linear_swap",
+        "tick_size": 0.1,
+        "quantity_step": 1.0,
+        "minimum_quantity": 1.0,
+        "maximum_quantity": 100000.0,
+        "minimum_notional": 0.0,
+        "contract_multiplier": 0.001,
+    }
+    first_frame = replace(frame, data_metadata={"instrument_spec": base_spec})
+    second_frame = replace(
+        frame,
+        data_metadata={
+            "instrument_spec": {**base_spec, "contract_multiplier": 0.01}
+        },
+    )
+    first = freeze_experiment_input(first_frame, None, Settings())
+    second = freeze_experiment_input(second_frame, None, Settings())
+
+    assert first.instrument_spec.contract_multiplier == 0.001
+    assert first.instrument_spec_hash != second.instrument_spec_hash
+    assert first.frozen_input_hash != second.frozen_input_hash
+    assert first.market_snapshot_hash != second.market_snapshot_hash
+
+
 def test_protocol_validator_replays_legacy_unversioned_market_hash() -> None:
     frame = make_frame()
     settings = Settings()
@@ -293,7 +325,9 @@ def test_protocol_validator_replays_legacy_unversioned_market_hash() -> None:
             client_instance_token=f"legacy-{arm_id}",
             stage1_request_hash="1" * 64,
         )
+        context["protocol_version"] = LEGACY_AABB_PROTOCOL_VERSION
         context.pop("market_snapshot_hash_algorithm")
+        context.pop("instrument_spec_hash")
         context["market_snapshot_hash"] = legacy_market_hash
         context["frozen_input_hash"] = legacy_frozen_hash
         context["first_pass_clean"] = True

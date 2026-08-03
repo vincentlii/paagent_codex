@@ -6,6 +6,7 @@ import pytest
 
 from pa_agent.data.instrument import InstrumentSpec
 from pa_agent.execution.plans import official_paper_plan, research_arm_plan
+from pa_agent.experiments.pa_vpa_aabb import AABB_PROTOCOL_VERSION
 
 
 def _spec() -> InstrumentSpec:
@@ -127,6 +128,19 @@ def test_research_b_fallback_keeps_itt_pa_decision() -> None:
 
     assert fallback is not None
     assert fallback.arm == "B2"
+
+
+def test_research_plan_accepts_current_aabb_protocol() -> None:
+    record = _record(path="joint", mode="soft", arm="B1")
+    record.experiment_context["protocol_version"] = AABB_PROTOCOL_VERSION
+
+    plan = research_arm_plan(
+        record,
+        _spec(),
+        market_snapshot_hash="c" * 64,
+    )
+
+    assert plan is not None and plan.arm == "B1"
 
 
 def test_plan_rejects_cross_contract_execution() -> None:

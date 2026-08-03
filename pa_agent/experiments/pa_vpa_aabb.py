@@ -24,18 +24,23 @@ from pa_agent.ai.vpa_measurements import (
     vpa_catalog_id,
 )
 from pa_agent.data.base import KlineFrame
+from pa_agent.data.instrument import InstrumentSpec
+from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.data.snapshot_identity import (
     LEGACY_SNAPSHOT_HASH_ALGORITHM,
     SNAPSHOT_HASH_ALGORITHM,
     canonical_market_snapshot_hash,
 )
-from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.quality.runtime_fingerprint import (
     analysis_runtime_fingerprint as _shared_runtime_fingerprint,
 )
 from pa_agent.records.schema import AnalysisRecord
 
-AABB_PROTOCOL_VERSION = "pa_vpa_aabb_v1"
+LEGACY_AABB_PROTOCOL_VERSION = "pa_vpa_aabb_v1"
+AABB_PROTOCOL_VERSION = "pa_vpa_aabb_v2"
+SUPPORTED_AABB_PROTOCOL_VERSIONS = frozenset(
+    {LEGACY_AABB_PROTOCOL_VERSION, AABB_PROTOCOL_VERSION}
+)
 ArmGroup = Literal["A", "B"]
 ArmMode = Literal["off", "soft"]
 _EXPECTED_ARM_IDS = frozenset({"A1", "A2", "B1", "B2"})
@@ -139,6 +144,8 @@ class FrozenExperimentInput:
     frozen_input_hash: str
     market_snapshot_hash: str
     market_snapshot_hash_algorithm: str
+    instrument_spec: InstrumentSpec | None
+    instrument_spec_hash: str
     cohort_id: str
     snapshot_hash: str
     htf_hash: str
@@ -167,6 +174,7 @@ class FrozenExperimentInput:
             "frozen_input_hash": self.frozen_input_hash,
             "market_snapshot_hash": self.market_snapshot_hash,
             "market_snapshot_hash_algorithm": self.market_snapshot_hash_algorithm,
+            "instrument_spec_hash": self.instrument_spec_hash,
             "cohort_id": self.cohort_id,
             "snapshot_hash": self.snapshot_hash,
             "htf_hash": self.htf_hash,
@@ -218,6 +226,10 @@ def freeze_experiment_input(
         }
     )
     snapshot_context = compact_snapshot_context(frame)
+    instrument_spec = InstrumentSpec.from_value(snapshot_context.get("instrument_spec"))
+    instrument_spec_hash = _stable_hash(
+        instrument_spec.to_dict() if instrument_spec is not None else None
+    )
     provider_fingerprint = _provider_fingerprint(settings)
     settings_fingerprint = _settings_fingerprint(settings)
     runtime_fingerprint = str(analysis_fingerprint or analysis_runtime_fingerprint()).strip()
@@ -245,6 +257,7 @@ def freeze_experiment_input(
             "market_snapshot_hash": market_snapshot_hash,
             "catalog_id": frozen_catalog["catalog_id"],
             "cohort_id": cohort_id,
+            "instrument_spec_hash": instrument_spec_hash,
         }
     )
     return FrozenExperimentInput(
@@ -254,6 +267,8 @@ def freeze_experiment_input(
         frozen_input_hash=frozen_hash,
         market_snapshot_hash=market_snapshot_hash,
         market_snapshot_hash_algorithm=SNAPSHOT_HASH_ALGORITHM,
+        instrument_spec=copy.deepcopy(instrument_spec),
+        instrument_spec_hash=instrument_spec_hash,
         cohort_id=cohort_id,
         snapshot_hash=str(frozen_catalog["snapshot_hash"]),
         htf_hash=htf_hash,
@@ -269,13 +284,14 @@ def freeze_experiment_input(
 
 def _record_frozen_input_hash(record: AnalysisRecord) -> str:
     context = record.experiment_context or {}
-    return _stable_hash(
-        {
-            "market_snapshot_hash": _record_market_snapshot_hash(record),
-            "catalog_id": context.get("catalog_id"),
-            "cohort_id": _record_cohort_id(record),
-        }
-    )
+    payload = {
+        "market_snapshot_hash": _record_market_snapshot_hash(record),
+        "catalog_id": context.get("catalog_id"),
+        "cohort_id": _record_cohort_id(record),
+    }
+    if context.get("protocol_version") == AABB_PROTOCOL_VERSION:
+        payload["instrument_spec_hash"] = context.get("instrument_spec_hash")
+    return _stable_hash(payload)
 
 
 def _record_market_snapshot_hash(record: AnalysisRecord) -> str:
@@ -417,6 +433,8 @@ def validate_aabb_records(records: list[AnalysisRecord]) -> dict[str, Any]:
     if set(by_arm) != _EXPECTED_ARM_IDS:
         errors.add("invalid_arm_set")
 
+    protocol_versions = {str(context.get("protocol_version") or "") for context in contexts}
+    current_protocol = protocol_versions == {AABB_PROTOCOL_VERSION}
     invariant_keys = (
         "protocol_version",
         "experiment_id",
@@ -432,10 +450,12 @@ def validate_aabb_records(records: list[AnalysisRecord]) -> dict[str, Any]:
         "analysis_fingerprint",
         "order_scheme",
     )
+    if current_protocol:
+        invariant_keys = (*invariant_keys, "instrument_spec_hash")
     for key in invariant_keys:
         if len({str(context.get(key)) for context in contexts}) != 1:
             errors.add(f"{key}_drift")
-    for key in (
+    digest_keys = (
         "frozen_input_hash",
         "market_snapshot_hash",
         "cohort_id",
@@ -444,11 +464,16 @@ def validate_aabb_records(records: list[AnalysisRecord]) -> dict[str, Any]:
         "provider_fingerprint",
         "settings_fingerprint",
         "analysis_fingerprint",
-    ):
+    )
+    if current_protocol:
+        digest_keys = (*digest_keys, "instrument_spec_hash")
+    for key in digest_keys:
         value = str(contexts[0].get(key) or "").lower()
         if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
             errors.add(f"invalid_{key}")
-    if any(context.get("protocol_version") != AABB_PROTOCOL_VERSION for context in contexts):
+    if len(protocol_versions) != 1 or not protocol_versions.issubset(
+        SUPPORTED_AABB_PROTOCOL_VERSIONS
+    ):
         errors.add("unsupported_protocol_version")
 
     sequences = {tuple(context.get("arm_sequence") or []) for context in contexts}
@@ -582,6 +607,7 @@ class PaVpaAabbRunner:
             "timeframe": frozen.frame.timeframe,
             "frozen_input_hash": frozen.frozen_input_hash,
             "market_snapshot_hash": frozen.market_snapshot_hash,
+            "instrument_spec_hash": frozen.instrument_spec_hash,
             "cohort_id": frozen.cohort_id,
             "snapshot_hash": frozen.snapshot_hash,
             "htf_hash": frozen.htf_hash,

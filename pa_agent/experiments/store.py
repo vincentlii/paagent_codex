@@ -319,6 +319,9 @@ class AnalysisExperimentStore:
             return {**rows, "ready_for_soft": False}
         itt = self._frequency_summary(rows, per_protocol=False)
         per_protocol = self._frequency_summary(rows, per_protocol=True)
+        protocol_versions = sorted(
+            {str(row["protocol_version"] or "") for row in rows}
+        )
         unique_snapshots = len({str(row["market_snapshot_hash"]) for row in rows})
         cohort_ids = sorted({str(row["cohort_id"] or "") for row in rows})
         reviewable_snapshots = len(
@@ -355,7 +358,10 @@ class AnalysisExperimentStore:
             reasons.append("Assigned-B trade frequency declines beyond the review tolerance.")
         return {
             "status": "offline_aabb",
-            "protocol_version": "pa_vpa_aabb_v1",
+            "protocol_version": (
+                protocol_versions[0] if len(protocol_versions) == 1 else "mixed"
+            ),
+            "protocol_versions": protocol_versions,
             "unique_snapshots": unique_snapshots,
             "reviewable_unique_snapshots": reviewable_snapshots,
             "cohort_count": len(cohort_ids),
@@ -499,7 +505,8 @@ class AnalysisExperimentStore:
                 )
                 query = (
                     "SELECT e.frozen_input_hash, e.market_snapshot_hash, e.cohort_id, "
-                    "e.experiment_id, e.status AS experiment_status, e.protocol_valid, "
+                    "e.experiment_id, e.protocol_version, "
+                    "e.status AS experiment_status, e.protocol_valid, "
                     f"a.*, {order_select} FROM experiment_arms a "
                     "JOIN analysis_experiments e ON e.experiment_id = a.experiment_id"
                     f"{run_join}" + (" WHERE " + " AND ".join(clauses) if clauses else "")
@@ -599,6 +606,7 @@ class AnalysisExperimentStore:
                 )
                 query = (
                     "SELECT e.frozen_input_hash, e.market_snapshot_hash, e.cohort_id, "
+                    "e.protocol_version, "
                     "e.symbol AS experiment_symbol, e.timeframe AS experiment_timeframe, "
                     "e.created_at_ms AS experiment_created_at_ms, "
                     "e.experiment_id, e.status AS experiment_status, e.protocol_valid, "

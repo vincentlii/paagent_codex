@@ -162,7 +162,6 @@ class PaperExecutionCoordinator:
         self,
         result: object,
         frozen: object,
-        spec: InstrumentSpec,
     ) -> tuple[ExecutionAction, ...]:
         if not self.enabled:
             return ()
@@ -172,6 +171,9 @@ class PaperExecutionCoordinator:
         records = tuple(getattr(result, "records", ()) or ())
         if len(records) != 4:
             raise ValueError("research paper requires all four A/A/B/B arms")
+        spec = InstrumentSpec.from_value(getattr(frozen, "instrument_spec", None))
+        if spec is None:
+            raise ValueError("research paper requires the frozen instrument spec")
         cohort = str(getattr(frozen, "cohort_id", "") or "")
         market_hash = str(getattr(frozen, "market_snapshot_hash", "") or "")
         frame = getattr(frozen, "frame", None)

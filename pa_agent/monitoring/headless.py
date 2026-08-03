@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass
 from typing import Any
 
@@ -91,13 +91,17 @@ class HeadlessMonitor:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._closed = False
-        self._paper_reconcile_needed = False
+        self._paper_reconcile_needed = bool(
+            paper_execution is not None
+            and getattr(paper_execution, "enabled", False)
+        )
         self._states = [
             _AssetState(config=asset)
             for asset in settings.monitoring.assets
             if asset.enabled
         ]
         self._task_to_state: dict[str, _AssetState] = {}
+        self._data_futures: set[Future[Any]] = set()
         self._data_executor = ThreadPoolExecutor(
             max_workers=settings.monitoring.max_data_concurrency,
             thread_name_prefix="pa-market-data",
@@ -113,33 +117,42 @@ class HeadlessMonitor:
 
     def poll_once(self) -> PollCycleResult:
         """Fetch every eligible asset once and enqueue accepted snapshots."""
-        if self._closed:
-            raise RuntimeError("headless monitor is closed")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("headless monitor is closed")
         self._retry_paper_reconciliation()
         now = self._monotonic()
         eligible = [state for state in self._states if now >= state.next_fetch_at]
-        futures = {
-            self._data_executor.submit(self._prepare_task, state): state
-            for state in eligible
-        }
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("headless monitor is closed")
+            futures = {
+                self._data_executor.submit(self._prepare_task, state): state
+                for state in eligible
+            }
+            self._data_futures.update(futures)
         prepared = 0
         accepted = 0
         skipped = len(self._states) - len(eligible)
         failed = 0
-        for future in as_completed(futures):
-            state = futures[future]
-            try:
-                task = future.result()
-            except Exception as exc:
-                failed += 1
-                self._record_fetch_failure(state, exc)
-                continue
-            prepared += 1
-            outcome = self._submit_prepared(state, task)
-            if outcome == "accepted":
-                accepted += 1
-            else:
-                skipped += 1
+        try:
+            for future in as_completed(futures):
+                state = futures[future]
+                try:
+                    task = future.result()
+                except Exception as exc:
+                    failed += 1
+                    self._record_fetch_failure(state, exc)
+                    continue
+                prepared += 1
+                outcome = self._submit_prepared(state, task)
+                if outcome == "accepted":
+                    accepted += 1
+                else:
+                    skipped += 1
+        finally:
+            with self._lock:
+                self._data_futures.difference_update(futures)
         return PollCycleResult(
             prepared=prepared,
             accepted=accepted,
@@ -249,7 +262,23 @@ class HeadlessMonitor:
                 return
             self._closed = True
             self._stop.set()
+            data_futures = tuple(self._data_futures)
+        timeout = float(self._settings.monitoring.shutdown_timeout_seconds)
+        deadline = self._monotonic() + timeout
         self._service.shutdown(wait=False)
+        for future in data_futures:
+            future.cancel()
+        if data_futures:
+            _done, unfinished = wait(
+                data_futures,
+                timeout=max(0.0, deadline - self._monotonic()),
+            )
+            if unfinished:
+                logger.warning(
+                    "Market-data shutdown deadline reached with %d task(s) still active",
+                    len(unfinished),
+                )
+        self._data_executor.shutdown(wait=False, cancel_futures=True)
         for state in self._states:
             source = state.source
             if source is None or not state.connected:
@@ -264,9 +293,7 @@ class HeadlessMonitor:
                 )
             finally:
                 state.connected = False
-        self._data_executor.shutdown(wait=False, cancel_futures=True)
-        timeout = float(self._settings.monitoring.shutdown_timeout_seconds)
-        idle = bool(self._service.wait_idle(timeout))
+        idle = bool(self._service.wait_idle(max(0.0, deadline - self._monotonic())))
         self._service.shutdown(wait=idle)
 
     def _prepare_task(self, state: _AssetState) -> AnalysisTask:
@@ -317,6 +344,17 @@ class HeadlessMonitor:
         )
         if frame is None:
             raise ValueError("insufficient closed bars for analysis")
+        latest_closed_bar_ts = max(int(bar.ts_open) for bar in frame.bars)
+        current_frame_hash = frame_snapshot_hash(frame)
+        with self._lock:
+            if (
+                state.prepared_task is not None
+                and state.prepared_closed_bar_ts == latest_closed_bar_ts
+                and state.prepared_frame_hash == current_frame_hash
+            ):
+                state.fetch_failures = 0
+                state.next_fetch_at = 0.0
+                return state.prepared_task
         paper_enabled = self._paper_execution is not None and bool(
             getattr(self._paper_execution, "enabled", False)
         )
@@ -339,17 +377,6 @@ class HeadlessMonitor:
                         frame.symbol,
                         frame.timeframe,
                     )
-        latest_closed_bar_ts = max(int(bar.ts_open) for bar in frame.bars)
-        current_frame_hash = frame_snapshot_hash(frame)
-        with self._lock:
-            if (
-                state.prepared_task is not None
-                and state.prepared_closed_bar_ts == latest_closed_bar_ts
-                and state.prepared_frame_hash == current_frame_hash
-            ):
-                state.fetch_failures = 0
-                state.next_fetch_at = 0.0
-                return state.prepared_task
         if self._settings.general.higher_timeframe_enabled:
             htf_context = fetch_higher_timeframe_context(
                 source=source,
@@ -413,6 +440,7 @@ class HeadlessMonitor:
                 source.disconnect()
             except Exception:
                 logger.debug("Partially connected source cleanup failed", exc_info=True)
+            state.source = None
             raise
         state.connected = True
         return source
@@ -500,6 +528,7 @@ class HeadlessMonitor:
                 except Exception:
                     logger.debug("Data source reset failed", exc_info=True)
                 state.connected = False
+                state.source = None
         logger.warning(
             "Market data unavailable for %s %s: %s",
             state.config.symbol,

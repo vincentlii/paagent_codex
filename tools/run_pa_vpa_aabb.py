@@ -23,7 +23,6 @@ from pa_agent.config.paths import (  # noqa: E402
 from pa_agent.config.settings import load_settings  # noqa: E402
 from pa_agent.demo.record_loader import load_analysis_record  # noqa: E402
 from pa_agent.execution.coordinator import PaperExecutionCoordinator  # noqa: E402
-from pa_agent.execution.plans import instrument_spec_from_record  # noqa: E402
 from pa_agent.experiments.executor import OrchestratorArmExecutor  # noqa: E402
 from pa_agent.experiments.pa_vpa_aabb import (  # noqa: E402
     PaVpaAabbRunner,
@@ -88,18 +87,14 @@ def main() -> int:
     paper_actions = []
     paper_error = None
     if settings.paper_trading.enabled and result.status == "completed":
-        spec = instrument_spec_from_record(source)
-        if spec is None:
-            paper_error = "source record has no provider-declared instrument spec"
-        else:
-            try:
-                actions = PaperExecutionCoordinator(
-                    args.paper_db,
-                    settings.paper_trading,
-                ).record_aabb(result, frozen, spec)
-                paper_actions = [action.__dict__ for action in actions]
-            except (OSError, sqlite3.Error, ValueError) as exc:
-                paper_error = str(exc)
+        try:
+            actions = PaperExecutionCoordinator(
+                args.paper_db,
+                settings.paper_trading,
+            ).record_aabb(result, frozen)
+            paper_actions = [action.__dict__ for action in actions]
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            paper_error = str(exc)
     print(
         json.dumps(
             {

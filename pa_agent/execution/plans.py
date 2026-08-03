@@ -8,6 +8,7 @@ from pa_agent.data.base import KlineBar
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.data.instrument import InstrumentSpec
 from pa_agent.execution.paper import PaperTradePlan
+from pa_agent.experiments.pa_vpa_aabb import SUPPORTED_AABB_PROTOCOL_VERSIONS
 
 _SUCCESS_STATUSES = frozenset({"completed", "completed_with_warnings", "degraded_pa_only"})
 _ORDER_TYPES = {
@@ -96,7 +97,7 @@ def research_arm_plan(
     context = _field(record, "experiment_context", {})
     if not isinstance(context, Mapping):
         raise ValueError("research paper plan requires experiment context")
-    if context.get("protocol_version") != "pa_vpa_aabb_v1":
+    if context.get("protocol_version") not in SUPPORTED_AABB_PROTOCOL_VERSIONS:
         raise ValueError("research paper plan requires the A/A/B/B protocol")
     arm_id = str(context.get("arm_id") or "")
     group = str(context.get("group") or "")

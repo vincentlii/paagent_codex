@@ -61,4 +61,3 @@ Primary references:
   of silently falling back to a different instrument.
 - This decision enables paper research only. It does not authorize private API
   credentials or real order placement.
-

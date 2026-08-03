@@ -53,6 +53,7 @@ def test_research_coordinator_uses_four_isolated_accounts_only_after_valid_proto
     frozen = SimpleNamespace(
         cohort_id="c" * 64,
         market_snapshot_hash="m" * 64,
+        instrument_spec=_spec(),
         frame=SimpleNamespace(timeframe="1h", bars=(_bar(2000),)),
     )
     result = SimpleNamespace(
@@ -61,7 +62,7 @@ def test_research_coordinator_uses_four_isolated_accounts_only_after_valid_proto
         records=records,
     )
 
-    actions = coordinator.record_aabb(result, frozen, _spec())
+    actions = coordinator.record_aabb(result, frozen)
 
     assert len(actions) == 4
     assert {action.account_id for action in actions} == {
@@ -144,13 +145,14 @@ def test_b_fallback_is_recorded_as_itt_without_treatment(tmp_path) -> None:
     frozen = SimpleNamespace(
         cohort_id="c" * 64,
         market_snapshot_hash="m" * 64,
+        instrument_spec=_spec(),
         frame=SimpleNamespace(timeframe="1h", bars=(_bar(2000),)),
     )
     result = SimpleNamespace(
         status="completed", protocol_report={"valid": True}, records=records
     )
 
-    actions = coordinator.record_aabb(result, frozen, _spec())
+    actions = coordinator.record_aabb(result, frozen)
     b2 = next(action for action in actions if action.arm == "B2")
 
     assert b2.received_path == "pa_only"
@@ -170,6 +172,7 @@ def test_aabb_prevalidates_all_arms_before_writing_any_order(tmp_path) -> None:
     frozen = SimpleNamespace(
         cohort_id="c" * 64,
         market_snapshot_hash="m" * 64,
+        instrument_spec=_spec(),
         frame=SimpleNamespace(timeframe="1h", bars=(_bar(2000),)),
     )
     result = SimpleNamespace(
@@ -177,7 +180,7 @@ def test_aabb_prevalidates_all_arms_before_writing_any_order(tmp_path) -> None:
     )
 
     try:
-        coordinator.record_aabb(result, frozen, _spec())
+        coordinator.record_aabb(result, frozen)
     except ValueError:
         pass
     else:
@@ -189,3 +192,34 @@ def test_aabb_prevalidates_all_arms_before_writing_any_order(tmp_path) -> None:
         ).fetchone()
         assert order_table is None
         assert connection.execute("SELECT COUNT(*) FROM paper_decisions").fetchone()[0] == 0
+
+
+def test_aabb_paper_requires_spec_from_frozen_experiment_not_external_input(
+    tmp_path,
+) -> None:
+    coordinator = PaperExecutionCoordinator(
+        tmp_path / "paper.sqlite3", PaperTradingSettings(enabled=True)
+    )
+    result = SimpleNamespace(
+        status="completed",
+        protocol_report={"valid": True},
+        records=(
+            _record(path="pa_only", mode="off", arm="A1"),
+            _record(path="pa_only", mode="off", arm="A2"),
+            _record(path="joint", mode="soft", arm="B1"),
+            _record(path="joint", mode="soft", arm="B2"),
+        ),
+    )
+    frozen = SimpleNamespace(
+        cohort_id="c" * 64,
+        market_snapshot_hash="m" * 64,
+        instrument_spec=None,
+        frame=SimpleNamespace(timeframe="1h", bars=(_bar(2000),)),
+    )
+
+    try:
+        coordinator.record_aabb(result, frozen)
+    except ValueError as exc:
+        assert "frozen instrument spec" in str(exc)
+    else:
+        raise AssertionError("research paper must not use a non-frozen instrument spec")

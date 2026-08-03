@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -eu
 
-APP_DIR=${APP_DIR:-/opt/pa-agent}
-STATE_DIR=${STATE_DIR:-/var/lib/pa-agent}
-CONFIG_DIR=${CONFIG_DIR:-/etc/pa-agent}
-SERVICE_USER=${SERVICE_USER:-pa-agent}
-CONDA_EXE=${CONDA_EXE:-/opt/miniconda3/bin/conda}
+APP_DIR=/opt/pa-agent
+STATE_DIR=/var/lib/pa-agent
+CONFIG_DIR=/etc/pa-agent
+SERVICE_USER=pa-agent
+CONDA_EXE=/opt/miniconda3/bin/conda
 
 if [ "$(id -u)" -ne 0 ]; then
   printf '%s\n' "Run this installer as root." >&2

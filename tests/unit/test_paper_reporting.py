@@ -53,3 +53,44 @@ def test_paper_report_handles_missing_database(tmp_path) -> None:
 
     assert report["available"] is False
     assert report["accounts"] == []
+
+
+def test_research_report_pairs_arms_by_cohort_and_exact_market_snapshot(tmp_path) -> None:
+    db = tmp_path / "paper.sqlite3"
+    PaperBroker(db, account_id="pa-official", initial_equity=10_000, risk_policy=RiskPolicy())
+    rows = []
+    for snapshot in ("snap-1", "snap-2"):
+        for arm in ("A1", "A2", "B1", "B2"):
+            rows.append(
+                (f"research-c1-{arm}", arm, snapshot, f"{snapshot}-{arm}", "no_trade",
+                 None, None, "joint" if arm.startswith("B") else "pa_only",
+                 1 if arm.startswith("B") else None, "cohort-1", snapshot)
+            )
+    rows.extend(
+        [
+            ("mixed-A1", "A1", "snap-x", "x-a1", "no_trade", None, None,
+             "pa_only", None, "cohort-mixed", "snap-x"),
+            ("mixed-A2", "A2", "snap-x", "x-a2", "no_trade", None, None,
+             "pa_only", None, "cohort-mixed", "snap-x"),
+            ("mixed-B1", "B1", "snap-y", "y-b1", "no_trade", None, None,
+             "joint", 1, "cohort-mixed", "snap-y"),
+            ("mixed-B2", "B2", "snap-y", "y-b2", "no_trade", None, None,
+             "joint", 1, "cohort-mixed", "snap-y"),
+        ]
+    )
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "CREATE TABLE paper_decisions("
+            "account_id TEXT, arm TEXT, dedupe_key TEXT, run_id TEXT, status TEXT, "
+            "order_id TEXT, reason TEXT, received_path TEXT, treatment_received INTEGER, "
+            "cohort_id TEXT, market_snapshot_hash TEXT)"
+        )
+        connection.executemany(
+            "INSERT INTO paper_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
+        )
+
+    research = build_paper_report(db)["research"]
+
+    assert research["cohorts"] == 2
+    assert research["complete_aabb_snapshots"] == 2
+    assert research["complete_aabb_cohorts"] == 1

@@ -352,3 +352,27 @@ def test_scheduler_success_lookup_failure_is_fail_open_for_retry(tmp_path, monke
     monkeypatch.setattr(store, "_connect", broken_connect)
 
     assert store.was_successful("missing-task") is False
+
+
+def test_scheduler_reconciliation_lists_snapshots_oldest_first(tmp_path) -> None:
+    store = SchedulerAuditStore(tmp_path / "monitoring.sqlite3")
+    with sqlite3.connect(store.db_path) as connection:
+        for task_id, run_id, created, completed in (
+            ("new", "run-new", 200, 400),
+            ("old", "run-old", 100, 300),
+        ):
+            connection.execute(
+                "INSERT INTO monitoring_jobs("
+                "task_id, asset_key, source, symbol, timeframe, snapshot_hash, cohort_id, "
+                "task_created_at_ms, first_submission_status, submission_status, "
+                "submission_count, submitted_at_ms, completion_status, run_id, "
+                "completed_at_ms, analysis_status, analysis_success, updated_at_ms"
+                ") VALUES (?, 'asset', 'source', 'XAUUSD', '1h', ?, ?, ?, 'accepted', "
+                "'accepted', 1, ?, 'completed', ?, ?, 'completed', 1, ?)",
+                (task_id, task_id * 64, "c" * 64, created, created, run_id, completed, completed),
+            )
+
+    assert store.list_successful_jobs() == [
+        {"task_id": "old", "run_id": "run-old"},
+        {"task_id": "new", "run_id": "run-new"},
+    ]

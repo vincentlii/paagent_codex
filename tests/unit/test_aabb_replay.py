@@ -181,3 +181,26 @@ def test_replay_preserves_volume_and_seasonality_snapshot_identity() -> None:
         "volume_provenance"
     ]
     assert validate_frozen_vpa_catalog(replayed_frame, replayed_catalog) == catalog
+
+
+def test_replay_preserves_frozen_instrument_spec() -> None:
+    source = _source_record(htf_available=False, with_htf_bars=False)
+    spec = {
+        "provider": "okx_swap",
+        "venue": "OKX",
+        "symbol": "XAU-USDT-SWAP",
+        "instrument_type": "linear_swap",
+        "tick_size": 0.1,
+        "quantity_step": 1.0,
+        "minimum_quantity": 1.0,
+        "maximum_quantity": 100000.0,
+        "minimum_notional": 0.0,
+        "contract_multiplier": 0.001,
+    }
+    source = source.model_copy(
+        update={"snapshot_context": {**source.snapshot_context, "instrument_spec": spec}}
+    )
+
+    frame, _htf_context, _catalog = frozen_input_from_record(source)
+
+    assert frame.data_metadata["instrument_spec"] == spec

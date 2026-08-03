@@ -221,4 +221,3 @@ def _instrument_spec(raw: object) -> InstrumentSpec | None:
         )
     except (KeyError, TypeError, ValueError):
         return None
-

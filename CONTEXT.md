@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0014`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0015`。
 
 ## 核心目标
 

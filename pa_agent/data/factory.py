@@ -211,10 +211,15 @@ def volume_metadata_for_source(
             zero_semantics="observed_zero",
         )
     elif normalized in NATIVE_PERPETUAL_KINDS:
+        native_volume_fields = {
+            "binance_usdm": "volume",
+            "okx_swap": "volCcy",
+            "bitget_usdt_futures": "baseVolume",
+        }
         metadata.update(volume_kind="real", volume_quality="exchange")
         metadata["volume_provenance"].update(
-            field="volume",
-            basis="exchange_contract_volume",
+            field=native_volume_fields[normalized],
+            basis="exchange_base_asset_volume",
             zero_semantics="observed_zero",
         )
     if resolved is not None:
