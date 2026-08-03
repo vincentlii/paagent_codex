@@ -1,0 +1,98 @@
+{
+  "provider": {
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com",
+    "api_key": "",
+    "api_key_encrypted": "",
+    "thinking": true,
+    "reasoning_effort": "high",
+    "context_window": 128000,
+    "structured_output_mode": "auto"
+  },
+  "general": {
+    "analysis_bar_count": 100,
+    "higher_timeframe_enabled": true,
+    "higher_timeframe_override": "4h",
+    "higher_timeframe_bar_count": 60,
+    "incremental_max_new_bars": 10,
+    "decision_stance": "balanced",
+    "decision_confidence_threshold": 40,
+    "counterfactual_horizon_bars": 20,
+    "enable_next_bar_prediction": false
+  },
+  "prompt": {
+    "stage2_load_full_strategy_library": false,
+    "experience_max_entries": 0,
+    "experience_max_chars_per_entry": 400,
+    "stage1_inject_pattern_briefs": true,
+    "vpa_mode": "shadow",
+    "vpa_enabled": true
+  },
+  "validation": {
+    "retry_enabled": true,
+    "retry_max": 3,
+    "retry_max_semantic": 1,
+    "retry_stage2": true
+  },
+  "monitoring": {
+    "enabled": true,
+    "max_concurrency": 1,
+    "max_pending_jobs": 12,
+    "max_pending_per_asset": 1,
+    "dedupe_history": 10000,
+    "max_data_concurrency": 3,
+    "poll_interval_seconds": 15,
+    "run_on_startup": true,
+    "max_analysis_retries": 2,
+    "retry_backoff_seconds": 30,
+    "analysis_timeout_seconds": 900,
+    "shutdown_timeout_seconds": 60,
+    "assets": [
+      {
+        "enabled": true,
+        "source": "binance_usdm",
+        "exchange": "BINANCE",
+        "symbol": "XAUUSDT",
+        "timeframe": "1h"
+      },
+      {
+        "enabled": true,
+        "source": "okx_swap",
+        "exchange": "OKX",
+        "symbol": "XAU-USDT-SWAP",
+        "timeframe": "1h"
+      },
+      {
+        "enabled": true,
+        "source": "bitget_usdt_futures",
+        "exchange": "BITGET",
+        "symbol": "XAUUSDT",
+        "timeframe": "1h"
+      }
+    ]
+  },
+  "paper_trading": {
+    "enabled": true,
+    "initial_equity": 10000,
+    "risk_fraction": 0.005,
+    "max_portfolio_risk_fraction": 0.02,
+    "max_leverage": 3,
+    "fee_bps": 5,
+    "slippage_bps": 2
+  },
+  "feishu": {
+    "enabled": false,
+    "webhook_url": "",
+    "secret": "",
+    "app_id": "",
+    "app_secret": "",
+    "notify_on_order_only": true
+  },
+  "pushplus": {
+    "enabled": false,
+    "token": ""
+  },
+  "tushare": {
+    "token": ""
+  }
+}

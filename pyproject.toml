@@ -44,6 +44,7 @@ dev = [
 [project.scripts]
 pa-agent = "pa_agent.main:main"
 pa-agent-headless = "pa_agent.headless:main"
+pa-agent-paper-report = "pa_agent.execution.reporting:main"
 
 [tool.setuptools.packages.find]
 include = ["pa_agent*"]

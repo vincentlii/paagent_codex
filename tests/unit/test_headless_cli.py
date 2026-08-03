@@ -79,6 +79,7 @@ def test_packaging_exposes_headless_entry_and_keeps_qt_in_gui_extra() -> None:
     assert any(item.startswith("PyQt6") for item in gui)
     assert any(item.startswith("pyqtgraph") for item in gui)
     assert scripts["pa-agent-headless"] == "pa_agent.headless:main"
+    assert scripts["pa-agent-paper-report"] == "pa_agent.execution.reporting:main"
 
 
 def test_headless_check_reports_missing_assets_secret_and_prompts(tmp_path) -> None:

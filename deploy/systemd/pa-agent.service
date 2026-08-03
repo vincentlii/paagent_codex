@@ -20,6 +20,7 @@ Restart=on-failure
 RestartSec=30s
 TimeoutStopSec=90s
 KillSignal=SIGTERM
+LimitNOFILE=4096
 UMask=0077
 StateDirectory=pa-agent
 StateDirectoryMode=0700

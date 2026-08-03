@@ -1,96 +1,142 @@
 # Linux VPS Headless 部署
 
-Headless 模式不加载 Qt，不显示图形界面，也不执行真实下单。它按资产轮询最新已收盘 K 线，每个新冻结快照自动运行 PA/VPA 分析，并写入 JSON 与 SQLite 审计。
+本部署用于持续拉取 Binance、OKX、Bitget 的 XAU 永续行情，自动运行 PA/VPA
+分析并进行本地 paper trading。当前代码没有私有交易所 API，也不会提交真实订单。
 
-## 1. Miniconda 安装
+## 1. 目录与前提
+
+推荐使用 64 位 Ubuntu 22.04/24.04，并约定：
+
+- 代码：`/opt/pa-agent`
+- Miniconda：`/opt/miniconda3`
+- Conda 环境：`pa-agent`
+- 运行状态：`/var/lib/pa-agent`
+- 非代码配置：`/etc/pa-agent`
+
+先安装 Miniconda，再把已验收的代码版本放到 `/opt/pa-agent`。Miniconda 安装包和
+校验值应从官方文档获取：<https://docs.anaconda.com/miniconda/>。
 
 ```bash
-git clone https://github.com/rosemarycox5334-debug/PA_Agent.git /opt/pa-agent
+sudo git clone <YOUR_PA_AGENT_REPOSITORY> /opt/pa-agent
 cd /opt/pa-agent
-conda create -n pa-agent python=3.11 -y
-conda activate pa-agent
-pip install -e .
+sudo bash deploy/install_vps.sh
 ```
 
-Linux 使用 TradingView；MT5 Python 包和桌面 GUI 不属于 Headless 依赖。需要在本机运行 GUI 时安装 `pip install -e ".[gui]"`。
+安装脚本只创建专用用户、Conda 环境、目录和 systemd unit，不会启动服务，也不会
+覆盖已有 `settings.json`、环境文件或密钥。
 
-## 2. 状态目录与配置
+## 2. 配置三交易所 XAU
 
-```bash
-sudo useradd --system --home /var/lib/pa-agent --shell /usr/sbin/nologin pa-agent
-sudo install -d -o pa-agent -g pa-agent -m 0700 /var/lib/pa-agent
-sudo install -d -o pa-agent -g pa-agent -m 0700 /var/lib/pa-agent/config
-sudo cp /opt/pa-agent/config/settings.example.json /var/lib/pa-agent/config/settings.json
-sudo chown pa-agent:pa-agent /var/lib/pa-agent/config/settings.json
-sudo chmod 0600 /var/lib/pa-agent/config/settings.json
+首次安装会从 `config/settings.vps.example.json` 创建：
+
+```text
+/var/lib/pa-agent/config/settings.json
 ```
 
-编辑 `settings.json`：
+默认监控：
 
-- `monitoring.enabled=true`
-- 在 `monitoring.assets` 中配置每个 `source/exchange/symbol/timeframe`
-- `prompt.vpa_mode=off|shadow|soft`
-- 根据 API 网关配置 `provider.model` 与 `provider.base_url`
-- 不要把明文 API Key 写进配置
+| Source | Symbol | 周期 | 高周期 |
+|---|---|---:|---:|
+| `binance_usdm` | `XAUUSDT` | `1h` | `4h` |
+| `okx_swap` | `XAU-USDT-SWAP` | `1h` | `4h` |
+| `bitget_usdt_futures` | `XAUUSDT` | `1h` | `4h` |
 
-运行状态遵循显式 `PA_AGENT_HOME` 边界，概念与 [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/) 的资源/状态分离一致；本项目保留显式目录以方便 systemd 权限控制。
+默认 `vpa_mode=shadow`，正式 paper 账户仍只执行 PA authority；Joint 只允许离线
+A/A/B/B 研究。默认单笔风险为权益的 `0.5%`、组合风险上限 `2%`、最大杠杆 `3x`。
+这些是 paper 研究参数，不代表收益承诺。
 
-## 3. API Key
+## 3. API Key 与模型
 
-推荐 systemd credential：
+不要把 API Key 写入 JSON。用不会把密钥值留在 shell history 的方式创建 credential：
 
 ```bash
-sudo install -d -m 0700 /etc/pa-agent
-sudo sh -c 'umask 077; printf %s "YOUR_API_KEY" > /etc/pa-agent/api_key'
+read -rsp 'PA Agent API key: ' PA_KEY; echo
+printf %s "$PA_KEY" | sudo install -o root -g pa-agent -m 0640 /dev/stdin /etc/pa-agent/api_key
+unset PA_KEY
 ```
 
-也可使用 `PA_AGENT_API_KEY_FILE` 或仅用于临时会话的 `PA_AGENT_API_KEY`。运行时 Key 不会回写 JSON。`LoadCredential=` 行为见 [systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)。
+编辑 `/etc/pa-agent/pa-agent.env`：
 
-## 4. 部署前检查
-
-```bash
-export PA_AGENT_HOME=/var/lib/pa-agent
-export PA_AGENT_API_KEY_FILE=/etc/pa-agent/api_key
-/opt/miniconda3/envs/pa-agent/bin/pa-agent-headless --check
-/opt/miniconda3/envs/pa-agent/bin/pa-agent-headless --once
+```dotenv
+PA_AGENT_MODEL=deepseek-chat
+PA_AGENT_BASE_URL=https://api.deepseek.com
 ```
 
-`--check` 只验证配置、Prompt、数据源能力和写权限，不访问网络或调用模型。`--once` 会真实拉取行情并分析一次，退出码非零表示任一最新快照未成功完成。
+`PA_AGENT_MODEL` 必须填写服务商实际开放的 API model id。套餐名称和 API model id
+不一定相同，不应猜测填写。
 
-## 5. systemd
-
-根据实际 Conda 路径编辑 `deploy/systemd/pa-agent.service`，再安装：
+## 4. 上线前四步验收
 
 ```bash
-sudo cp /opt/pa-agent/deploy/systemd/pa-agent.service /etc/systemd/system/
-sudo cp /opt/pa-agent/deploy/systemd/pa-agent.env.example /etc/pa-agent/pa-agent.env
-sudo systemctl daemon-reload
+BIN=/opt/miniconda3/envs/pa-agent/bin
+COMMON_ENV='PA_AGENT_HOME=/var/lib/pa-agent PA_AGENT_PROMPT_DIR=/opt/pa-agent/prompt_engineering PA_AGENT_API_KEY_FILE=/etc/pa-agent/api_key'
+```
+
+1. 离线检查配置、Prompt、依赖和目录权限：
+
+```bash
+sudo -u pa-agent env $COMMON_ENV "$BIN/pa-agent-headless" --check
+```
+
+2. 只访问公开行情 API，不调用 LLM：
+
+```bash
+sudo -u pa-agent env $COMMON_ENV "$BIN/pa-agent-headless" --probe-data
+```
+
+三个结果都必须显示 `"success": true`，并核对 `resolved_symbol`、
+`instrument_type`、`tick_size`、`quantity_step` 和 `contract_multiplier`。
+
+3. 真正执行一轮三资产分析并写入 paper 账本：
+
+```bash
+sudo -u pa-agent env $COMMON_ENV "$BIN/pa-agent-headless" --once
+```
+
+4. 查看 paper 账户、订单和研究 disposition：
+
+```bash
+sudo -u pa-agent env PA_AGENT_HOME=/var/lib/pa-agent "$BIN/pa-agent-paper-report"
+```
+
+报告中的 A1/A2/B1/B2 仅是同一市场快照的重复 arm；统计单位始终是配对的
+`market_snapshot`，不能把四个 arm 当作四个独立样本。
+
+## 5. 启动 systemd
+
+四步都通过后再启动：
+
+```bash
 sudo systemctl enable --now pa-agent
 sudo systemctl status pa-agent
-journalctl -u pa-agent -f
+sudo journalctl -u pa-agent -f
 ```
 
-服务使用 `StateDirectory=pa-agent` 创建并授权状态目录，同时启用 `Restart=on-failure`、启动频率限制、只读系统目录和唯一可写状态目录。相关语义见 [systemd.service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html) 与 [systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)。
+服务启动前只运行 `--check`。`--probe-data` 不放入自动重启链路，避免交易所短暂断线
+导致 systemd 重启风暴。运行时失败按有界退避重试，同一闭合快照不会重复分析。
 
-## 6. 数据与复盘
+## 6. 更新与回滚
 
-- 完整记录：`$PA_AGENT_HOME/records/pending/*.json`
-- 分析数据库：`$PA_AGENT_HOME/records/audit/analysis.sqlite3`
-- 调度数据库：`$PA_AGENT_HOME/records/audit/monitoring.sqlite3`
-- 日志：`$PA_AGENT_HOME/logs/pa_agent.log`
-
-`monitoring_jobs.analysis_success=1` 仅表示分析链路成功且记录已持久化，不代表交易盈利。真实收益、人工标签和 OHLC 反事实复盘继续分库存储。
-
-## 7. 停止与升级
+更新前先记录当前 commit，并停止服务：
 
 ```bash
-sudo systemctl stop pa-agent
 cd /opt/pa-agent
-git pull --ff-only
-conda activate pa-agent
-pip install -e .
-pa-agent-headless --check
-sudo systemctl start pa-agent
+git rev-parse HEAD
+sudo systemctl stop pa-agent
+sudo git fetch --all --tags
+sudo git switch <VERIFIED_BRANCH_OR_TAG>
+sudo bash deploy/install_vps.sh
 ```
 
-先停止服务再升级，避免运行中 Prompt/源码变化造成 cohort 混用。`SIGTERM` 会停止新轮询、取消队列并断开数据源；若外部依赖迟迟不返回，systemd 的 `TimeoutStopSec` 是最终边界。
+重新执行 `--check`、`--probe-data`、`--once` 后再启动。回滚时切回之前记录的 commit，
+再次运行安装脚本和四步验收。不要删除 `/var/lib/pa-agent`，paper 与审计数据都在那里。
+
+## 7. 运行边界
+
+- Binance、OKX、Bitget 合约是否可用以启动时公开 metadata 为准。
+- OKX quantity 是合约张数，`contract_multiplier` 来自 `ctVal * ctMult`；模拟盈亏、
+  手续费、风险和名义价值均据此换算。
+- Bitget K 线没有闭合标记，程序用交易所服务器时间和周期长度确认已收盘。
+- VPA 不创建 Setup、不翻转 PA 方向、不修改主观胜率；其增量价值需由配对研究验证。
+- 当前只有 paper execution。接入真实交易前必须另做私有 API、幂等订单、持仓同步、
+  kill switch、时钟偏差、精度和异常恢复审计。

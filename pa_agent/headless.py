@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import math
 import os
 import signal
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +19,137 @@ from pa_agent.config.runtime import RuntimeConfigurationError, load_runtime_sett
 from pa_agent.config.settings import Settings, provider_api_key_configured
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MarketDataProbeResult:
+    source: str
+    symbol: str
+    timeframe: str
+    success: bool
+    closed_bars: int = 0
+    newest_closed_ts: int | None = None
+    higher_timeframe: str = ""
+    higher_closed_bars: int = 0
+    identity: dict[str, Any] = field(default_factory=dict)
+    instrument_spec: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def probe_market_data(
+    settings: Settings,
+    *,
+    source_factory: Callable[[Any], Any] | None = None,
+    sample_bars: int = 3,
+) -> list[MarketDataProbeResult]:
+    """Probe native market facts without invoking an AI provider."""
+    from pa_agent.data.factory import create_data_source, resolved_identity_for_source
+    from pa_agent.data.higher_timeframe import resolve_higher_timeframe
+
+    factory = source_factory or (
+        lambda asset: create_data_source(asset.source, settings=settings)
+    )
+    results: list[MarketDataProbeResult] = []
+    for asset in settings.monitoring.assets:
+        if not asset.enabled:
+            continue
+        source = None
+        error = ""
+        closed = []
+        identity = None
+        spec = None
+        higher_timeframe = ""
+        higher_closed = []
+        try:
+            source = factory(asset)
+            source.connect()
+            source.subscribe(asset.symbol, asset.timeframe)
+            bars = list(source.latest_snapshot(max(2, int(sample_bars))))
+            closed = _validated_probe_bars(bars, label="source")
+            identity = resolved_identity_for_source(
+                asset.source, source, symbol=asset.symbol,
+            )
+            if identity is None or identity.provider != asset.source:
+                raise ValueError("source did not resolve an exact instrument identity")
+            if settings.general.higher_timeframe_enabled:
+                higher_timeframe = str(resolve_higher_timeframe(
+                    asset.timeframe,
+                    settings.general.higher_timeframe_override,
+                ) or "")
+                if higher_timeframe:
+                    if higher_timeframe not in set(source.supported_timeframes()):
+                        raise ValueError(
+                            f"source does not support higher timeframe {higher_timeframe}"
+                        )
+                    higher_bars = source.fetch_snapshot_for_identity(
+                        identity,
+                        higher_timeframe,
+                        max(2, int(sample_bars)),
+                    )
+                    higher_closed = _validated_probe_bars(
+                        list(higher_bars),
+                        label="higher timeframe source",
+                    )
+            current_spec = getattr(source, "current_instrument_spec", None)
+            if callable(current_spec):
+                spec = current_spec()
+            if settings.paper_trading.enabled:
+                if spec is None:
+                    raise ValueError("paper trading requires an instrument spec")
+                if identity.key != (
+                    spec.provider.casefold(), spec.venue.casefold(),
+                    spec.symbol.casefold(), spec.instrument_type.casefold(),
+                ):
+                    raise ValueError("instrument spec does not match resolved identity")
+        except Exception as exc:
+            error = str(exc) or type(exc).__name__
+        finally:
+            if source is not None:
+                try:
+                    source.disconnect()
+                except Exception as exc:
+                    if not error:
+                        error = f"disconnect failed: {exc}"
+        results.append(MarketDataProbeResult(
+            source=asset.source,
+            symbol=asset.symbol,
+            timeframe=asset.timeframe,
+            success=not error,
+            closed_bars=len(closed),
+            newest_closed_ts=(
+                max(int(bar.ts_open) for bar in closed) if closed else None
+            ),
+            higher_timeframe=higher_timeframe,
+            higher_closed_bars=len(higher_closed),
+            identity=(identity.to_dict() if identity is not None else {}),
+            instrument_spec=(
+                spec.to_dict()
+                if spec is not None and callable(getattr(spec, "to_dict", None))
+                else {}
+            ),
+            error=error,
+        ))
+    return results
+
+
+def _validated_probe_bars(bars: list[Any], *, label: str) -> list[Any]:
+    closed = [bar for bar in bars if bool(getattr(bar, "closed", False))]
+    if not closed:
+        raise ValueError(f"{label} returned no closed bars")
+    for bar in closed:
+        values = (bar.ts_open, bar.open, bar.high, bar.low, bar.close, bar.volume)
+        if not all(math.isfinite(float(value)) for value in values):
+            raise ValueError(f"{label} returned non-finite bar facts")
+        if not float(bar.low) <= min(float(bar.open), float(bar.close)):
+            raise ValueError(f"{label} returned OHLC below bar low")
+        if not float(bar.high) >= max(float(bar.open), float(bar.close)):
+            raise ValueError(f"{label} returned OHLC above bar high")
+        if float(bar.volume) < 0:
+            raise ValueError(f"{label} returned negative volume")
+    return closed
 
 
 def _required_prompt_files(settings: Settings) -> set[str]:
@@ -195,6 +329,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="PA Agent headless multi-asset monitor")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="validate deployment without network calls")
+    mode.add_argument(
+        "--probe-data",
+        action="store_true",
+        help="probe configured market data without calling the AI provider",
+    )
     mode.add_argument("--once", action="store_true", help="analyze the latest closed snapshot once")
     parser.add_argument("--settings", type=Path, help="settings JSON path")
     parser.add_argument("--state-dir", type=Path, help="writable runtime state directory")
@@ -237,6 +376,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"api_key_source={loaded.api_key_source}, state={paths.state_root}"
         )
         return 0
+    if args.probe_data:
+        results = probe_market_data(settings)
+        print(json.dumps(
+            [result.to_dict() for result in results],
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ))
+        return 0 if results and all(result.success for result in results) else 1
 
     from pa_agent.util.logging import configure_logging
 

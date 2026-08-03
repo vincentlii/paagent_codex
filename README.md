@@ -52,10 +52,11 @@ Linux VPS 不安装 Qt：
 ```bash
 pip install -e .
 pa-agent-headless --check
+pa-agent-headless --probe-data
 pa-agent-headless
 ```
 
-Headless 会为每个配置资产独立拉取已收盘 K 线并自动调用 AI；同一快照成功后不会重复分析，失败只按有界退避重试。完整安装、配置与 systemd 部署见 [`docs/linux_headless_deployment.md`](docs/linux_headless_deployment.md)。
+Headless 会为每个配置资产独立拉取已收盘 K 线并自动调用 AI；同一快照成功后不会重复分析，失败只按有界退避重试。`--probe-data` 只验证行情、身份和合约规格，不调用模型。当前原生 paper 市场包括 Binance、OKX、Bitget 的 XAU 永续；完整安装、配置与 systemd 部署见 [`docs/linux_headless_deployment.md`](docs/linux_headless_deployment.md)。
 
 核心安装包含数据、AI、校验和审计依赖；`[gui]` 才额外安装 PyQt6 与 pyqtgraph。
 
