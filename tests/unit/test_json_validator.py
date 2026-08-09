@@ -32,6 +32,31 @@ def test_current_stage_contracts_validate() -> None:
     assert isinstance(stage2, Ok)
 
 
+def test_passive_limit_confirmation_wording_is_a_warning_not_a_failure() -> None:
+    stage2 = copy.deepcopy(VALID_STAGE2)
+    stage2["decision"].update(
+        {
+            "order_type": "限价单",
+            "entry_basis_bar": None,
+            "entry_basis_extreme": None,
+            "entry_rule": "等待下一根已收盘阳线确认后才激活",
+        }
+    )
+
+    result = _validator().validate(
+        "stage2",
+        json.dumps(stage2, ensure_ascii=False),
+        kline_frame=make_frame(),
+        stage1_json=VALID_STAGE1,
+    )
+
+    assert isinstance(result, Ok)
+    assert any(
+        "confirmation before a passive limit" in warning.message
+        for warning in result.warnings
+    )
+
+
 def test_malformed_json_is_rejected_instead_of_semantic_repair() -> None:
     raw = '{"cycle_position": "normal_channel"; "direction": "bullish"}'
 
@@ -165,6 +190,70 @@ def test_spike_pause_state_requires_a_closed_pause_bar_reference() -> None:
         "pa_evidence.spike_analysis.first_pause_or_pullback_bar"
         in result.invalid_fields
     )
+
+
+def test_spike_pause_bar_exact_alias_is_normalized_at_model_boundary() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1.update(
+        {
+            "cycle_position": "spike",
+            "spike_stage": "transitioning",
+            "market_phase": "transitioning",
+            "transition_risk": "medium",
+        }
+    )
+    next(item for item in stage1["gate_trace"] if item["node_id"] == "1.2")[
+        "branch"
+    ] = "spike"
+    stage1["pa_evidence"]["spike_analysis"] = {
+        "anchor_bar": "K5",
+        "post_anchor_state": "pause_or_pullback_present",
+        "first_pullback_bar": "K4",
+    }
+
+    result = _validator().validate(
+        "stage1", json.dumps(stage1, ensure_ascii=False), kline_frame=make_frame()
+    )
+
+    assert isinstance(result, Ok)
+    assert result.obj["pa_evidence"]["spike_analysis"] == {
+        "anchor_bar": "K5",
+        "post_anchor_state": "pause_or_pullback_present",
+        "first_pause_or_pullback_bar": "K4",
+    }
+    assert any(
+        event["path"]
+        == "pa_evidence.spike_analysis.first_pause_or_pullback_bar"
+        for event in result.normalization_events
+    )
+
+
+def test_spike_pause_bar_alias_does_not_override_canonical_field() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1.update(
+        {
+            "cycle_position": "spike",
+            "spike_stage": "transitioning",
+            "market_phase": "transitioning",
+            "transition_risk": "medium",
+        }
+    )
+    next(item for item in stage1["gate_trace"] if item["node_id"] == "1.2")[
+        "branch"
+    ] = "spike"
+    stage1["pa_evidence"]["spike_analysis"] = {
+        "anchor_bar": "K5",
+        "post_anchor_state": "pause_or_pullback_present",
+        "first_pause_or_pullback_bar": "K4",
+        "first_pullback_bar": "K3",
+    }
+
+    result = _validator().validate(
+        "stage1", json.dumps(stage1, ensure_ascii=False), kline_frame=make_frame()
+    )
+
+    assert isinstance(result, ValidationError)
+    assert "pa_evidence.spike_analysis" in result.invalid_fields
 
 
 def test_spike_pause_state_requires_the_complete_transition_tuple() -> None:

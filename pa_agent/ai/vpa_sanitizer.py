@@ -149,6 +149,17 @@ def materialize_vpa_reference_bindings(
             str(value) for value in item.get("auto_bound_evidence_ids", [])
         ]
         before = list(auto_bound)
+        for claim in item.get("sequence_claims", []):
+            if not isinstance(claim, dict):
+                continue
+            for key in ("earlier_evidence_id", "later_evidence_id"):
+                evidence_id = str(claim.get(key) or "")
+                if (
+                    evidence_id in ranges_by_id
+                    and evidence_id not in declared
+                    and evidence_id not in auto_bound
+                ):
+                    auto_bound.append(evidence_id)
         covered: set[int] = set()
         for evidence_id in [*declared, *auto_bound]:
             bounds = ranges_by_id.get(evidence_id)
@@ -173,7 +184,7 @@ def materialize_vpa_reference_bindings(
                 "path": f"{path}.auto_bound_evidence_ids",
                 "before": before,
                 "after": list(auto_bound),
-                "reason": "bound_unique_explicit_k_reference",
+                "reason": "bound_explicit_model_reference",
             }
         )
     return out, events

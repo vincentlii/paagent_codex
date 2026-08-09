@@ -763,6 +763,50 @@ def classify_vpa_comparator_narrative(
     return errors, warnings
 
 
+def collect_unreconciled_vpa_comparator_warnings(
+    text: object,
+    *,
+    cited_evidence_ids: set[str],
+    evidence_items: dict[str, dict[str, Any]],
+    path: str,
+) -> list[str]:
+    """Warn when cited bar evidence has opposite rolling/seasonal relations.
+
+    The program identifies only comparator disagreement.  The VPA model keeps
+    ownership of which comparator matters in context and what it means.
+    """
+    divergent: list[str] = []
+    for evidence_id in sorted(cited_evidence_ids):
+        item = evidence_items.get(evidence_id)
+        facts = item.get("facts") if isinstance(item, dict) else None
+        if not isinstance(facts, dict):
+            continue
+        rolling = str(facts.get("volume_vs_baseline_relation") or "")
+        seasonal = str(facts.get("volume_vs_seasonality_relation") or "")
+        if {rolling, seasonal} == {"above", "below"}:
+            divergent.append(evidence_id)
+    if not divergent:
+        return []
+
+    value = str(text or "")
+    rolling_disclosed = bool(
+        re.search(r"rolling|causal\s+baseline|滚动|因果.{0,8}基线", value, re.IGNORECASE)
+    )
+    seasonal_disclosed = bool(
+        re.search(
+            r"seasonal(?:ity)?|same[-\s]?slot|季节性|同(?:一)?时间槽|同槽",
+            value,
+            re.IGNORECASE,
+        )
+    )
+    if rolling_disclosed and seasonal_disclosed:
+        return []
+    return [
+        f"{path} cites evidence with rolling/seasonality divergence "
+        f"({', '.join(divergent)}) without disclosing both comparators"
+    ]
+
+
 def validate_vpa_comparator_narrative(
     text: object,
     *,

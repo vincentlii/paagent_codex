@@ -19,8 +19,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pa_agent.config.settings import Settings, save_settings
-from pa_agent.config.paths import SETTINGS_JSON_PATH
 from pa_agent.ai.cursor_connector import (
     is_openclaw_cs_model,
     should_use_cursor_provider,
@@ -35,10 +33,33 @@ from pa_agent.ai.workbuddy_connector import (
     is_openclaw_wb_model,
     should_use_workbuddy_provider,
 )
+from pa_agent.config.paths import SETTINGS_JSON_PATH
+from pa_agent.config.settings import ReasoningProfileOverride, Settings, save_settings
 
 _API_KEY_HELP_URL = "https://my.feishu.cn/wiki/CUV1wUKWxiQGhekQdRvcZQQ2ncf"
 _AGENT_TUTORIAL_URL = (
     "https://my.feishu.cn/wiki/BEdFwGJhaiATbukuD2HccSXCnrb?from=from_copylink"
+)
+
+_ROLE_PROFILE_FIELDS = (
+    ("stage1", "PA Stage 1"),
+    ("stage2", "PA Stage 2"),
+    ("vpa_evidence", "VPA Evidence"),
+    ("joint_arbiter", "Joint Arbiter"),
+    ("free_chat", "Free Chat"),
+)
+_ROLE_PROFILE_OPTIONS = (
+    ("inherit", "继承全局", None),
+    ("off", "关闭 Thinking", (False, None)),
+    ("on", "开启 / 继承 effort", (True, None)),
+    ("low", "开启 / low", (True, "low")),
+    ("medium", "开启 / medium", (True, "medium")),
+    ("high", "开启 / high", (True, "high")),
+    ("max", "开启 / max", (True, "max")),
+    ("inherit_low", "继承 Thinking / low", (None, "low")),
+    ("inherit_medium", "继承 Thinking / medium", (None, "medium")),
+    ("inherit_high", "继承 Thinking / high", (None, "high")),
+    ("inherit_max", "继承 Thinking / max", (None, "max")),
 )
 
 
@@ -86,6 +107,23 @@ class AIModelSettingsDialog(QDialog):
         self._reasoning_effort_combo.addItems(["low", "medium", "high", "max"])
         form.addRow("Reasoning Effort:", self._reasoning_effort_combo)
 
+        role_group = QGroupBox("按角色配置 Thinking (未设置则继承全局)")
+        role_form = QFormLayout(role_group)
+        role_form.addRow(
+            "",
+            QLabel(
+                "DeepSeek V4 的 low/medium 会按官方兼容规则映射为 high; 关闭 Thinking 才会明显减少耗时."
+            ),
+        )
+        self._role_profile_combos: dict[str, QComboBox] = {}
+        for role, label in _ROLE_PROFILE_FIELDS:
+            combo = QComboBox()
+            for key, text, data in _ROLE_PROFILE_OPTIONS:
+                combo.addItem(text, (key, data))
+            self._role_profile_combos[role] = combo
+            role_form.addRow(f"{label}:", combo)
+        form.addRow(role_group)
+
         self._api_key_help_btn = QPushButton("小白点这里！获取程序无限Token，无限分析")
         self._api_key_help_btn.setStyleSheet(
             "QPushButton { font-size: 13pt; font-weight: bold; "
@@ -126,6 +164,22 @@ class AIModelSettingsDialog(QDialog):
         idx = self._reasoning_effort_combo.findText(p.reasoning_effort)
         if idx >= 0:
             self._reasoning_effort_combo.setCurrentIndex(idx)
+        for role, combo in self._role_profile_combos.items():
+            profile = getattr(p.reasoning_profiles, role)
+            key = "inherit"
+            if profile is not None:
+                if profile.thinking is False:
+                    key = "off"
+                elif profile.thinking is True:
+                    key = profile.reasoning_effort or "on"
+                elif profile.reasoning_effort:
+                    key = f"inherit_{profile.reasoning_effort}"
+            index = combo.findData((key, next(
+                (data for option_key, _text, data in _ROLE_PROFILE_OPTIONS if option_key == key),
+                None,
+            )))
+            if index >= 0:
+                combo.setCurrentIndex(index)
 
     def _on_save(self) -> None:
         p = self._settings.provider
@@ -164,6 +218,26 @@ class AIModelSettingsDialog(QDialog):
 
         p.thinking = self._thinking_check.isChecked()
         p.reasoning_effort = self._reasoning_effort_combo.currentText()  # type: ignore[assignment]
+        for role, combo in self._role_profile_combos.items():
+            key, data = combo.currentData()
+            if key == "inherit":
+                setattr(p.reasoning_profiles, role, None)
+            elif key == "off":
+                setattr(
+                    p.reasoning_profiles,
+                    role,
+                    ReasoningProfileOverride(thinking=False),
+                )
+            else:
+                thinking, effort = data
+                setattr(
+                    p.reasoning_profiles,
+                    role,
+                    ReasoningProfileOverride(
+                        thinking=thinking,
+                        reasoning_effort=effort,
+                    ),
+                )
         if not api_key:
             p.api_key_encrypted = ""
 
@@ -239,7 +313,8 @@ class AIModelSettingsDialog(QDialog):
         from PyQt6.QtWidgets import QDialog as _QDialog
         dlg = _QDialog(self)
         dlg.setWindowTitle("获取无限Token")
-        from PyQt6.QtWidgets import QVBoxLayout as _VBox, QDialogButtonBox as _DBB
+        from PyQt6.QtWidgets import QDialogButtonBox as _DBB
+        from PyQt6.QtWidgets import QVBoxLayout as _VBox
         layout = _VBox(dlg)
         label = QLabel(
             "获取无限Token方法需付费49.9元，付费后你将获得<br>"

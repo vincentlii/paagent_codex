@@ -65,6 +65,7 @@ _VPA_EVIDENCE_ANALYST_SYSTEM = """
 - Evidence first, label last。先讨论 Background、Location、Effort versus Result、Leg/Wave Comparison、Acceptance/Follow-through，再谨慎使用 Wyckoff 事件标签。
 - 单根 K 线只能形成候选解释；没有可比背景、位置和后续已收盘 K 线时，不得把 Spring、UTAD、Absorption、Exhaustion、No Demand 或 No Supply 写成已确认事件。
 - OHLCV 不能识别参与者身份、主动买卖方向或机构意图。tick/proxy/unknown volume 只能支持同源相对活动比较。
+- 同一 evidence 的 causal rolling baseline 与 seasonality comparator 都可用但方向相反时，必须同时披露两者，再由你解释背景权重；不得只选择有利于某一结论的 comparator。
 - 只引用 VPA_PROGRAM_EVIDENCE_CATALOG 中存在的 evidence ID；不得复写或心算 OHLC、Volume、RVOL、ATR、百分比或价格。
 - 下一步确认只能等待下一根已收盘 K 线，不得引用 K0、形成中或未收盘 K 线。
 - 只输出一个 JSON object，不输出 Markdown、PA 字段、交易方向、订单、胜率或置信度。
@@ -104,7 +105,7 @@ _PA_EVIDENCE_OUTPUT_RULE = """
 - `pa_evidence.fact_refs` 只能引用 ANALYSIS_FACT_CATALOG 中存在的 `PA.*` ID；确定性计数、连续段、极值与比较不得自行重算。
 - `theory_rule_ids` 只能引用 PA_THEORY_RULE_CATALOG 中存在且本轮实际使用的 Brooks 规则，不得自造或为了凑字段罗列无关规则。
 - 非 `spike` 周期时 `spike_analysis=null` 且 `spike_stage=null`，不得残留上一轮 Spike 状态。
-- `spike` 周期必须填写 `spike_analysis`：`anchor_bar` 是本轮识别的 Spike 锚点；`post_anchor_state` 只能为 `no_closed_bar_after_anchor`、`continuation_only`、`pause_or_pullback_present`。
+- `spike` 周期必须严格填写 `spike_analysis={"anchor_bar":"K#","post_anchor_state":"no_closed_bar_after_anchor|continuation_only|pause_or_pullback_present","first_pause_or_pullback_bar":"K#|null"}`。字段名不得缩写或改名；`anchor_bar` 是本轮识别的 Spike 锚点。
 - 一旦识别 `pause_or_pullback_present`，必须给出第一根对应的已收盘 K 线，`spike_stage` 不得仍为 `active`，`market_phase` 必须为 `transitioning`；`pause_or_pullback_present` 时，`transition_risk` 必须从 `high|medium|low` 中选择，并由你根据已收盘价格行为判断，程序不会代填。这个状态组表达 Brooks 的 Spike 向通道/区间过渡语义，不是程序替代市场判断。
 - `market_phase=stable` 时 `transition_risk=null`；风险等级只描述模型已经识别出的转换期，不得反向作为隐藏 Gate。
 """.strip()
@@ -356,6 +357,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 - K线序号方向：K1 是最新已收盘，K2 是它前一根；判断 K2 的后续跟随时看 K1，判断 K3 的后续跟随时看 K2/K1；K1 的跟随通常为 pending。
 - 程序几何表只提供实体、影线、收盘位置、ATR 比值和与前棒的精确包含/重叠关系，**不提供 `bar_type` 结论**。
 - `relation_to_previous` 已由程序精确测量；不要在 `bar_type` 重复输出 inside/outside。`bar_type` 只表达需要背景解释的 trend/doji/flat/other，且不可只靠单一固定阈值机械决定。
+- `reason` 也不要重新心算或改写 inside/outside 包含关系；需要讨论其 PA 意义时，直接引用程序的 `relation_to_previous` 事实后解释上下文作用。
 - 先引用 K 线与程序事实 ID，再给出标签；`reason` 只写定性解释，不复写程序表中的数值、计数或 canonical key=value，不得自行抄算、扩展窗口或伪造程序未提供的事实。若多种解释均合理，使用 `other` 或在 `reason` 中说明歧义。
 - `context_effect` 必须使用 **strengthens_bull / strengthens_bear**（带 s），禁止写 strengthen_bull、strengthen_bear。
 
@@ -540,9 +542,10 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 - 计划型限价单只有在「结构失效位」和「目标结构位」都清晰时才可执行；宽通道 / 区间边界 setup 只是允许进入评估，不代表必须下单。
 
 **计划型限价优先级（背景与周期 > 独立信号棒）：**
+- 执行语义必须唯一：`限价单` 是价格触及即可能成交的被动挂单，不能把“下一根收盘确认”写成其成交前提；若必须先确认，则本轮 `不下单`，把确认条件写入 watch_points，下一轮再由 PA 决定订单。`突破单` 由所引用极点触发，`市价单` 表示当前立即执行。
 - 阶段一 `gate_result=proceed` 且 `cycle_position` 为 broad_channel / trading_range / normal_channel / trending_tr 时，**默认先评估计划型限价（§9.0P）**。
 - **无独立信号棒（signal_bar.bar=null）** → §9.0=否，**必须**继续 §9.0P；若 §9.0P=是 则给出限价三价。
-- `direction=neutral`、K1 为 doji/inside/弱棒、或 `transition_risk=medium` **单独出现**时，仍应尝试 §9.0P 边界/回撤限价；仅当 **§10.1–10.3 无法通过** 或 **§14 触犯** 时才 `不下单`。
+- `direction=neutral`、K1 为 doji/弱棒、K1 的 `relation_to_previous=contained_by_previous`、或 `transition_risk=medium` **单独出现**时，仍应尝试 §9.0P 边界/回撤限价；仅当 **§10.1–10.3 无法通过** 或 **§14 触犯** 时才 `不下单`。
 - 禁止以「等下一根 K 确认信号棒」为由跳过 §9.0P——计划型限价本来就是等价格到位。
 - 仅当同时满足：**区间/通道中部（6.3=middle）**、**无结构锚点定 stop**、**K1 已穿过计划 entry/stop**、或 **barbwire 且无边界锚点** 时，才可在 §9.0P 判否。
 
@@ -1407,11 +1410,12 @@ class PromptAssembler:
 
 不要输出 `bar_range`，程序会根据 evidence IDs 唯一生成。K 序号越大越早，K1
 是最新已收盘 K 线；凡声称 response/follow-through/acceptance/rejection/test，优先用
-`sequence_claims` 明确较早与较晚 evidence ID；两个 ID 必须列在同一 observation，且
-各自 `bar_range` 不得重叠。证据不够时保持 `unresolved`，不要为了
-填标签把候选事件写成确认事件。`interpretation_label` 是开放式速记，不是第二份证明。
-每条 `interpretation` 明确提到的 K#，必须由该条自己的 `evidence_ids` 覆盖；不得借用
-其他 observation 的 evidence。只有 VPA 本身存在需要下一根已收盘 K 线验证的竞争解释时，
+`sequence_claims` 已经明确声明较早与较晚 evidence ID，无需仅为格式在父级 `evidence_ids` 重复列出；
+程序会把目录内已知 ID 记入 `auto_bound_evidence_ids`，但不会据此替你升级 supports/challenges。两个证据
+各自 `bar_range` 不得重叠。证据不够时保持 `unresolved`，不要为了填标签把候选事件写成确认事件。
+`interpretation_label` 是开放式速记，不是第二份证明。每条 `interpretation` 明确提到的 K# 应优先由
+该条自己的 `evidence_ids` 覆盖；唯一可绑定的单棒引用可由程序审计补全，未知、歧义或越界引用仍会拒绝。
+只有 VPA 本身存在需要下一根已收盘 K 线验证的竞争解释时，
 `next_confirmation` 才写 `pending_closed_bar`；VPA 为 neutral/insufficient，或没有独立的后续
 验证条件时可写 `not_applicable`。该字段是证据观察项，不是 Brooks Entry Attempt 的审批 Gate。
 当 `ENTRY_ATTEMPT_CONTEXT.applicable=false` 时，不存在可被 VPA 评价的当前入场尝试，

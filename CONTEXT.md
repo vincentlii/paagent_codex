@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0015`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0017`。
 
 ## 核心目标
 
@@ -20,6 +20,9 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
 - `PaHypothesisSet`：`compile_pa_handoff(...)` 从已验证 PA Stage 1/Stage 2 与冻结价格快照
   编译出的唯一角色交接对象，包含主/替代假设、真实 Entry Attempt、程序交易数学、
   PA 已引用窗口的数值位置与证据引用；它不新增交易判断。
+- `PaSetupCandidate.execution_mode` 由程序从已验证 `order_type` 唯一物化：限价单为
+  `passive_limit`、突破单为 `price_triggered_stop`、市价单为 `immediate_market`。它只澄清
+  执行语义，不改变 PA 选择的订单类型；旧记录按同一映射回放。
 - `VpaEvidenceReport`：VPA 分析者针对 PA 假设给出的支持、挑战或信息不足结论；
   它不能创建 Setup、翻转方向或修改胜率。
 - `JointDecisionProposal`：联合裁决者在既有 PA 候选中选择当前 Entry Attempt、

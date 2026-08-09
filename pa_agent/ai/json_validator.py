@@ -555,6 +555,42 @@ class JsonValidator:
             )
 
         events: list[dict[str, Any]] = []
+        if stage == "stage1":
+            before_evidence = before.get("pa_evidence")
+            after_evidence = after.get("pa_evidence")
+            before_spike = (
+                before_evidence.get("spike_analysis")
+                if isinstance(before_evidence, dict)
+                else None
+            )
+            after_spike = (
+                after_evidence.get("spike_analysis")
+                if isinstance(after_evidence, dict)
+                else None
+            )
+            if (
+                isinstance(before_spike, dict)
+                and isinstance(after_spike, dict)
+                and "first_pullback_bar" in before_spike
+                and "first_pause_or_pullback_bar" not in before_spike
+                and "first_pause_or_pullback_bar" in after_spike
+            ):
+                events.append(
+                    {
+                        "path": (
+                            "pa_evidence.spike_analysis."
+                            "first_pause_or_pullback_bar"
+                        ),
+                        "before": {
+                            "first_pullback_bar": copy.deepcopy(
+                                before_spike["first_pullback_bar"]
+                            )
+                        },
+                        "after": copy.deepcopy(
+                            after_spike["first_pause_or_pullback_bar"]
+                        ),
+                    }
+                )
         if stage == "stage2":
             for field in ("next_bar_prediction", "next_cycle_prediction"):
                 old_prediction = before.get(field)

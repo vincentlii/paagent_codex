@@ -15,6 +15,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from pa_agent.ai.factual_grounding import (
     classify_vpa_comparator_narrative,
+    collect_unreconciled_vpa_comparator_warnings,
     validate_future_confirmation_narrative,
     validate_inference_only_narrative,
     validate_k_reference_bounds,
@@ -321,6 +322,7 @@ def _validate_vpa_report_grounding(
         path: str,
         cited_ids: set[str],
         check_k_references: bool,
+        require_comparator_reconciliation: bool = False,
     ) -> None:
         cited = [
             evidence_items[evidence_id]
@@ -343,6 +345,15 @@ def _validate_vpa_report_grounding(
         )
         errors.extend(comparator_errors)
         warnings.extend(comparator_warnings)
+        if require_comparator_reconciliation:
+            warnings.extend(
+                collect_unreconciled_vpa_comparator_warnings(
+                    text,
+                    cited_evidence_ids=cited_ids,
+                    evidence_items=evidence_items,
+                    path=path,
+                )
+            )
         if check_k_references:
             errors.extend(
                 validate_vpa_k_references(
@@ -364,6 +375,7 @@ def _validate_vpa_report_grounding(
             path=f"vpa_report.observations[{index}].interpretation",
             cited_ids=observation.effective_evidence_ids,
             check_k_references=True,
+            require_comparator_reconciliation=True,
         )
     for index, assessment in enumerate(report.hypothesis_assessments):
         validate_inference(
@@ -554,6 +566,19 @@ def validate_vpa_evidence(
         if isinstance(item, dict)
         for evidence_id in item.get("evidence_ids", [])
     }
+    cited_before_materialization.update(
+        str(claim.get(key))
+        for observation in (
+            report_obj.get("observations", [])
+            if isinstance(report_obj, dict)
+            else []
+        )
+        if isinstance(observation, dict)
+        for claim in observation.get("sequence_claims", [])
+        if isinstance(claim, dict)
+        for key in ("earlier_evidence_id", "later_evidence_id")
+        if claim.get(key)
+    )
     pre_schema_errors: list[str] = []
     unknown_before_materialization = sorted(
         cited_before_materialization - known_ids
@@ -642,10 +667,11 @@ def validate_vpa_evidence(
         for item in section:
             if isinstance(item, dict):
                 item["auto_bound_evidence_ids"] = []
-    report_obj, _binding_audit = materialize_vpa_reference_bindings(
+    report_obj, binding_audit = materialize_vpa_reference_bindings(
         report_obj,
         catalog,
     )
+    normalizations.extend(binding_audit)
     applicability_warnings: list[str] = []
     if (
         not pa_hypotheses.candidate_ids
@@ -784,7 +810,7 @@ def validate_vpa_evidence(
                     f"hypothesis_assessments.{index} requires relative-volume evidence"
                 )
     for observation_index, observation in enumerate(report.observations):
-        observation_ids = set(observation.evidence_ids)
+        observation_ids = observation.effective_evidence_ids
         for claim_index, claim in enumerate(observation.sequence_claims):
             claim_ids = {
                 claim.earlier_evidence_id,

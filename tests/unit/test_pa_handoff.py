@@ -6,6 +6,7 @@ import pytest
 
 from pa_agent.ai.pa_handoff import compile_pa_handoff
 from pa_agent.ai.prompt_assembler import PromptAssembler
+from pa_agent.ai.role_contracts import PaSetupCandidate
 from pa_agent.config.paths import PROMPT_DIR
 from pa_agent.config.settings import PromptSettings
 from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
@@ -47,6 +48,7 @@ def test_limit_plan_without_entry_rule_compiles_one_structured_candidate() -> No
     candidate = handoff.setup_candidates[0]
     assert candidate.setup is None
     assert candidate.trigger is None
+    assert candidate.execution_mode == "passive_limit"
     assert candidate.order_type == "限价单"
     assert candidate.order_direction == "做多"
     assert candidate.entry_price == 2035.0
@@ -148,6 +150,34 @@ def test_handoff_digest_covers_prices_and_frozen_price_snapshot() -> None:
     changed = compile_pa_handoff(VALID_STAGE1, changed_stage2, make_frame())
 
     assert first.source_digest != changed.source_digest
+
+
+def test_order_type_materializes_one_unambiguous_execution_mode() -> None:
+    frame = make_frame()
+    breakout = compile_pa_handoff(VALID_STAGE1, VALID_STAGE2, frame)
+    assert breakout.setup_candidates[0].execution_mode == "price_triggered_stop"
+
+    market_stage2 = copy.deepcopy(VALID_STAGE2)
+    market_stage2["decision"].update(
+        {
+            "order_type": "市价单",
+            "entry_basis_bar": None,
+            "entry_basis_extreme": None,
+            "entry_rule": None,
+        }
+    )
+    market = compile_pa_handoff(VALID_STAGE1, market_stage2, frame)
+    assert market.setup_candidates[0].execution_mode == "immediate_market"
+
+
+def test_legacy_candidate_replays_with_deterministic_execution_mode() -> None:
+    candidate = compile_pa_handoff(VALID_STAGE1, VALID_STAGE2, make_frame()).setup_candidates[0]
+    payload = candidate.model_dump()
+    payload.pop("execution_mode")
+
+    replayed = PaSetupCandidate.model_validate(payload)
+
+    assert replayed.execution_mode == "price_triggered_stop"
 
 
 def test_executable_plan_with_missing_structured_price_fails_loudly() -> None:

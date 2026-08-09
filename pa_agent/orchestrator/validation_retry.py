@@ -18,6 +18,7 @@ from pa_agent.ai.retry_policy import (
     max_retries_for_category,
     should_retry,
 )
+from pa_agent.orchestrator.warning_events import group_warning_messages
 
 logger = logging.getLogger(__name__)
 
@@ -113,16 +114,21 @@ def validate_with_retry(
 
         retry_cap = max_attempts
         if isinstance(result, Ok):
-            for warning in result.warnings:
+            grouped_warnings = group_warning_messages(
+                (warning.code, warning.message) for warning in result.warnings
+            )
+            for warning in grouped_warnings:
                 validation_events.append(
                     {
                         "attempt": attempt + 1,
                         "category": "warning",
-                        "code": warning.code,
+                        "code": warning["code"],
                         "severity": "warning",
                         "owner": stage,
                         "retry_policy": "none",
-                        "message": warning.message,
+                        "message": warning["message"],
+                        "occurrence_count": warning["occurrence_count"],
+                        "findings": warning["findings"],
                         "missing_fields": [],
                         "invalid_fields": [],
                         "allowed_values": {},
@@ -227,13 +233,20 @@ def validate_with_retry(
             )
 
         err = result
+        retry_allowed = attempt < retry_cap and should_retry(
+            err.category,
+            err.invalid_fields,
+            err.missing_fields,
+            attempt=attempt,
+            settings=validation_settings,
+        )
         event = {
             "attempt": attempt + 1,
             "category": err.category,
             "code": "json_contract_violation",
             "severity": "hard_error",
             "owner": stage,
-            "retry_policy": "bounded_retry",
+            "retry_policy": "bounded_retry" if retry_allowed else "none",
             "message": err.message,
             "missing_fields": list(err.missing_fields),
             "invalid_fields": list(err.invalid_fields),
@@ -245,13 +258,7 @@ def validate_with_retry(
             "retry_feedback": None,
         }
         validation_events.append(event)
-        if attempt >= retry_cap or not should_retry(
-            err.category,
-            err.invalid_fields,
-            err.missing_fields,
-            attempt=attempt,
-            settings=validation_settings,
-        ):
+        if not retry_allowed:
             return ValidationRetryResult(
                 result=err,
                 canonical_messages=canonical_messages,

@@ -76,17 +76,26 @@ class ModelCallRunner:
         )
         attempts: list[dict[str, Any]] = []
         structured_downgraded = False
+        attempt_limit = self._max_attempts
+        requested_effort = reasoning_effort if thinking else None
+        effective_thinking = bool(thinking)
+        effective_effort = _provider_effective_effort(
+            capabilities.provider_id,
+            settings=self._settings,
+            thinking=effective_thinking,
+            requested_effort=requested_effort,
+        )
 
         attempt_number = 0
-        while attempt_number < self._max_attempts:
+        while attempt_number < attempt_limit:
             attempt_number += 1
             started = time.monotonic()
             kwargs: dict[str, Any] = {
                 "on_reasoning_token": on_reasoning_token,
                 "on_content_token": on_content_token,
                 "cancel_token": cancel_token,
-                "thinking": thinking,
-                "reasoning_effort": reasoning_effort,
+                "thinking": effective_thinking,
+                "reasoning_effort": effective_effort,
             }
             if response_format is not None:
                 kwargs["response_format"] = response_format
@@ -105,11 +114,15 @@ class ModelCallRunner:
                             "failed",
                             failure,
                             started,
+                            requested_thinking=thinking,
+                            requested_reasoning_effort=requested_effort,
+                            effective_thinking=effective_thinking,
+                            effective_reasoning_effort=effective_effort,
                         )
                     )
                     if on_attempt_error is not None:
                         on_attempt_error(RuntimeError(failure.message))
-                    if attempt_number < self._max_attempts:
+                    if attempt_number < attempt_limit:
                         self._sleep(_retry_delay(attempt_number))
                         continue
                     raise ModelCallFailure(
@@ -123,6 +136,10 @@ class ModelCallRunner:
                         "completed",
                         None,
                         started,
+                        requested_thinking=thinking,
+                        requested_reasoning_effort=requested_effort,
+                        effective_thinking=effective_thinking,
+                        effective_reasoning_effort=effective_effort,
                     )
                 )
                 return ModelCallResult(
@@ -146,6 +163,10 @@ class ModelCallRunner:
                         "failed",
                         failure,
                         started,
+                        requested_thinking=thinking,
+                        requested_reasoning_effort=requested_effort,
+                        effective_thinking=effective_thinking,
+                        effective_reasoning_effort=effective_effort,
                     )
                 )
                 if on_attempt_error is not None:
@@ -157,13 +178,17 @@ class ModelCallRunner:
                 ):
                     structured_downgraded = True
                     response_format = None
+                    # Capability negotiation has its own single bounded call;
+                    # it must not disappear merely because transient retries
+                    # consumed the normal transport budget.
+                    attempt_limit += 1
                     self._log.warning(
                         "Provider rejected structured output for %s; "
                         "retrying once in text mode",
                         stage,
                     )
                     continue
-                if failure.retryable and attempt_number < self._max_attempts:
+                if failure.retryable and attempt_number < attempt_limit:
                     self._sleep(_retry_delay(attempt_number))
                     continue
                 raise ModelCallFailure(
@@ -172,7 +197,14 @@ class ModelCallRunner:
                     attempts=tuple(attempts),
                 ) from exc
 
-        raise AssertionError("model call loop exhausted without result")
+        raise ModelCallFailure(
+            ProviderFailure(
+                kind="internal",
+                message="model call budget exhausted without a terminal result",
+                retryable=False,
+            ),
+            attempts=tuple(attempts),
+        )
 
 
 def _attempt_entry(
@@ -181,10 +213,20 @@ def _attempt_entry(
     status: str,
     failure: ProviderFailure | None,
     started: float,
+    requested_thinking: bool,
+    requested_reasoning_effort: str | None,
+    effective_thinking: bool,
+    effective_reasoning_effort: str | None,
 ) -> dict[str, Any]:
     return {
         "attempt": number,
         "status": status,
+        "requested_thinking": bool(requested_thinking),
+        "requested_reasoning_effort": requested_reasoning_effort,
+        "effective_thinking": bool(effective_thinking),
+        "effective_reasoning_effort": effective_reasoning_effort,
+        "thinking": bool(effective_thinking),
+        "reasoning_effort": effective_reasoning_effort,
         "structured_output_mode": (
             str(response_format.get("type")) if response_format is not None else "text"
         ),
@@ -193,6 +235,26 @@ def _attempt_entry(
         "status_code": failure.status_code if failure is not None else None,
         "retryable": failure.retryable if failure is not None else None,
     }
+
+
+def _provider_effective_effort(
+    provider_id: str,
+    *,
+    settings: Any,
+    thinking: bool,
+    requested_effort: str | None,
+) -> str | None:
+    if not thinking:
+        return None
+    value = str(requested_effort or "high").strip().lower()
+    model = str(getattr(settings, "model", "") or "").strip().lower()
+    is_openclaw_alias = model in {"openclaw", "openclaw_wb", "openclaw_cs"} or any(
+        model.startswith(f"{prefix}/")
+        for prefix in ("openclaw", "openclaw_wb", "openclaw_cs")
+    )
+    if provider_id == "deepseek" or ("deepseek" in model and not is_openclaw_alias):
+        return "max" if value == "max" else "high"
+    return value
 
 
 def _retry_delay(attempt_number: int) -> float:

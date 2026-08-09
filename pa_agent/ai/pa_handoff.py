@@ -24,6 +24,11 @@ from pa_agent.util.trade_metrics import compute_risk_reward, passes_trader_equat
 
 _EXECUTABLE_ORDER_TYPES = frozenset({"限价单", "突破单", "市价单"})
 _ORDER_DIRECTIONS = frozenset({"做多", "做空"})
+_EXECUTION_MODE_BY_ORDER_TYPE = {
+    "限价单": "passive_limit",
+    "突破单": "price_triggered_stop",
+    "市价单": "immediate_market",
+}
 
 
 def _finite(value: object) -> float | None:
@@ -225,6 +230,7 @@ def _candidate(
         direction=candidate_direction,
         setup=setup,
         timing_state=timing_state,
+        execution_mode=_EXECUTION_MODE_BY_ORDER_TYPE[order_type],
         order_type=order_type,
         order_direction=order_direction,
         entry_price=float(decision["entry_price"]),

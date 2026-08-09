@@ -9,7 +9,12 @@ from pa_agent.ai.prompt_assembler import PromptAssembler, VpaPromptBuildError
 from pa_agent.ai.router import route_strategy_files
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
 from pa_agent.config.paths import PROMPT_DIR
-from pa_agent.config.settings import PromptSettings, Settings, ValidationSettings
+from pa_agent.config.settings import (
+    PromptSettings,
+    ReasoningProfileOverride,
+    Settings,
+    ValidationSettings,
+)
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 from tests.integration.conftest import (
@@ -81,11 +86,14 @@ def _orchestrator(
     baseline_replies: list | None = None,
     vpa_side_effect=None,
     allow_research_joint: bool | None = None,
+    reasoning_profiles: dict[str, ReasoningProfileOverride] | None = None,
 ) -> tuple[TwoStageOrchestrator, MagicMock, MagicMock]:
     settings = Settings(
         prompt=PromptSettings(vpa_mode=mode),
         validation=ValidationSettings(retry_enabled=False),
     )
+    for role, profile in (reasoning_profiles or {}).items():
+        setattr(settings.provider.reasoning_profiles, role, profile)
     baseline_client = MagicMock()
     baseline_client.stream_chat.side_effect = baseline_replies or [
         make_reply(copy.deepcopy(VALID_STAGE1)),
@@ -182,6 +190,42 @@ def test_shadow_and_soft_have_distinct_official_paths(
     ] == expected_calls
     writer.save_full.assert_called_once()
     assert events[-1] == OrchestratorEvent.RecordSaved
+
+
+def test_each_role_uses_and_records_its_own_reasoning_profile() -> None:
+    orchestrator, _client, _writer = _orchestrator(
+        "soft",
+        vpa_replies=[make_reply(_vpa_report())],
+        joint_replies=[make_reply(_joint_lower_confidence())],
+        reasoning_profiles={
+            "stage1": ReasoningProfileOverride(thinking=True, reasoning_effort="high"),
+            "stage2": ReasoningProfileOverride(thinking=False),
+            "vpa_evidence": ReasoningProfileOverride(
+                thinking=True,
+                reasoning_effort="max",
+            ),
+            "joint_arbiter": ReasoningProfileOverride(thinking=False),
+        },
+    )
+
+    record = orchestrator.submit(make_frame(), CancelToken(), lambda _event: None)
+
+    controls = {
+        item["stage"]: (item["thinking"], item["reasoning_effort"])
+        for item in record.call_attempts
+    }
+    assert controls == {
+        "stage1": (True, "high"),
+        "stage2": (False, None),
+        "vpa_evidence": (True, "max"),
+        "joint_arbiter": (False, None),
+    }
+    assert record.role_runtime["reasoning_profiles"]["stage2"] == {
+        "role": "stage2",
+        "thinking": False,
+        "reasoning_effort": "high",
+        "source": "role",
+    }
 
 
 def test_vpa_failure_degrades_to_pa_only_without_failing_analysis() -> None:

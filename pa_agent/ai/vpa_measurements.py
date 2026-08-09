@@ -1127,7 +1127,7 @@ def render_vpa_measurements(
     lines.append(
         "evidence_id | source | range | OHLC/direction | volume/available | "
         "baseline_median/rvol/relation/sample_count/minimum | volume_vs_prev_ratio/relation | "
-        "percentile | seasonality_rvol/relation/n | spread_atr | close_position | body_atr | "
+        "percentile | seasonality_rvol/relation/n | comparator_alignment | spread_atr | close_position | body_atr | "
         "close_to_close_progress_atr/relation | "
         "prior_5(high,low,high_delta/high_relation,low_delta/low_relation) | "
         "prior_20(high,low,high_delta/high_relation,low_delta/low_relation) | time_bucket | day"
@@ -1179,6 +1179,18 @@ def render_vpa_measurements(
             )
             continue
         clock = item["time_context"]
+        rolling_relation = str(facts.get("volume_vs_baseline_relation") or "")
+        seasonal_relation = str(facts.get("volume_vs_seasonality_relation") or "")
+        comparator_alignment = (
+            "divergent"
+            if {rolling_relation, seasonal_relation} == {"above", "below"}
+            else (
+                "aligned"
+                if rolling_relation in {"above", "below", "equal"}
+                and rolling_relation == seasonal_relation
+                else "unavailable_or_mixed"
+            )
+        )
         lines.append(
             f"{item['evidence_id']} | {item['source']} | {item['bar_range']} | "
             f"{facts.get('open')}/{facts.get('high')}/{facts.get('low')}/{facts.get('close')}/"
@@ -1190,7 +1202,8 @@ def render_vpa_measurements(
             f"{facts.get('volume_vs_previous_relation')} | {facts.get('volume_percentile')} | "
             f"{facts.get('seasonality_relative_volume')}/"
             f"{facts.get('volume_vs_seasonality_relation')}/"
-            f"{facts.get('seasonality_sample_count')} | {facts.get('spread_atr')} | "
+            f"{facts.get('seasonality_sample_count')} | {comparator_alignment} | "
+            f"{facts.get('spread_atr')} | "
             f"{facts.get('close_position')} | {facts.get('body_atr')} | "
             f"{facts.get('directional_progress_atr')}/"
             f"{facts.get('close_vs_previous_relation')} | "

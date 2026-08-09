@@ -39,6 +39,7 @@ from pa_agent.ai.json_validator import Ok, ValidationError
 from pa_agent.ai.model_call_runner import ModelCallRunner
 from pa_agent.ai.pa_handoff import compile_pa_handoff
 from pa_agent.ai.provider_failures import ModelCallFailure
+from pa_agent.ai.reasoning_profiles import resolve_reasoning_profile
 from pa_agent.ai.role_contracts import (
     JOINT_DECISION_SCHEMA,
     VPA_EVIDENCE_SCHEMA,
@@ -229,6 +230,16 @@ def _call_attempt_entry(
         "error_type": error_type,
         "provider_id": model_call_meta.get("provider_id"),
         "structured_output_mode": model_call_meta.get("structured_output_mode"),
+        "thinking": model_call_meta.get("thinking"),
+        "reasoning_effort": model_call_meta.get("reasoning_effort"),
+        "requested_thinking": model_call_meta.get("requested_thinking"),
+        "requested_reasoning_effort": model_call_meta.get(
+            "requested_reasoning_effort"
+        ),
+        "effective_thinking": model_call_meta.get("effective_thinking"),
+        "effective_reasoning_effort": model_call_meta.get(
+            "effective_reasoning_effort"
+        ),
         "provider_fallback_used": bool(
             model_call_meta.get("provider_fallback_used", False)
         ),
@@ -268,7 +279,7 @@ def _apply_validation_to_call_attempts(
                     response_calls[index]["execution_policy_applied"] = True
                 response_calls[index]["validation_warning_count"] = (
                     int(response_calls[index].get("validation_warning_count") or 0)
-                    + 1
+                    + max(1, int(event.get("occurrence_count") or 1))
                 )
                 continue
             response_calls[index]["status"] = "validation_failed"
@@ -284,6 +295,31 @@ def _apply_validation_to_call_attempts(
     elif final_call.get("status") != "validation_failed":
         final_call["status"] = "validation_failed"
         final_call["validation_category"] = result.category
+
+
+def _effective_reasoning_profile(
+    calls: list[dict[str, Any]],
+    role: str,
+) -> dict[str, Any]:
+    matching = [
+        item
+        for item in calls
+        if item.get("stage") == role and item.get("response_hash")
+    ]
+    if not matching:
+        return {
+            "provider_id": None,
+            "thinking": None,
+            "reasoning_effort": None,
+            "source": "unavailable",
+        }
+    latest = matching[-1]
+    return {
+        "provider_id": latest.get("provider_id"),
+        "thinking": latest.get("effective_thinking"),
+        "reasoning_effort": latest.get("effective_reasoning_effort"),
+        "source": "call_ledger",
+    }
 
 
 def _validation_failure_status(
@@ -524,6 +560,9 @@ def _build_empty_record(
             "api_key": mask_secret(p.api_key) if p.api_key else "****",
             "thinking": p.thinking,
             "reasoning_effort": p.reasoning_effort,
+            "reasoning_profiles": p.reasoning_profiles.model_dump(
+                exclude_none=True
+            ),
             "context_window": p.context_window,
         }
 
@@ -946,7 +985,7 @@ class TwoStageOrchestrator:
             s1_user = next((m.get("content", "") for m in messages_s1 if m.get("role") == "user"), "")
             on_stage_prompt("stage1", s1_system, s1_user)
 
-        _thinking, _effort = self._thinking_params()
+        _s1_thinking, _s1_effort = self._thinking_params("stage1")
         s1_streamed_reasoning = False
         s1_streamed_content = False
 
@@ -969,8 +1008,8 @@ class TwoStageOrchestrator:
                 on_reasoning_token=_on_s1_reasoning,
                 on_content_token=_on_s1_content,
                 cancel_token=cancel_token,
-                thinking=_thinking,
-                reasoning_effort=_effort,
+                thinking=_s1_thinking,
+                reasoning_effort=_s1_effort,
                 stage_label="Stage 1",
                 on_attempt_error=lambda exc: _append_call(
                     "stage1",
@@ -1071,8 +1110,8 @@ class TwoStageOrchestrator:
                 on_reasoning_token=_on_s1_reasoning,
                 on_content_token=_on_s1_content,
                 cancel_token=cancel_token,
-                thinking=_thinking,
-                reasoning_effort=_effort,
+                thinking=_s1_thinking,
+                reasoning_effort=_s1_effort,
                 stage_label="Stage 1 repair",
                 on_attempt_error=lambda exc: _append_call(
                     "stage1",
@@ -1359,6 +1398,7 @@ class TwoStageOrchestrator:
             if on_stage2_content is not None:
                 on_stage2_content(chunk)
 
+        _s2_thinking, _s2_effort = self._thinking_params("stage2")
         try:
             reply_s2 = self._stream_chat_resilient(
                 messages_s2,
@@ -1366,8 +1406,8 @@ class TwoStageOrchestrator:
                 on_reasoning_token=_on_s2_reasoning,
                 on_content_token=_on_s2_content,
                 cancel_token=cancel_token,
-                thinking=_thinking,
-                reasoning_effort=_effort,
+                thinking=_s2_thinking,
+                reasoning_effort=_s2_effort,
                 stage_label="Stage 2",
                 on_attempt_error=lambda exc: _append_call(
                     "stage2",
@@ -1502,8 +1542,8 @@ class TwoStageOrchestrator:
                 on_reasoning_token=_on_s2_reasoning,
                 on_content_token=_on_s2_content,
                 cancel_token=cancel_token,
-                thinking=_thinking,
-                reasoning_effort=_effort,
+                thinking=_s2_thinking,
+                reasoning_effort=_s2_effort,
                 stage_label="Stage 2 repair",
                 on_attempt_error=lambda exc: _append_call(
                     "stage2",
@@ -1982,7 +2022,6 @@ class TwoStageOrchestrator:
                     "message": "Soft is research-only; production executed Shadow.",
                 }
             )
-        thinking, effort = self._thinking_params()
 
         def execute_role(
             *,
@@ -1993,6 +2032,7 @@ class TwoStageOrchestrator:
             validate: Callable[[str], Any],
         ) -> tuple[StructuredRoleResult | None, dict[str, Any] | None]:
             def call_api(current_messages: list[dict[str, Any]]) -> Any:
+                profile = self._thinking_profile(role)
                 attempt = 1 + sum(
                     1
                     for item in role_calls
@@ -2009,8 +2049,8 @@ class TwoStageOrchestrator:
                         on_reasoning_token=None,
                         on_content_token=None,
                         cancel_token=cancel_token,
-                        thinking=thinking,
-                        reasoning_effort=effort,
+                        thinking=profile.thinking,
+                        reasoning_effort=profile.reasoning_effort,
                     )
                 except ModelCallFailure as exc:
                     failed = _call_attempt_entry(
@@ -2203,6 +2243,13 @@ class TwoStageOrchestrator:
                     if str(violation).strip()
                 }
             )
+            reasoning_roles = ["stage1", "stage2", "vpa_evidence"]
+            if research_joint:
+                reasoning_roles.append("joint_arbiter")
+            effective_calls = [
+                *copy.deepcopy(baseline.call_attempts),
+                *copy.deepcopy(role_calls),
+            ]
             role_runtime = {
                 "design": (
                     "pa_vpa_joint_research_v1"
@@ -2219,6 +2266,14 @@ class TwoStageOrchestrator:
                 ),
                 "provider_fallback_allowed": False,
                 "authority_violations": authority_violations,
+                "reasoning_profiles": {
+                    role: self._thinking_profile(role).to_dict()
+                    for role in reasoning_roles
+                },
+                "provider_effective_reasoning_profiles": {
+                    role: _effective_reasoning_profile(effective_calls, role)
+                    for role in reasoning_roles
+                },
             }
             usage = _accumulate_usage_calls(
                 baseline.usage_total,
@@ -2255,10 +2310,7 @@ class TwoStageOrchestrator:
                     },
                     "run_outcome": outcome,
                     "usage_total": usage,
-                    "call_attempts": [
-                        *copy.deepcopy(baseline.call_attempts),
-                        *copy.deepcopy(role_calls),
-                    ],
+                    "call_attempts": effective_calls,
                     "validation_audit": [
                         *copy.deepcopy(baseline.validation_audit),
                         *copy.deepcopy(role_audit),
@@ -2474,12 +2526,19 @@ class TwoStageOrchestrator:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
-    def _thinking_params(self) -> tuple[bool, str]:
-        """Return (thinking, reasoning_effort) from settings defaults."""
-        if self._settings is None:
-            return True, "high"
-        p = self._settings.provider
-        return p.thinking, p.reasoning_effort
+    def _thinking_profile(self, role: str):
+        """Resolve one role without changing the prompt or decision contract."""
+        provider = (
+            self._settings.provider
+            if self._settings is not None
+            else getattr(self._client, "_settings", None)
+        )
+        return resolve_reasoning_profile(provider, role)
+
+    def _thinking_params(self, role: str) -> tuple[bool, str]:
+        """Return the effective thinking controls for one logical role."""
+        profile = self._thinking_profile(role)
+        return profile.thinking, profile.reasoning_effort
 
     def _stream_chat_resilient(
         self,
@@ -2608,10 +2667,21 @@ class TwoStageOrchestrator:
             }
             for attempt in result.attempts
         )
+        last_attempt = result.attempts[-1] if result.attempts else {}
         try:
             result.reply._pa_model_call_meta = {
                 "provider_id": provider_id,
                 "structured_output_mode": result.structured_output_mode,
+                "thinking": last_attempt.get("thinking"),
+                "reasoning_effort": last_attempt.get("reasoning_effort"),
+                "requested_thinking": last_attempt.get("requested_thinking"),
+                "requested_reasoning_effort": last_attempt.get(
+                    "requested_reasoning_effort"
+                ),
+                "effective_thinking": last_attempt.get("effective_thinking"),
+                "effective_reasoning_effort": last_attempt.get(
+                    "effective_reasoning_effort"
+                ),
                 "provider_fallback_used": provider_fallback_used,
                 "transport_attempts": transport_attempts,
             }

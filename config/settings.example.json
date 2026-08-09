@@ -6,6 +6,13 @@
     "api_key_encrypted": "",
     "thinking": true,
     "reasoning_effort": "high",
+    "reasoning_profiles": {
+      "stage1": {"thinking": true, "reasoning_effort": "high"},
+      "stage2": {"thinking": true, "reasoning_effort": "high"},
+      "vpa_evidence": {"thinking": true, "reasoning_effort": "high"},
+      "joint_arbiter": {"thinking": true, "reasoning_effort": "max"},
+      "free_chat": {"thinking": false}
+    },
     "context_window": 128000
   },
   "general": {

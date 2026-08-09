@@ -267,12 +267,6 @@ class FreeChatSession:
         history_for_api.append({"role": "user", "content": user_content})
 
         # ── 2. Resolve reasoning_effort ───────────────────────────────────────
-        reasoning_effort = "high"
-        if self._settings is not None:
-            reasoning_effort = getattr(
-                self._settings.provider, "reasoning_effort", "high"
-            )
-
         # ── 3. Check cancellation before API call ─────────────────────────────
         from pa_agent.ai.deepseek_client import CancelledError
 
@@ -305,6 +299,9 @@ class FreeChatSession:
             from pa_agent.config.settings import AIProviderSettings
 
             provider = AIProviderSettings(structured_output_mode="text")
+        from pa_agent.ai.reasoning_profiles import resolve_reasoning_profile
+
+        profile = resolve_reasoning_profile(provider, "free_chat")
         try:
             reply = ModelCallRunner(self._client, provider).run_stream(
                 history_for_api,
@@ -313,8 +310,8 @@ class FreeChatSession:
                 on_reasoning_token=on_reasoning_token,
                 on_content_token=on_content_token,
                 cancel_token=cancel_token,
-                thinking=bool(getattr(provider, "thinking", True)),
-                reasoning_effort=reasoning_effort,
+                thinking=profile.thinking,
+                reasoning_effort=profile.reasoning_effort,
                 structured_output=False,
             ).reply
         except ModelCallFailure as exc:

@@ -56,6 +56,33 @@ def test_retry_policy_treats_key_signal_shape_as_format_only() -> None:
     assert not should_retry("c", ["key_signals.0"], [], attempt=1, settings=settings)
 
 
+def test_non_retryable_contract_error_is_not_audited_as_bounded_retry() -> None:
+    settings = Settings(
+        validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
+    )
+    invalid = copy.deepcopy(VALID_STAGE1)
+    invalid["pa_evidence"]["spike_analysis"] = {
+        "anchor_bar": "K5",
+        "post_anchor_state": "continuation_only",
+        "first_pause_or_pullback_bar": None,
+    }
+    retry_messages: list[list[dict]] = []
+
+    result = validate_with_retry(
+        stage="stage1",
+        messages=[{"role": "user", "content": "stage1"}],
+        reply=make_reply(invalid),
+        validator=JsonValidator(settings),
+        validation_settings=settings.validation,
+        validate_kwargs={"kline_frame": make_frame()},
+        call_api=lambda messages: retry_messages.append(messages),
+    )
+
+    assert isinstance(result.result, ValidationError)
+    assert retry_messages == []
+    assert result.validation_events[0]["retry_policy"] == "none"
+
+
 def test_trade_metric_retry_can_reject_order_but_cannot_reprice_it() -> None:
     before = {
         "decision": {

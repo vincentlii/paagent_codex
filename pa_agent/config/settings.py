@@ -18,6 +18,7 @@ DataSourceKind = Literal[
     "okx_swap", "bitget_usdt_futures",
 ]
 VpaMode = Literal["off", "shadow", "soft"]
+ReasoningEffort = Literal["low", "medium", "high", "max"]
 MIN_ANALYSIS_BARS = 20
 
 
@@ -27,6 +28,27 @@ def validate_api_key_value(value: str, *, source: str = "API Key") -> str:
     if key and (not key.isascii() or any(char.isspace() for char in key)):
         raise ValueError(f"{source} must be one single-line ASCII token")
     return key
+
+
+class ReasoningProfileOverride(BaseModel):
+    """Optional per-role override; omitted fields inherit the provider default."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    thinking: bool | None = None
+    reasoning_effort: ReasoningEffort | None = None
+
+
+class ReasoningProfiles(BaseModel):
+    """Thinking controls for each model role in the analysis pipeline."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stage1: ReasoningProfileOverride | None = None
+    stage2: ReasoningProfileOverride | None = None
+    vpa_evidence: ReasoningProfileOverride | None = None
+    joint_arbiter: ReasoningProfileOverride | None = None
+    free_chat: ReasoningProfileOverride | None = None
 
 
 class AIProviderSettings(BaseModel):
@@ -39,7 +61,8 @@ class AIProviderSettings(BaseModel):
     api_key: str = ""
     api_key_encrypted: str = ""
     thinking: bool = True
-    reasoning_effort: Literal["low", "medium", "high", "max"] = "high"
+    reasoning_effort: ReasoningEffort = "high"
+    reasoning_profiles: ReasoningProfiles = Field(default_factory=ReasoningProfiles)
     context_window: int = Field(default=2_000_000, ge=1)
     structured_output_mode: Literal[
         "auto",

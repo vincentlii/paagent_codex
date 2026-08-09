@@ -85,6 +85,11 @@ class PaSetupCandidate(BaseModel):
     direction: Literal["bullish", "bearish", "neutral"]
     setup: str | None
     timing_state: Literal["eligible", "waiting"]
+    execution_mode: Literal[
+        "passive_limit",
+        "price_triggered_stop",
+        "immediate_market",
+    ]
     order_type: Literal["限价单", "突破单", "市价单"]
     order_direction: Literal["做多", "做空"]
     entry_price: float
@@ -99,6 +104,21 @@ class PaSetupCandidate(BaseModel):
     window_context: list[PaWindowContext] = Field(default_factory=list)
     fact_refs: list[str] = Field(default_factory=list)
     theory_rule_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def materialize_legacy_execution_mode(cls, value: Any) -> Any:
+        """Keep frozen pre-field records replayable via an exact order mapping."""
+        if not isinstance(value, dict) or value.get("execution_mode") is not None:
+            return value
+        execution_mode = {
+            "限价单": "passive_limit",
+            "突破单": "price_triggered_stop",
+            "市价单": "immediate_market",
+        }.get(value.get("order_type"))
+        if execution_mode is None:
+            return value
+        return {**value, "execution_mode": execution_mode}
 
 
 class PaHypothesisSet(BaseModel):

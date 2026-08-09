@@ -141,8 +141,7 @@ _STAGE1_BAR_ANALYSIS: dict = {
         "bar_type": {
             "type": "string",
             "enum": [
-                "trend_bull", "trend_bear", "doji", "inside",
-                "outside_bull", "outside_bear", "flat", "other",
+                "trend_bull", "trend_bear", "doji", "flat", "other",
             ],
         },
         "signal_bar": _SIGNAL_BAR,
@@ -206,8 +205,7 @@ _BAR_BY_BAR_ITEM: dict = {
         "bar_type": {
             "type": "string",
             "enum": [
-                "trend_bull", "trend_bear", "doji", "inside",
-                "outside_bull", "outside_bear", "flat", "other",
+                "trend_bull", "trend_bear", "doji", "flat", "other",
             ],
         },
         "context_effect": {

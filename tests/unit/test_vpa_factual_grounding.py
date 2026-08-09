@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pa_agent.ai.factual_grounding import (
+    collect_unreconciled_vpa_comparator_warnings,
     validate_future_confirmation_narrative,
     validate_inference_only_narrative,
     validate_k_reference_bounds,
@@ -8,6 +9,35 @@ from pa_agent.ai.factual_grounding import (
     validate_vpa_comparator_narrative,
     validate_vpa_k_references,
 )
+
+
+def test_divergent_rolling_and_seasonality_comparators_require_disclosure_warning() -> None:
+    evidence = {
+        "vpa-e001": {
+            "evidence_id": "vpa-e001",
+            "bar_range": "K1",
+            "facts": {
+                "volume_vs_baseline_relation": "above",
+                "volume_vs_seasonality_relation": "below",
+            },
+        }
+    }
+    warnings = collect_unreconciled_vpa_comparator_warnings(
+        "K1 相对因果滚动基线活动较高，支持承接候选。",
+        cited_evidence_ids={"vpa-e001"},
+        evidence_items=evidence,
+        path="vpa_report.observations[0].interpretation",
+    )
+
+    assert len(warnings) == 1
+    assert "rolling/seasonality divergence" in warnings[0]
+
+    assert collect_unreconciled_vpa_comparator_warnings(
+        "K1 高于因果滚动基线，但低于同时间槽季节性基线，因此仅作未决候选。",
+        cited_evidence_ids={"vpa-e001"},
+        evidence_items=evidence,
+        path="vpa_report.observations[0].interpretation",
+    ) == []
 
 
 def test_inference_narrative_allows_evidence_ids_but_not_numbers() -> None:

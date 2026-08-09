@@ -107,6 +107,46 @@ _PA_BOUNDED_EXTREME_FACT_RE = re.compile(
 _FACT_CLAUSE_SPLIT_RE = re.compile(
     r"[\u3002\uFF01\uFF1F!?;\uFF1B\n]+|\.\s+"
 )
+_LIMIT_CONFIRMATION_PREREQUISITE_RE = re.compile(
+    r"(?:等待|等|需|必须).{0,24}(?:收盘|K线|bar).{0,16}(?:确认|站稳).{0,12}(?:后|才)|"
+    r"(?:activate|enter|place).{0,20}(?:only\s+)?after.{0,20}(?:closed\s+bar|confirmation)",
+    re.IGNORECASE,
+)
+_INSIDE_PREVIOUS_CLAIM_RE = re.compile(
+    r"\binside\s+(?:price\s+)?bar\b|"
+    r"(?:内包棒|内包线)|"
+    r"被(?:前(?:一根|棒)|上一根)(?:K线|棒)?(?:完全)?包含|"
+    r"(?:contained|enclosed)\s+(?:by|within)\s+(?:the\s+)?previous\s+bar",
+    re.IGNORECASE,
+)
+_OUTSIDE_PREVIOUS_CLAIM_RE = re.compile(
+    r"\boutside\s+(?:price\s+)?bar\b|"
+    r"(?:外包棒|外包线)|"
+    r"(?:完全)?包含(?:了)?(?:前(?:一根|棒)|上一根)(?:K线|棒)?|"
+    r"contains?\s+(?:the\s+)?previous\s+bar",
+    re.IGNORECASE,
+)
+_INSIDE_EXPLICIT_PAIR_RE = re.compile(
+    r"(?<![A-Za-z0-9_])K\s*(\d+)(?![A-Za-z0-9_.])(?:"
+    r".{0,24}?(?:被)\s*(?:K线)?\s*K\s*(\d+)(?![A-Za-z0-9_.])"
+    r".{0,8}?(?:包含|包住)|"
+    r".{0,24}?(?:内包于)\s*(?:K线)?\s*K\s*(\d+)(?![A-Za-z0-9_.])|"
+    r".{0,24}?(?:contained\s+(?:by|within)|inside(?:\s+of)?)\s*"
+    r"(?:K线)?\s*K\s*(\d+)(?![A-Za-z0-9_.])"
+    r")",
+    re.IGNORECASE,
+)
+_OUTSIDE_EXPLICIT_PAIR_RE = re.compile(
+    r"(?<![A-Za-z0-9_])K\s*(\d+)(?![A-Za-z0-9_.]).{0,24}?"
+    r"(?:包含|外包|contains?|outside(?:\s+of)?)\s*"
+    r"(?:K线)?\s*K\s*(\d+)(?![A-Za-z0-9_.])",
+    re.IGNORECASE,
+)
+_NEGATION_NEAR_GEOMETRY_RE = re.compile(
+    r"\b(?:not|never|isn't|isnt|aren't|arent|doesn't|doesnt|didn't|didnt)\b|"
+    r"(?:\u4e0d\u662f|\u5e76\u975e|\u672a(?:\u88ab)?|\u6ca1\u6709|\u4e0d(?:\u88ab|\u5305\u542b))",
+    re.IGNORECASE,
+)
 _BAR_BREAK_RANGE_RE = re.compile(
     r"(?<![A-Za-z0-9_])K\s*(\d+)(?![A-Za-z0-9_.]).{0,32}?"
     r"(?:broke|breaks?|exceeded|\u7a81\u7834|\u8d8a\u8fc7).{0,20}?"
@@ -238,6 +278,7 @@ def collect_stage1_quality_warnings(
                 f"bar_by_bar_summary has {len(summary)} items; preferred {expected}"
             )
     warnings.extend(_collect_stage1_narrative_warnings(stage1, kline_frame))
+    warnings.extend(_validate_stage1_narrative_geometry(stage1, kline_frame))
     return warnings
 
 
@@ -285,6 +326,15 @@ def collect_stage2_quality_warnings(
         if _PA_VOLUME_RE.search(text):
             warnings.append(f"{path} violates the PA price-only evidence contract")
     warnings.extend(_validate_tick_claims(stage2, kline_frame))
+    decision = stage2.get("decision")
+    if isinstance(decision, dict) and decision.get("order_type") == "限价单":
+        entry_rule = str(decision.get("entry_rule") or "")
+        if _LIMIT_CONFIRMATION_PREREQUISITE_RE.search(entry_rule):
+            warnings.append(
+                "decision.entry_rule describes confirmation before a passive limit; "
+                "execution still follows order_type=限价单, so move a true prerequisite "
+                "to watch_points and wait for the next PA run"
+            )
     return warnings
 
 
@@ -402,16 +452,140 @@ def _validate_stage1_bar_geometry(stage1: dict[str, Any], frame: Any) -> list[st
             errors.append(f"{path}=trend_bull conflicts with program candle direction")
         elif label == "trend_bear" and feature.candle_direction != "bearish":
             errors.append(f"{path}=trend_bear conflicts with program candle direction")
-        elif label == "inside" and feature.relation_to_previous != "contained_by_previous":
-            errors.append(f"{path}=inside conflicts with exact program geometry")
-        elif label in {"outside_bull", "outside_bear"}:
-            expected_direction = "bullish" if label == "outside_bull" else "bearish"
-            if (
-                feature.relation_to_previous != "contains_previous"
-                or feature.candle_direction != expected_direction
-            ):
-                errors.append(f"{path}={label} conflicts with exact program geometry")
     return errors
+
+
+def _validate_stage1_narrative_geometry(
+    stage1: dict[str, Any],
+    frame: Any,
+) -> list[str]:
+    """Report explicit inside/outside-bar claims with a unique bar owner."""
+    if frame is None:
+        return []
+    from pa_agent.ai.kline_features import compute_kline_geometry_features
+
+    features = {feature.seq: feature for feature in compute_kline_geometry_features(frame)}
+    narratives: list[tuple[str, object, int | None]] = []
+    owned_paths: set[str] = set()
+    for index, item in enumerate(stage1.get("bar_by_bar_summary") or []):
+        if isinstance(item, dict):
+            path = f"bar_by_bar_summary[{index}].reason"
+            narratives.append(
+                (
+                    path,
+                    item.get("reason"),
+                    _parse_k_seq(item.get("bar")),
+                )
+            )
+            owned_paths.add(path)
+    bar_analysis = stage1.get("bar_analysis")
+    if isinstance(bar_analysis, dict):
+        signal_bar = bar_analysis.get("signal_bar")
+        if isinstance(signal_bar, dict):
+            path = "bar_analysis.signal_bar.reason"
+            narratives.append(
+                (
+                    path,
+                    signal_bar.get("reason"),
+                    _parse_k_seq(signal_bar.get("bar")),
+                )
+            )
+            owned_paths.add(path)
+
+    narratives.extend(
+        (path, text, None)
+        for path, text in _narrative_strings(stage1)
+        if path not in owned_paths
+    )
+
+    errors: list[str] = []
+    for path, raw_text, target_seq in narratives:
+        text = str(raw_text or "")
+        errors.extend(
+            _validate_explicit_geometry_pairs(
+                text,
+                path=path,
+                frame=frame,
+            )
+        )
+        if target_seq is None:
+            references = {
+                int(match.group(1)) for match in K_REFERENCE_RE.finditer(text)
+            }
+            target_seq = next(iter(references)) if len(references) == 1 else None
+        feature = features.get(target_seq) if target_seq is not None else None
+        if feature is None:
+            continue
+        inside_match = _INSIDE_PREVIOUS_CLAIM_RE.search(text)
+        outside_match = _OUTSIDE_PREVIOUS_CLAIM_RE.search(text)
+        if (
+            inside_match
+            and not _geometry_claim_is_negated(text, inside_match)
+            and feature.relation_to_previous != "contained_by_previous"
+        ):
+            errors.append(
+                f"{path} claims K{target_seq} is contained_by_previous, "
+                "but exact program geometry disagrees"
+            )
+        if (
+            outside_match
+            and not _geometry_claim_is_negated(text, outside_match)
+            and feature.relation_to_previous != "contains_previous"
+        ):
+            errors.append(
+                f"{path} claims K{target_seq} contains_previous, "
+                "but exact program geometry disagrees"
+            )
+    return errors
+
+
+def _validate_explicit_geometry_pairs(
+    text: str,
+    *,
+    path: str,
+    frame: Any,
+) -> list[str]:
+    bars = {
+        int(getattr(bar, "seq", 0)): bar
+        for bar in getattr(frame, "bars", ()) or ()
+        if int(getattr(bar, "seq", 0) or 0) > 0
+    }
+    errors: list[str] = []
+    for relation, pattern in (
+        ("contained_by", _INSIDE_EXPLICIT_PAIR_RE),
+        ("contains", _OUTSIDE_EXPLICIT_PAIR_RE),
+    ):
+        for match in pattern.finditer(text):
+            if _geometry_claim_is_negated(text, match):
+                continue
+            groups = [value for value in match.groups() if value is not None]
+            target_seq = int(groups[0])
+            reference_seq = int(groups[1])
+            target = bars.get(target_seq)
+            reference = bars.get(reference_seq)
+            if target is None or reference is None:
+                continue
+            contained = (
+                float(target.high) <= float(reference.high)
+                and float(target.low) >= float(reference.low)
+            )
+            contains = (
+                float(target.high) >= float(reference.high)
+                and float(target.low) <= float(reference.low)
+            )
+            valid = contained if relation == "contained_by" else contains
+            if not valid:
+                errors.append(
+                    f"{path} claims K{target_seq} {relation} K{reference_seq}, "
+                    "but exact program geometry disagrees"
+                )
+    return errors
+
+
+def _geometry_claim_is_negated(text: str, match: re.Match[str]) -> bool:
+    """Conservatively exclude negated prose from affirmative fact checks."""
+    nearby = text[max(0, match.start() - 24) : match.end()]
+    return bool(_NEGATION_NEAR_GEOMETRY_RE.search(nearby))
 
 
 def _collect_stage1_narrative_warnings(

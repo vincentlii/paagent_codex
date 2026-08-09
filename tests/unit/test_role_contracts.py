@@ -187,7 +187,7 @@ def test_vpa_draft_drops_harmless_extra_fields_but_rejects_authority_fields() ->
     )
 
 
-def test_vpa_sequence_claim_must_use_observation_evidence_ids() -> None:
+def test_vpa_sequence_claim_ids_are_materialized_into_parent_observation() -> None:
     hypotheses = _hypotheses()
     catalog = build_vpa_evidence_catalog(make_frame())
     payload = _vpa_payload(catalog, hypotheses)
@@ -205,8 +205,37 @@ def test_vpa_sequence_claim_must_use_observation_evidence_ids() -> None:
         pa_hypotheses=hypotheses,
     )
 
+    assert result.ok
+    observation = result.obj["vpa_report"]["observations"][0]
+    assert observation["evidence_ids"] == ["vpa-e001"]
+    assert observation["auto_bound_evidence_ids"] == ["vpa-e002"]
+    assert any(
+        item["path"] == "vpa_report.observations[0].auto_bound_evidence_ids"
+        and item["after"] == ["vpa-e002"]
+        for item in result.normalizations
+    )
+
+
+def test_vpa_sequence_claim_still_rejects_unknown_evidence() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    payload["vpa_report"]["observations"][0]["sequence_claims"] = [
+        {
+            "earlier_evidence_id": "vpa-unknown",
+            "later_evidence_id": "vpa-e001",
+            "relation": "response",
+        }
+    ]
+
+    result = validate_vpa_evidence(
+        json.dumps(payload),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
     assert not result.ok
-    assert any("same observation" in item for item in result.hard_errors)
+    assert any("unknown evidence IDs" in item for item in result.hard_errors)
 
 
 def test_vpa_overlapping_sequence_claim_is_dropped_without_failing_report() -> None:
@@ -373,7 +402,11 @@ def test_vpa_role_rejects_unclosed_confirmation_and_unavailable_k_reference() ->
     normalized_observation = uncited_result.obj["vpa_report"]["observations"][0]
     assert normalized_observation["evidence_ids"] == ["vpa-e001"]
     assert normalized_observation["auto_bound_evidence_ids"] == ["vpa-e002"]
-    assert uncited_result.normalizations == ()
+    assert any(
+        item["path"] == "vpa_report.observations[0].auto_bound_evidence_ids"
+        and item["after"] == ["vpa-e002"]
+        for item in uncited_result.normalizations
+    )
 
     unavailable = _vpa_payload(catalog, hypotheses)
     unavailable["vpa_report"]["observations"][0]["interpretation"] = (

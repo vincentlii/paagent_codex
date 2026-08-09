@@ -164,3 +164,123 @@ def test_text_call_never_inherits_provider_json_mode() -> None:
 
     assert result.structured_output_mode == "text"
     assert "response_format" not in client.stream_chat.call_args.kwargs
+
+
+def test_structured_output_downgrade_keeps_one_compatibility_attempt() -> None:
+    settings = AIProviderSettings(
+        base_url="https://gateway.example/v1",
+        model="custom",
+        structured_output_mode="json_object",
+    )
+    client = MagicMock()
+    client.stream_chat.side_effect = [
+        _StatusError(429, "rate limited"),
+        _StatusError(400, "unknown response_format parameter"),
+        _reply(),
+    ]
+
+    result = _run(client, settings, attempts=2)
+
+    assert client.stream_chat.call_count == 3
+    assert [item["structured_output_mode"] for item in result.attempts] == [
+        "json_object",
+        "json_object",
+        "text",
+    ]
+
+
+def test_text_fallback_retains_remaining_transient_retry() -> None:
+    settings = AIProviderSettings(
+        base_url="https://gateway.example/v1",
+        model="custom",
+        structured_output_mode="json_object",
+    )
+    client = MagicMock()
+    client.stream_chat.side_effect = [
+        _StatusError(400, "unknown response_format parameter"),
+        _StatusError(429, "rate limited"),
+        _reply(),
+    ]
+
+    result = _run(client, settings, attempts=2)
+
+    assert client.stream_chat.call_count == 3
+    assert result.attempts[-1]["structured_output_mode"] == "text"
+
+
+def test_attempt_ledger_records_effective_reasoning_controls() -> None:
+    settings = AIProviderSettings(structured_output_mode="text")
+    client = MagicMock()
+    client.stream_chat.return_value = _reply()
+
+    result = ModelCallRunner(client, settings, sleep=lambda _: None).run_stream(
+        [{"role": "user", "content": "chat"}],
+        stage="stage2",
+        schema=None,
+        on_reasoning_token=None,
+        on_content_token=None,
+        cancel_token=None,
+        thinking=False,
+        reasoning_effort="max",
+        structured_output=False,
+    )
+
+    assert result.attempts[0]["thinking"] is False
+    assert result.attempts[0]["reasoning_effort"] is None
+    assert client.stream_chat.call_args.kwargs["thinking"] is False
+    assert client.stream_chat.call_args.kwargs["reasoning_effort"] is None
+
+
+def test_deepseek_ledger_distinguishes_requested_and_provider_effective_effort() -> None:
+    settings = AIProviderSettings(
+        base_url="https://api.deepseek.com",
+        model="deepseek-chat",
+        structured_output_mode="text",
+    )
+    client = MagicMock()
+    client.stream_chat.return_value = _reply()
+
+    result = ModelCallRunner(client, settings, sleep=lambda _: None).run_stream(
+        [{"role": "user", "content": "chat"}],
+        stage="stage2",
+        schema=None,
+        on_reasoning_token=None,
+        on_content_token=None,
+        cancel_token=None,
+        thinking=True,
+        reasoning_effort="low",
+        structured_output=False,
+    )
+
+    attempt = result.attempts[0]
+    assert attempt["requested_reasoning_effort"] == "low"
+    assert attempt["effective_reasoning_effort"] == "high"
+    assert attempt["reasoning_effort"] == "high"
+    assert client.stream_chat.call_args.kwargs["reasoning_effort"] == "high"
+
+
+def test_deepseek_model_through_gateway_uses_the_same_effective_effort() -> None:
+    settings = AIProviderSettings(
+        base_url="https://gateway.example/v1",
+        model="deepseek-v4-pro",
+        structured_output_mode="text",
+    )
+    client = MagicMock()
+    client.stream_chat.return_value = _reply()
+
+    result = ModelCallRunner(client, settings, sleep=lambda _: None).run_stream(
+        [{"role": "user", "content": "chat"}],
+        stage="stage2",
+        schema=None,
+        on_reasoning_token=None,
+        on_content_token=None,
+        cancel_token=None,
+        thinking=True,
+        reasoning_effort="medium",
+        structured_output=False,
+    )
+
+    attempt = result.attempts[0]
+    assert attempt["requested_reasoning_effort"] == "medium"
+    assert attempt["effective_reasoning_effort"] == "high"
+    assert client.stream_chat.call_args.kwargs["reasoning_effort"] == "high"

@@ -51,6 +51,7 @@ def normalize_stage1(
         )
     _normalize_key_signals(out)
     _normalize_closed_enum_aliases(out)
+    _normalize_spike_analysis_alias(out)
     _normalize_structure_level_order(out)
     normalize_stage1_traces(out, default_max_seq=_max_bar_seq(kline_frame))
     _attach_incremental_facts(
@@ -91,6 +92,18 @@ def _normalize_closed_enum_aliases(out: dict[str, Any]) -> None:
             value = item.get("context_effect")
             if isinstance(value, str) and value in _CONTEXT_EFFECT_ALIASES:
                 item["context_effect"] = _CONTEXT_EFFECT_ALIASES[value]
+
+
+def _normalize_spike_analysis_alias(out: dict[str, Any]) -> None:
+    """Canonicalize one exact provider alias without changing PA semantics."""
+    evidence = out.get("pa_evidence")
+    spike = evidence.get("spike_analysis") if isinstance(evidence, dict) else None
+    if not isinstance(spike, dict):
+        return
+    alias = "first_pullback_bar"
+    canonical = "first_pause_or_pullback_bar"
+    if alias in spike and canonical not in spike:
+        spike[canonical] = spike.pop(alias)
 
 
 def _normalize_structure_level_order(out: dict[str, Any]) -> None:

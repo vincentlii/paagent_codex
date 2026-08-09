@@ -784,13 +784,68 @@ def test_bar_type_direction_must_match_program_candle_direction() -> None:
     assert any("bar_by_bar_summary[0].bar_type" in error for error in errors)
 
 
-def test_inside_and_outside_labels_must_match_exact_geometry() -> None:
+def test_explicit_inside_claim_in_bar_summary_is_a_quality_warning() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
-    stage1["bar_by_bar_summary"][0]["bar_type"] = "inside"
+    stage1["bar_by_bar_summary"][0]["bar_type"] = "other"
+    stage1["bar_by_bar_summary"][0]["reason"] = "K5 是内包棒，被前棒完全包含。"
+
+    warnings = collect_stage1_quality_warnings(stage1, kline_frame=make_frame())
+
+    assert any(
+        "bar_by_bar_summary[0].reason" in warning
+        and "contained_by_previous" in warning
+        for warning in warnings
+    )
+
+
+def test_inside_market_context_wording_is_not_treated_as_bar_geometry() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["bar_by_bar_summary"][0]["reason"] = (
+        "K5 remains inside the broader trading range context."
+    )
 
     errors = validate_stage1_coherence(stage1, kline_frame=make_frame())
 
-    assert any("inside" in error and "geometry" in error for error in errors)
+    assert not any("exact program geometry" in error for error in errors)
+
+
+def test_negated_inside_claim_is_not_treated_as_positive_geometry() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["bar_by_bar_summary"][0]["reason"] = "K1 is not an inside bar."
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_frame())
+
+    assert not any("exact program geometry" in error for error in errors)
+
+
+def test_negated_outside_claim_is_not_treated_as_positive_geometry() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["bar_by_bar_summary"][0]["reason"] = "K1 is not an outside bar."
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_frame())
+
+    assert not any("exact program geometry" in error for error in errors)
+
+
+def test_explicit_geometry_pair_is_warned_in_other_stage1_narratives() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["risk_warning"] = "K5 被 K6 完全包含，因此风险较低。"
+
+    warnings = collect_stage1_quality_warnings(stage1, kline_frame=make_frame())
+
+    assert any(
+        "risk_warning" in warning and "K5 contained_by K6" in warning
+        for warning in warnings
+    )
+
+
+def test_rejection_by_another_bar_is_not_misread_as_inside_geometry() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["risk_warning"] = "K5 was rejected by K6 near resistance."
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_frame())
+
+    assert not any("K5 contained_by K6" in error for error in errors)
 
 
 def test_ema_slope_number_cannot_reuse_close_to_ema_distance() -> None:

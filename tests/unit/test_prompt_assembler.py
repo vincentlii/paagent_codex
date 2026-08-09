@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from pa_agent.ai.prompt_assembler import VPA_KNOWLEDGE_MODULES, PromptAssembler
+from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
+from pa_agent.ai.role_contracts import JOINT_DECISION_SCHEMA, VPA_EVIDENCE_SCHEMA
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
 from pa_agent.config.settings import PromptSettings
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
@@ -37,6 +39,49 @@ def _make_frame(n: int = 5) -> KlineFrame:
         indicators=indicators,
         snapshot_ts_local_ms=1_700_000_000_000,
     )
+
+
+def _required_schema_keys(schema: dict) -> set[str]:
+    """Collect required keys reachable only through required object fields."""
+    keys: set[str] = set()
+    properties = schema.get("properties", {})
+    for key in schema.get("required", []):
+        keys.add(key)
+        child = properties.get(key)
+        if isinstance(child, dict):
+            keys.update(_required_schema_keys(child))
+    return keys
+
+
+def _schema_contract_tokens(schema: dict) -> set[str]:
+    """Collect provider-owned required keys and enums through local refs."""
+    tokens: set[str] = set()
+
+    def visit(node: dict) -> None:
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            target = schema.get("$defs", {}).get(ref.rsplit("/", 1)[-1])
+            if isinstance(target, dict):
+                visit(target)
+            return
+        for value in node.get("enum", []):
+            if isinstance(value, str):
+                tokens.add(value)
+        properties = node.get("properties", {})
+        for key in node.get("required", []):
+            tokens.add(str(key))
+            child = properties.get(key)
+            if isinstance(child, dict):
+                visit(child)
+        items = node.get("items")
+        if isinstance(items, dict):
+            visit(items)
+        for branch in node.get("anyOf", []):
+            if isinstance(branch, dict):
+                visit(branch)
+
+    visit(schema)
+    return tokens
 
 
 @pytest.fixture()
@@ -241,6 +286,7 @@ def test_stage1_output_reminder_present(assembler: PromptAssembler):
     assert (
         "非 `spike` 周期时 `spike_analysis=null` 且 `spike_stage=null`"
     ) in user
+    assert '"first_pause_or_pullback_bar":"K#|null"' in user
     assert "`market_phase=stable` 时 `transition_risk=null`" in user
     assert '"transition_risk": "high|medium|low|null"' in user
     assert "逐K摘要硬规则" in user
@@ -251,6 +297,85 @@ def test_stage1_output_reminder_present(assembler: PromptAssembler):
     assert "gate_result" in user
     assert "K1 自己的 high/low" in user
     assert "bar_range 是审计覆盖范围" in user
+
+
+def test_required_schema_keys_are_visible_in_role_prompts(
+    assembler: PromptAssembler,
+) -> None:
+    frame = _make_frame()
+    stage1_prompt = "\n".join(
+        message["content"] for message in assembler.build_stage1(frame)
+    )
+    stage2_prompt = "\n".join(
+        message["content"]
+        for message in assembler.build_stage2(frame, {}, [], [])
+    )
+
+    assert sorted(
+        key for key in _required_schema_keys(STAGE1_SCHEMA) if key not in stage1_prompt
+    ) == []
+    assert sorted(
+        key for key in _required_schema_keys(STAGE2_SCHEMA) if key not in stage2_prompt
+    ) == []
+
+
+def test_stage1_bar_type_schema_matches_contextual_prompt_contract() -> None:
+    allowed = set(
+        STAGE1_SCHEMA["properties"]["bar_analysis"]["properties"]["bar_type"][
+            "enum"
+        ]
+    )
+    summary_allowed = set(
+        STAGE1_SCHEMA["properties"]["bar_by_bar_summary"]["items"]["properties"][
+            "bar_type"
+        ]["enum"]
+    )
+
+    assert allowed == {"trend_bull", "trend_bear", "doji", "flat", "other"}
+    assert summary_allowed == allowed
+
+
+def test_vpa_and_joint_prompts_cover_provider_schema_contracts(
+    assembler: PromptAssembler,
+) -> None:
+    frame = _make_frame()
+    vpa_assembler = assembler.clone_with_prompt_settings(
+        PromptSettings(vpa_mode="shadow")
+    )
+    baseline = {
+        "cycle_position": "trading_range",
+        "direction": "neutral",
+        "gate_result": "proceed",
+    }
+    hypotheses = {"primary": {"hypothesis_id": "pa-primary"}, "setup_candidates": []}
+    vpa_prompt = "\n".join(
+        message["content"]
+        for message in vpa_assembler.build_vpa_evidence_report(
+            frame,
+            baseline,
+            hypotheses,
+        )
+    )
+    joint_prompt = "\n".join(
+        message["content"]
+        for message in vpa_assembler.build_joint_decision(
+            {"decision": {"order_type": "不下单"}},
+            hypotheses,
+            {"summary": "neutral", "entry_timing_relation": "neutral"},
+        )
+    )
+
+    assert sorted(
+        token
+        for token in _schema_contract_tokens(VPA_EVIDENCE_SCHEMA)
+        if token not in vpa_prompt
+    ) == []
+    assert sorted(
+        token
+        for token in _schema_contract_tokens(JOINT_DECISION_SCHEMA)
+        if token not in joint_prompt
+    ) == []
+    assert "无需仅为格式在父级 `evidence_ids` 重复列出" in vpa_prompt
 
 
 def test_stage1_original_mode_keeps_llm_owned_gate_semantics(assembler: PromptAssembler):
