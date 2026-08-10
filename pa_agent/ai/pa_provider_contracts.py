@@ -189,7 +189,10 @@ def _next_cycle_placeholder() -> dict[str, Any]:
 
 
 def _equation_trace(
-    decision: dict[str, Any], *, catalog: AnalysisFactCatalog
+    decision: dict[str, Any],
+    bar_analysis: dict[str, Any],
+    *,
+    catalog: AnalysisFactCatalog,
 ) -> tuple[dict[str, Any], bool]:
     metrics = compute_risk_reward(
         decision.get("entry_price"), decision.get("take_profit_price"),
@@ -200,8 +203,18 @@ def _equation_trace(
         metrics is not None and win_rate is not None
         and passes_trader_equation(float(win_rate), metrics["risk"], metrics["reward"])
     )
-    basis = decision.get("entry_basis_bar")
-    refs = [f"PA.BAR.{basis}"] if isinstance(basis, str) and basis.startswith("K") else ["PA.BAR.K1"]
+    signal = bar_analysis.get("signal_bar")
+    signal = signal if isinstance(signal, dict) else {}
+    entry = bar_analysis.get("entry_bar")
+    entry = entry if isinstance(entry, dict) else {}
+    bars = [decision.get("entry_basis_bar"), signal.get("bar"), entry.get("bar")]
+    refs = list(
+        dict.fromkeys(
+            f"PA.BAR.{bar}"
+            for bar in bars
+            if isinstance(bar, str) and bar.startswith("K")
+        )
+    ) or ["PA.BAR.K1"]
     resolved = catalog.resolve_references(refs, role="pa_stage2")
     node = load_decision_tree()["node_index"]["10.3"]
     if metrics is None:
@@ -241,7 +254,11 @@ def materialize_stage2_draft(
         raise ValueError("trade intent requires an executable PA candidate")
     equation_passes = False
     if executable:
-        equation, equation_passes = _equation_trace(decision, catalog=catalog)
+        equation, equation_passes = _equation_trace(
+            decision,
+            result.get("bar_analysis") if isinstance(result.get("bar_analysis"), dict) else {},
+            catalog=catalog,
+        )
         insert_at = next(
             (i for i, item in enumerate(trace) if str(item["node_id"]).startswith(("11.", "14"))),
             len(trace),

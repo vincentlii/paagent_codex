@@ -285,26 +285,56 @@ def compile_pa_handoff(
         setup=setup,
         thesis=primary_thesis,
         fact_refs=[str(item) for item in primary_source.get("supporting_fact_refs", fact_refs)],
+        challenging_fact_refs=[
+            str(item) for item in primary_source.get("challenging_fact_refs", [])
+        ],
         theory_rule_ids=[str(item) for item in primary_source.get("theory_rule_ids", theory_ids)],
+        confirmation_condition=str(primary_source.get("confirmation_condition") or "") or None,
+        disconfirmation_condition=str(primary_source.get("disconfirmation_condition") or "") or None,
     )
-    alternatives = hypotheses.get("alternatives")
-    alternatives = alternatives if isinstance(alternatives, list) else []
-    alternative_source = alternatives[0] if alternatives and isinstance(alternatives[0], dict) else None
-    alternative_cycle = (
-        alternative_source.get("cycle_position") if alternative_source else stage1.get("alternative_cycle_position")
-    )
-    alternative = None
-    if alternative_cycle and str(alternative_cycle) != cycle:
-        alternative = PaHypothesis(
-            hypothesis_id=str(alternative_source.get("hypothesis_id") or "pa-alternative") if alternative_source else "pa-alternative",
-            role="alternative",
-            cycle_position=str(alternative_cycle),
-            direction=str(alternative_source.get("direction") or direction) if alternative_source else direction,
-            setup=str(alternative_source.get("setup_hint") or "").strip() or None if alternative_source else setup,
-            thesis=str(alternative_source.get("thesis") or "") if alternative_source else f"Competing PA framework: {alternative_cycle}.",
-            fact_refs=[str(item) for item in alternative_source.get("supporting_fact_refs", [])] if alternative_source else fact_refs,
-            theory_rule_ids=[str(item) for item in alternative_source.get("theory_rule_ids", [])] if alternative_source else theory_ids,
+    alternative_sources = hypotheses.get("alternatives")
+    alternative_sources = alternative_sources if isinstance(alternative_sources, list) else []
+    compiled_alternatives: list[PaHypothesis] = []
+    for index, source in enumerate(alternative_sources, start=1):
+        if not isinstance(source, dict):
+            continue
+        alternative_cycle = str(source.get("cycle_position") or "unknown")
+        alternative_direction = str(source.get("direction") or "neutral")
+        if alternative_direction not in {"bullish", "bearish", "neutral"}:
+            alternative_direction = "neutral"
+        compiled_alternatives.append(
+            PaHypothesis(
+                hypothesis_id=str(source.get("hypothesis_id") or f"pa-alternative-{index}"),
+                role="alternative",
+                cycle_position=alternative_cycle,
+                direction=alternative_direction,
+                setup=str(source.get("setup_hint") or "").strip() or None,
+                thesis=str(source.get("thesis") or ""),
+                fact_refs=[str(item) for item in source.get("supporting_fact_refs", [])],
+                challenging_fact_refs=[
+                    str(item) for item in source.get("challenging_fact_refs", [])
+                ],
+                theory_rule_ids=[str(item) for item in source.get("theory_rule_ids", [])],
+                confirmation_condition=str(source.get("confirmation_condition") or "") or None,
+                disconfirmation_condition=str(source.get("disconfirmation_condition") or "") or None,
+            )
         )
+    if not compiled_alternatives:
+        legacy_cycle = stage1.get("alternative_cycle_position")
+        if legacy_cycle and str(legacy_cycle) != cycle:
+            compiled_alternatives.append(
+                PaHypothesis(
+                    hypothesis_id="pa-alternative",
+                    role="alternative",
+                    cycle_position=str(legacy_cycle),
+                    direction=direction,
+                    setup=setup,
+                    thesis=f"Competing PA framework: {legacy_cycle}.",
+                    fact_refs=fact_refs,
+                    theory_rule_ids=theory_ids,
+                )
+            )
+    alternative = compiled_alternatives[0] if compiled_alternatives else None
     stage2_obj = stage2 if isinstance(stage2, dict) else {}
     decision = (
         stage2_obj.get("decision")
@@ -333,6 +363,9 @@ def compile_pa_handoff(
             if alternative is not None
             else None
         ),
+        "alternatives": [
+            item.model_dump(mode="python") for item in compiled_alternatives
+        ],
         "setup_candidates": [
             item.model_dump(mode="python") for item in candidates
         ],
@@ -350,6 +383,7 @@ def compile_pa_handoff(
     return PaHypothesisSet(
         primary=primary,
         alternative=alternative,
+        alternatives=compiled_alternatives,
         setup_candidates=candidates,
         gate_result=gate,
         price_snapshot_hash=catalog.snapshot_hash,

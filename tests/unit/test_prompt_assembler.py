@@ -436,6 +436,9 @@ def test_vpa_evidence_role_loads_modules_from_frozen_brooks_context(
     assert '"interpretation_label"' in prompt
     assert '"epistemic_status"' in prompt
     assert '"sequence_claims"' in prompt
+    observation_block = prompt[prompt.index('"observations"'):prompt.index('"hypothesis_assessments"')]
+    assert observation_block.index('"evidence_ids"') < observation_block.index('"interpretation"')
+    assert observation_block.index('"epistemic_status"') < observation_block.index('"interpretation_label"')
     assert "针对该真实 Entry Attempt" in prompt
     assert "各自 `bar_range` 不得重叠" in prompt
     assert "VPA_ANALYSIS_ENVELOPE" in prompt

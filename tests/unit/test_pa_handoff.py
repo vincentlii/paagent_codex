@@ -170,6 +170,13 @@ def test_handoff_preserves_model_owned_competing_hypothesis() -> None:
             "supporting_fact_refs": ["PA.WINDOW.K5"], "challenging_fact_refs": ["PA.BAR.K1"],
             "theory_rule_ids": ["BROOKS.CHANNEL.CONTEXT"],
             "confirmation_condition": "continued overlap", "disconfirmation_condition": "strong breakout",
+        }, {
+            "hypothesis_id": "pa-alternative-2", "role": "alternative",
+            "cycle_position": "broad_channel", "direction": "bullish",
+            "setup_hint": "wait for deeper pullback", "thesis": "channel is broadening",
+            "supporting_fact_refs": ["PA.WINDOW.K8"], "challenging_fact_refs": ["PA.BAR.K2"],
+            "theory_rule_ids": ["BROOKS.CHANNEL.CONTEXT"],
+            "confirmation_condition": "larger two-sided swings", "disconfirmation_condition": "tight continuation",
         }],
     }
 
@@ -179,6 +186,14 @@ def test_handoff_preserves_model_owned_competing_hypothesis() -> None:
     assert handoff.alternative.direction == "neutral"
     assert handoff.alternative.setup == "wait for edge"
     assert handoff.alternative.thesis == "overlap dominates"
+    assert [item.hypothesis_id for item in handoff.alternatives] == [
+        "pa-alternative-1", "pa-alternative-2",
+    ]
+    assert handoff.alternatives[0].challenging_fact_refs == ["PA.BAR.K1"]
+    assert handoff.alternatives[1].confirmation_condition == "larger two-sided swings"
+    assert handoff.hypothesis_ids == {
+        "pa-primary", "pa-alternative-1", "pa-alternative-2",
+    }
 
 
 def test_order_type_materializes_one_unambiguous_execution_mode() -> None:

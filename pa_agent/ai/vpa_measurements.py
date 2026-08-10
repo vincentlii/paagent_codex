@@ -1227,6 +1227,9 @@ def pa_window_fact_refs(pa_hypotheses: Mapping[str, Any] | None) -> set[str]:
         pa_hypotheses.get("primary"),
         pa_hypotheses.get("alternative"),
     ]
+    alternatives = pa_hypotheses.get("alternatives")
+    if isinstance(alternatives, list):
+        sections.extend(alternatives)
     candidates = pa_hypotheses.get("setup_candidates")
     if isinstance(candidates, list):
         sections.extend(candidates)

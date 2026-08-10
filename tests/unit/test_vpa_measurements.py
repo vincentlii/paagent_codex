@@ -275,9 +275,13 @@ def test_pa_window_fact_selection_reads_frozen_handoff_only() -> None:
         {
             "primary": {"fact_refs": ["PA.WINDOW.K5", "PA.BAR.K1"]},
             "alternative": {"fact_refs": ["PA.WINDOW.K8"]},
+            "alternatives": [
+                {"fact_refs": ["PA.WINDOW.K8"]},
+                {"fact_refs": ["PA.WINDOW.K10"]},
+            ],
             "setup_candidates": [{"fact_refs": ["PA.WINDOW.K5"]}],
         }
-    ) == {"PA.WINDOW.K5", "PA.WINDOW.K8"}
+    ) == {"PA.WINDOW.K5", "PA.WINDOW.K8", "PA.WINDOW.K10"}
 
 
 def test_vpa_sequence_direction_relation_is_exact_and_non_semantic() -> None:

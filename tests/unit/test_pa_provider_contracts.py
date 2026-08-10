@@ -150,6 +150,8 @@ def test_stage2_draft_inherits_diagnosis_and_materializes_math_trace_terminal() 
     )
     assert equation["answer"] == "是"
     assert "risk=" in equation["reason"]
+    assert equation["evidence_refs"] == ["PA.BAR.K2", "PA.BAR.K1"]
+    assert equation["bar_range"] == "K2-K1"
     assert result["terminal"]["outcome"] == "trade"
     assert result["next_cycle_prediction"]["unpredictable"] is True
 

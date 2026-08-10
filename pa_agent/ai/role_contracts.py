@@ -33,7 +33,10 @@ class PaHypothesis(BaseModel):
     setup: str | None
     thesis: str
     fact_refs: list[str] = Field(default_factory=list)
+    challenging_fact_refs: list[str] = Field(default_factory=list)
     theory_rule_ids: list[str] = Field(default_factory=list)
+    confirmation_condition: str | None = None
+    disconfirmation_condition: str | None = None
 
 
 class PaTradeMath(BaseModel):
@@ -128,6 +131,7 @@ class PaHypothesisSet(BaseModel):
 
     primary: PaHypothesis
     alternative: PaHypothesis | None
+    alternatives: list[PaHypothesis] = Field(default_factory=list)
     setup_candidates: list[PaSetupCandidate]
     gate_result: Literal["proceed", "wait", "unknown"]
     price_snapshot_hash: str
@@ -138,6 +142,7 @@ class PaHypothesisSet(BaseModel):
         result = {self.primary.hypothesis_id}
         if self.alternative is not None:
             result.add(self.alternative.hypothesis_id)
+        result.update(item.hypothesis_id for item in self.alternatives)
         return result
 
     @property
@@ -180,15 +185,15 @@ class VpaObservationDraft(BaseModel):
         "acceptance_rejection",
         "entry_timing",
     ]
-    interpretation_label: str | None = Field(default=None, max_length=80)
+    sequence_claims: list[VpaSequenceClaimDraft] = Field(default_factory=list)
+    interpretation: str
     epistemic_status: Literal[
         "candidate",
         "confirmed",
         "unresolved",
         "insufficient_data",
     ] = "unresolved"
-    sequence_claims: list[VpaSequenceClaimDraft] = Field(default_factory=list)
-    interpretation: str
+    interpretation_label: str | None = Field(default=None, max_length=80)
 
 
 class VpaObservation(VpaObservationDraft):

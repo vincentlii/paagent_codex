@@ -1011,14 +1011,14 @@ class PromptAssembler:
     "observations": [{
       "evidence_ids": ["仅使用目录中的 ID"],
       "finding_kind": "background | effort_result | sequence_comparison | acceptance_rejection | entry_timing",
-      "interpretation_label": "开放式专业标签或 null；先写证据，最后才使用标签",
-      "epistemic_status": "candidate | confirmed | unresolved | insufficient_data",
       "sequence_claims": [{
         "earlier_evidence_id": "较早证据 ID",
         "later_evidence_id": "较晚证据 ID",
         "relation": "response | follow_through | acceptance | rejection | test"
       }],
-      "interpretation": "上下文解释、竞争解释与局限，不复写数字"
+      "interpretation": "先写事实综合，再比较合理解释并说明不确定性，不复写数字",
+      "epistemic_status": "candidate | confirmed | unresolved | insufficient_data",
+      "interpretation_label": "开放式专业标签或 null；必须最后填写"
     }],
     "hypothesis_assessments": [{
       "hypothesis_id": "逐字复制每个 PA hypothesis_id；每个假设恰好一项",
