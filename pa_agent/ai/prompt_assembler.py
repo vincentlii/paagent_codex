@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from pa_agent.ai.decision_stance import build_decision_stance_guidance, normalize_stance
-from pa_agent.ai.fact_catalog import build_analysis_fact_catalog, render_pa_fact_catalog
+from pa_agent.ai.fact_catalog import (
+    AnalysisFactCatalog,
+    analysis_snapshot_hash,
+    build_analysis_fact_catalog,
+    render_pa_fact_catalog,
+)
 from pa_agent.ai.higher_timeframe import render_higher_timeframe_context
 from pa_agent.ai.kline_features import bar_candle_direction_label, compute_kline_geometry_features
 from pa_agent.ai.market_features import (
@@ -951,11 +956,13 @@ class PromptAssembler:
         *,
         prompt_settings: Any = None,
         vpa_evidence_catalog: dict[str, Any] | None = None,
+        analysis_fact_catalog: AnalysisFactCatalog | None = None,
     ) -> None:
         self._prompt_dir = prompt_dir
         self._experience_reader = experience_reader
         self._prompt_settings = prompt_settings
         self._vpa_evidence_catalog = vpa_evidence_catalog
+        self._analysis_fact_catalog = analysis_fact_catalog
         self._txt_cache: dict[str, str] = {}
 
     def _load_full_strategy_library(self) -> bool:
@@ -979,6 +986,20 @@ class PromptAssembler:
             self._experience_reader,
             prompt_settings=prompt_settings,
             vpa_evidence_catalog=vpa_evidence_catalog,
+            analysis_fact_catalog=self._analysis_fact_catalog,
+        )
+
+    def clone_with_analysis_fact_catalog(
+        self,
+        catalog: AnalysisFactCatalog,
+    ) -> "PromptAssembler":
+        """Bind one immutable fact catalog to a frozen analysis run."""
+        return PromptAssembler(
+            self._prompt_dir,
+            self._experience_reader,
+            prompt_settings=self._prompt_settings,
+            vpa_evidence_catalog=self._vpa_evidence_catalog,
+            analysis_fact_catalog=catalog,
         )
 
     def _vpa_modules_for_stage2(
@@ -1264,11 +1285,14 @@ class PromptAssembler:
         lines.append(_KLINE_INDICATOR_NOTE)
         return "\n".join(lines)
 
-    @staticmethod
-    def _render_simple_market_features_block(frame: KlineFrame) -> str:
+    def _render_simple_market_features_block(self, frame: KlineFrame) -> str:
         """Render the canonical price-only fact catalog."""
         try:
-            catalog = build_analysis_fact_catalog(frame)
+            catalog = self._analysis_fact_catalog
+            if catalog is None:
+                catalog = build_analysis_fact_catalog(frame)
+            elif catalog.snapshot_hash != analysis_snapshot_hash(frame):
+                raise ValueError("analysis fact catalog does not match the frozen frame")
             rendered = render_pa_fact_catalog(catalog).replace(
                 "## ANALYSIS_FACT_CATALOG",
                 "ANALYSIS_FACT_CATALOG",
@@ -1281,10 +1305,9 @@ class PromptAssembler:
             logger.warning("_render_simple_market_features_block failed: %s", exc)
             return ""
 
-    @staticmethod
-    def _inject_market_features_block(prompt: str, frame: KlineFrame) -> str:
+    def _inject_market_features_block(self, prompt: str, frame: KlineFrame) -> str:
         """Refresh or insert program market-features into a Stage 1 user prompt."""
-        block = PromptAssembler._render_simple_market_features_block(frame)
+        block = self._render_simple_market_features_block(frame)
         if not block:
             return prompt
         return inject_market_features_section(prompt, block)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any, Literal
@@ -40,10 +41,37 @@ class AnalysisFact:
 
 
 @dataclass(frozen=True)
+class EvidenceRelation:
+    source_id: str
+    target_id: str
+    relation: Literal[
+        "derived_from",
+        "compares_with",
+        "member_of",
+        "older_than",
+        "overlaps",
+    ]
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "relation": self.relation,
+        }
+
+
+@dataclass(frozen=True)
+class ResolvedEvidence:
+    facts: tuple[AnalysisFact, ...]
+    bar_range: str
+
+
+@dataclass(frozen=True)
 class AnalysisFactCatalog:
     catalog_id: str
     snapshot_hash: str
     facts: tuple[AnalysisFact, ...]
+    relations: tuple[EvidenceRelation, ...]
     provenance: dict[str, Any]
     capabilities: dict[str, Any]
     vpa_catalog: dict[str, Any]
@@ -53,6 +81,21 @@ class AnalysisFactCatalog:
             if item.fact_id == fact_id:
                 return item
         raise KeyError(fact_id)
+
+    def resolve_references(self, refs: list[str] | tuple[str, ...]) -> ResolvedEvidence:
+        """Resolve declared fact references without inferring missing evidence."""
+        facts = tuple(self.fact(str(fact_id)) for fact_id in refs)
+        seqs = [
+            int(match.group(1))
+            for fact in facts
+            for match in re.finditer(r"K([1-9]\d*)", fact.bar_range)
+        ]
+        bar_range = ""
+        if seqs:
+            newest = min(seqs)
+            oldest = max(seqs)
+            bar_range = f"K{oldest}" if oldest == newest else f"K{oldest}-K{newest}"
+        return ResolvedEvidence(facts=facts, bar_range=bar_range)
 
     def fact_ids(self, *, view: FactView = "pa") -> set[str]:
         domains = {"price", "indicator"} if view == "pa" else None
@@ -86,6 +129,26 @@ class AnalysisFactCatalog:
                 "vpa_catalog": self.vpa_catalog,
             }
         raise ValueError(f"unsupported fact view: {view}")
+
+    def project(
+        self,
+        role: Literal["pa_stage1", "pa_stage2", "vpa"],
+        *,
+        selected_refs: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return a role-safe projection of the same frozen fact identity."""
+        if role in {"pa_stage1", "pa_stage2"}:
+            payload = self.view("pa")
+        elif role == "vpa":
+            payload = self.view("vpa")
+            refs = sorted(selected_refs or set())
+            if refs:
+                self.resolve_references(refs)
+            payload["selected_pa_fact_refs"] = refs
+        else:
+            raise ValueError(f"unsupported evidence role: {role}")
+        payload["relations"] = [item.as_dict() for item in self.relations]
+        return payload
 
     def compare_bar_to_range(
         self,
@@ -236,10 +299,19 @@ def build_analysis_fact_catalog(
         catalog_id=catalog_id,
         snapshot_hash=snapshot_hash,
         facts=tuple(facts),
+        relations=_build_relations(tuple(facts)),
         provenance=provenance,
         capabilities=capabilities,
         vpa_catalog=vpa_catalog,
     )
+
+
+def analysis_snapshot_hash(frame: KlineFrame) -> str:
+    """Return the price-only identity used by :class:`AnalysisFactCatalog`."""
+    bars = tuple(
+        bar for bar in frame.bars if bool(getattr(bar, "closed", False)) and int(bar.seq) >= 1
+    )
+    return _price_snapshot_hash(frame, bars)
 
 
 def render_pa_fact_catalog(
@@ -291,6 +363,46 @@ def render_pa_fact_catalog(
 def _window_sizes(bar_count: int) -> tuple[int, ...]:
     sizes = {min(value, bar_count) for value in _WINDOWS if bar_count > 0}
     return tuple(sorted(value for value in sizes if value > 0))
+
+
+def _build_relations(facts: tuple[AnalysisFact, ...]) -> tuple[EvidenceRelation, ...]:
+    """Build formula-only graph edges over facts already present in the catalog."""
+    by_type: dict[str, list[AnalysisFact]] = {}
+    for fact in facts:
+        by_type.setdefault(fact.fact_type, []).append(fact)
+
+    relations: list[EvidenceRelation] = []
+    bars = sorted(
+        by_type.get("bar_ohlc_geometry", []),
+        key=lambda item: int(item.value["seq"]),
+    )
+    for newer, older in pairwise(bars):
+        relations.append(EvidenceRelation(older.fact_id, newer.fact_id, "older_than"))
+
+    windows = sorted(
+        by_type.get("rolling_price_window", []),
+        key=lambda item: int(item.value["bar_count"]),
+    )
+    for window in windows:
+        count = int(window.value["bar_count"])
+        for bar in bars:
+            if int(bar.value["seq"]) <= count:
+                relations.append(EvidenceRelation(bar.fact_id, window.fact_id, "member_of"))
+    for smaller, larger in pairwise(windows):
+        relations.append(EvidenceRelation(smaller.fact_id, larger.fact_id, "overlaps"))
+
+    for comparison in by_type.get("adjacent_bar_comparison", []):
+        value = comparison.value
+        for bar_name in (value.get("newer_bar"), value.get("older_bar")):
+            if bar_name:
+                relations.append(
+                    EvidenceRelation(
+                        comparison.fact_id,
+                        f"PA.BAR.{bar_name}",
+                        "compares_with",
+                    )
+                )
+    return tuple(relations)
 
 
 def _window_facts(bars: tuple[KlineBar, ...]) -> dict[str, Any]:

@@ -184,3 +184,46 @@ def test_pa_fact_catalog_default_does_not_construct_vpa_state() -> None:
     assert catalog.provenance == {}
     assert catalog.capabilities == {}
     assert catalog.vpa_catalog == {}
+
+
+def test_catalog_exposes_only_deterministic_evidence_relations() -> None:
+    catalog = build_analysis_fact_catalog(make_mixed_frame())
+
+    relations = catalog.relations
+    assert relations
+    assert {item.relation for item in relations} <= {
+        "derived_from",
+        "compares_with",
+        "member_of",
+        "older_than",
+        "overlaps",
+    }
+    assert any(
+        item.source_id == "PA.BAR.K1"
+        and item.target_id == "PA.WINDOW.K5"
+        and item.relation == "member_of"
+        for item in relations
+    )
+    assert all(
+        forbidden not in item.relation
+        for item in relations
+        for forbidden in ("trend", "setup", "support", "spring", "absorption")
+    )
+
+
+def test_catalog_role_projection_and_reference_resolution_share_one_identity() -> None:
+    catalog = build_analysis_fact_catalog(make_mixed_frame(), include_vpa=True)
+
+    pa = catalog.project("pa_stage1")
+    vpa = catalog.project("vpa", selected_refs={"PA.WINDOW.K5"})
+    resolved = catalog.resolve_references(["PA.BAR.K1", "PA.WINDOW.K5"])
+
+    assert pa["catalog_id"] == vpa["catalog_id"] == catalog.catalog_id
+    assert pa["snapshot_hash"] == vpa["snapshot_hash"] == catalog.snapshot_hash
+    assert "volume" not in json.dumps(pa, sort_keys=True).lower()
+    assert vpa["vpa_catalog"]["evidence"]
+    assert [item.fact_id for item in resolved.facts] == [
+        "PA.BAR.K1",
+        "PA.WINDOW.K5",
+    ]
+    assert resolved.bar_range == "K5-K1"

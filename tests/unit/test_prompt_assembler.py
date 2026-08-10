@@ -6,11 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
 from pa_agent.ai.prompt_assembler import VPA_KNOWLEDGE_MODULES, PromptAssembler
 from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
 from pa_agent.ai.role_contracts import JOINT_DECISION_SCHEMA, VPA_EVIDENCE_SCHEMA
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
 from pa_agent.config.settings import PromptSettings
+from pa_agent.config.paths import PROMPT_DIR
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
 
 
@@ -184,6 +186,34 @@ def test_pa_stage1_prompt_is_price_only_and_uses_fact_catalog(
     assert "| 1000" not in user
     assert "只引用 fact ID，不复制 canonical_value 的 key=value" in user
     assert "不复写阳线/阴线根数" in user
+
+
+def test_prompt_assembler_reuses_injected_fact_catalog(monkeypatch) -> None:
+    frame = _make_frame()
+    catalog = build_analysis_fact_catalog(frame)
+    assembler = PromptAssembler(PROMPT_DIR, analysis_fact_catalog=catalog)
+
+    def fail_rebuild(_frame):
+        raise AssertionError("fact catalog must be built once per frozen snapshot")
+
+    monkeypatch.setattr(
+        "pa_agent.ai.prompt_assembler.build_analysis_fact_catalog",
+        fail_rebuild,
+    )
+
+    stage1 = assembler.build_stage1(frame)
+    stage2 = assembler.build_stage2_continuation(
+        frame=frame,
+        stage1_messages=stage1,
+        stage1_reply_content="{}",
+        stage1_json={"direction": "neutral", "gate_result": "proceed"},
+        strategy_files=[],
+        experience_entries=[],
+        use_prefix_chain=True,
+    )
+
+    assert "ANALYSIS_FACT_CATALOG" in stage1[1]["content"]
+    assert stage2
 
 
 def test_stage2_user_prompt_includes_gate_trace(assembler: PromptAssembler):

@@ -942,6 +942,12 @@ class TwoStageOrchestrator:
             on_event(OrchestratorEvent.InsufficientData)
             return record
 
+        from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
+
+        run_assembler = self._assembler.clone_with_analysis_fact_catalog(
+            build_analysis_fact_catalog(frame)
+        )
+
         # ── Step 3: Stage 1 started ───────────────────────────────────────────
         on_event(OrchestratorEvent.Stage1Started)
 
@@ -954,7 +960,7 @@ class TwoStageOrchestrator:
 
         # ── Step 4: Build Stage 1 messages ───────────────────────────────────
         if previous_record is not None and incremental_new_bar_count is not None:
-            messages_s1 = self._assembler.build_incremental_stage1(
+            messages_s1 = run_assembler.build_incremental_stage1(
                 frame,
                 previous_record,
                 incremental_new_bar_count,
@@ -963,7 +969,7 @@ class TwoStageOrchestrator:
                 htf_context=htf_context,
             )
         else:
-            messages_s1 = self._assembler.build_stage1(
+            messages_s1 = run_assembler.build_stage1(
                 frame,
                 analysis_mode=analysis_mode,
                 htf_context=htf_context,
@@ -1352,7 +1358,7 @@ class TwoStageOrchestrator:
         _enable_next_bar = bool(
             getattr(getattr(self._settings, "general", None), "enable_next_bar_prediction", False)
         )
-        messages_s2 = self._assembler.build_stage2_continuation(
+        messages_s2 = run_assembler.build_stage2_continuation(
             frame=frame,
             stage1_messages=messages_s1,
             stage1_reply_content=reply_s1.content,
