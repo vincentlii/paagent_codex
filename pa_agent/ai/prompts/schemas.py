@@ -30,6 +30,11 @@ _TRACE_ITEM: dict = {
             "type": "string",
             "description": "K-line basis e.g. K50-K1 (seq1=newest closed bar)",
         },
+        "evidence_refs": {
+            "type": "array",
+            "items": {"type": "string", "pattern": r"^PA\."},
+            "uniqueItems": True,
+        },
     },
     "additionalProperties": False,
 }
@@ -301,6 +306,55 @@ _PA_EVIDENCE: dict = {
     "additionalProperties": False,
 }
 
+_MARKET_HYPOTHESIS: dict = {
+    "type": "object",
+    "required": [
+        "hypothesis_id", "role", "cycle_position", "direction", "setup_hint",
+        "thesis", "supporting_fact_refs", "challenging_fact_refs",
+        "theory_rule_ids", "confirmation_condition", "disconfirmation_condition",
+    ],
+    "properties": {
+        "hypothesis_id": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "enum": ["primary", "alternative"]},
+        "cycle_position": {
+            "type": "string",
+            "enum": [
+                "spike", "micro_channel", "tight_channel", "normal_channel",
+                "broad_channel", "trending_tr", "trading_range", "extreme_tr", "unknown",
+            ],
+        },
+        "direction": {"type": "string", "enum": ["bullish", "bearish", "neutral"]},
+        "setup_hint": {"type": "string"},
+        "thesis": {"type": "string", "minLength": 1},
+        "supporting_fact_refs": {
+            "type": "array", "items": {"type": "string", "pattern": r"^PA\."},
+            "uniqueItems": True,
+        },
+        "challenging_fact_refs": {
+            "type": "array", "items": {"type": "string", "pattern": r"^PA\."},
+            "uniqueItems": True,
+        },
+        "theory_rule_ids": {
+            "type": "array", "minItems": 1,
+            "items": {"type": "string", "enum": sorted(PA_THEORY_RULE_IDS)},
+            "uniqueItems": True,
+        },
+        "confirmation_condition": {"type": "string", "minLength": 1},
+        "disconfirmation_condition": {"type": "string", "minLength": 1},
+    },
+    "additionalProperties": False,
+}
+
+_MARKET_HYPOTHESES: dict = {
+    "type": "object",
+    "required": ["primary", "alternatives"],
+    "properties": {
+        "primary": _MARKET_HYPOTHESIS,
+        "alternatives": {"type": "array", "maxItems": 2, "items": _MARKET_HYPOTHESIS},
+    },
+    "additionalProperties": False,
+}
+
 # ── Stage 1 schema ────────────────────────────────────────────────────────────
 
 STAGE1_SCHEMA: dict = {
@@ -346,6 +400,7 @@ STAGE1_SCHEMA: dict = {
         },
         "direction": {"type": "string", "enum": ["bullish", "bearish", "neutral"]},
         "diagnosis_confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+        "diagnosis_confidence_reasoning": {"type": "string", "minLength": 1},
         "spike_stage": {
             "type": ["string", "null"],
             "enum": ["active", "ending", "transitioning", None],
@@ -373,6 +428,7 @@ STAGE1_SCHEMA: dict = {
             "items": _BAR_BY_BAR_ITEM,
         },
         "pa_evidence": _PA_EVIDENCE,
+        "market_hypotheses": _MARKET_HYPOTHESES,
         "gate_trace": {
             "type": "array",
             "minItems": 1,

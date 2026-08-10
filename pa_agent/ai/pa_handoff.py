@@ -256,6 +256,8 @@ def compile_pa_handoff(
     stage1: dict[str, Any],
     stage2: dict[str, Any] | None,
     frame: KlineFrame,
+    *,
+    catalog: AnalysisFactCatalog | None = None,
 ) -> PaHypothesisSet:
     """Compile validated PA outputs without inventing missing PA semantics."""
     evidence = stage1.get("pa_evidence")
@@ -270,9 +272,11 @@ def compile_pa_handoff(
     if gate not in {"proceed", "wait", "unknown"}:
         gate = "unknown"
     setup = str(stage1.get("entry_setup") or "").strip() or None
-    primary_thesis = f"{cycle} / {direction}. Gate={gate}."
-    if setup:
-        primary_thesis = f"{cycle} / {direction}: {setup}. Gate={gate}."
+    hypotheses = stage1.get("market_hypotheses")
+    hypotheses = hypotheses if isinstance(hypotheses, dict) else {}
+    primary_source = hypotheses.get("primary")
+    primary_source = primary_source if isinstance(primary_source, dict) else {}
+    primary_thesis = str(primary_source.get("thesis") or f"{cycle} / {direction}. Gate={gate}.")
     primary = PaHypothesis(
         hypothesis_id="pa-primary",
         role="primary",
@@ -280,24 +284,26 @@ def compile_pa_handoff(
         direction=direction,
         setup=setup,
         thesis=primary_thesis,
-        fact_refs=fact_refs,
-        theory_rule_ids=theory_ids,
+        fact_refs=[str(item) for item in primary_source.get("supporting_fact_refs", fact_refs)],
+        theory_rule_ids=[str(item) for item in primary_source.get("theory_rule_ids", theory_ids)],
     )
-    alternative_cycle = stage1.get("alternative_cycle_position")
+    alternatives = hypotheses.get("alternatives")
+    alternatives = alternatives if isinstance(alternatives, list) else []
+    alternative_source = alternatives[0] if alternatives and isinstance(alternatives[0], dict) else None
+    alternative_cycle = (
+        alternative_source.get("cycle_position") if alternative_source else stage1.get("alternative_cycle_position")
+    )
     alternative = None
     if alternative_cycle and str(alternative_cycle) != cycle:
         alternative = PaHypothesis(
-            hypothesis_id="pa-alternative",
+            hypothesis_id=str(alternative_source.get("hypothesis_id") or "pa-alternative") if alternative_source else "pa-alternative",
             role="alternative",
             cycle_position=str(alternative_cycle),
-            direction=direction,
-            setup=setup,
-            thesis=(
-                f"Competing PA framework: {alternative_cycle} / {direction}; "
-                "reassess the same model-owned setup without changing PA authority."
-            ),
-            fact_refs=fact_refs,
-            theory_rule_ids=theory_ids,
+            direction=str(alternative_source.get("direction") or direction) if alternative_source else direction,
+            setup=str(alternative_source.get("setup_hint") or "").strip() or None if alternative_source else setup,
+            thesis=str(alternative_source.get("thesis") or "") if alternative_source else f"Competing PA framework: {alternative_cycle}.",
+            fact_refs=[str(item) for item in alternative_source.get("supporting_fact_refs", [])] if alternative_source else fact_refs,
+            theory_rule_ids=[str(item) for item in alternative_source.get("theory_rule_ids", [])] if alternative_source else theory_ids,
         )
     stage2_obj = stage2 if isinstance(stage2, dict) else {}
     decision = (
@@ -305,7 +311,7 @@ def compile_pa_handoff(
         if isinstance(stage2_obj.get("decision"), dict)
         else {}
     )
-    catalog = build_analysis_fact_catalog(frame)
+    catalog = catalog or build_analysis_fact_catalog(frame)
     candidate = (
         _candidate(
             decision=decision,

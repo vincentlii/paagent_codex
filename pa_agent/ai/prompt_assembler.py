@@ -944,6 +944,79 @@ def stage2_prompt_txt_files(
     ]
 
 
+# Provider Draft v2 deliberately omits deterministic protocol fields. Canonical
+# records remain unchanged after JsonValidator materializes the draft.
+_THINKING_CONTENT_OUTPUT_RULE = """
+## 思考与正式输出分离
+思考区用于推演；正文只输出可被 json.loads 解析的完整裸 JSON。不得使用 Markdown
+围栏、工具或外部数据。控制推演篇幅，为最终 JSON 预留充足输出预算。
+""".strip()
+
+_STAGE1_OUTPUT_REMINDER = """
+## Stage 1 Provider Draft v2
+只输出裸 JSON。PA 负责判断 Background、cycle、direction、Always In、Setup 线索与
+竞争假设；程序只提供可复算事实并物化决策树静态字段。Evidence first，hypothesis
+plural，label last。不得根据单一阈值机械分类，也不得为了满足格式制造替代假设。
+
+顶层必须包含：
+- `protocol_version`: 固定 `pa_draft_v2`
+- `diagnosis_confidence` 与 `diagnosis_confidence_reasoning`
+- `market_hypotheses`: `primary` 加 0-2 个 `alternatives`
+- 原有 `spike_stage/climax_risk/market_phase/transition_risk/detected_patterns/key_signals/htf_context`
+- 原有 `support_levels/resistance_levels/risk_warning/bar_analysis/bar_by_bar_summary`
+- `pa_evidence`: 只输出 `spike_analysis`
+- `gate_trace`: 只输出语义核心
+
+每个 hypothesis 必须包含：`cycle_position`、`direction`、`setup_hint`、`thesis`、
+`supporting_fact_refs`、`challenging_fact_refs`、`theory_rule_ids`、
+`confirmation_condition`、`disconfirmation_condition`。证据 ID 必须来自本次
+ANALYSIS_FACT_CATALOG。alternatives 可为空，禁止复制 primary 伪造不同观点。
+
+`gate_trace` 每项只含：`node_id`、`answer`、`reason`、`evidence_refs`，按需可含
+`branch/next_node/skipped`。不要输出 `question/section/bar_range`；程序按 node 与证据
+引用物化。只评估 §1-§2，禁止输出 10.3、14 或 `gate_result`。完整可决策路径应走到
+§2.5；§1.2 无法识别时在该节点停止，§1.3 极端混乱时在该节点停止。
+`bar_analysis` 保留 `last_closed_bar=K1`、`signal_bar` 与 `follow_through`；逐棒项保留 `trapped_side`。
+""".strip()
+
+_STAGE2_OUTPUT_CONTRACT = """
+## Stage 2 Provider Draft v2
+只输出裸 JSON。Stage 2 负责 Brooks Setup、信号与入场时机、结构三价、PA 主观胜率
+先验及最终 `trade|wait|reject` 意图；程序复算价格几何、RR、Breakeven、Expectancy
+和 Trader Equation，并执行订单安全检查。
+Stage 2 是具体 PA 交易方案的唯一所有者；程序不替它选择 Setup 或入场时机。
+
+顶层必须包含：
+- `protocol_version`: 固定 `pa_draft_v2`
+- `decision_intent`: `trade|wait|reject`
+- `decision`、`bar_analysis`、`decision_trace`
+- `next_bar_prediction`（启用时）；`next_cycle_prediction` 为可选辅助任务
+
+`decision` 沿用原字段，但不要输出 `diagnosis_confidence` 或
+`diagnosis_confidence_reasoning`，程序从 Stage 1 冻结复制。若 `order_type=不下单`，
+方向、三价、交易置信度和胜率按 schema 置 null。
+`bar_analysis` 保留 `signal_bar`、`entry_bar`、`second_entry`；后者包含
+`is_second_entry/type`。`entry_bar` 必须包含 `bar/strength/follow_through/still_valid/freshness`。
+`signal_bar` 必须包含 `bar/quality/pattern/reason`；decision 保留 `invalidation_condition`。
+突破候选必须提供 `entry_basis_bar/entry_basis_extreme/entry_rule`。
+
+`decision_trace` 每项只含 `node_id/answer/reason/evidence_refs`，按需可含
+`branch/next_node/skipped`。不要输出 `question/section/bar_range`、§10.3 或 `terminal`：
+程序根据 Evidence ID、模型意图和确定性交易数学物化。模型仍需判断 §10.1/§10.2、
+Setup 是否成立、信号质量和是否执行；不得为了让方程通过而调整结构价格或胜率。
+""".strip()
+
+_STAGE1_TAIL_REMINDER = (
+    "【输出】正文只写 Stage 1 Draft v2 裸 JSON。确认含真实 primary、可为空的 alternatives、"
+    "证据引用和完整语义 gate_trace；不要输出程序拥有的静态字段。"
+)
+
+_STAGE2_TAIL_REMINDER = (
+    "【输出】正文只写 Stage 2 Draft v2 裸 JSON。确认保留最终 decision_intent，"
+    "不要输出 Stage1 冻结字段、§10.3、terminal 或静态 trace 字段。"
+)
+
+
 # ── PromptAssembler ────────────────────────────────────────────────────────────
 
 class PromptAssembler:
@@ -2091,9 +2164,6 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
             stage2_parts.append(_NEXT_BAR_PREDICTION_INSTRUCTION)
         else:
             stage2_parts.append(_NEXT_BAR_DISABLED_NOTE)
-        stage2_parts.append(
-            _build_next_cycle_prediction_instruction(enable_next_bar=enable_next_bar_prediction)
-        )
         # Static strategy / contract blocks first → better KV prefix reuse across runs.
         stage2_context = "\n\n---\n\n".join(p for p in stage2_parts if p)
 
@@ -2106,25 +2176,15 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
         higher_timeframe_block = "" if omit_htf_context else render_higher_timeframe_context(htf_context)
         prev_pred_block = self._render_previous_prediction(previous_record)
         compact_s1 = json.dumps(
-            self._compact_stage1_for_stage2(stage1_json),
-            ensure_ascii=False,
-            indent=2,
+            self._compact_stage1_for_stage2(stage1_json), ensure_ascii=False, indent=2
         )
 
         if omit_kline_block:
             kline_block = (
                 "## K线数据\n\n"
                 "完整 K 线表与几何特征已包含在上方阶段一用户消息中"
-                "（序号按当前分析窗口编号，K1=最新已收盘）。"
-                "阶段二须结合该表与下方阶段一诊断 JSON 做交易者方程与定价。\n\n"
+                "（K1=最新已收盘）；程序将复算交易数学。\n\n"
             )
-            simple_features_block = self._render_simple_market_features_block(frame)
-            if simple_features_block:
-                kline_block += (
-                    _MARKET_FEATURES_AUTHORITY_NOTE
-                    + simple_features_block
-                    + "\n\n"
-                )
             if breakout_tick_hint:
                 kline_block += f"{breakout_tick_hint}\n\n"
         else:
@@ -2151,6 +2211,9 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
             if omit_kline_block
             else "本消息下方附有完整 K 线表与几何特征。\n\n"
         )
+        stage1_block = "" if omit_kline_block else (
+            f"## 阶段一诊断结果\n\n```json\n{compact_s1}\n```\n\n"
+        )
         return (
             f"{_STAGE2_API_TASK_RULE}\n\n"
             "## 阶段二任务\n\n"
@@ -2159,14 +2222,11 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
             f"{kline_intro}"
             f"{stage2_context}\n\n"
             "---\n\n"
-            f"## 阶段一诊断结果\n\n```json\n"
-            f"{compact_s1}"
-            f"\n```\n\n"
+            f"{stage1_block}"
             + (f"{higher_timeframe_block}\n" if higher_timeframe_block else "")
             + f"{kline_block}"
             f"{prev_pred_block + chr(10) if prev_pred_block else ''}"
-            f"请根据以上诊断和K线数据,按《二元决策.txt》§9–§11、§14 输出 JSON 决策结果"
-            f"(含 decision_trace 与 terminal)。\n"
+            f"请根据以上诊断和K线数据按路由后的 Brooks 分支与 §9–§11、§14 输出 Stage 2 Draft。\n"
             f"注意:如果判断不下单,entry_price、take_profit_price、take_profit_price_2、stop_loss_price、order_direction 必须全部为 null。\n\n"
             f"{_stage2_tail_reminder()}"
         )

@@ -82,8 +82,21 @@ class AnalysisFactCatalog:
                 return item
         raise KeyError(fact_id)
 
-    def resolve_references(self, refs: list[str] | tuple[str, ...]) -> ResolvedEvidence:
+    def resolve_references(
+        self,
+        refs: list[str] | tuple[str, ...],
+        *,
+        role: Literal["pa_stage1", "pa_stage2", "vpa"] = "pa_stage1",
+    ) -> ResolvedEvidence:
         """Resolve declared fact references without inferring missing evidence."""
+        visible_ids = (
+            self.fact_ids(view="pa")
+            if role in {"pa_stage1", "pa_stage2"}
+            else self.fact_ids(view="vpa")
+        )
+        hidden = [str(fact_id) for fact_id in refs if str(fact_id) not in visible_ids]
+        if hidden:
+            raise KeyError(hidden[0])
         facts = tuple(self.fact(str(fact_id)) for fact_id in refs)
         seqs = [
             int(match.group(1))
@@ -143,11 +156,25 @@ class AnalysisFactCatalog:
             payload = self.view("vpa")
             refs = sorted(selected_refs or set())
             if refs:
-                self.resolve_references(refs)
+                self.resolve_references(refs, role="vpa")
             payload["selected_pa_fact_refs"] = refs
         else:
             raise ValueError(f"unsupported evidence role: {role}")
-        payload["relations"] = [item.as_dict() for item in self.relations]
+        visible_ids = {str(item["fact_id"]) for item in payload["facts"]}
+        payload["relations"] = [
+            item.as_dict()
+            for item in self.relations
+            if item.source_id in visible_ids and item.target_id in visible_ids
+        ]
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        payload["projection_digest"] = hashlib.sha256(
+            encoded.encode("utf-8")
+        ).hexdigest()
         return payload
 
     def compare_bar_to_range(

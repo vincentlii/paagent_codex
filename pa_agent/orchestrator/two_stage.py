@@ -944,9 +944,8 @@ class TwoStageOrchestrator:
 
         from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
 
-        run_assembler = self._assembler.clone_with_analysis_fact_catalog(
-            build_analysis_fact_catalog(frame)
-        )
+        analysis_catalog = build_analysis_fact_catalog(frame)
+        run_assembler = self._assembler.clone_with_analysis_fact_catalog(analysis_catalog)
 
         # ── Step 3: Stage 1 started ───────────────────────────────────────────
         on_event(OrchestratorEvent.Stage1Started)
@@ -1148,6 +1147,7 @@ class TwoStageOrchestrator:
                     ),
                     "incremental_previous_stage1": prev_s1,
                     "htf_context": htf_context,
+                    "analysis_fact_catalog": analysis_catalog,
                 },
                 call_api=_call_s1_retry,
                 provider_settings=getattr(self._settings, "provider", None),
@@ -1577,6 +1577,7 @@ class TwoStageOrchestrator:
                     "kline_frame": frame,
                     "stage1_json": stage1_for_stage2,
                     "skip_next_bar": not _enable_next_bar,
+                    "analysis_fact_catalog": analysis_catalog,
                 },
                 call_api=_call_s2_retry,
                 provider_settings=getattr(self._settings, "provider", None),

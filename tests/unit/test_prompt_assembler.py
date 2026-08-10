@@ -8,6 +8,7 @@ import pytest
 
 from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
 from pa_agent.ai.prompt_assembler import VPA_KNOWLEDGE_MODULES, PromptAssembler
+from pa_agent.ai.pa_provider_contracts import STAGE1_DRAFT_SCHEMA, STAGE2_DRAFT_SCHEMA
 from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
 from pa_agent.ai.role_contracts import JOINT_DECISION_SCHEMA, VPA_EVIDENCE_SCHEMA
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
@@ -168,7 +169,7 @@ def test_stage1_user_prompt_contains_required_fields(assembler: PromptAssembler)
     assert "序号" in user
     assert "程序可复算 K线事实" in user
     assert "程序可复算市场事实" in user
-    assert "不提供 `bar_type` 结论" in user
+    assert "Evidence first" in user
     assert "更高时间框架" not in user
 
 
@@ -178,14 +179,12 @@ def test_pa_stage1_prompt_is_price_only_and_uses_fact_catalog(
     user = assembler.build_stage1(_make_frame())[1]["content"]
 
     assert "ANALYSIS_FACT_CATALOG" in user
-    assert "PA.WINDOW.K5" in user
-    assert "逐棒 reason 不得手写 OHLC、EMA、ATR" in user
-    assert "htf_context 只引用 HTF.H# 并解释背景" in user
+    assert "PA.WINDOW.K4" in user
+    assert "Evidence first" in user
     assert "成交量" not in user
     assert "| volume" not in user.lower()
     assert "| 1000" not in user
-    assert "只引用 fact ID，不复制 canonical_value 的 key=value" in user
-    assert "不复写阳线/阴线根数" in user
+    assert "ANALYSIS_FACT_CATALOG" in user
 
 
 def test_prompt_assembler_reuses_injected_fact_catalog(monkeypatch) -> None:
@@ -275,8 +274,8 @@ def test_stage2_prompt_does_not_assign_quality_without_a_signal_bar(
         [],
     )[1]["content"]
 
-    assert "计划型限价时 `signal_bar.bar` 为 null" in user
-    assert '`quality="invalid"`、`pattern="none"`' in user
+    assert "Stage 2 Provider Draft v2" in user
+    assert "order_type=不下单" in user
     assert "`quality=invalid` 或 **weak**" not in user
 
 
@@ -307,26 +306,14 @@ def test_stage1_output_reminder_present(assembler: PromptAssembler):
     assert "cycle_position" in user
     assert "diagnosis_confidence" in user
     assert "bar_by_bar_summary" in user
-    assert '"key_signals": ["K4：强阴线收盘近低点，但属于逆主流方向信号"]' in user
-    assert "`key_signals` 的每个元素必须是字符串" in user
-    assert (
-        "`pause_or_pullback_present` 时，`transition_risk` 必须从 "
-        "`high|medium|low` 中选择"
-    ) in user
-    assert (
-        "非 `spike` 周期时 `spike_analysis=null` 且 `spike_stage=null`"
-    ) in user
-    assert '"first_pause_or_pullback_bar":"K#|null"' in user
-    assert "`market_phase=stable` 时 `transition_risk=null`" in user
-    assert '"transition_risk": "high|medium|low|null"' in user
-    assert "逐K摘要硬规则" in user
-    assert "K5–K1" in user
-    assert "reversal_attempt" in user
+    assert "protocol_version" in user
+    assert "market_hypotheses" in user
+    assert "supporting_fact_refs" in user
+    assert "challenging_fact_refs" in user
     assert "detected_patterns" in user
     assert "gate_trace" in user
-    assert "gate_result" in user
-    assert "K1 自己的 high/low" in user
-    assert "bar_range 是审计覆盖范围" in user
+    assert "不要输出 `question/section/bar_range`" in user
+    assert "禁止输出 10.3、14 或 `gate_result`" in user
 
 
 def test_required_schema_keys_are_visible_in_role_prompts(
@@ -342,10 +329,10 @@ def test_required_schema_keys_are_visible_in_role_prompts(
     )
 
     assert sorted(
-        key for key in _required_schema_keys(STAGE1_SCHEMA) if key not in stage1_prompt
+        key for key in _required_schema_keys(STAGE1_DRAFT_SCHEMA) if key not in stage1_prompt
     ) == []
     assert sorted(
-        key for key in _required_schema_keys(STAGE2_SCHEMA) if key not in stage2_prompt
+        key for key in _required_schema_keys(STAGE2_DRAFT_SCHEMA) if key not in stage2_prompt
     ) == []
 
 
@@ -415,9 +402,9 @@ def test_stage1_original_mode_keeps_llm_owned_gate_semantics(assembler: PromptAs
     user = messages[1]["content"]
 
     assert "原始分析过程闸门硬规则" not in user
-    assert "七个阶段一语义节点均由你输出" in user
-    assert "程序只校验格式、引用范围与内部一致性" in user
-    assert "每个未跳过节点 reason 必填" in user
+    assert "PA 负责判断 Background" in user
+    assert "程序只提供可复算事实" in user
+    assert "完整语义 gate_trace" in user
 
 
 def test_vpa_evidence_role_loads_modules_from_frozen_brooks_context(
@@ -587,8 +574,8 @@ def test_stage2_win_rate_is_explicitly_an_uncalibrated_pa_prior(
         [],
     )[1]["content"]
 
-    assert "当前 Setup 的 PA 主观先验" in prompt
-    assert "禁止称其为“历史胜率”或“回测胜率”" in prompt
+    assert "PA 主观胜率" in prompt
+    assert "不得为了让方程通过而调整结构价格或胜率" in prompt
 
 
 def test_stage1_prompt_injects_canonical_brooks_theory_rule_catalog(
@@ -651,12 +638,11 @@ def test_stage2_output_contract_present(assembler: PromptAssembler):
     assert "order_direction" in user
     assert "bar_analysis" in user
     assert "entry_basis_bar" in user
-    assert "突破单 entry_price 硬规则" in user
-    assert "§9 逐K信号链与新鲜度硬规则" in user
+    assert "Stage 2 Provider Draft v2" in user
     assert "程序可复算 K线事实" in user
-    assert "不得替代背景解释或交易者方程" in user
+    assert "程序复算价格几何" in user
     assert "decision_trace" in user
-    assert "terminal" in user
+    assert "不要输出 `question/section/bar_range`、§10.3 或 `terminal`" in user
 
 
 def test_stage2_pending_entry_and_stop_semantics_are_unambiguous(
@@ -666,12 +652,9 @@ def test_stage2_pending_entry_and_stop_semantics_are_unambiguous(
     messages = assembler.build_stage2(frame, {}, [], [])
     user = messages[1]["content"]
 
-    assert '"follow_through": null' in user
-    assert '"still_valid": null' in user
-    assert "尚未触发的 entry attempt 不存在入场棒跟随" in user
-    assert "保护性止损价格" in user
-    assert "分析假设失效条件" in user
-    assert "若称某价格为 K 线极点或前高/前低，必须写明对应 K#" in user
+    assert "bar_analysis" in user
+    assert "结构三价" in user
+    assert "模型仍需判断 §10.1/§10.2" in user
     assert "follow_through=false` 当作失败跟随，应写 `pending`" not in user
 
 
@@ -759,7 +742,7 @@ def test_stage2_continuation_is_standalone_not_stage1_chat(assembler: PromptAsse
     assert "序号 | 时间" in s2_user
     assert "下跌通道分析识别" in s2_user
     assert "上涨通道分析识别" not in s2_user
-    assert "【最后一步·必做】" in s2_user
+    assert "【输出】正文只写 Stage 2 Draft v2" in s2_user
 
 
 def test_stage1_stage2_system_prompt_byte_identical(assembler: PromptAssembler):
@@ -1441,7 +1424,6 @@ def test_stage2_prompt_states_the_final_trace_order(assembler: PromptAssembler) 
     )
 
     user = messages[-1]["content"]
-    assert "10.3 → 11.x → 14" in user
-    assert "entry_setup` 只是提示性线索" in user
-    assert "order_type 为“不下单”时" in user
-    assert '"trade_confidence": null' in user
+    assert "不要输出 `question/section/bar_range`、§10.3 或 `terminal`" in user
+    assert "Stage 2 是具体 PA 交易方案的唯一所有者" in user
+    assert "order_type=不下单" in user

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
+import pytest
+
 from pa_agent.ai.fact_catalog import (
     build_analysis_fact_catalog,
     render_pa_fact_catalog,
@@ -227,3 +229,16 @@ def test_catalog_role_projection_and_reference_resolution_share_one_identity() -
         "PA.WINDOW.K5",
     ]
     assert resolved.bar_range == "K5-K1"
+    assert pa["projection_digest"] != vpa["projection_digest"]
+    visible_ids = {item["fact_id"] for item in pa["facts"]}
+    assert all(
+        item["source_id"] in visible_ids and item["target_id"] in visible_ids
+        for item in pa["relations"]
+    )
+
+
+def test_pa_reference_resolution_rejects_cross_role_or_unknown_ids() -> None:
+    catalog = build_analysis_fact_catalog(make_mixed_frame(), include_vpa=True)
+
+    with pytest.raises(KeyError):
+        catalog.resolve_references(["vpa-e001"], role="pa_stage1")

@@ -195,7 +195,13 @@ class JsonValidator:
         stage: Literal["stage1", "stage2"],
     ) -> dict[str, Any]:
         """Return an isolated schema for provider capability negotiation."""
-        return copy.deepcopy(self._schemas[stage])
+        from pa_agent.ai.pa_provider_contracts import (
+            STAGE1_DRAFT_SCHEMA,
+            STAGE2_DRAFT_SCHEMA,
+        )
+
+        schemas = {"stage1": STAGE1_DRAFT_SCHEMA, "stage2": STAGE2_DRAFT_SCHEMA}
+        return copy.deepcopy(schemas[stage])
 
     def normalize_parsed(
         self,
@@ -238,6 +244,7 @@ class JsonValidator:
         incremental_previous_stage1: dict[str, Any] | None = None,
         skip_next_bar: bool = False,
         htf_context: dict[str, Any] | None = None,
+        analysis_fact_catalog: Any = None,
     ) -> Result:
         """Validate *raw_text* against the schema for *stage*.
 
@@ -290,6 +297,42 @@ class JsonValidator:
             )
 
         pre_normalized_obj = copy.deepcopy(obj)
+        if obj.get("protocol_version") == "pa_draft_v2":
+            try:
+                import jsonschema  # type: ignore[import]
+                from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
+                from pa_agent.ai.pa_provider_contracts import (
+                    STAGE1_DRAFT_SCHEMA,
+                    STAGE2_DRAFT_SCHEMA,
+                    materialize_stage1_draft,
+                    materialize_stage2_draft,
+                )
+
+                draft_schema = STAGE1_DRAFT_SCHEMA if stage == "stage1" else STAGE2_DRAFT_SCHEMA
+                draft_errors = list(jsonschema.Draft7Validator(draft_schema).iter_errors(obj))
+                if draft_errors:
+                    first = draft_errors[0]
+                    path = ".".join(str(part) for part in first.absolute_path)
+                    return ValidationError(
+                        category="b" if first.validator == "required" else "c",
+                        stage=stage,
+                        raw_text=raw_text,
+                        missing_fields=[first.message.split("'")[1]] if first.validator == "required" else [],
+                        invalid_fields=[] if first.validator == "required" else [path or "draft"],
+                        message=f"Provider draft validation failed: {first.message}",
+                    )
+                catalog = analysis_fact_catalog or build_analysis_fact_catalog(kline_frame)
+                obj = (
+                    materialize_stage1_draft(obj, catalog=catalog)
+                    if stage == "stage1"
+                    else materialize_stage2_draft(obj, stage1=stage1_json or {}, catalog=catalog)
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                return ValidationError(
+                    category="c", stage=stage, raw_text=raw_text,
+                    invalid_fields=["provider_draft_materialization"],
+                    message=f"Provider draft materialization failed: {exc}",
+                )
         obj = self.normalize_parsed(
             stage,
             obj,
