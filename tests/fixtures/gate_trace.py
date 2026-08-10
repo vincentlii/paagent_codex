@@ -35,6 +35,8 @@ def make_mandatory_gate_trace_proceed(
             "reason": reason,
             "bar_range": bar_range,
         }
+        if nid == "1.3":
+            item["answer"] = "否"
         if nid == "1.2":
             item["branch"] = cycle_branch
         if nid == "2.3":

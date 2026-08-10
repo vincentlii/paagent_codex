@@ -365,6 +365,20 @@ def test_feedback_target_extraction_is_path_based() -> None:
     assert targets == {"direction", "decision.order_direction", "next_bar_prediction"}
 
 
+def test_draft_retry_guard_compares_provider_semantics_before_materialization() -> None:
+    before = {
+        "market_hypotheses": {
+            "primary": {"direction": "bullish", "cycle_position": "normal_channel", "setup_hint": "H2", "thesis": "continuation"}
+        }
+    }
+    after = copy.deepcopy(before)
+    after["market_hypotheses"]["primary"]["direction"] = "bearish"
+
+    changes = detect_immutable_field_changes("stage1", before, after)
+
+    assert changes == ["market_hypotheses.primary.direction: 'bullish' → 'bearish'"]
+
+
 def test_retry_parser_is_strict_json_only() -> None:
     assert parse_json_object('{"direction": "bullish"}') == {"direction": "bullish"}
     assert parse_json_object('{"direction": "bullish"; }') is None

@@ -152,6 +152,35 @@ def test_handoff_digest_covers_prices_and_frozen_price_snapshot() -> None:
     assert first.source_digest != changed.source_digest
 
 
+def test_handoff_preserves_model_owned_competing_hypothesis() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["market_hypotheses"] = {
+        "primary": {
+            "hypothesis_id": "pa-primary", "role": "primary",
+            "cycle_position": "normal_channel", "direction": "bullish",
+            "setup_hint": "buy pullback", "thesis": "bull channel continues",
+            "supporting_fact_refs": ["PA.WINDOW.K5"], "challenging_fact_refs": [],
+            "theory_rule_ids": ["BROOKS.CHANNEL.CONTEXT"],
+            "confirmation_condition": "follow-through", "disconfirmation_condition": "channel break",
+        },
+        "alternatives": [{
+            "hypothesis_id": "pa-alternative-1", "role": "alternative",
+            "cycle_position": "trading_range", "direction": "neutral",
+            "setup_hint": "wait for edge", "thesis": "overlap dominates",
+            "supporting_fact_refs": ["PA.WINDOW.K5"], "challenging_fact_refs": ["PA.BAR.K1"],
+            "theory_rule_ids": ["BROOKS.CHANNEL.CONTEXT"],
+            "confirmation_condition": "continued overlap", "disconfirmation_condition": "strong breakout",
+        }],
+    }
+
+    handoff = compile_pa_handoff(stage1, VALID_STAGE2, make_frame())
+
+    assert handoff.alternative is not None
+    assert handoff.alternative.direction == "neutral"
+    assert handoff.alternative.setup == "wait for edge"
+    assert handoff.alternative.thesis == "overlap dominates"
+
+
 def test_order_type_materializes_one_unambiguous_execution_mode() -> None:
     frame = make_frame()
     breakout = compile_pa_handoff(VALID_STAGE1, VALID_STAGE2, frame)

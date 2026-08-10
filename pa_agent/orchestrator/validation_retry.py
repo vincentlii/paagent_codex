@@ -23,14 +23,6 @@ from pa_agent.orchestrator.warning_events import group_warning_messages
 logger = logging.getLogger(__name__)
 
 StageName = Literal["stage1", "stage2"]
-_NORMALIZE_KWARGS = {
-    "kline_frame",
-    "incremental_new_bar_count",
-    "incremental_previous_stage1",
-    "skip_next_bar",
-}
-
-
 @dataclass
 class ValidationRetryResult:
     result: Ok | ValidationError
@@ -174,19 +166,10 @@ def validate_with_retry(
                     }
                 )
             if attempt > 0 and previous_obj is not None:
-                before_norm = validator.normalize_parsed(
-                    stage,
-                    previous_obj,
-                    **{
-                        key: value
-                        for key, value in validate_kwargs.items()
-                        if key in _NORMALIZE_KWARGS
-                    },
-                )
                 immutable_changes = detect_immutable_field_changes(
                     stage,
-                    before_norm,
-                    result.obj,
+                    previous_obj,
+                    result.provider_obj or result.obj,
                     feedback_mentioned=previous_feedback_targets,
                 )
                 if immutable_changes:

@@ -438,7 +438,9 @@ def test_vpa_evidence_role_loads_modules_from_frozen_brooks_context(
     assert '"sequence_claims"' in prompt
     assert "针对该真实 Entry Attempt" in prompt
     assert "各自 `bar_range` 不得重叠" in prompt
-    assert "ENTRY_ATTEMPT_CONTEXT" in prompt
+    assert "VPA_ANALYSIS_ENVELOPE" in prompt
+    assert "### ENTRY_ATTEMPT_CONTEXT" not in prompt
+    assert "### FROZEN_PA_CONTEXT" not in prompt
     assert '"applicable": false' in prompt
     assert "entry_timing_relation=insufficient_data" in prompt
 

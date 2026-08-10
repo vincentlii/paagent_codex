@@ -35,6 +35,10 @@ _SEMANTIC_STATE_FIELDS: frozenset[str] = frozenset(
 
 IMMUTABLE_FIELDS: dict[StageName, tuple[str, ...]] = {
     "stage1": (
+        "market_hypotheses.primary.direction",
+        "market_hypotheses.primary.cycle_position",
+        "market_hypotheses.primary.setup_hint",
+        "market_hypotheses.primary.thesis",
         "direction",
         "cycle_position",
         "gate_result",
@@ -43,6 +47,7 @@ IMMUTABLE_FIELDS: dict[StageName, tuple[str, ...]] = {
         "pa_evidence.spike_analysis",
     ),
     "stage2": (
+        "decision_intent",
         "decision.order_type",
         "decision.order_direction",
         "decision.entry_price",

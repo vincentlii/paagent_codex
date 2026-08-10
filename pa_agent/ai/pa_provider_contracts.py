@@ -113,13 +113,15 @@ def _materialize_trace(
         if node_id not in nodes:
             raise ValueError(f"unknown decision-tree node: {node_id}")
         refs = [str(item) for item in source.get("evidence_refs", [])]
+        if not refs and not bool(source.get("skipped")):
+            raise ValueError(f"decision-tree node {node_id} requires evidence_refs")
         resolved = catalog.resolve_references(refs, role=role)
         node = nodes[node_id]
         item = copy.deepcopy(source)
         item.setdefault("skipped", False)
         item["question"] = node["question"]
         item["section"] = node["section_title"]
-        item["bar_range"] = resolved.bar_range or "K1"
+        item["bar_range"] = resolved.bar_range or "不适用"
         result.append(item)
     return result
 
@@ -141,10 +143,9 @@ def _materialize_hypotheses(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _derive_gate_result(trace: list[dict[str, Any]]) -> str:
     by_id = {str(item["node_id"]): str(item["answer"]) for item in trace}
-    last_node = str(trace[-1]["node_id"])
-    if last_node == "1.2" and by_id.get("1.2") in {"否", "等待"}:
+    if by_id.get("1.2") in {"否", "等待"}:
         return "unknown"
-    if last_node == "1.3" and by_id.get("1.3") == "是":
+    if by_id.get("1.3") == "是":
         return "wait"
     if "2.5" not in by_id:
         raise ValueError("incomplete Stage 1 gate path: node 2.5 was not evaluated")
@@ -235,12 +236,17 @@ def materialize_stage2_draft(
     trace = _materialize_trace(result["decision_trace"], catalog=catalog, role="pa_stage2")
     if any(item["node_id"] == "10.3" for item in trace):
         raise ValueError("Stage 2 Draft must not provide program-owned node 10.3")
-    equation, equation_passes = _equation_trace(decision, catalog=catalog)
-    insert_at = next(
-        (i for i, item in enumerate(trace) if str(item["node_id"]).startswith(("11.", "14"))),
-        len(trace),
-    )
-    trace.insert(insert_at, equation)
+    executable = decision.get("order_type") in {"限价单", "突破单", "市价单"}
+    if intent == "trade" and not executable:
+        raise ValueError("trade intent requires an executable PA candidate")
+    equation_passes = False
+    if executable:
+        equation, equation_passes = _equation_trace(decision, catalog=catalog)
+        insert_at = next(
+            (i for i, item in enumerate(trace) if str(item["node_id"]).startswith(("11.", "14"))),
+            len(trace),
+        )
+        trace.insert(insert_at, equation)
     result["decision_trace"] = trace
     if intent == "trade" and equation_passes:
         terminal_node = next(
@@ -256,8 +262,15 @@ def materialize_stage2_draft(
             "node_id": "10.3", "outcome": "reject", "label": "Deterministic trader equation failed",
         }
     else:
+        terminal_item = next(
+            (
+                item for item in reversed(trace)
+                if str(item["node_id"]) != "14" or str(item.get("answer")) == "是"
+            ),
+            trace[-1],
+        )
         result["terminal"] = {
-            "node_id": trace[-1]["node_id"], "outcome": intent, "label": f"LLM {intent} intent",
+            "node_id": terminal_item["node_id"], "outcome": intent, "label": f"LLM {intent} intent",
         }
     result.setdefault("next_cycle_prediction", _next_cycle_placeholder())
     return result

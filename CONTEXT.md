@@ -55,8 +55,8 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 ## 分析顺序
 
 1. 程序解析一次数据源身份并冻结主周期、高周期和成交量事实。
-2. PA Stage 1 产生市场框架、主假设与替代假设。
-3. PA Stage 2 形成并冻结不含 VPA 的具体订单 baseline。
+2. PA Stage 1 以 `pa_draft_v2` 产生市场框架、主假设、可为空的真实替代假设及证据引用；程序物化静态 trace 与 Gate。
+3. PA Stage 2 以 `pa_draft_v2` 形成不含 VPA 的 Setup、结构三价、PA 胜率先验与交易意图；程序继承 Stage 1 置信度并复算 Trader Equation、terminal 与执行安全。
 4. `compile_pa_handoff(...)` 只复制 PA 语义并补充可复算的订单数学、身份和窗口位置事实。
 5. VPA Evidence Analyst 独立检查量价证据；生产 Shadow 到此结束，正式结果仍是 PA-only。
 6. 隔离的 A/A/B/B 研究 B 臂才调用 Joint Arbiter，在既有 PA candidate 内输出有界补丁。

@@ -47,6 +47,7 @@ _NO_ORDER_REPAIR_PATHS = (
 class Ok:
     """Successful validation result."""
     obj: dict[str, Any]
+    provider_obj: dict[str, Any] | None = None
     normalization_events: list[dict[str, Any]] = field(default_factory=list)
     warnings: list["ValidationWarning"] = field(default_factory=list)
 
@@ -482,6 +483,7 @@ class JsonValidator:
         if not errors and not missing and not invalid:
             return Ok(
                 obj=obj,
+                provider_obj=pre_normalized_obj,
                 normalization_events=normalization_events,
                 warnings=warnings,
             )
