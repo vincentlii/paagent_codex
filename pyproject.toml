@@ -45,6 +45,8 @@ dev = [
 pa-agent = "pa_agent.main:main"
 pa-agent-headless = "pa_agent.headless:main"
 pa-agent-paper-report = "pa_agent.execution.reporting:main"
+pa-agent-aabb = "pa_agent.experiments.cli:single_main"
+pa-agent-aabb-monitor = "pa_agent.experiments.cli:continuous_main"
 
 [tool.setuptools.packages.find]
 include = ["pa_agent*"]

@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0020`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0021`。
 
 ## 核心目标
 
@@ -33,6 +33,8 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
 - `RunOutcome`：`completed`、`completed_with_warnings`、`degraded_pa_only`、
   `unavailable_input`、`unavailable_provider`、`invalid_model_output`、`cancelled`
   或 `internal_error`。
+- `ContinuousAabbSample`：以 `(pipeline_id, cohort_id, market_snapshot_hash)` 唯一标识的
+  持续配对研究单元；SQLite 租约只管理执行与恢复，不参与市场判断。
 
 ## 权限边界
 
@@ -109,6 +111,9 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
   per-protocol；生产 Shadow/Soft 及模型自述 comparison 都不构成反事实。
 - A/A/B/B 的独立抽样单位是 `market_snapshot_hash`；`cohort_id` 隔离 Provider、settings、源码与
   Prompt 版本。同一行情的重复臂、重跑或跨版本复核都不得增加独立样本数。
+- 持续 A/A/B/B 只从已落盘生产 Shadow record 抽样，独立于生产 Headless 调度；
+  `completed_with_warnings` 不因 VPA 先验失败而被筛掉。四臂完成后若研究 Paper 暂时失败，
+  只重放四条已验证 record，不重新调用模型。
 - PA `estimated_win_rate` 是未校准的 Setup 主观先验，仍参与 Brooks Trader Equation；
   不得称为历史统计。VPA、固定外部阈值与单次样本不得修改它或新增概率 Gate。
 - 教材概率只允许对竞争假设作定性排序。没有同品种、同周期、同数据源、同执行协议的

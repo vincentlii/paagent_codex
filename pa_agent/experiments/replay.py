@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from pa_agent.demo.record_loader import frame_from_record_klines
+from pa_agent.records.replay import frame_from_record_klines
 from pa_agent.records.schema import AnalysisRecord
 
 

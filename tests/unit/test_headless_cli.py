@@ -63,6 +63,26 @@ def test_headless_runtime_import_does_not_load_qt() -> None:
     assert result.stdout.strip() == "False"
 
 
+def test_aabb_research_cli_import_does_not_load_qt() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            (
+                "import sys; import pa_agent.experiments.cli; "
+                "print(any(name.startswith('PyQt6') for name in sys.modules))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.stdout.strip() == "False"
+
+
 def test_desktop_entry_module_can_be_imported_without_qt() -> None:
     result = subprocess.run(
         [
@@ -95,6 +115,8 @@ def test_packaging_exposes_headless_entry_and_keeps_qt_in_gui_extra() -> None:
     assert any(item.startswith("pyqtgraph") for item in gui)
     assert scripts["pa-agent-headless"] == "pa_agent.headless:main"
     assert scripts["pa-agent-paper-report"] == "pa_agent.execution.reporting:main"
+    assert scripts["pa-agent-aabb"] == "pa_agent.experiments.cli:single_main"
+    assert scripts["pa-agent-aabb-monitor"] == "pa_agent.experiments.cli:continuous_main"
 
 
 def test_headless_check_reports_missing_assets_secret_and_prompts(tmp_path) -> None:

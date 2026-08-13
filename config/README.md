@@ -77,10 +77,10 @@
 | `prompt.experience_max_entries` | int | `0` | 经验库最大加载条目数（0–10） |
 | `prompt.experience_max_chars_per_entry` | int | `400` | 每条经验最大字符数（100–4000） |
 | `prompt.stage1_inject_pattern_briefs` | bool | `true` | 阶段一是否注入模式判定表和速查 brief（减少 missed tags） |
-| `prompt.vpa_mode` | string/null | `null` | `off` / `shadow` / `soft`；`shadow` 的正式结果为 PA-only，`soft` 采用通过边界校验的 PA+VPA 联合裁决，角色失败时降级为 PA-only |
+| `prompt.vpa_mode` | string/null | `null` | `off` / `shadow` / `soft`；生产只执行 `off` 或 `shadow`，正式结果均为 PA-only；普通运行请求 `soft` 会记录 requested=`soft`、effective=`shadow`，真正 Joint 只在隔离 A/A/B/B 的 B 臂授权 |
 | `prompt.vpa_enabled` | bool | `false` | 旧配置兼容字段；仅在 `vpa_mode` 未设置时，`true` 迁移为 `shadow` |
 
-真正的 VPA 增量实验不由运行配置模拟。它使用已保存的冻结 Snapshot 离线执行独立 A1/A2/B1/B2，并将分配、失败和结果写入实验 manifest；入口见 `tools/run_pa_vpa_aabb.py`。
+真正的 VPA 增量实验不由运行配置模拟。它使用已保存的冻结 Snapshot 离线执行独立 A1/A2/B1/B2，并将分配、失败和结果写入实验 manifest。单次入口为 `tools/run_pa_vpa_aabb.py`；持续抽样入口为 `tools/run_pa_vpa_aabb_monitor.py --once|--forever`。持续模式只消费生产 Shadow record，按 cohort/market snapshot 原子去重，默认每轮最多启动一个四臂实验。
 
 ### validation — 校验与重试
 

@@ -86,6 +86,121 @@ def test_experiment_store_keeps_running_manifest_and_four_arm_ledger(tmp_path: P
     assert '"status": "completed"' in artifact.read_text(encoding="utf-8")
 
 
+def test_continuous_snapshot_claim_is_atomic_retryable_and_bounded(tmp_path: Path) -> None:
+    store = AnalysisExperimentStore(tmp_path / "analysis.sqlite3")
+    common = {
+        "pipeline_id": "continuous-aabb-v1",
+        "cohort_id": "c" * 64,
+        "market_snapshot_hash": "m" * 64,
+        "source_run_id": "source-run",
+        "source_record_path": "source.json",
+        "max_attempts": 2,
+        "lease_seconds": 60,
+    }
+
+    first = store.claim_continuous_snapshot(**common, now_ms=1_000)
+    assert first.acquired is True
+    assert first.attempt == 1
+    assert first.lease_token
+
+    concurrent = store.claim_continuous_snapshot(**common, now_ms=2_000)
+    assert concurrent.acquired is False
+    assert concurrent.reason == "lease_active"
+
+    assert store.finish_continuous_snapshot(
+        pipeline_id=common["pipeline_id"],
+        cohort_id=common["cohort_id"],
+        market_snapshot_hash=common["market_snapshot_hash"],
+        lease_token=first.lease_token,
+        completed=False,
+        retryable=True,
+        experiment_id="aabb-failed-1",
+        error="provider_timeout",
+        max_attempts=common["max_attempts"],
+        retry_backoff_seconds=10,
+        now_ms=3_000,
+    ).ok
+
+    backing_off = store.claim_continuous_snapshot(**common, now_ms=12_999)
+    assert backing_off.acquired is False
+    assert backing_off.reason == "retry_backoff"
+
+    second = store.claim_continuous_snapshot(**common, now_ms=13_000)
+    assert second.acquired is True
+    assert second.attempt == 2
+    assert store.finish_continuous_snapshot(
+        pipeline_id=common["pipeline_id"],
+        cohort_id=common["cohort_id"],
+        market_snapshot_hash=common["market_snapshot_hash"],
+        lease_token=second.lease_token,
+        completed=False,
+        retryable=True,
+        experiment_id="aabb-failed-2",
+        error="provider_timeout",
+        max_attempts=common["max_attempts"],
+        retry_backoff_seconds=10,
+        now_ms=14_000,
+    ).ok
+
+    exhausted = store.claim_continuous_snapshot(**common, now_ms=99_000)
+    assert exhausted.acquired is False
+    assert exhausted.reason == "attempts_exhausted"
+
+
+def test_continuous_snapshot_claim_recovers_expired_lease(tmp_path: Path) -> None:
+    store = AnalysisExperimentStore(tmp_path / "analysis.sqlite3")
+    common = {
+        "pipeline_id": "continuous-aabb-v1",
+        "cohort_id": "c" * 64,
+        "market_snapshot_hash": "m" * 64,
+        "source_run_id": "source-run",
+        "source_record_path": "source.json",
+        "max_attempts": 2,
+        "lease_seconds": 1,
+    }
+
+    first = store.claim_continuous_snapshot(**common, now_ms=1_000)
+    recovered = store.claim_continuous_snapshot(**common, now_ms=2_000)
+
+    assert first.acquired is True
+    assert recovered.acquired is True
+    assert recovered.attempt == 2
+    assert recovered.lease_token != first.lease_token
+
+
+def test_continuous_snapshot_claim_leases_completed_manual_experiment_for_replay(
+    tmp_path: Path,
+) -> None:
+    store = AnalysisExperimentStore(tmp_path / "analysis.sqlite3")
+    manifest = _manifest(
+        "aabb-manual",
+        market_snapshot_hash="m" * 64,
+        cohort_id="c" * 64,
+    )
+    assert store.start_experiment(manifest).ok
+    assert store.finish_experiment(
+        "aabb-manual",
+        status="completed",
+        protocol_report={"valid": True, "errors": []},
+        external_comparison={},
+    ).ok
+
+    claim = store.claim_continuous_snapshot(
+        pipeline_id="continuous-aabb-v1",
+        cohort_id="c" * 64,
+        market_snapshot_hash="m" * 64,
+        source_run_id="source-run",
+        source_record_path="source.json",
+        max_attempts=2,
+        lease_seconds=60,
+        now_ms=1_000,
+    )
+
+    assert claim.acquired is True
+    assert claim.reason == "acquired"
+    assert claim.experiment_id is None
+
+
 def test_reports_use_assigned_treatment_for_itt_and_received_treatment_for_per_protocol(
     tmp_path: Path,
 ) -> None:

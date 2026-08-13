@@ -13,6 +13,8 @@
 7. 自由文本 regex 质量发现触发 validation retry 或阻断 PA-only 正式结果的次数为 0。
 8. 可执行候选缺少独立 TP2 时的错误拒绝为 0；存在 TP2 时错误几何被执行的次数为 0。
 9. VPA 知识模块泄漏 Joint action enum，或窗口 seasonality 在不完整/非因果覆盖下产出可用关系的次数为 0。
+10. 持续 A/A/B/B 对同一 `(pipeline, cohort, market_snapshot)` 的并发或重启重复执行为 0；
+    研究 Joint/账户进入生产正式结果或 `pa-official` 账户的次数为 0。
 
 ## 结构与鲁棒性
 
@@ -40,6 +42,8 @@
 - 相比 PA-only，触发频率下降超过 15% 时，必须由扣除成本后的 EV、MAE 或回撤改善支持。
 - 生产环境保持禁止逆势订单；MTR/反转候选仅进入 Shadow 研究。
 - A/A/B/B 需要臂顺序平衡，同时报告 intention-to-treat 与 per-protocol。
+- 持续 A/A/B/B 必须按生产 Shadow 冻结快照抽样，协议无效为终态；Provider/Paper 暂时失败
+  有界退避。已有有效四臂只允许重放并恢复 Paper，不得再次调用模型。
 - 定向修复必须同时保留首次失败与最终接受状态：首次失败计入 first-pass 指标；最终已验证
   输出进入 grounding/status 指标；所有尝试均计入 token 与 latency，不得重复惩罚或隐去成本。
 - `first_pass_clean` 只评估 Provider 首轮契约：warning（包括程序 execution policy）可接受；

@@ -82,7 +82,7 @@ VPA 失败不会使 PA 分析伪装失败；记录标记 `completed_with_warning
 ## 4. A/A/B/B 实验有效性
 
 生产 Shadow 不是 A/B，模型自述的 baseline comparison 也不是反事实。真正实验仅由
-`pa_vpa_aabb_v1` 离线运行器针对同一冻结输入执行四次独立完整分析：A1/A2 为 `off`，B1/B2
+`pa_vpa_aabb_v2` 离线运行器针对同一冻结输入执行四次独立完整分析：A1/A2 为 `off`，B1/B2
 为 `soft`。顺序按冻结输入 hash 确定为 ABBA 或 BAAB，降低固定顺序和服务端时漂影响。
 
 冻结身份分三层：`market_snapshot_hash` 只覆盖主周期/HTF 完整 Kline 与 compact context；
@@ -100,6 +100,11 @@ VPA 失败不会使 PA 分析伪装失败；记录标记 `completed_with_warning
 影响的声明。报告同时给出 ITT 与 per-protocol：ITT 保留所有已分配 arm，用于暴露交付失败和
 降级的真实系统效应；per-protocol 只比较协议完整、成功持久化且确实收到指定处理的 arm。
 单次组间差异不能归因于 VPA，必须先用 A/A、B/B 估计模型随机波动，并跨独立 Snapshot 复核。
+持续研究使用独立 `pa-agent-aabb-monitor` 进程消费生产 Shadow 的冻结 record，不进入生产分析调度。
+它按旧到新顺序运行，使四个隔离研究 Paper 账户只观察当时及之后的闭盘数据；SQLite 租约按
+`(pipeline_id, cohort_id, market_snapshot_hash)` 防止并发与重启重复。生产 VPA 角色曾出现 warning
+不构成排除条件，否则会形成幸存者偏差；真正四臂中的失败按 ITT 保留。若四臂已完成而 Paper
+暂时写入失败，只允许重新校验并重放四条 artifact，不得再次调用模型。
 统计抽样单位是独立 `market_snapshot_hash`；arm、重复运行和不同 cohort 下的同一行情都不增加样本数。
 反事实结果在每个 Snapshot 内先平均重复臂；相互重叠的前向观察区间再合并为 episode，避免把同一
 行情路径伪装成独立样本。主配对结论使用 ITT：`no_order` 与未触发入场计 `0R`，pending/ambiguous

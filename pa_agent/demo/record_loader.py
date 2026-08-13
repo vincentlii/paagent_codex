@@ -6,11 +6,9 @@ import random
 from pathlib import Path
 
 from pa_agent.config.paths import RECORDS_PENDING_DIR
-from pa_agent.data.base import KlineBar, KlineFrame, normalize_kline_bar
-from pa_agent.data.snapshot import compute_indicators
 from pa_agent.records.codec import load_record
+from pa_agent.records.replay import frame_from_record_klines as frame_from_record_klines
 from pa_agent.records.schema import AnalysisRecord
-from pa_agent.util.timefmt import now_local_ms
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +37,7 @@ def try_load_analysis_record(path: Path) -> AnalysisRecord | None:
     """Load *path*; return None if the file is unreadable or invalid."""
     try:
         return load_analysis_record(path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("Skip demo record %s: %s", path.name, exc)
         return None
 
@@ -96,43 +94,3 @@ def pick_playable_demo_record(
             return path, record
 
     return None
-
-
-def frame_from_record_klines(
-    kline_data: list[dict],
-    *,
-    symbol: str,
-    timeframe: str,
-    snapshot_ts_local_ms: int | None = None,
-    data_metadata: dict | None = None,
-) -> KlineFrame:
-    """Build a chart/analysis frame from persisted ``kline_data`` (newest-first)."""
-    rebased: list[KlineBar] = []
-    for i, b in enumerate(kline_data):
-        rebased.append(
-            normalize_kline_bar(
-                KlineBar(
-                    seq=int(b.get("seq", i + 1)),
-                    ts_open=b["ts_open"],
-                    open=b["open"],
-                    high=b["high"],
-                    low=b["low"],
-                    close=b["close"],
-                    volume=b.get("volume", 0),
-                    volume_state=b.get("volume_state"),
-                    amount=b.get("amount", 0) or 0,
-                    pct_chg=b.get("pct_chg"),
-                    closed=bool(b.get("closed", True)),
-                )
-            )
-        )
-    if not rebased:
-        raise ValueError("Record has no kline_data")
-    return KlineFrame(
-        symbol=symbol,
-        timeframe=timeframe,
-        bars=tuple(rebased),
-        indicators=compute_indicators(rebased),
-        snapshot_ts_local_ms=snapshot_ts_local_ms or now_local_ms(),
-        data_metadata=dict(data_metadata or {}),
-    )

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pa_agent.data.bar_close_wait import timeframe_to_seconds
 
@@ -54,6 +55,15 @@ def _is_executable_order(value: object) -> bool:
 class ExperimentWriteResult:
     ok: bool
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class ContinuousSnapshotClaim:
+    acquired: bool
+    reason: str
+    attempt: int = 0
+    lease_token: str | None = None
+    experiment_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -242,6 +252,30 @@ class AnalysisExperimentStore:
             logger.warning("Experiment manifest query failed: %s", exc)
             return None
 
+    def find_completed_experiment(
+        self,
+        *,
+        cohort_id: str,
+        market_snapshot_hash: str,
+    ) -> dict[str, Any] | None:
+        """Return the newest valid completion for one paired-snapshot unit."""
+        try:
+            with self._connect() as connection:
+                self._ensure_schema(connection)
+                row = connection.execute(
+                    """
+                    SELECT experiment_id FROM analysis_experiments
+                    WHERE cohort_id = ? AND market_snapshot_hash = ?
+                      AND status = 'completed' AND protocol_valid = 1
+                    ORDER BY completed_at_ms DESC LIMIT 1
+                    """,
+                    (cohort_id, market_snapshot_hash),
+                ).fetchone()
+            return self.get_experiment(str(row[0])) if row is not None else None
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            logger.warning("Completed experiment query failed: %s", exc)
+            raise
+
     def _sync_json_manifest(self, experiment_id: str) -> ExperimentWriteResult:
         """Atomically mirror the SQLite manifest as a rebuildable JSON artifact."""
         if not re.fullmatch(r"[A-Za-z0-9._-]+", experiment_id):
@@ -300,6 +334,194 @@ class AnalysisExperimentStore:
         except (OSError, sqlite3.Error, ValueError) as exc:
             logger.warning("Experiment list failed: %s", exc)
             return []
+
+    def claim_continuous_snapshot(
+        self,
+        *,
+        pipeline_id: str,
+        cohort_id: str,
+        market_snapshot_hash: str,
+        source_run_id: str,
+        source_record_path: str,
+        max_attempts: int,
+        lease_seconds: float,
+        now_ms: int | None = None,
+    ) -> ContinuousSnapshotClaim:
+        """Atomically lease one paired market snapshot for continuous research."""
+        timestamp = self._now_ms() if now_ms is None else int(now_ms)
+        lease_until_ms = timestamp + max(1, int(float(lease_seconds) * 1000))
+        lease_token = uuid4().hex
+        maximum_attempts = max(1, int(max_attempts))
+        try:
+            with self._connect() as connection:
+                self._ensure_schema(connection)
+                connection.commit()
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT status, attempt_count, lease_until_ms, next_retry_at_ms,
+                           experiment_id
+                    FROM continuous_aabb_snapshots
+                    WHERE pipeline_id = ? AND cohort_id = ? AND market_snapshot_hash = ?
+                    """,
+                    (pipeline_id, cohort_id, market_snapshot_hash),
+                ).fetchone()
+                if row is not None:
+                    status = str(row[0])
+                    attempts = int(row[1])
+                    active_until = int(row[2] or 0)
+                    next_retry = int(row[3] or 0)
+                    experiment_id = str(row[4]) if row[4] else None
+                    if status == "completed":
+                        return ContinuousSnapshotClaim(
+                            acquired=False,
+                            reason="already_completed",
+                            attempt=attempts,
+                            experiment_id=experiment_id,
+                        )
+                    if status == "terminal_failed" or attempts >= maximum_attempts:
+                        return ContinuousSnapshotClaim(
+                            acquired=False,
+                            reason="attempts_exhausted",
+                            attempt=attempts,
+                            experiment_id=experiment_id,
+                        )
+                    if status == "running" and active_until > timestamp:
+                        return ContinuousSnapshotClaim(
+                            acquired=False,
+                            reason="lease_active",
+                            attempt=attempts,
+                            experiment_id=experiment_id,
+                        )
+                    if status == "retry_wait" and next_retry > timestamp:
+                        return ContinuousSnapshotClaim(
+                            acquired=False,
+                            reason="retry_backoff",
+                            attempt=attempts,
+                            experiment_id=experiment_id,
+                        )
+                    attempt = attempts + 1
+                    connection.execute(
+                        """
+                        UPDATE continuous_aabb_snapshots SET
+                            source_run_id = ?, source_record_path = ?, status = 'running',
+                            attempt_count = ?, lease_token = ?, lease_until_ms = ?,
+                            next_retry_at_ms = NULL, updated_at_ms = ?
+                        WHERE pipeline_id = ? AND cohort_id = ?
+                          AND market_snapshot_hash = ?
+                        """,
+                        (
+                            source_run_id,
+                            source_record_path,
+                            attempt,
+                            lease_token,
+                            lease_until_ms,
+                            timestamp,
+                            pipeline_id,
+                            cohort_id,
+                            market_snapshot_hash,
+                        ),
+                    )
+                else:
+                    attempt = 1
+                    connection.execute(
+                        """
+                        INSERT INTO continuous_aabb_snapshots (
+                            pipeline_id, cohort_id, market_snapshot_hash,
+                            source_run_id, source_record_path, status, attempt_count,
+                            lease_token, lease_until_ms, next_retry_at_ms,
+                            experiment_id, last_error, created_at_ms, updated_at_ms
+                        ) VALUES (?, ?, ?, ?, ?, 'running', 1, ?, ?, NULL, NULL, NULL, ?, ?)
+                        """,
+                        (
+                            pipeline_id,
+                            cohort_id,
+                            market_snapshot_hash,
+                            source_run_id,
+                            source_record_path,
+                            lease_token,
+                            lease_until_ms,
+                            timestamp,
+                            timestamp,
+                        ),
+                    )
+            return ContinuousSnapshotClaim(
+                acquired=True,
+                reason="acquired",
+                attempt=attempt,
+                lease_token=lease_token,
+            )
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            logger.warning("Continuous experiment claim failed: %s", exc)
+            return ContinuousSnapshotClaim(acquired=False, reason="store_error")
+
+    def finish_continuous_snapshot(
+        self,
+        *,
+        pipeline_id: str,
+        cohort_id: str,
+        market_snapshot_hash: str,
+        lease_token: str,
+        completed: bool,
+        retryable: bool,
+        experiment_id: str | None,
+        error: str | None,
+        max_attempts: int,
+        retry_backoff_seconds: float,
+        now_ms: int | None = None,
+    ) -> ExperimentWriteResult:
+        """Finalize the current lease without allowing a stale worker to overwrite it."""
+        timestamp = self._now_ms() if now_ms is None else int(now_ms)
+        try:
+            with self._connect() as connection:
+                self._ensure_schema(connection)
+                row = connection.execute(
+                    """
+                    SELECT attempt_count FROM continuous_aabb_snapshots
+                    WHERE pipeline_id = ? AND cohort_id = ? AND market_snapshot_hash = ?
+                      AND status = 'running' AND lease_token = ?
+                    """,
+                    (pipeline_id, cohort_id, market_snapshot_hash, lease_token),
+                ).fetchone()
+                if row is None:
+                    return ExperimentWriteResult(ok=False, error="stale_or_unknown_lease")
+                attempts = int(row[0])
+                can_retry = bool(retryable) and attempts < max(1, int(max_attempts))
+                status = "completed" if completed else (
+                    "retry_wait" if can_retry else "terminal_failed"
+                )
+                next_retry_at_ms = (
+                    timestamp + max(0, int(float(retry_backoff_seconds) * 1000))
+                    if status == "retry_wait"
+                    else None
+                )
+                cursor = connection.execute(
+                    """
+                    UPDATE continuous_aabb_snapshots SET
+                        status = ?, lease_token = NULL, lease_until_ms = NULL,
+                        next_retry_at_ms = ?, experiment_id = ?, last_error = ?,
+                        updated_at_ms = ?
+                    WHERE pipeline_id = ? AND cohort_id = ? AND market_snapshot_hash = ?
+                      AND status = 'running' AND lease_token = ?
+                    """,
+                    (
+                        status,
+                        next_retry_at_ms,
+                        experiment_id,
+                        error,
+                        timestamp,
+                        pipeline_id,
+                        cohort_id,
+                        market_snapshot_hash,
+                        lease_token,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    return ExperimentWriteResult(ok=False, error="stale_or_unknown_lease")
+            return ExperimentWriteResult(ok=True)
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            logger.warning("Continuous experiment finish failed: %s", exc)
+            return ExperimentWriteResult(ok=False, error=str(exc))
 
     def frequency_report(
         self,
@@ -1251,6 +1473,29 @@ class AnalysisExperimentStore:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_experiments_market_cohort "
             "ON analysis_experiments(cohort_id, market_snapshot_hash, created_at_ms)"
+        )
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS continuous_aabb_snapshots (
+                pipeline_id TEXT NOT NULL,
+                cohort_id TEXT NOT NULL,
+                market_snapshot_hash TEXT NOT NULL,
+                source_run_id TEXT NOT NULL,
+                source_record_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL,
+                lease_token TEXT,
+                lease_until_ms INTEGER,
+                next_retry_at_ms INTEGER,
+                experiment_id TEXT,
+                last_error TEXT,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (pipeline_id, cohort_id, market_snapshot_hash)
+            )
+            """)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_continuous_aabb_status "
+            "ON continuous_aabb_snapshots(pipeline_id, status, next_retry_at_ms)"
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_experiment_arms_run " "ON experiment_arms(run_id)"
