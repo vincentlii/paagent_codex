@@ -727,12 +727,6 @@ class JsonValidator:
             for msg in self._check_next_cycle_prediction(obj):
                 invalid.append(msg)
 
-            trade_metric_errors = self._check_trade_metrics(obj)
-            for msg in trade_metric_errors:
-                invalid.append(f"metrics:trade_metrics {msg}")
-            if trade_metric_errors:
-                self._append_no_order_repair_targets(invalid, prefix="metrics")
-
             from pa_agent.ai.coherence_checks import validate_stage2_coherence
             from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
 
@@ -1083,15 +1077,15 @@ class JsonValidator:
                             "after": copy.deepcopy(new_prediction),
                         }
                     )
+            disposition = after.get("execution_disposition")
             if (
                 isinstance(before_decision, dict)
-                and isinstance(after_decision, dict)
+                and isinstance(disposition, dict)
                 and before_decision.get("order_type")
                 in {"限价单", "突破单", "市价单"}
-                and after_decision.get("order_type") == "不下单"
+                and disposition.get("status") == "suppressed"
             ):
-                from pa_agent.util.trade_metrics import validate_order_trade_metrics
-
+                metric_check = disposition.get("checks", {}).get("trade_metrics", {})
                 events.append(
                     {
                         "path": "execution_policy",
@@ -1107,11 +1101,8 @@ class JsonValidator:
                                 "estimated_win_rate",
                             )
                         },
-                        "after": {
-                            "order_type": "不下单",
-                            "terminal": copy.deepcopy(after.get("terminal")),
-                        },
-                        "reasons": validate_order_trade_metrics(before_decision),
+                        "after": copy.deepcopy(disposition),
+                        "reasons": copy.deepcopy(metric_check.get("errors") or []),
                     }
                 )
         for path in paths:

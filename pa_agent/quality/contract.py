@@ -36,6 +36,26 @@ class QualityContract:
             self.research,
             "max_unexplained_trade_frequency_decline",
         )
+        _require_fraction(self.research, "max_a_disagreement_rate")
+        _require_fraction(self.research, "max_b_disagreement_rate")
+        required_performance = {
+            "max_call_p50_latency_ms",
+            "max_call_p95_latency_ms",
+            "max_run_p50_latency_ms",
+            "max_run_p95_latency_ms",
+            "max_run_p50_tokens",
+            "max_run_p95_tokens",
+            "max_b_to_a_latency_ratio_p95",
+            "max_b_to_a_token_ratio_p95",
+        }
+        required_research = {
+            "minimum_independent_snapshots",
+            "minimum_repeatability_snapshots",
+            "max_a_disagreement_rate",
+            "max_b_disagreement_rate",
+        }
+        _require_positive_keys(self.performance, required_performance)
+        _require_positive_keys(self.research, required_research)
 
 
 def _require_fraction(
@@ -48,6 +68,15 @@ def _require_fraction(
     valid_lower = value > 0 if lower_open else value >= 0
     if not valid_lower or value > 1:
         raise ValueError(f"{key} must be within {'(0, 1]' if lower_open else '[0, 1]'}")
+
+
+def _require_positive_keys(section: dict[str, Any], keys: set[str]) -> None:
+    missing = keys.difference(section)
+    if missing:
+        raise ValueError(f"quality contract missing thresholds: {sorted(missing)}")
+    for key in keys:
+        if float(section[key]) <= 0:
+            raise ValueError(f"{key} must be positive")
 
 
 def load_quality_contract(path: str | Path) -> QualityContract:

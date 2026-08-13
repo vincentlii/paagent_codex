@@ -109,6 +109,31 @@ def test_warning_is_audited_but_does_not_fail_first_pass() -> None:
     assert report["status"] == "pass"
 
 
+def test_execution_policy_warning_does_not_misclassify_provider_first_pass() -> None:
+    records = _records()
+    records[0] = records[0].model_copy(
+        update={
+            "validation_audit": [
+                {
+                    "attempt": 1,
+                    "stage": "stage2",
+                    "owner": "execution_policy",
+                    "category": "execution_policy",
+                    "severity": "warning",
+                    "message": "candidate suppressed by deterministic order math",
+                }
+            ]
+        }
+    )
+
+    report = evaluate_analysis_quality(records, thresholds=_thresholds())
+
+    assert report["axes"]["first_pass_clean"]["passed"] is True
+    assert report["axes"]["first_pass_clean"]["classifications"][
+        records[0].meta.run_id
+    ]["status"] == "clean_with_warnings"
+
+
 def test_normalization_fails_first_pass_but_not_semantic_grounding() -> None:
     records = _records()
     records[0] = records[0].model_copy(
@@ -129,6 +154,11 @@ def test_normalization_fails_first_pass_but_not_semantic_grounding() -> None:
     assert report["status"] == "fail"
     assert report["axes"]["first_pass_clean"]["failed_runs"] == [records[0].meta.run_id]
     assert report["axes"]["pa_grounding"]["semantic_error_runs"] == []
+    classification = report["axes"]["first_pass_clean"]["classifications"][
+        records[0].meta.run_id
+    ]
+    assert classification["status"] == "normalized"
+    assert classification["reason_codes"] == ["contract_normalization"]
 
 
 def test_repaired_attempt_fails_first_pass_but_passes_final_quality_axes() -> None:

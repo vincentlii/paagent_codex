@@ -9,10 +9,12 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from pa_agent.ai.vpa_measurements import evidence_has_relative_volume_comparison
 from pa_agent.experiments.pa_vpa_aabb import (
+    classify_first_pass,
     decision_signature,
     first_pass_clean,
     validate_aabb_records,
@@ -21,18 +23,18 @@ from pa_agent.experiments.pa_vpa_aabb import (
 
 @dataclass(frozen=True)
 class QualityThresholds:
-    min_unique_snapshots: int = 300
-    min_repeatability_snapshots: int = 20
-    max_call_p50_latency_ms: float = 100_000.0
-    max_call_p95_latency_ms: float = 150_000.0
-    max_run_p50_latency_ms: float = 220_000.0
-    max_run_p95_latency_ms: float = 300_000.0
-    max_run_p50_tokens: int = 180_000
-    max_run_p95_tokens: int = 250_000
-    max_b_to_a_latency_ratio_p95: float = 2.2
-    max_b_to_a_token_ratio_p95: float = 1.35
-    max_a_disagreement_rate: float = 0.25
-    max_b_disagreement_rate: float = 0.35
+    min_unique_snapshots: int
+    min_repeatability_snapshots: int
+    max_call_p50_latency_ms: float
+    max_call_p95_latency_ms: float
+    max_run_p50_latency_ms: float
+    max_run_p95_latency_ms: float
+    max_run_p50_tokens: int
+    max_run_p95_tokens: int
+    max_b_to_a_latency_ratio_p95: float
+    max_b_to_a_token_ratio_p95: float
+    max_a_disagreement_rate: float
+    max_b_disagreement_rate: float
 
     def __post_init__(self) -> None:
         if self.min_unique_snapshots < 1:
@@ -44,6 +46,34 @@ class QualityThresholds:
                 continue
             if float(value) <= 0:
                 raise ValueError(f"{name} must be positive")
+
+
+def default_quality_thresholds() -> QualityThresholds:
+    """Load release-gate thresholds from the repository quality contract."""
+    from pa_agent.quality.contract import load_quality_contract
+
+    root = Path(__file__).resolve().parents[2]
+    contract = load_quality_contract(root / "config" / "quality_contract.toml")
+    performance = contract.performance
+    research = contract.research
+    return QualityThresholds(
+        min_unique_snapshots=int(research["minimum_independent_snapshots"]),
+        min_repeatability_snapshots=int(research["minimum_repeatability_snapshots"]),
+        max_call_p50_latency_ms=float(performance["max_call_p50_latency_ms"]),
+        max_call_p95_latency_ms=float(performance["max_call_p95_latency_ms"]),
+        max_run_p50_latency_ms=float(performance["max_run_p50_latency_ms"]),
+        max_run_p95_latency_ms=float(performance["max_run_p95_latency_ms"]),
+        max_run_p50_tokens=int(performance["max_run_p50_tokens"]),
+        max_run_p95_tokens=int(performance["max_run_p95_tokens"]),
+        max_b_to_a_latency_ratio_p95=float(
+            performance["max_b_to_a_latency_ratio_p95"]
+        ),
+        max_b_to_a_token_ratio_p95=float(
+            performance["max_b_to_a_token_ratio_p95"]
+        ),
+        max_a_disagreement_rate=float(research["max_a_disagreement_rate"]),
+        max_b_disagreement_rate=float(research["max_b_disagreement_rate"]),
+    )
 
 
 def _value(obj: Any, name: str, default: Any = None) -> Any:
@@ -182,12 +212,13 @@ def evaluate_analysis_quality(
     thresholds: QualityThresholds | None = None,
 ) -> dict[str, Any]:
     """Evaluate one or more complete offline A/A/B/B experiments."""
-    limits = thresholds or QualityThresholds()
+    limits = thresholds or default_quality_thresholds()
     candidates = list(records)
     experiments, unassigned = _group_records(candidates)
 
     invalid_experiments: dict[str, list[str]] = {}
     first_pass_failed: list[str] = []
+    first_pass_classifications: dict[str, dict[str, Any]] = {}
     pa_missing: list[str] = []
     pa_semantic: list[str] = []
     vpa_increment_missing: list[str] = []
@@ -255,6 +286,8 @@ def evaluate_analysis_quality(
                 for call in (_value(record, "call_attempts", []) or [])
                 if isinstance(call, dict)
             ]
+            classification = classify_first_pass(record)
+            first_pass_classifications[run_id] = classification
             if not first_pass_clean(record):
                 first_pass_failed.append(run_id)
             pa_event, vpa_event = _semantic_roles(events, calls)
@@ -391,6 +424,7 @@ def evaluate_analysis_quality(
             "passed": not first_pass_failed,
             "failed_runs": sorted(set(first_pass_failed)),
             "warnings_are_accepted": True,
+            "classifications": first_pass_classifications,
         },
         "pa_grounding": {
             "passed": not pa_missing and not pa_semantic,

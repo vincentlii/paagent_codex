@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ from pa_agent.records.audit_store import AnalysisAuditStore  # noqa: E402
 from pa_agent.records.codec import load_record  # noqa: E402
 from pa_agent.records.quality_gate import (  # noqa: E402
     QualityThresholds,
+    default_quality_thresholds,
     evaluate_analysis_quality,
 )
 from pa_agent.records.schema import AnalysisRecord  # noqa: E402
@@ -140,18 +142,18 @@ def main() -> int:
     listing.add_argument("--limit", type=int, default=100)
     experiments.add_argument("--limit", type=int, default=100)
     quality.add_argument("--limit-experiments", type=int, default=200)
-    quality.add_argument("--min-snapshots", type=int, default=300)
-    quality.add_argument("--min-repeatability-snapshots", type=int, default=20)
-    quality.add_argument("--max-call-p50-ms", type=float, default=100_000)
-    quality.add_argument("--max-call-p95-ms", type=float, default=150_000)
-    quality.add_argument("--max-run-p50-ms", type=float, default=220_000)
-    quality.add_argument("--max-run-p95-ms", type=float, default=300_000)
-    quality.add_argument("--max-run-p50-tokens", type=int, default=180_000)
-    quality.add_argument("--max-run-p95-tokens", type=int, default=250_000)
-    quality.add_argument("--max-b-latency-ratio-p95", type=float, default=2.2)
-    quality.add_argument("--max-b-token-ratio-p95", type=float, default=1.35)
-    quality.add_argument("--max-a-disagreement-rate", type=float, default=0.25)
-    quality.add_argument("--max-b-disagreement-rate", type=float, default=0.35)
+    quality.add_argument("--min-snapshots", type=int)
+    quality.add_argument("--min-repeatability-snapshots", type=int)
+    quality.add_argument("--max-call-p50-ms", type=float)
+    quality.add_argument("--max-call-p95-ms", type=float)
+    quality.add_argument("--max-run-p50-ms", type=float)
+    quality.add_argument("--max-run-p95-ms", type=float)
+    quality.add_argument("--max-run-p50-tokens", type=int)
+    quality.add_argument("--max-run-p95-tokens", type=int)
+    quality.add_argument("--max-b-latency-ratio-p95", type=float)
+    quality.add_argument("--max-b-token-ratio-p95", type=float)
+    quality.add_argument("--max-a-disagreement-rate", type=float)
+    quality.add_argument("--max-b-disagreement-rate", type=float)
     label.add_argument("run_id")
     label.add_argument("--entry-status", required=True)
     label.add_argument("--outcome", required=True)
@@ -214,20 +216,25 @@ def main() -> int:
             limit_experiments=args.limit_experiments,
             cohort_id=args.cohort_id,
         )
-        thresholds = QualityThresholds(
-            min_unique_snapshots=args.min_snapshots,
-            min_repeatability_snapshots=args.min_repeatability_snapshots,
-            max_call_p50_latency_ms=args.max_call_p50_ms,
-            max_call_p95_latency_ms=args.max_call_p95_ms,
-            max_run_p50_latency_ms=args.max_run_p50_ms,
-            max_run_p95_latency_ms=args.max_run_p95_ms,
-            max_run_p50_tokens=args.max_run_p50_tokens,
-            max_run_p95_tokens=args.max_run_p95_tokens,
-            max_b_to_a_latency_ratio_p95=args.max_b_latency_ratio_p95,
-            max_b_to_a_token_ratio_p95=args.max_b_token_ratio_p95,
-            max_a_disagreement_rate=args.max_a_disagreement_rate,
-            max_b_disagreement_rate=args.max_b_disagreement_rate,
+        threshold_values = asdict(default_quality_thresholds())
+        overrides = {
+            "min_unique_snapshots": args.min_snapshots,
+            "min_repeatability_snapshots": args.min_repeatability_snapshots,
+            "max_call_p50_latency_ms": args.max_call_p50_ms,
+            "max_call_p95_latency_ms": args.max_call_p95_ms,
+            "max_run_p50_latency_ms": args.max_run_p50_ms,
+            "max_run_p95_latency_ms": args.max_run_p95_ms,
+            "max_run_p50_tokens": args.max_run_p50_tokens,
+            "max_run_p95_tokens": args.max_run_p95_tokens,
+            "max_b_to_a_latency_ratio_p95": args.max_b_latency_ratio_p95,
+            "max_b_to_a_token_ratio_p95": args.max_b_token_ratio_p95,
+            "max_a_disagreement_rate": args.max_a_disagreement_rate,
+            "max_b_disagreement_rate": args.max_b_disagreement_rate,
+        }
+        threshold_values.update(
+            {key: value for key, value in overrides.items() if value is not None}
         )
+        thresholds = QualityThresholds(**threshold_values)
         report = evaluate_analysis_quality(records, thresholds=thresholds)
         report["record_load"] = load_report
         if load_report["missing_records"] or load_report["invalid_records"]:

@@ -132,10 +132,13 @@ def _plan_from_decision(
     outcome = _outcome(record)
     if str(outcome.get("status") or "") not in _SUCCESS_STATUSES:
         raise ValueError("analysis status is not executable")
+    stage2 = _field(record, "stage2_decision", {})
     decision = _decision(record)
     if not decision:
         raise ValueError("validated stage2 decision is unavailable")
-    order_label = str(decision.get("order_type") or "")
+    from pa_agent.ai.execution_policy import effective_order_type
+
+    order_label = effective_order_type(stage2)
     if order_label == _NO_TRADE:
         return None
     order_type = _ORDER_TYPES.get(order_label)

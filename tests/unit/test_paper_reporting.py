@@ -46,6 +46,10 @@ def test_paper_report_summarizes_accounts_and_research_dispositions(tmp_path) ->
     assert report["research"]["cohorts"] == 1
     assert report["research"]["unit_of_analysis"] == "paired_market_snapshot"
     assert report["research"]["descriptive_only"] is True
+    assert report["simulation"] == {
+        "current_version": "paper_ohlc_v2",
+        "by_version": [],
+    }
 
 
 def test_paper_report_handles_missing_database(tmp_path) -> None:

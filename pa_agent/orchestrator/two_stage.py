@@ -330,66 +330,10 @@ def _validation_failure_status(
 
 
 def _apply_confidence_threshold(stage2: dict, threshold: int) -> dict:
-    """Apply the configured confidence policy once, before persistence and UI."""
-    out = copy.deepcopy(stage2)
-    decision = out.get("decision")
-    if not isinstance(decision, dict) or threshold <= 0:
-        return out
-    if decision.get("order_type") == "不下单":
-        return out
-    try:
-        confidence = int(decision.get("trade_confidence"))
-    except (TypeError, ValueError):
-        confidence = -1
-    if confidence >= threshold:
-        out["confidence_threshold"] = {
-            "configured": threshold,
-            "trade_confidence": confidence,
-            "result": "passed",
-        }
-        return out
+    """Project confidence eligibility without changing the model candidate."""
+    from pa_agent.ai.execution_policy import apply_confidence_execution_policy
 
-    original_order_type = decision.get("order_type")
-    decision["order_type"] = "不下单"
-    for key in (
-        "order_direction",
-        "entry_price",
-        "stop_loss_price",
-        "take_profit_price",
-        "take_profit_price_2",
-        "entry_rule",
-        "entry_basis_bar",
-        "entry_basis_extreme",
-        "trade_confidence",
-        "estimated_win_rate",
-        "estimated_win_rate_reasoning",
-    ):
-        decision[key] = None
-    reason = f"程序置信度阈值未通过：{confidence} < {threshold}，原方案 {original_order_type} 不执行。"
-    decision["reasoning"] = f"{decision.get('reasoning', '')}\n{reason}".strip()
-    trace = list(out.get("decision_trace") or [])
-    trace.append(
-        {
-            "node_id": "confidence_threshold",
-            "question": "交易置信度是否达到配置门槛",
-            "answer": "否",
-            "reason": reason,
-            "bar_range": "K1",
-        }
-    )
-    out["decision"] = decision
-    out["decision_trace"] = trace
-    out["terminal"] = {
-        "node_id": "confidence_threshold",
-        "outcome": "wait",
-        "label": "交易置信度门槛未通过",
-    }
-    out["confidence_threshold"] = {
-        "configured": threshold,
-        "trade_confidence": confidence,
-        "result": "rejected",
-    }
-    return out
+    return apply_confidence_execution_policy(stage2, threshold)
 
 
 def _latency_ms_label(latency_ms: object) -> str:

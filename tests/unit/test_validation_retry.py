@@ -163,7 +163,9 @@ def test_trade_metric_failure_is_program_rejected_without_retry() -> None:
 
     assert isinstance(result.result, Ok)
     assert retry_messages == []
-    assert result.result.obj["decision"]["order_type"] == "不下单"
+    assert result.result.obj["decision"] == invalid["decision"]
+    assert result.result.obj["execution_disposition"]["status"] == "suppressed"
+    assert result.result.obj["execution_disposition"]["effective_order_type"] == "不下单"
     assert any(
         event["path"] == "execution_policy"
         for event in result.result.normalization_events

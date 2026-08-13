@@ -824,6 +824,63 @@ _NEXT_CYCLE_PREDICTION: dict = {
     "additionalProperties": False,
 }
 
+_EXECUTION_DISPOSITION: dict = {
+    "type": "object",
+    "required": [
+        "status",
+        "candidate_order_type",
+        "effective_order_type",
+        "reason_codes",
+        "checks",
+    ],
+    "properties": {
+        "status": {
+            "enum": ["eligible", "suppressed", "not_applicable"],
+        },
+        "candidate_order_type": {
+            "type": ["string", "null"],
+        },
+        "effective_order_type": {
+            "enum": ["限价单", "突破单", "市价单", "不下单"],
+        },
+        "reason_codes": {
+            "type": "array",
+            "items": {"type": "string"},
+            "uniqueItems": True,
+        },
+        "checks": {
+            "type": "object",
+            "properties": {
+                "trade_metrics": {
+                    "type": "object",
+                    "required": ["passed", "errors"],
+                    "properties": {
+                        "passed": {"type": "boolean"},
+                        "errors": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+                "confidence_threshold": {
+                    "type": "object",
+                    "required": ["configured", "observed", "passed"],
+                    "properties": {
+                        "configured": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "observed": {"type": "integer"},
+                        "passed": {"type": "boolean"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    "additionalProperties": False,
+}
+
+
 STAGE2_SCHEMA: dict = {
     "type": "object",
     "required": [
@@ -844,6 +901,7 @@ STAGE2_SCHEMA: dict = {
         "gate_shortcircuited": {"type": "boolean"},
         "next_bar_prediction": _NEXT_BAR_PREDICTION,
         "next_cycle_prediction": _NEXT_CYCLE_PREDICTION,
+        "execution_disposition": _EXECUTION_DISPOSITION,
     },
     "additionalProperties": False,
 }

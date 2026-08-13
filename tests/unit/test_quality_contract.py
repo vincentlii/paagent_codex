@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from pa_agent.quality.contract import QualityContract, load_quality_contract
-from pa_agent.records.quality_gate import QualityThresholds
+from pa_agent.records.quality_gate import default_quality_thresholds
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def test_repository_quality_contract_is_valid() -> None:
     contract = load_quality_contract(PROJECT_ROOT / "config" / "quality_contract.toml")
 
-    assert contract.version == 1
+    assert contract.version == 2
     assert contract.invariants["max_fact_contradictions"] == 0
     assert contract.structured_output["certified_provider_first_pass_rate"] == 0.995
     assert (
@@ -19,9 +19,16 @@ def test_repository_quality_contract_is_valid() -> None:
         is True
     )
     assert (
-        QualityThresholds().min_unique_snapshots
+        default_quality_thresholds().min_unique_snapshots
         == contract.research["minimum_independent_snapshots"]
     )
+    thresholds = default_quality_thresholds()
+    assert thresholds.max_call_p95_latency_ms == contract.performance[
+        "max_call_p95_latency_ms"
+    ]
+    assert thresholds.max_b_to_a_token_ratio_p95 == contract.performance[
+        "max_b_to_a_token_ratio_p95"
+    ]
 
 
 def test_quality_contract_rejects_invalid_probability_threshold() -> None:

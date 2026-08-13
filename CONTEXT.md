@@ -64,6 +64,8 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 4. `compile_pa_handoff(...)` 只复制 PA 语义并补充可复算的订单数学、身份和窗口位置事实。
 5. VPA Evidence Analyst 独立检查量价证据；生产 Shadow 到此结束，正式结果仍是 PA-only。
 6. 隔离的 A/A/B/B 研究 B 臂才调用 Joint Arbiter，在既有 PA candidate 内输出有界补丁。
+7. Stage 2 的模型候选保持不可变；程序订单数学与置信度只生成 `execution_disposition`，
+   Paper/未来执行器只消费 effective order 语义。
 7. 程序验证补丁与执行安全，随后持久化完整审计链。
 
 这是一条信息依赖链，不代表 VPA 从属于 PA，也不允许形成第二套 Strategy Router。

@@ -14,6 +14,8 @@ from pa_agent.data.instrument import InstrumentSpec
 
 Side = Literal["long", "short"]
 PaperOrderType = Literal["market", "limit", "breakout"]
+PAPER_SIMULATION_VERSION = "paper_ohlc_v2"
+LEGACY_PAPER_SIMULATION_VERSION = "paper_ohlc_v1"
 
 
 @dataclass(frozen=True)
@@ -168,8 +170,9 @@ class PaperBroker:
                     order_id, account_id, run_id, arm, provider, venue, instrument_type,
                     symbol, timeframe, side, order_type, entry_price, stop_price,
                     take_profit_price, take_profit_price_2, created_bar_ts, dedupe_key,
-                    quantity, contract_multiplier, instrument_spec_json, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                    quantity, contract_multiplier, instrument_spec_json,
+                    simulation_version, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     order_id, self._account_id, plan.run_id, plan.arm, spec.provider,
@@ -178,6 +181,7 @@ class PaperBroker:
                     plan.take_profit_price_2, int(plan.created_bar_ts), plan.dedupe_key,
                     sized.quantity, spec.contract_multiplier,
                     json.dumps(spec.to_dict(), sort_keys=True, separators=(",", ":")),
+                    PAPER_SIMULATION_VERSION,
                 ),
             )
             self._event(connection, order_id, "submitted", None, {"sizing": asdict(sized)})
@@ -306,6 +310,20 @@ class PaperBroker:
             ).fetchone()[0]
             result = dict(account)
             result["open_position_count"] = int(open_count)
+            result["ambiguous_order_count"] = int(connection.execute(
+                "SELECT COUNT(*) FROM paper_orders WHERE account_id = ? "
+                "AND status = 'ambiguous'",
+                (self._account_id,),
+            ).fetchone()[0])
+            result["orders_by_simulation_version"] = {
+                str(row["simulation_version"]): int(row["order_count"])
+                for row in connection.execute(
+                    "SELECT simulation_version, COUNT(*) AS order_count "
+                    "FROM paper_orders WHERE account_id = ? "
+                    "GROUP BY simulation_version ORDER BY simulation_version",
+                    (self._account_id,),
+                ).fetchall()
+            }
             return result
 
     def order(self, order_id: str) -> dict[str, Any] | None:
@@ -406,11 +424,13 @@ class PaperBroker:
                 stored_spec = spec
         fill_price = float(row["fill_price"]) if row["fill_price"] is not None else None
         filled_this_bar = row["status"] == "pending"
+        entry_timing: str | None = None
         if filled_this_bar:
-            fill_price = self._entry_fill(row, bar)
-            if fill_price is None:
+            entry_fill = self._entry_fill(row, bar)
+            if entry_fill is None:
                 self._event(connection, row["order_id"], "bar_observed", int(bar.ts_open), {"status": "pending"})
                 return
+            fill_price, entry_timing = entry_fill
             quantity = self._quantity_at_fill(connection, row, fill_price, stored_spec)
             if quantity is None:
                 connection.execute(
@@ -444,6 +464,28 @@ class PaperBroker:
         if exit_fill is None:
             self._event(connection, row["order_id"], "bar_observed", int(bar.ts_open), {"status": "open"})
             return
+        if (
+            filled_this_bar
+            and entry_timing == "intrabar"
+            and str(row["simulation_version"]) == PAPER_SIMULATION_VERSION
+        ):
+            connection.execute(
+                "UPDATE paper_orders SET status = 'ambiguous', "
+                "exit_reason = 'ambiguous_entry_bar' WHERE order_id = ?",
+                (row["order_id"],),
+            )
+            self._event(
+                connection,
+                row["order_id"],
+                "ambiguous",
+                int(bar.ts_open),
+                {
+                    "reason": "ambiguous_entry_bar",
+                    "simulation_version": PAPER_SIMULATION_VERSION,
+                    "entry_price": fill_price,
+                },
+            )
+            return
         exit_price, reason = exit_fill
         assert fill_price is not None
         direction = 1.0 if row["side"] == "long" else -1.0
@@ -467,7 +509,11 @@ class PaperBroker:
             "price": exit_price, "reason": reason, "net_pnl": net_pnl,
         })
 
-    def _entry_fill(self, row: sqlite3.Row, bar: KlineBar) -> float | None:
+    def _entry_fill(
+        self,
+        row: sqlite3.Row,
+        bar: KlineBar,
+    ) -> tuple[float, str] | None:
         entry = float(row["entry_price"])
         side = str(row["side"])
         order_type = str(row["order_type"])
@@ -480,11 +526,24 @@ class PaperBroker:
             return None
         if order_type == "market":
             base = float(bar.open)
+            timing = "at_open"
         elif order_type == "limit":
             base = min(float(bar.open), entry) if side == "long" else max(float(bar.open), entry)
+            timing = (
+                "at_open"
+                if (side == "long" and bar.open <= entry)
+                or (side == "short" and bar.open >= entry)
+                else "intrabar"
+            )
         else:
             base = max(float(bar.open), entry) if side == "long" else min(float(bar.open), entry)
-        return self._with_slippage(base, buy=side == "long")
+            timing = (
+                "at_open"
+                if (side == "long" and bar.open >= entry)
+                or (side == "short" and bar.open <= entry)
+                else "intrabar"
+            )
+        return self._with_slippage(base, buy=side == "long"), timing
 
     def _exit_fill(
         self,
@@ -573,10 +632,10 @@ class PaperBroker:
             tp2 = float(plan.take_profit_price_2)
             if not math.isfinite(tp2) or tp2 <= 0:
                 raise ValueError("second target must be finite and positive")
-            if plan.side == "long" and tp2 < plan.take_profit_price:
-                raise ValueError("long second target cannot be below first target")
-            if plan.side == "short" and tp2 > plan.take_profit_price:
-                raise ValueError("short second target cannot be above first target")
+            if plan.side == "long" and tp2 <= plan.take_profit_price:
+                raise ValueError("long second target must be strictly beyond first target")
+            if plan.side == "short" and tp2 >= plan.take_profit_price:
+                raise ValueError("short second target must be strictly beyond first target")
         for price in prices:
             units = float(price) / spec.tick_size
             if abs(units - round(units)) > 1e-7:
@@ -638,6 +697,7 @@ class PaperBroker:
                 fill_bar_ts INTEGER, exit_price REAL, exit_bar_ts INTEGER,
                 exit_reason TEXT, realized_pnl REAL, fees REAL,
                 evaluated_through_ts INTEGER,
+                simulation_version TEXT NOT NULL DEFAULT 'paper_ohlc_v2',
                 UNIQUE(account_id, run_id, arm)
             )
         """)
@@ -666,6 +726,16 @@ class PaperBroker:
             connection.execute(
                 "ALTER TABLE paper_orders ADD COLUMN instrument_spec_json TEXT"
             )
+        if "simulation_version" not in existing:
+            connection.execute(
+                "ALTER TABLE paper_orders ADD COLUMN simulation_version "
+                "TEXT NOT NULL DEFAULT 'paper_ohlc_v1'"
+            )
+        connection.execute(
+            "UPDATE paper_orders SET simulation_version = ? "
+            "WHERE simulation_version IS NULL OR simulation_version = ''",
+            (LEGACY_PAPER_SIMULATION_VERSION,),
+        )
         connection.execute("DROP TABLE IF EXISTS paper_market_progress")
         connection.execute("""
             CREATE TABLE IF NOT EXISTS paper_market_bars(

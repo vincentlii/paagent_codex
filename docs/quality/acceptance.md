@@ -38,6 +38,10 @@
 - A/A/B/B 需要臂顺序平衡，同时报告 intention-to-treat 与 per-protocol。
 - 定向修复必须同时保留首次失败与最终接受状态：首次失败计入 first-pass 指标；最终已验证
   输出进入 grounding/status 指标；所有尝试均计入 token 与 latency，不得重复惩罚或隐去成本。
+- `first_pass_clean` 只评估 Provider 首轮契约：warning（包括程序 execution policy）可接受；
+  retry、normalization、fallback、未验证调用和运行失败必须分别给出机器可读原因。
+- Stage 2 候选不得因订单数学或置信度被改写；实际执行资格只读取
+  `execution_disposition`。Paper `paper_ohlc_v1` 与 `paper_ohlc_v2` 不得混合统计。
 
 ## 每阶段完成条件
 

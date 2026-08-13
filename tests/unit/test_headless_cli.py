@@ -7,7 +7,22 @@ from pathlib import Path
 
 from pa_agent.config.paths import resolve_runtime_paths
 from pa_agent.config.settings import MonitoringSettings, Settings, save_settings
-from pa_agent.headless import main, validate_headless_configuration
+from pa_agent.headless import (
+    analysis_batch_timeout_seconds,
+    main,
+    validate_headless_configuration,
+)
+
+
+def test_once_timeout_scales_by_bounded_concurrency_waves() -> None:
+    monitoring = MonitoringSettings(
+        max_concurrency=2,
+        analysis_timeout_seconds=120,
+    )
+
+    assert analysis_batch_timeout_seconds(monitoring, accepted_jobs=0) == 0
+    assert analysis_batch_timeout_seconds(monitoring, accepted_jobs=1) == 120
+    assert analysis_batch_timeout_seconds(monitoring, accepted_jobs=5) == 360
 
 
 def test_headless_import_does_not_load_qt() -> None:

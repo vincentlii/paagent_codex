@@ -333,33 +333,71 @@ def _first_stage1_request_hash(record: AnalysisRecord) -> str:
     return str(candidates[0].get("request_hash") or "")
 
 
-def first_pass_clean(record: AnalysisRecord) -> bool:
-    """Warnings are acceptable; retries, normalization, failures, and fallback are not."""
+def classify_first_pass(record: AnalysisRecord) -> dict[str, Any]:
+    """Classify provider first-pass quality independently from program warnings."""
+    reasons: list[str] = []
     outcome = record.run_outcome if isinstance(record.run_outcome, dict) else {}
-    if record.exception is not None or outcome.get("status") not in {
+    if record.exception is not None:
+        reasons.append("run_exception")
+    if outcome.get("status") not in {
         "completed",
         "completed_with_warnings",
     }:
-        return False
+        reasons.append("run_not_completed")
     events = [item for item in record.validation_audit if isinstance(item, dict)]
-    if any(str(item.get("category") or "") != "warning" for item in events):
-        return False
+    warning_count = sum(
+        str(item.get("severity") or item.get("category") or "") == "warning"
+        for item in events
+    )
+    if any(
+        str(item.get("severity") or item.get("category") or "") == "normalization"
+        for item in events
+    ):
+        reasons.append("contract_normalization")
+    if any(
+        str(item.get("severity") or item.get("category") or "")
+        not in {"warning", "normalization"}
+        for item in events
+    ):
+        reasons.append("validation_failure")
     calls = [item for item in record.call_attempts if isinstance(item, dict)]
     if not calls:
-        return False
+        reasons.append("missing_call_ledger")
     seen: set[tuple[str, str]] = set()
     for call in calls:
         key = (str(call.get("arm") or ""), str(call.get("stage") or ""))
         if key in seen or int(call.get("attempt") or 0) != 1:
-            return False
+            if "provider_retry" not in reasons:
+                reasons.append("provider_retry")
         seen.add(key)
         if str(call.get("status") or "") != "validated":
-            return False
+            if "call_not_validated" not in reasons:
+                reasons.append("call_not_validated")
         if call.get("normalization_applied"):
-            return False
+            if "contract_normalization" not in reasons:
+                reasons.append("contract_normalization")
         if call.get("provider_fallback_used"):
-            return False
-    return True
+            if "provider_fallback" not in reasons:
+                reasons.append("provider_fallback")
+    if not reasons:
+        status = "clean_with_warnings" if warning_count else "clean"
+    elif "contract_normalization" in reasons and len(reasons) == 1:
+        status = "normalized"
+    elif "provider_retry" in reasons:
+        status = "repaired"
+    else:
+        status = "failed"
+    return {
+        "clean": not reasons,
+        "status": status,
+        "reason_codes": reasons,
+        "warning_count": warning_count,
+    }
+
+
+def first_pass_clean(record: AnalysisRecord) -> bool:
+    """Warnings are acceptable; retries, normalization, failures, and fallback are not."""
+    return bool(classify_first_pass(record)["clean"])
 
 
 def decision_signature(record: AnalysisRecord) -> dict[str, Any]:

@@ -1,4 +1,4 @@
-version = 1
+version = 2
 
 [invariants]
 max_fact_contradictions = 0
@@ -18,11 +18,22 @@ pa_only_prompt_p95_baseline_ratio = 0.60
 soft_total_prompt_p95_pa_only_ratio = 1.35
 concurrent_asset_jobs = 20
 gui_lifecycle_cycles = 1000
+max_call_p50_latency_ms = 100000
+max_call_p95_latency_ms = 150000
+max_run_p50_latency_ms = 220000
+max_run_p95_latency_ms = 300000
+max_run_p50_tokens = 180000
+max_run_p95_tokens = 250000
+max_b_to_a_latency_ratio_p95 = 2.2
+max_b_to_a_token_ratio_p95 = 1.35
 
 [research]
 minimum_independent_snapshots = 300
+minimum_repeatability_snapshots = 20
 minimum_decisive_outcomes = 100
 max_unexplained_trade_frequency_decline = 0.15
+max_a_disagreement_rate = 0.25
+max_b_disagreement_rate = 0.35
 external_numeric_probability_gate_requires_calibration = true
 production_countertrend_orders_allowed = false
 

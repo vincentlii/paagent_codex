@@ -94,6 +94,19 @@ def test_official_plan_uses_only_validated_pa_fields() -> None:
     assert plan.dedupe_key == "task-1"
 
 
+def test_official_plan_respects_program_execution_disposition() -> None:
+    record = _record()
+    record.stage2_decision["execution_disposition"] = {
+        "status": "suppressed",
+        "candidate_order_type": record.stage2_decision["decision"]["order_type"],
+        "effective_order_type": "不下单",
+        "reason_codes": ["confidence_below_threshold"],
+        "checks": {},
+    }
+
+    assert official_paper_plan(record, _spec(), dedupe_key="task-1") is None
+
+
 def test_official_plan_rejects_joint_or_experiment_authority() -> None:
     with pytest.raises(ValueError, match="PA-only"):
         official_paper_plan(

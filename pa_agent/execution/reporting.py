@@ -23,6 +23,10 @@ def build_paper_report(db_path: Path) -> dict[str, Any]:
             "unit_of_analysis": "paired_market_snapshot",
             "descriptive_only": True,
         },
+        "simulation": {
+            "current_version": "paper_ohlc_v2",
+            "by_version": [],
+        },
     }
     if not path.is_file():
         return empty
@@ -36,6 +40,7 @@ def build_paper_report(db_path: Path) -> dict[str, Any]:
         accounts = _account_rows(connection)
         decisions = _decision_summary(connection)
         research = _research_summary(connection)
+        simulation = _simulation_summary(connection)
     except sqlite3.Error as exc:
         return {**empty, "error": str(exc)}
     finally:
@@ -46,6 +51,7 @@ def build_paper_report(db_path: Path) -> dict[str, Any]:
         "accounts": accounts,
         "decisions": decisions,
         "research": research,
+        "simulation": simulation,
     }
 
 
@@ -75,6 +81,7 @@ def _account_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             "open": 0,
             "closed": 0,
             "cancelled": 0,
+            "ambiguous": 0,
             "realized_pnl": 0.0,
             "fees": 0.0,
         } for row in rows]
@@ -85,6 +92,7 @@ def _account_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
                SUM(CASE WHEN o.status = 'open' THEN 1 ELSE 0 END) AS open_count,
                SUM(CASE WHEN o.status = 'closed' THEN 1 ELSE 0 END) AS closed,
                SUM(CASE WHEN o.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
+               SUM(CASE WHEN o.status = 'ambiguous' THEN 1 ELSE 0 END) AS ambiguous,
                COALESCE(SUM(o.realized_pnl), 0) AS realized_pnl,
                COALESCE(SUM(o.fees), 0) AS fees
         FROM paper_accounts AS a
@@ -102,9 +110,51 @@ def _account_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         "open": int(row["open_count"]),
         "closed": int(row["closed"]),
         "cancelled": int(row["cancelled"]),
+        "ambiguous": int(row["ambiguous"]),
         "realized_pnl": float(row["realized_pnl"]),
         "fees": float(row["fees"]),
     } for row in rows]
+
+
+def _simulation_summary(connection: sqlite3.Connection) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "current_version": "paper_ohlc_v2",
+        "by_version": [],
+    }
+    if not _table_exists(connection, "paper_orders"):
+        return summary
+    columns = {
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(paper_orders)").fetchall()
+    }
+    version_expression = (
+        "COALESCE(NULLIF(simulation_version, ''), 'paper_ohlc_v1')"
+        if "simulation_version" in columns
+        else "'paper_ohlc_v1'"
+    )
+    rows = connection.execute(f"""
+        SELECT {version_expression} AS simulation_version,
+               COUNT(*) AS orders,
+               SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed,
+               SUM(CASE WHEN status = 'ambiguous' THEN 1 ELSE 0 END) AS ambiguous,
+               COALESCE(SUM(realized_pnl), 0) AS realized_pnl,
+               COALESCE(SUM(fees), 0) AS fees
+        FROM paper_orders
+        GROUP BY {version_expression}
+        ORDER BY simulation_version
+    """).fetchall()
+    summary["by_version"] = [
+        {
+            "simulation_version": str(row["simulation_version"]),
+            "orders": int(row["orders"]),
+            "closed": int(row["closed"]),
+            "ambiguous": int(row["ambiguous"]),
+            "realized_pnl": float(row["realized_pnl"]),
+            "fees": float(row["fees"]),
+        }
+        for row in rows
+    ]
+    return summary
 
 
 def _group_counts(

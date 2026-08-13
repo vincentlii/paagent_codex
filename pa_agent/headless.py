@@ -21,6 +21,16 @@ from pa_agent.config.settings import Settings, provider_api_key_configured
 logger = logging.getLogger(__name__)
 
 
+def analysis_batch_timeout_seconds(monitoring: Any, *, accepted_jobs: int) -> float:
+    """Bound a run-once wait by per-job timeout and scheduler concurrency waves."""
+    jobs = max(0, int(accepted_jobs))
+    if jobs == 0:
+        return 0.0
+    concurrency = max(1, int(monitoring.max_concurrency))
+    waves = math.ceil(jobs / concurrency)
+    return float(monitoring.analysis_timeout_seconds) * waves
+
+
 @dataclass(frozen=True)
 class MarketDataProbeResult:
     source: str
@@ -394,8 +404,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             previous_handlers[value] = signal.signal(value, request_stop)
     try:
         if args.once:
-            monitor.poll_once()
-            idle = monitor.wait_idle(settings.monitoring.analysis_timeout_seconds)
+            cycle = monitor.poll_once()
+            idle = monitor.wait_idle(
+                analysis_batch_timeout_seconds(
+                    settings.monitoring,
+                    accepted_jobs=cycle.accepted,
+                )
+            )
             return int(not (idle and monitor.latest_snapshots_successful()))
         monitor.run_forever()
         return 0

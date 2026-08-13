@@ -18,8 +18,8 @@
 - 相邻窗口净推进方向与 HTF 点位相对当前 K1.close 的上/下方属于程序事实。程序只校验明确的同向/反向、窗口方向标签和空间词矛盾，不据此命名 leg、磁力位、支撑阻力、Test 或 Absorption。
 - VPA `sequence_claim` 倒序是 hard error；证据窗口重叠时只删除该 claim 并记录 normalization + warning，保留 observation 与 PA 正式结果。
 - §9.0P 计划型限价只由程序校验 entry 相对 K1.close 的正确一侧；不得因 K1 影线历史触价、推测 tick size 或自由文本而自动判失效、改价或改单。
-- `analysis_outcomes` 只保存人工核验的真实执行结果；`counterfactual_outcomes` 只保存闭盘 OHLC 对计划的反事实回放。两者不得混为真实 PnL、胜率或训练标签。
-- PA/VPA 增量只能用离线 `pa_vpa_aabb_v1` 四臂协议估计：模型调用前登记 A1/A2/B1/B2，使用同一冻结输入、四个独立客户端及 ABBA/BAAB 顺序，并同时报告 ITT、per-protocol、A/A 与 B/B 分歧。生产 Shadow 不得自称 A/B；每条 record 的反事实只回放自己的正式订单。market order、同 K 入场与出场、同 K 同触止损与目标、突破跳空越价必须保留为 unsupported/ambiguous。同 timestamp OHLC 冲突时拒绝历史，原始快照滚出窗口时停止推进，不得猜测成交路径。
+- `analysis_outcomes` 只保存人工核验的真实执行结果；`counterfactual_outcomes` 只保存闭盘 OHLC 对计划的反事实回放。两者不得混为真实 PnL、胜率或训练标签。Stage 2 模型候选不可由程序改写；订单数学与置信度只写入 `execution_disposition`，执行层必须使用其中的 effective 语义。
+- PA/VPA 增量只能用离线 `pa_vpa_aabb_v1` 四臂协议估计：模型调用前登记 A1/A2/B1/B2，使用同一冻结输入、四个独立客户端及 ABBA/BAAB 顺序，并同时报告 ITT、per-protocol、A/A 与 B/B 分歧。生产 Shadow 不得自称 A/B；每条 record 的反事实只回放自己的正式订单。挂单柱内触发后同柱触及退出价、同 K 同触止损与目标、无法确定顺序的突破成交必须保留为 unsupported/ambiguous；开盘已成交的订单可在同柱按保守止损优先回放。同 timestamp OHLC 冲突时拒绝历史，原始快照滚出窗口时停止推进，不得猜测成交路径。Paper v1/v2 统计必须按 simulation version 分离。
 - A/A/B/B 统计以 `market_snapshot_hash` 为独立样本，以 `cohort_id` 隔离 Provider/settings/源码/Prompt 版本；重复臂、重跑和同一行情的跨版本复核不得重复计样，质量门禁不得混合 cohort。
 - A/A/B/B 收益主结论使用 episode-level ITT：`no_order` / `entry_not_triggered` 计 `0R`，pending/ambiguous 为 censored，缺失 arm 保留在 coverage 并阻止验收；重叠前向窗口先合并 episode。per-protocol 仅为处理交付诊断，不得取代 ITT。
 - 自动回放目标周期由 `general.counterfactual_horizon_bars` 配置，但单条记录不得超过 `analysis_bar_count - 1`；分析最少需要 20 根已收盘 K 线。

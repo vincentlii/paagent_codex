@@ -100,10 +100,10 @@ def test_failed_trader_equation_is_program_rejected_without_model_retry() -> Non
     result = _validate(stage2)
 
     assert isinstance(result, Ok)
-    assert result.obj["decision"]["order_type"] == "不下单"
-    assert result.obj["decision"]["entry_price"] is None
-    assert result.obj["terminal"]["node_id"] == "10.3"
-    assert result.obj["terminal"]["outcome"] == "reject"
+    assert result.obj["decision"] == stage2["decision"]
+    disposition = result.obj["execution_disposition"]
+    assert disposition["status"] == "suppressed"
+    assert disposition["reason_codes"] == ["trader_equation_failed"]
     assert any(
         event["path"] == "execution_policy"
         for event in result.normalization_events
@@ -118,7 +118,8 @@ def test_invalid_tp2_is_blocked_by_execution_policy() -> None:
     result = _validate(stage2)
 
     assert isinstance(result, Ok)
-    assert result.obj["decision"]["order_type"] == "不下单"
+    assert result.obj["decision"] == stage2["decision"]
+    assert result.obj["execution_disposition"]["status"] == "suppressed"
     policy_event = next(
         event
         for event in result.normalization_events

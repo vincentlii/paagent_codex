@@ -206,7 +206,9 @@ def test_paper_broker_persists_limit_fill_and_tp1_full_exit(tmp_path: Path) -> N
     assert restarted.account_snapshot()["equity"] == pytest.approx(snapshot["equity"])
 
 
-def test_same_bar_stop_and_target_uses_conservative_stop_first(tmp_path: Path) -> None:
+def test_intrabar_limit_entry_and_exit_touch_is_ambiguous_without_pnl(
+    tmp_path: Path,
+) -> None:
     broker = PaperBroker(
         tmp_path / "paper.sqlite3",
         account_id="pa-official",
@@ -219,9 +221,43 @@ def test_same_bar_stop_and_target_uses_conservative_stop_first(tmp_path: Path) -
     broker.observe_market(
         _spec(),
         "1h",
-        [
-        _bar(2000, open_=2001.0, high=2025.0, low=1985.0, close=2005.0),
-        ],
+        [_bar(2000, open_=2005.0, high=2025.0, low=1998.0, close=2005.0)],
+    )
+
+    saved = broker.order(order.order_id)
+    assert saved is not None
+    assert saved["simulation_version"] == "paper_ohlc_v2"
+    assert saved["status"] == "ambiguous"
+    assert saved["exit_reason"] == "ambiguous_entry_bar"
+    assert saved["realized_pnl"] is None
+    assert broker.account_snapshot()["equity"] == pytest.approx(10_000.0)
+    assert broker.account_snapshot()["ambiguous_order_count"] == 1
+    assert broker.account_snapshot()["orders_by_simulation_version"] == {
+        "paper_ohlc_v2": 1
+    }
+
+
+def test_open_position_same_bar_stop_and_target_uses_conservative_stop_first(
+    tmp_path: Path,
+) -> None:
+    broker = PaperBroker(
+        tmp_path / "paper.sqlite3",
+        account_id="pa-official",
+        initial_equity=10_000.0,
+        risk_policy=RiskPolicy(risk_fraction=0.01, max_leverage=3.0),
+        fee_bps=0.0,
+        slippage_bps=0.0,
+    )
+    order = broker.submit(_plan(), _spec())
+    broker.observe_market(
+        _spec(),
+        "1h",
+        [_bar(2000, open_=2005.0, high=2008.0, low=1998.0, close=2004.0)],
+    )
+    broker.observe_market(
+        _spec(),
+        "1h",
+        [_bar(3000, open_=2001.0, high=2025.0, low=1985.0, close=2005.0)],
     )
 
     saved = broker.order(order.order_id)
@@ -229,6 +265,21 @@ def test_same_bar_stop_and_target_uses_conservative_stop_first(tmp_path: Path) -
     assert saved["status"] == "closed"
     assert saved["exit_reason"] == "protective_stop_ambiguous_intrabar"
     assert broker.account_snapshot()["equity"] < 10_000.0
+
+
+def test_second_target_must_be_strictly_beyond_first_target(tmp_path: Path) -> None:
+    broker = PaperBroker(
+        tmp_path / "paper.sqlite3",
+        account_id="pa-official",
+        initial_equity=10_000.0,
+        risk_policy=RiskPolicy(risk_fraction=0.01, max_leverage=3.0),
+    )
+    invalid = _plan().__class__(
+        **{**_plan().__dict__, "take_profit_price_2": _plan().take_profit_price}
+    )
+
+    with pytest.raises(ValueError, match="strictly beyond"):
+        broker.submit(invalid, _spec())
 
 
 def test_breakout_and_stop_gap_use_open_instead_of_optimistic_trigger_price(
