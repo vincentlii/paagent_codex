@@ -1,5 +1,7 @@
 # AGENTS
 
+- 上线前最终实施范围、三角色审计证据与未验证边界见 `docs/quality/pre_release_final_audit_20260813.md`。
+
 - 回应与生成文件优先使用中文；代码、API、错误信息、产品名保留英文。
 - 修改、调试、优化、审查或部署本项目前，必须读取并遵循 `.agents/skills/paagent-change-guardrails/SKILL.md`。
 - 修改 PA / Wyckoff VPA 融合链路或运行时前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0022`。
