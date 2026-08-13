@@ -31,17 +31,27 @@ def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     environment = (root / "environment-vps.yml").read_text("utf-8")
     service = (root / "deploy" / "systemd" / "pa-agent.service").read_text("utf-8")
     installer = (root / "deploy" / "install_vps.sh").read_text("utf-8")
+    ci = (root / ".github" / "workflows" / "ci.yml").read_text("utf-8")
     attributes = (root / ".gitattributes").read_text("utf-8")
 
     assert "name: pa-agent" in environment
     assert "- python=3.11" in environment
+    assert "uv==0.11.19" in environment
     assert "ExecStartPre=" in service and "--check" in service
     assert "ExecStart=" in service and "pa-agent-headless" in service
     assert "--probe-data" not in service
     assert "LoadCredential=pa_agent_api_key:" in service
     assert "systemctl enable" not in installer
+    assert '"$ENV_UV" export' in installer
+    assert "--frozen" in installer
+    assert "--require-hashes" in installer
+    assert 'trap \'rm -f "$LOCK_REQUIREMENTS"\' EXIT' in installer
     assert "YOUR_API_KEY" not in installer
     assert 'cd "$APP_DIR"' in installer
     assert "${APP_DIR:-" not in installer
     assert "${STATE_DIR:-" not in installer
+    assert "Validate frozen VPS profile" in ci
+    assert "uv export --frozen --extra vps --no-dev --no-emit-project" in ci
+    assert "uv pip check" in ci
+    assert "python -m pip check" not in ci
     assert "*.sh text eol=lf" in attributes

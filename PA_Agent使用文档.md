@@ -41,7 +41,7 @@ python run.py
 python -m pa_agent.main
 
 # 方式三：安装后使用命令行入口
-pip install -e ".[dev]"
+pip install -e ".[desktop]"
 pa-agent
 ```
 
@@ -50,7 +50,7 @@ pa-agent
 1. 程序启动后自动创建 `config/settings.json`（默认配置）
 2. 如提示 MT5 未连接，确保 MetaTrader 5 终端已打开并登录
 3. 首次使用需在 **菜单 → 设置** 中填写 API Key
-4. API Key 通过 Windows DPAPI 加密存储，不会明文写入磁盘
+4. API Key 通过 Fernet 加密并由本机 `secret.key` 解密，不会明文写入 `settings.json`
 
 ### 环境要求
 
@@ -652,7 +652,7 @@ experience/
 
 ### API Key 加密
 
-- 使用 Windows DPAPI（Data Protection API）加密
+- 使用 Fernet 加密，密文与本机 `secret.key` 必须一起保密
 - 存储在 `settings.json` 中的 `api_key_encrypted` 字段（Base64 编码）
 - 明文 `api_key` **永远不会写入磁盘**
 - 加密/解密类：`pa_agent.security.secret_store.SecretStore`
@@ -676,8 +676,8 @@ experience/
 
 | 问题                                                | 解决方案                                        |
 | ------------------------------------------------- | ------------------------------------------- |
-| `ModuleNotFoundError: No module named 'pa_agent'` | 在项目根目录执行 `pip install -e ".[dev]"`          |
-| `No module named 'PyQt6'`                         | 执行 `pip install PyQt6`                      |
+| `ModuleNotFoundError: No module named 'pa_agent'` | 在项目根目录执行 `pip install -e ".[desktop]"`          |
+| `No module named 'PyQt6'` 或 `pyqtgraph`          | 执行 `pip install -e ".[gui]"`                      |
 | `DLL load failed`                                 | 安装 Visual C++ 运行库                           |
 | MT5 未连接                                           | 确保 MT5 终端已打开并登录                             |
 

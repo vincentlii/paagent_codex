@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any, Literal
 
 from pa_agent.ai.retry_policy import extract_feedback_targets
@@ -111,6 +112,7 @@ def build_retry_feedback(
     max_attempts: int,
     frame: Any = None,
     previous_raw: str | None = None,
+    contract_renderer: Callable[[str], str] | None = None,
 ) -> str:
     """Compose a concise retry user turn."""
     category = str(getattr(err, "category", "c") or "c")
@@ -164,11 +166,13 @@ def build_retry_feedback(
     if provider_contract:
         from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
 
+        renderer = contract_renderer or render_provider_draft_contract
+
         lines.extend(
             [
                 "",
                 "**本次 Provider Draft 的唯一结构契约：**",
-                render_provider_draft_contract(stage),
+                renderer(stage),
             ]
         )
     editable_targets = extract_feedback_targets(invalid, missing)

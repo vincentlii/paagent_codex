@@ -54,13 +54,18 @@ def probe_market_data(
     *,
     source_factory: Callable[[Any], Any] | None = None,
     sample_bars: int = 3,
+    config_dir: Path | None = None,
 ) -> list[MarketDataProbeResult]:
     """Probe native market facts without invoking an AI provider."""
     from pa_agent.data.factory import create_data_source, resolved_identity_for_source
     from pa_agent.data.higher_timeframe import resolve_higher_timeframe
 
     factory = source_factory or (
-        lambda asset: create_data_source(asset.source, settings=settings)
+        lambda asset: create_data_source(
+            asset.source,
+            settings=settings,
+            config_dir=config_dir,
+        )
     )
     results: list[MarketDataProbeResult] = []
     for asset in settings.monitoring.assets:
@@ -215,7 +220,11 @@ def validate_headless_configuration(
         from pa_agent.data.factory import create_data_source
 
         def factory(asset):
-            return create_data_source(asset.source, settings=settings)
+            return create_data_source(
+                asset.source,
+                settings=settings,
+                config_dir=paths.config_dir,
+            )
     for asset in assets:
         if asset.source == "mt5" and not platform.startswith("win"):
             errors.append("MT5 data source is unavailable on Linux; use TradingView")
@@ -314,6 +323,7 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
         source_factory=lambda asset: create_data_source(
             asset.source,
             settings=settings,
+            config_dir=paths.config_dir,
         ),
         service_factory=service_factory,
         analysis_fingerprint=analysis_runtime_fingerprint(
@@ -376,7 +386,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     if args.probe_data:
-        results = probe_market_data(settings)
+        results = probe_market_data(settings, config_dir=paths.config_dir)
         print(json.dumps(
             [result.to_dict() for result in results],
             ensure_ascii=False,

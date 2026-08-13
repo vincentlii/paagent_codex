@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0021`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0022`。
 
 ## 核心目标
 
@@ -35,6 +35,8 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
   或 `internal_error`。
 - `ContinuousAabbSample`：以 `(pipeline_id, cohort_id, market_snapshot_hash)` 唯一标识的
   持续配对研究单元；SQLite 租约只管理执行与恢复，不参与市场判断。
+- `RuntimeResourceSnapshot`：一次运行实际加载的 `prompt_dir`、Provider Contract digest 与代码/Prompt
+  fingerprint；三者必须同源，并进入 record/cohort 身份。
 
 ## 权限边界
 
@@ -68,7 +70,7 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 6. 隔离的 A/A/B/B 研究 B 臂才调用 Joint Arbiter，在既有 PA candidate 内输出有界补丁。
 7. Stage 2 的模型候选保持不可变；程序订单数学与置信度只生成 `execution_disposition`，
    Paper/未来执行器只消费 effective order 语义。
-7. 程序验证补丁与执行安全，随后持久化完整审计链。
+8. 程序验证补丁与执行安全，随后持久化完整审计链。
 
 这是一条信息依赖链，不代表 VPA 从属于 PA，也不允许形成第二套 Strategy Router。
 

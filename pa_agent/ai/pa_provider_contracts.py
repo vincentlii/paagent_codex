@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 from pa_agent.ai.decision_tree import (
@@ -178,7 +179,9 @@ def _stage1_draft_schema() -> dict[str, Any]:
     }
 
 
-def _stage2_draft_schema() -> dict[str, Any]:
+def _stage2_draft_schema(
+    decision_tree_path: Path | None = None,
+) -> dict[str, Any]:
     decision = copy.deepcopy(STAGE2_SCHEMA["properties"]["decision"])
     for key in ("diagnosis_confidence", "diagnosis_confidence_reasoning"):
         decision["required"].remove(key)
@@ -199,7 +202,9 @@ def _stage2_draft_schema() -> dict[str, Any]:
         "decision_trace": {
             "type": "array",
             "minItems": 1,
-            "items": _draft_trace_item(stage2_provider_node_ids()),
+            "items": _draft_trace_item(
+                stage2_provider_node_ids(decision_tree_path)
+            ),
         },
         "next_bar_prediction": copy.deepcopy(
             STAGE2_SCHEMA["properties"]["next_bar_prediction"]
@@ -224,36 +229,73 @@ STAGE1_DRAFT_SCHEMA = _stage1_draft_schema()
 STAGE2_DRAFT_SCHEMA = _stage2_draft_schema()
 
 
-def schema_for_provider_draft(stage: str) -> dict[str, Any]:
+def schema_for_provider_draft(
+    stage: str,
+    *,
+    decision_tree_path: Path | None = None,
+) -> dict[str, Any]:
     """Return an isolated provider contract for one PA stage."""
-    schemas = {"stage1": STAGE1_DRAFT_SCHEMA, "stage2": STAGE2_DRAFT_SCHEMA}
+    schemas = {
+        "stage1": STAGE1_DRAFT_SCHEMA,
+        "stage2": (
+            STAGE2_DRAFT_SCHEMA
+            if decision_tree_path is None
+            else _stage2_draft_schema(decision_tree_path)
+        ),
+    }
     try:
         return copy.deepcopy(schemas[stage])
     except KeyError as exc:
         raise ValueError(f"unknown PA provider stage: {stage}") from exc
 
 
-def _serialized_provider_schema(stage: str) -> str:
+def _serialized_provider_schema(
+    stage: str,
+    *,
+    decision_tree_path: Path | None = None,
+) -> str:
     return json.dumps(
-        schema_for_provider_draft(stage),
+        schema_for_provider_draft(
+            stage,
+            decision_tree_path=decision_tree_path,
+        ),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     )
 
 
-def provider_draft_schema_digest(stage: str) -> str:
+def provider_draft_schema_digest(
+    stage: str,
+    *,
+    decision_tree_path: Path | None = None,
+) -> str:
     """Stable identity shared by prompts, validation, and audit tests."""
-    return hashlib.sha256(_serialized_provider_schema(stage).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        _serialized_provider_schema(
+            stage,
+            decision_tree_path=decision_tree_path,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
-def render_provider_draft_contract(stage: str) -> str:
+def render_provider_draft_contract(
+    stage: str,
+    *,
+    decision_tree_path: Path | None = None,
+) -> str:
     """Render the minified exact runtime contract for schema-less providers."""
-    digest = provider_draft_schema_digest(stage)
+    digest = provider_draft_schema_digest(
+        stage,
+        decision_tree_path=decision_tree_path,
+    )
     return (
         f"Provider contract digest: {digest}\n"
         "PA_PROVIDER_DRAFT_CONTRACT_BEGIN\n"
-        + _serialized_provider_schema(stage)
+        + _serialized_provider_schema(
+            stage,
+            decision_tree_path=decision_tree_path,
+        )
         + "\nPA_PROVIDER_DRAFT_CONTRACT_END"
     )
 
@@ -282,6 +324,7 @@ def provider_draft_semantic_issues(
     draft: dict[str, Any],
     *,
     catalog: AnalysisFactCatalog,
+    decision_tree_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Validate provider-owned protocol semantics before canonical materialization."""
     trace_name = "gate_trace" if stage == "stage1" else "decision_trace"
@@ -295,7 +338,7 @@ def provider_draft_semantic_issues(
     valid_ids = (
         {"1.1", *STAGE1_GATE_NODE_IDS}
         if stage == "stage1"
-        else set(stage2_provider_node_ids())
+        else set(stage2_provider_node_ids(decision_tree_path))
     )
     valid_trace_ids: list[str] = []
     for index, item in enumerate(trace):
@@ -412,9 +455,13 @@ def provider_draft_semantic_issues(
 
 
 def _materialize_trace(
-    trace: list[dict[str, Any]], *, catalog: AnalysisFactCatalog, role: str
+    trace: list[dict[str, Any]],
+    *,
+    catalog: AnalysisFactCatalog,
+    role: str,
+    decision_tree_path: Path | None = None,
 ) -> list[dict[str, Any]]:
-    nodes = load_decision_tree()["node_index"]
+    nodes = load_decision_tree(decision_tree_path)["node_index"]
     result: list[dict[str, Any]] = []
     for source in trace:
         node_id = str(source["node_id"])
@@ -461,7 +508,10 @@ def _derive_gate_result(trace: list[dict[str, Any]]) -> str:
 
 
 def materialize_stage1_draft(
-    draft: dict[str, Any], *, catalog: AnalysisFactCatalog
+    draft: dict[str, Any],
+    *,
+    catalog: AnalysisFactCatalog,
+    decision_tree_path: Path | None = None,
 ) -> dict[str, Any]:
     result = copy.deepcopy(draft)
     result.pop("protocol_version", None)
@@ -479,7 +529,10 @@ def materialize_stage1_draft(
         if str(item.get("node_id")) != "1.1"
     ]
     result["gate_trace"] = _materialize_trace(
-        semantic_gate_trace, catalog=catalog, role="pa_stage1"
+        semantic_gate_trace,
+        catalog=catalog,
+        role="pa_stage1",
+        decision_tree_path=decision_tree_path,
     )
     result["gate_result"] = _derive_gate_result(result["gate_trace"])
     spike_analysis = result.get("pa_evidence", {}).get("spike_analysis")
@@ -507,6 +560,7 @@ def _equation_trace(
     decision_trace: list[dict[str, Any]],
     *,
     catalog: AnalysisFactCatalog,
+    decision_tree_path: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     metrics = compute_risk_reward(
         decision.get("entry_price"), decision.get("take_profit_price"),
@@ -540,7 +594,7 @@ def _equation_trace(
     if not refs:
         raise ValueError("trader equation requires model-declared PA evidence")
     resolved = catalog.resolve_references(refs, role="pa_stage2")
-    node = load_decision_tree()["node_index"]["10.3"]
+    node = load_decision_tree(decision_tree_path)["node_index"]["10.3"]
     if metrics is None:
         reason = "risk/reward geometry is unavailable; trader equation cannot pass"
     else:
@@ -560,7 +614,11 @@ def _equation_trace(
 
 
 def materialize_stage2_draft(
-    draft: dict[str, Any], *, stage1: dict[str, Any], catalog: AnalysisFactCatalog
+    draft: dict[str, Any],
+    *,
+    stage1: dict[str, Any],
+    catalog: AnalysisFactCatalog,
+    decision_tree_path: Path | None = None,
 ) -> dict[str, Any]:
     result = copy.deepcopy(draft)
     result.pop("protocol_version", None)
@@ -570,7 +628,12 @@ def materialize_stage2_draft(
     decision["diagnosis_confidence_reasoning"] = stage1.get(
         "diagnosis_confidence_reasoning"
     ) or stage1.get("risk_warning") or "Inherited from Stage 1 diagnosis."
-    trace = _materialize_trace(result["decision_trace"], catalog=catalog, role="pa_stage2")
+    trace = _materialize_trace(
+        result["decision_trace"],
+        catalog=catalog,
+        role="pa_stage2",
+        decision_tree_path=decision_tree_path,
+    )
     if any(item["node_id"] == "10.3" for item in trace):
         raise ValueError("Stage 2 Draft must not provide program-owned node 10.3")
     executable = decision.get("order_type") in {"限价单", "突破单", "市价单"}
@@ -583,6 +646,7 @@ def materialize_stage2_draft(
             result.get("bar_analysis") if isinstance(result.get("bar_analysis"), dict) else {},
             trace,
             catalog=catalog,
+            decision_tree_path=decision_tree_path,
         )
         insert_at = next(
             (i for i, item in enumerate(trace) if str(item["node_id"]).startswith(("11.", "14"))),

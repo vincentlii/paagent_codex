@@ -2,13 +2,27 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: windows-latest
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
 
@@ -17,8 +31,54 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
+      - name: Install uv
+        run: python -m pip install uv==0.11.19
 
-      - name: Verify install
-        run: python -c "import pa_agent; print('OK')"
+      - name: Sync frozen environment
+        run: uv sync --frozen --extra desktop --extra dev
+
+      - name: Verify dependency graph
+        run: uv pip check
+
+      - name: Check critical Python errors
+        run: uv run --frozen python -m ruff check pa_agent tools tests --select E9,F63,F7,F82 --no-cache
+
+      - name: Run non-live tests
+        run: uv run --frozen python -m pytest -m "not live"
+
+  distribution:
+    name: Wheel and Linux assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install uv==0.11.19
+
+      - name: Validate frozen VPS profile
+        run: |
+          uv export --frozen --extra vps --no-dev --no-emit-project --output-file vps-requirements.txt
+          python -c "from pathlib import Path; t=Path('vps-requirements.txt').read_text('utf-8').lower(); assert all(x in t for x in ('openai==','httpx==','curl-cffi==','pydantic==','cryptography==')); assert not any(x in t for x in ('pyqt6==','pyqtgraph==','tvdatafeed','metatrader5==','pytest==')); assert '--hash=sha256:' in t"
+
+      - name: Build wheel from frozen environment
+        run: |
+          uv sync --frozen --extra dev
+          uv run --frozen python -m build --wheel
+
+      - name: Verify installed wheel resources and headless imports
+        run: |
+          python -m venv wheel-smoke
+          wheel-smoke/bin/python -m pip install dist/*.whl
+          wheel-smoke/bin/python -c "from pa_agent.config.paths import PROMPT_DIR; assert (PROMPT_DIR / '\u4e8c\u5143\u51b3\u7b56.txt').is_file(); assert (PROMPT_DIR / 'wyckoff_vpa' / 'core.txt').is_file()"
+          wheel-smoke/bin/python -c "import sys; import pa_agent.headless; assert not any(name.startswith(('PyQt6', 'pyqtgraph')) for name in sys.modules)"
+
+      - name: Validate deployment shell syntax
+        run: bash -n deploy/install_vps.sh

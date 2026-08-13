@@ -338,6 +338,11 @@ def validate_with_retry(
             max_attempts=effective_max_attempts,
             frame=validate_kwargs.get("kline_frame"),
             previous_raw=previous_raw,
+            contract_renderer=getattr(
+                validator,
+                "render_provider_contract",
+                None,
+            ),
         )
         event["retry_feedback"] = feedback
         audit_messages = append_assistant_turn(

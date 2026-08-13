@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 # MT5 broker spot gold (suffix varies by broker; m = common micro/mini suffix)
 GOLD_MT5_SYMBOL = "XAUUSDm"
@@ -230,15 +231,23 @@ def tv_forex_auto_probe_plan(symbol: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def tv_auto_probe_plan(symbol: str) -> list[tuple[str, str]]:
+def tv_auto_probe_plan(
+    symbol: str,
+    *,
+    config_dir: Path | None = None,
+) -> list[tuple[str, str]]:
     """Full auto-probe plan: equity venues first, else all forex presets in the UI list."""
-    equity = equity_tv_auto_probe_plan(symbol)
+    equity = equity_tv_auto_probe_plan(symbol, config_dir=config_dir)
     if equity:
         return equity
     return tv_forex_auto_probe_plan(symbol)
 
 
-def equity_tv_auto_probe_plan(symbol: str) -> list[tuple[str, str]]:
+def equity_tv_auto_probe_plan(
+    symbol: str,
+    *,
+    config_dir: Path | None = None,
+) -> list[tuple[str, str]]:
     """Ordered (exchange, symbol) attempts for auto-detect equity feeds."""
     from pa_agent.data.tv_symbol_lookup import is_tv_name_input, lookup_tv_symbol_by_name
 
@@ -249,7 +258,7 @@ def equity_tv_auto_probe_plan(symbol: str) -> list[tuple[str, str]]:
 
     # 2. Company name lookup (Chinese or lowercase English)
     if is_tv_name_input(symbol):
-        hit = lookup_tv_symbol_by_name(symbol)
+        hit = lookup_tv_symbol_by_name(symbol, config_dir=config_dir)
         if hit is not None:
             return [hit]
         return []
@@ -359,7 +368,12 @@ def resolve_tv_hk_pair(
     return TV_HK_EXCHANGE, code, True
 
 
-def resolve_tv_fetch_pair(exchange: str, symbol: str) -> tuple[str, str]:
+def resolve_tv_fetch_pair(
+    exchange: str,
+    symbol: str,
+    *,
+    config_dir: Path | None = None,
+) -> tuple[str, str]:
     """Map user subscription to tvDatafeed ``get_hist`` args only.
 
     Does not rewrite the user's symbol/exchange in the UI. Name lookup is used
@@ -375,7 +389,7 @@ def resolve_tv_fetch_pair(exchange: str, symbol: str) -> tuple[str, str]:
     if is_tv_exchange_auto(ex):
         return "", sym
     if is_tv_name_input(sym):
-        hit = lookup_tv_symbol_by_name(sym)
+        hit = lookup_tv_symbol_by_name(sym, config_dir=config_dir)
         if hit is not None:
             return hit
         # Name lookup failed — fall through to ticker path
@@ -385,6 +399,8 @@ def resolve_tv_fetch_pair(exchange: str, symbol: str) -> tuple[str, str]:
 def resolve_tv_pair(
     exchange: str,
     symbol: str,
+    *,
+    config_dir: Path | None = None,
 ) -> tuple[str, str, bool]:
     """Resolve TradingView exchange/symbol for names, A/HK shares, indices, or gold/forex."""
     from pa_agent.data.tv_symbol_lookup import (
@@ -397,7 +413,7 @@ def resolve_tv_pair(
 
     # 1. Company name lookup (Chinese or lowercase English)
     if is_tv_name_input(sym):
-        hit = lookup_tv_symbol_by_name(sym)
+        hit = lookup_tv_symbol_by_name(sym, config_dir=config_dir)
         if hit is not None:
             ex_res, code = hit
             return ex_res, code, True

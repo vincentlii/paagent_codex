@@ -109,7 +109,7 @@ class AppContext:
         )
 
         # ── Validator & router ────────────────────────────────────────────────
-        validator = JsonValidator(settings)
+        validator = JsonValidator(settings, prompt_dir=PROMPT_DIR)
         router = route_strategy_files
 
         # ── Pending writer ────────────────────────────────────────────────────

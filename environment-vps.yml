@@ -7,4 +7,4 @@ dependencies:
   - pip
   - git
   - pip:
-      - -e .
+      - uv==0.11.19

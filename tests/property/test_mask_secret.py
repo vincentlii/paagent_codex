@@ -6,14 +6,14 @@ from hypothesis import strategies as st
 from pa_agent.util.mask_secret import mask_secret
 
 
-@given(st.text(min_size=4))
+@given(st.text(min_size=4, max_size=2048))
 def test_last_four_preserved(s: str) -> None:
     """For strings of length >= 4, the last 4 chars are preserved."""
     result = mask_secret(s)
     assert result.endswith(s[-4:])
 
 
-@given(st.text(min_size=4))
+@given(st.text(min_size=4, max_size=2048))
 def test_prefix_all_stars(s: str) -> None:
     """For strings of length >= 4, all chars before the last 4 are '*'."""
     result = mask_secret(s)
@@ -27,13 +27,22 @@ def test_short_strings_unchanged(s: str) -> None:
     assert mask_secret(s) == s
 
 
-@given(st.text())
+@given(st.text(max_size=4096))
 def test_never_raises(s: str) -> None:
     """mask_secret never raises for any input."""
     mask_secret(s)  # must not raise
 
 
-@given(st.text(min_size=4))
+@given(st.text(min_size=4, max_size=2048))
 def test_length_preserved(s: str) -> None:
     """Output length equals input length."""
     assert len(mask_secret(s)) == len(s)
+
+
+def test_very_long_secret_is_masked_without_changing_length() -> None:
+    secret = "x" * 1_000_000 + "tail"
+
+    masked = mask_secret(secret)
+
+    assert len(masked) == len(secret)
+    assert masked.endswith("tail")

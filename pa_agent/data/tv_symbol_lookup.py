@@ -78,7 +78,7 @@ _NAME_SUFFIXES = (
     "控股",
 )
 
-_aliases_cache: dict[str, tuple[str, str]] | None = None
+_aliases_cache: dict[Path, dict[str, tuple[str, str]]] = {}
 
 
 class TvSymbolNotFoundError(ValueError):
@@ -94,8 +94,14 @@ def _normalize_name_key(name: str) -> str:
     return s
 
 
-def _load_user_aliases() -> dict[str, tuple[str, str]]:
-    path = CONFIG_DIR / "tv_symbol_aliases.json"
+def _alias_file(config_dir: Path | None) -> Path:
+    return (Path(config_dir) if config_dir is not None else CONFIG_DIR) / (
+        "tv_symbol_aliases.json"
+    )
+
+
+def _load_user_aliases(config_dir: Path | None = None) -> dict[str, tuple[str, str]]:
+    path = _alias_file(config_dir)
     if not path.is_file():
         return {}
     try:
@@ -114,21 +120,25 @@ def _load_user_aliases() -> dict[str, tuple[str, str]]:
     return out
 
 
-def _all_aliases() -> dict[str, tuple[str, str]]:
-    global _aliases_cache
-    if _aliases_cache is None:
+def _all_aliases(config_dir: Path | None = None) -> dict[str, tuple[str, str]]:
+    cache_key = _alias_file(config_dir).resolve()
+    aliases = _aliases_cache.get(cache_key)
+    if aliases is None:
         merged = dict(_BUILTIN_ALIASES)
-        merged.update(_load_user_aliases())
-        _aliases_cache = {
+        merged.update(_load_user_aliases(config_dir))
+        aliases = {
             _normalize_name_key(k): v for k, v in merged.items()
         }
-    return _aliases_cache
+        _aliases_cache[cache_key] = aliases
+    return aliases
 
 
-def reload_tv_symbol_aliases() -> None:
+def reload_tv_symbol_aliases(config_dir: Path | None = None) -> None:
     """Clear cache after user edits ``config/tv_symbol_aliases.json``."""
-    global _aliases_cache
-    _aliases_cache = None
+    if config_dir is None:
+        _aliases_cache.clear()
+        return
+    _aliases_cache.pop(_alias_file(config_dir).resolve(), None)
 
 
 def is_tv_name_input(symbol: str) -> bool:
@@ -148,12 +158,16 @@ def is_tv_name_input(symbol: str) -> bool:
     return False
 
 
-def lookup_tv_symbol_by_name(name: str) -> tuple[str, str] | None:
+def lookup_tv_symbol_by_name(
+    name: str,
+    *,
+    config_dir: Path | None = None,
+) -> tuple[str, str] | None:
     """Return ``(exchange, symbol)`` for a company name, or None."""
     key = _normalize_name_key(name)
     if not key:
         return None
-    aliases = _all_aliases()
+    aliases = _all_aliases(config_dir)
     if key in aliases:
         return aliases[key]
     for alias_key, pair in aliases.items():
@@ -163,9 +177,13 @@ def lookup_tv_symbol_by_name(name: str) -> tuple[str, str] | None:
     return None
 
 
-def resolve_tv_symbol_name(name: str) -> tuple[str, str]:
+def resolve_tv_symbol_name(
+    name: str,
+    *,
+    config_dir: Path | None = None,
+) -> tuple[str, str]:
     """Resolve name to ``(exchange, symbol)``; raise if unknown."""
-    hit = lookup_tv_symbol_by_name(name)
+    hit = lookup_tv_symbol_by_name(name, config_dir=config_dir)
     if hit is None:
         raise TvSymbolNotFoundError(
             f"未找到股票名称「{name.strip()}」。"

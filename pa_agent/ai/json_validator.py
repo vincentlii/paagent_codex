@@ -14,6 +14,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
@@ -386,8 +387,14 @@ def _provider_contract_issues(errors: list[Any]) -> list[dict[str, Any]]:
 class JsonValidator:
     """Validates raw AI text against Stage 1 or Stage 2 JSON schemas."""
 
-    def __init__(self, validation: Any = None) -> None:
+    def __init__(
+        self,
+        validation: Any = None,
+        *,
+        prompt_dir: Path | None = None,
+    ) -> None:
         from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
+        from pa_agent.config.paths import PROMPT_DIR
         from pa_agent.config.settings import ValidationSettings
 
         if validation is None:
@@ -396,6 +403,8 @@ class JsonValidator:
             self._validation = validation.validation
         else:
             self._validation = validation
+        effective_prompt_dir = Path(prompt_dir) if prompt_dir is not None else PROMPT_DIR
+        self._decision_tree_path = effective_prompt_dir / "\u4e8c\u5143\u51b3\u7b56.txt"
 
         self._schemas = {
             "stage1": copy.deepcopy(STAGE1_SCHEMA),
@@ -409,7 +418,30 @@ class JsonValidator:
         """Return an isolated schema for provider capability negotiation."""
         from pa_agent.ai.pa_provider_contracts import schema_for_provider_draft
 
-        return schema_for_provider_draft(stage)
+        return schema_for_provider_draft(
+            stage,
+            decision_tree_path=self._decision_tree_path,
+        )
+
+    @property
+    def decision_tree_path(self) -> Path:
+        return self._decision_tree_path
+
+    def render_provider_contract(self, stage: Literal["stage1", "stage2"]) -> str:
+        from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
+
+        return render_provider_draft_contract(
+            stage,
+            decision_tree_path=self._decision_tree_path,
+        )
+
+    def provider_contract_digest(self, stage: Literal["stage1", "stage2"]) -> str:
+        from pa_agent.ai.pa_provider_contracts import provider_draft_schema_digest
+
+        return provider_draft_schema_digest(
+            stage,
+            decision_tree_path=self._decision_tree_path,
+        )
 
     def normalize_parsed(
         self,
@@ -521,12 +553,20 @@ class JsonValidator:
                 )
 
                 obj = normalize_provider_draft(stage, obj)
-                draft_schema = schema_for_provider_draft(stage)
+                draft_schema = schema_for_provider_draft(
+                    stage,
+                    decision_tree_path=self._decision_tree_path,
+                )
                 draft_errors = list(jsonschema.Draft7Validator(draft_schema).iter_errors(obj))
                 issues = _provider_contract_issues(draft_errors)
                 catalog = analysis_fact_catalog or build_analysis_fact_catalog(kline_frame)
                 issues.extend(
-                    provider_draft_semantic_issues(stage, obj, catalog=catalog)
+                    provider_draft_semantic_issues(
+                        stage,
+                        obj,
+                        catalog=catalog,
+                        decision_tree_path=self._decision_tree_path,
+                    )
                 )
                 deduplicated_issues: list[dict[str, Any]] = []
                 seen_issues: set[tuple[str, str, str]] = set()
@@ -563,9 +603,18 @@ class JsonValidator:
                     }
                     provider_contract_issues = issues
                 obj = (
-                    materialize_stage1_draft(obj, catalog=catalog)
+                    materialize_stage1_draft(
+                        obj,
+                        catalog=catalog,
+                        decision_tree_path=self._decision_tree_path,
+                    )
                     if stage == "stage1"
-                    else materialize_stage2_draft(obj, stage1=stage1_json or {}, catalog=catalog)
+                    else materialize_stage2_draft(
+                        obj,
+                        stage1=stage1_json or {},
+                        catalog=catalog,
+                        decision_tree_path=self._decision_tree_path,
+                    )
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 if provider_contract_issues:
@@ -730,7 +779,10 @@ class JsonValidator:
             from pa_agent.ai.coherence_checks import validate_stage2_coherence
             from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
 
-            for msg in validate_stage2_trace_consistency(obj):
+            for msg in validate_stage2_trace_consistency(
+                obj,
+                decision_tree_path=self._decision_tree_path,
+            ):
                 invalid.append(f"trace:{msg}")
             stage2_coherence_errors = validate_stage2_coherence(
                 obj,

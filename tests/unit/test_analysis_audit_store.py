@@ -27,6 +27,7 @@ def test_review_cli_list_accepts_default_cohort_filter(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
 
     assert result.returncode == 0, result.stderr

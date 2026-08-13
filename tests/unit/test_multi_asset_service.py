@@ -191,7 +191,13 @@ def test_production_factory_does_not_share_mutable_model_state(
     monkeypatch.setattr(production, "create_ai_client", create_client)
     monkeypatch.setattr(production, "ExperienceReader", lambda **_kwargs: object())
     monkeypatch.setattr(production, "PromptAssembler", create_assembler)
-    monkeypatch.setattr(production, "JsonValidator", lambda _settings: object())
+    validator_paths = []
+
+    def create_validator(_settings, *, prompt_dir=None):
+        validator_paths.append(prompt_dir)
+        return object()
+
+    monkeypatch.setattr(production, "JsonValidator", create_validator)
     monkeypatch.setattr(production, "TwoStageOrchestrator", create_orchestrator)
 
     factory = production.ProductionOrchestratorFactory(
@@ -207,6 +213,7 @@ def test_production_factory_does_not_share_mutable_model_state(
     assert clients[0] is not clients[1]
     assert assemblers[0] is not assemblers[1]
     assert built[0].settings is not built[1].settings
+    assert validator_paths == [tmp_path, tmp_path]
 
 
 def test_scheduler_audit_failure_is_visible_in_service_metrics() -> None:

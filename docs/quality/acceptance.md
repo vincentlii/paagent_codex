@@ -15,6 +15,9 @@
 9. VPA 知识模块泄漏 Joint action enum，或窗口 seasonality 在不完整/非因果覆盖下产出可用关系的次数为 0。
 10. 持续 A/A/B/B 对同一 `(pipeline, cohort, market_snapshot)` 的并发或重启重复执行为 0；
     研究 Joint/账户进入生产正式结果或 `pa-official` 账户的次数为 0。
+11. 同一分析中 Prompt、Provider Contract、materializer、validator 与审计 digest 的资源目录漂移为 0。
+12. wheel 安装后缺失 `prompt_engineering` 知识文件的次数为 0。
+13. 不同 `PA_AGENT_HOME/config` 之间 TradingView 用户别名缓存污染为 0。
 
 ## 结构与鲁棒性
 
@@ -30,6 +33,8 @@
 - Prompt 压缩不得删除 Background、八态频谱、Always In、Setup、竞争假设、HTF、Gate 或核心 VPA 证据域。
 - 20 个资产并发排队时无丢失、重复、跨资产身份污染或重复数据库记录。
 - GUI 连续 1000 次取消、切换品种与关闭，不发生 `QThread` 生命周期崩溃。
+- Windows 与 Linux CI 必须使用 `uv.lock` 运行全部 `not live` 测试；CI 不得访问真实行情、Provider
+  或交易 API。wheel smoke 必须从安装位置读取 Prompt，并证明 Headless import 不加载 Qt。
 
 ## 交易与研究
 

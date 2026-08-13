@@ -6,6 +6,8 @@ STATE_DIR=/var/lib/pa-agent
 CONFIG_DIR=/etc/pa-agent
 SERVICE_USER=pa-agent
 CONDA_EXE=/opt/miniconda3/bin/conda
+ENV_PYTHON=/opt/miniconda3/envs/pa-agent/bin/python
+ENV_UV=/opt/miniconda3/envs/pa-agent/bin/uv
 
 if [ "$(id -u)" -ne 0 ]; then
   printf '%s\n' "Run this installer as root." >&2
@@ -27,6 +29,23 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 
 "$CONDA_EXE" env update --file "$APP_DIR/environment-vps.yml"
+LOCK_REQUIREMENTS=$(mktemp)
+trap 'rm -f "$LOCK_REQUIREMENTS"' EXIT
+"$ENV_UV" export \
+  --frozen \
+  --extra vps \
+  --no-dev \
+  --no-emit-project \
+  --output-file "$LOCK_REQUIREMENTS"
+"$ENV_UV" pip install \
+  --python "$ENV_PYTHON" \
+  --require-hashes \
+  --requirements "$LOCK_REQUIREMENTS"
+"$ENV_UV" pip install \
+  --python "$ENV_PYTHON" \
+  --no-deps \
+  --editable "$APP_DIR"
+"$ENV_UV" pip check --python "$ENV_PYTHON"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$STATE_DIR"
 install -d -o root -g "$SERVICE_USER" -m 0750 "$CONFIG_DIR"
 

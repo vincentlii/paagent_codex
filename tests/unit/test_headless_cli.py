@@ -39,6 +39,7 @@ def test_headless_import_does_not_load_qt() -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=30,
     )
 
     assert result.stdout.strip() == "False"
@@ -58,6 +59,7 @@ def test_headless_runtime_import_does_not_load_qt() -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=30,
     )
 
     assert result.stdout.strip() == "False"
@@ -97,6 +99,7 @@ def test_desktop_entry_module_can_be_imported_without_qt() -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=30,
     )
 
     assert result.stdout.strip() == "False"

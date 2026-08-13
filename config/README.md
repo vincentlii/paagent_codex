@@ -18,7 +18,7 @@
 
 3. `config/exception_state.json` 由程序在需要时自动创建，一般无需手动复制。结构可参考 `exception_state.example.json`。
 
-4. 如需自定义 TradingView 品种别名，复制模板：
+4. 如需自定义 TradingView 品种别名，复制模板。Headless 使用 `PA_AGENT_HOME/config`，桌面默认使用项目 `config`：
 
    ```cmd
    copy config\tv_symbol_aliases.example.json config\tv_symbol_aliases.json
@@ -26,7 +26,7 @@
 
 ## `settings.json` 字段说明
 
-配置分为四个顶层组：`provider`、`general`、`prompt`、`validation`。
+配置按职责分为多个顶层组；核心分析设置位于 `provider`、`general`、`prompt`、`validation`，持续监控、模拟盘和通知各有独立分组。
 
 ### provider — AI 提供商
 
@@ -36,7 +36,7 @@
 | `provider.base_url` | string | `"https://api.deepseek.com"` | OpenAI 兼容 API 根地址。DeepSeek：`https://api.deepseek.com`；MiMo：`https://api.xiaomimimo.com/v1`（程序自动处理 `enable_thinking` 与 `reasoning_content` 回放） |
 | `provider.api_key` | string | `""` | API Key 的内存字段；保存时强制清空，不以明文写入 JSON |
 | `provider.api_key_encrypted` | string | `""` | Fernet 密文；由 GUI/`save_settings` 自动写入，本机 `secret.key` 用于解密 |
-| `provider.thinking` | bool | `true` | 是否启用思考/推理类扩展参数（依模型与网关而定）。关闭可 3–5 倍提速但分析质量下降 |
+| `provider.thinking` | bool | `true` | 是否启用思考/推理类扩展参数（依模型与网关而定）；实际耗时与质量影响必须按所用模型实测 |
 | `provider.reasoning_effort` | string | `"high"` | 推理深度：`low` / `medium` / `high` / `max` |
 | `provider.context_window` | int | `2000000` | 用于上下文占用提示的窗口大小（tokens） |
 

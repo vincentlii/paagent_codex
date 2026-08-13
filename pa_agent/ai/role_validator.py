@@ -934,6 +934,7 @@ def validate_joint_decision(
     catalog: dict[str, Any],
     kline_frame: Any,
     skip_next_bar: bool,
+    validator: JsonValidator | None = None,
 ) -> RoleValidationResult:
     """Validate and materialize a bounded joint decision patch.
 
@@ -1118,8 +1119,8 @@ def validate_joint_decision(
                 "reject_current_attempt": "PA基线已完成: 联合裁决拒绝当前入场尝试",
             }[effect]
 
-    validator = JsonValidator(ValidationSettings())
-    stage2_result = validator.validate(
+    stage2_validator = validator or JsonValidator(ValidationSettings())
+    stage2_result = stage2_validator.validate(
         "stage2",
         json.dumps(stage2, ensure_ascii=False),
         kline_frame=kline_frame,

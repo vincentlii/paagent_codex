@@ -2,7 +2,7 @@
 
 - 回应与生成文件优先使用中文；代码、API、错误信息、产品名保留英文。
 - 修改、调试、优化、审查或部署本项目前，必须读取并遵循 `.agents/skills/paagent-change-guardrails/SKILL.md`。
-- 修改 PA / Wyckoff VPA 融合链路或运行时前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0021`。
+- 修改 PA / Wyckoff VPA 融合链路或运行时前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0022`。
 - PA provider 使用 Draft v2：模型输出市场假设、证据引用、交易候选与意图；`pa_provider_contracts.py` 唯一负责物化静态 trace 元数据、Gate、Stage 1 冻结字段、Trader Equation 与 terminal。不得另建平行 materializer，重试保护必须比较 Draft 与 Draft。
 - 每个实现 Phase 必须按 `docs/quality/acceptance.md` 完成测试、临时文件清理和独立提交；机器阈值以 `config/quality_contract.toml` 为准。
 - VPA 必须保持开关化：以 `resolve_vpa_mode(...) == "off"` 为准，VPA prompt、测量块及历史 `vpa_*` / `wyckoff_*` 字段不得进入原 PA 链路。
@@ -28,6 +28,8 @@
 - 自动回放目标周期由 `general.counterfactual_horizon_bars` 配置，但单条记录不得超过 `analysis_bar_count - 1`；分析最少需要 20 根已收盘 K 线。
 - 多资产队列只能接收已冻结 Snapshot；同资产必须 FIFO 单飞、全局并发与 pending 数必须有界。每个任务使用独立 client/orchestrator，任务身份必须绑定 source、venue、symbol、timeframe、snapshot 与 cohort，禁止静默丢弃或复用 GUI 的共享 client。
 - Linux Headless 入口不得导入 Qt；`PROJECT_ROOT/PROMPT_DIR` 为只读资源，配置、日志、records、audit 与 experience 必须写入 `PA_AGENT_HOME`。只有已落盘的成功分析进入去重历史，Provider/持久化失败按同一 task ID 有界退避重试。
+- 同一分析的 Prompt 文本、Provider Contract、decision-tree materialization、validator、retry contract 与审计 digest 必须来自同一个显式 `prompt_dir`；不得重新引入 import-time 路径分裂或以修改全局环境变量掩盖依赖注入。
+- 发布依赖以 `uv.lock` 为准；Windows/Linux CI 必须运行全部 `not live` 测试、wheel 资源 smoke test 与关键静态错误检查。真实 Provider、行情和交易所测试只能显式标记 `live`，不得进入 CI。
 - 业务结果信号不得覆盖 Qt 原生 `QThread.finished()`。运行中的线程必须保持强引用；窗口关闭时若仍有线程，只能协作取消并延迟销毁，禁止 `terminate()` 或对运行线程调用 `deleteLater()`。
 - 冻结快照分析期间必须暂停网络刷新；生产置信度执行策略只对正式 PA 结果应用一次。研究 B 臂的 PA baseline 与 Joint 判断均发生在该策略之前。
 - DeepSeek 原生 OpenAI-compatible 请求使用 `extra_body.thinking.type` 与顶层 `reasoning_effort`；不得混入 Anthropic `output_config.effort` 语义。

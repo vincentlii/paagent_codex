@@ -4,14 +4,15 @@
 
 ## 开发环境
 
-1. Windows 10/11，Python 3.11+
-2. 安装 MetaTrader 5 并登录（用于真实 K 线联调）
+1. Windows 10/11、macOS 或 Linux，Python 3.11+
+2. 仅在需要 MT5 真实 K 线联调时，于 Windows 安装并登录 MetaTrader 5
 3. 克隆仓库后：
 
    ```cmd
    python -m venv .venv
    .venv\Scripts\activate
-   pip install -e ".[dev]"
+   python -m pip install uv==0.11.19
+   uv sync --frozen --extra desktop --extra dev
    copy config\settings.example.json config\settings.json
    ```
 
@@ -20,8 +21,8 @@
 ## 提交代码前
 
 ```cmd
-pytest -m "not e2e"
-ruff check pa_agent tests
+uv run --frozen python -m pytest -m "not live"
+uv run --frozen python -m ruff check pa_agent tools tests --select E9,F63,F7,F82 --no-cache
 ```
 
 （若已安装 `black`，可按团队习惯格式化。）

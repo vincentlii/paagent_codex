@@ -22,8 +22,9 @@ cd /opt/pa-agent
 sudo bash deploy/install_vps.sh
 ```
 
-安装脚本只创建专用用户、Conda 环境、目录和 systemd unit，不会启动服务，也不会
-覆盖已有 `settings.json`、环境文件或密钥。
+安装脚本从已提交的 `uv.lock` 导出 `vps` profile 的精确依赖并安装到 Miniconda 环境，
+随后创建专用用户、目录和 systemd unit。它不会启动服务，也不会覆盖已有
+`settings.json`、环境文件或密钥。
 
 ## 2. 配置三交易所 XAU
 

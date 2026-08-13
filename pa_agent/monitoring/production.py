@@ -49,7 +49,7 @@ class ProductionOrchestratorFactory:
             client=client,
             assembler=assembler,
             router=route_strategy_files,
-            validator=JsonValidator(settings),
+            validator=JsonValidator(settings, prompt_dir=self._prompt_dir),
             pending_writer=self._pending_writer,
             exp_reader=experience_reader,
             settings=settings,

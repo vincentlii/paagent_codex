@@ -215,6 +215,8 @@ _MARKET_FEATURES_AUTHORITY_NOTE = (
 
 def _stage1_output_reminder_for_mode(
     analysis_mode: str = "original",
+    *,
+    decision_tree_path: Path | None = None,
 ) -> str:
     """Return Stage 1 output rules (same for original and optimized).
 
@@ -226,7 +228,7 @@ def _stage1_output_reminder_for_mode(
     return (
         f"{_STAGE1_OUTPUT_REMINDER}\n\n"
         "## Exact Stage 1 provider contract\n"
-        f"{render_provider_draft_contract('stage1')}"
+        f"{render_provider_draft_contract('stage1', decision_tree_path=decision_tree_path)}"
     )
 
 
@@ -234,13 +236,16 @@ def _stage1_tail_reminder() -> str:
     return _STAGE1_TAIL_REMINDER
 
 
-def _stage2_output_contract() -> str:
+def _stage2_output_contract(
+    *,
+    decision_tree_path: Path | None = None,
+) -> str:
     from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
 
     return (
         f"{_STAGE2_OUTPUT_CONTRACT}\n\n"
         "## Exact Stage 2 provider contract\n"
-        f"{render_provider_draft_contract('stage2')}"
+        f"{render_provider_draft_contract('stage2', decision_tree_path=decision_tree_path)}"
     )
 
 
@@ -572,6 +577,15 @@ class PromptAssembler:
         self._vpa_evidence_catalog = vpa_evidence_catalog
         self._analysis_fact_catalog = analysis_fact_catalog
         self._txt_cache: dict[str, str] = {}
+
+    @property
+    def prompt_dir(self) -> Path:
+        """Directory containing the immutable prompt pack for this run."""
+        return Path(self._prompt_dir)
+
+    @property
+    def decision_tree_path(self) -> Path:
+        return self.prompt_dir / "\u4e8c\u5143\u51b3\u7b56.txt"
 
     def _load_full_strategy_library(self) -> bool:
         cfg = self._prompt_settings
@@ -1293,7 +1307,10 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
             _PA_FACTUAL_CLAIM_RULE,
             _PA_EVIDENCE_OUTPUT_RULE,
             render_pa_theory_rule_catalog(),
-            _stage1_output_reminder_for_mode(analysis_mode),
+            _stage1_output_reminder_for_mode(
+                analysis_mode,
+                decision_tree_path=self.decision_tree_path,
+            ),
         ]
         stage1_context = "\n\n---\n\n".join(p for p in stage1_parts if p)
         kline_table = self._render_kline_table(frame)
@@ -1366,7 +1383,10 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
             _PA_FACTUAL_CLAIM_RULE,
             _PA_EVIDENCE_OUTPUT_RULE,
             render_pa_theory_rule_catalog(),
-            _stage1_output_reminder_for_mode(analysis_mode),
+            _stage1_output_reminder_for_mode(
+                analysis_mode,
+                decision_tree_path=self.decision_tree_path,
+            ),
         ]
         stage1_context = "\n\n---\n\n".join(p for p in stage1_parts if p)
         n_bars = len(frame.bars)
@@ -1697,7 +1717,11 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
                     max_chars_per_entry=max_chars,
                 )
             )
-        stage2_parts.append(_stage2_output_contract())
+        stage2_parts.append(
+            _stage2_output_contract(
+                decision_tree_path=self.decision_tree_path,
+            )
+        )
         if enable_next_bar_prediction:
             stage2_parts.append(_NEXT_BAR_PREDICTION_INSTRUCTION)
         else:

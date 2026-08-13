@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 from pa_agent.data.base import (
     DataSource,
@@ -84,9 +85,18 @@ TV_EXCHANGE_PRESETS: tuple[str, ...] = (
 class TradingViewSource(DataSource):
     """Live K-line data from TradingView via tvdatafeed."""
 
-    def __init__(self, username: str = "", password: str = "") -> None:
+    def __init__(
+        self,
+        username: str = "",
+        password: str = "",
+        *,
+        alias_config_dir: Path | None = None,
+    ) -> None:
         self._username = username
         self._password = password
+        self._alias_config_dir = (
+            Path(alias_config_dir) if alias_config_dir is not None else None
+        )
         self._tv = None          # tvDatafeed instance
         self._connected: bool = False
         self._symbol: str = ""
@@ -452,11 +462,20 @@ class TradingViewSource(DataSource):
             exchange = req_exchange or ""
             fetch_symbol = user_symbol
             auto_probe = is_tv_exchange_auto(req_exchange)
-            probe_plan = tv_auto_probe_plan(user_symbol) if auto_probe else []
+            probe_plan = (
+                tv_auto_probe_plan(
+                    user_symbol,
+                    config_dir=self._alias_config_dir,
+                )
+                if auto_probe
+                else []
+            )
             if not auto_probe:
                 try:
                     exchange, fetch_symbol = resolve_tv_fetch_pair(
-                        req_exchange, user_symbol
+                        req_exchange,
+                        user_symbol,
+                        config_dir=self._alias_config_dir,
                     )
                 except TvSymbolNotFoundError as exc:
                     raise DataSourceTransientError(str(exc)) from exc

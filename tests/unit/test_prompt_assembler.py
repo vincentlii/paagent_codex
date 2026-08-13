@@ -373,8 +373,14 @@ def test_pa_prompts_embed_the_runtime_provider_contract_digest(
         for message in assembler.build_stage2(frame, {}, [], [])
     )
 
-    assert provider_draft_schema_digest("stage1") in stage1_prompt
-    assert provider_draft_schema_digest("stage2") in stage2_prompt
+    assert provider_draft_schema_digest(
+        "stage1",
+        decision_tree_path=assembler.decision_tree_path,
+    ) in stage1_prompt
+    assert provider_draft_schema_digest(
+        "stage2",
+        decision_tree_path=assembler.decision_tree_path,
+    ) in stage2_prompt
     assert "PA_PROVIDER_DRAFT_CONTRACT_BEGIN" in stage1_prompt
     assert "PA_PROVIDER_DRAFT_CONTRACT_BEGIN" in stage2_prompt
 

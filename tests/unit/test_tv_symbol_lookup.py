@@ -1,6 +1,8 @@
 """TradingView HK codes and name alias lookup."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from pa_agent.data.market_defaults import (
@@ -59,6 +61,31 @@ def test_resolve_tv_pair_hk_auto() -> None:
     ex, sym, adjusted = resolve_tv_pair("", "1810")
     assert ex == "" and sym == "1810" and adjusted is False
     assert equity_tv_auto_probe_plan("1810") == [("HKEX", "1810")]
+
+
+def test_user_alias_cache_is_scoped_to_explicit_config_directory(tmp_path) -> None:
+    company = "\u6d4b\u8bd5\u516c\u53f8"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / "tv_symbol_aliases.json").write_text(
+        json.dumps({company: ["NYSE", "FIRST"]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (second / "tv_symbol_aliases.json").write_text(
+        json.dumps({company: ["NASDAQ", "SECOND"]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    assert lookup_tv_symbol_by_name(company, config_dir=first) == (
+        "NYSE",
+        "FIRST",
+    )
+    assert lookup_tv_symbol_by_name(company, config_dir=second) == (
+        "NASDAQ",
+        "SECOND",
+    )
 
 
 def test_unknown_name_raises() -> None:

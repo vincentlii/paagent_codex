@@ -43,11 +43,11 @@ STAGE1_GATE_NODE_IDS = (
 STAGE1_FORBIDDEN_GATE_NODES = frozenset({"0.3"})
 
 
-def stage2_provider_node_ids() -> tuple[str, ...]:
+def stage2_provider_node_ids(path: Path | None = None) -> tuple[str, ...]:
     """Return model-owned Stage 2 node IDs from the canonical decision tree."""
     return tuple(
         node_id
-        for node_id in load_decision_tree().get("node_index", {})
+        for node_id in load_decision_tree(path).get("node_index", {})
         if (
             node_id != "10.3"
             and (
@@ -188,9 +188,14 @@ def _parse_all_branch_outcomes(text: str) -> dict[str, dict[str, str]]:
     return outcomes
 
 
-def get_node_branch_outcome(node_id: str, branch: str) -> str:
+def get_node_branch_outcome(
+    node_id: str,
+    branch: str,
+    *,
+    path: Path | None = None,
+) -> str:
     """Return human-readable outcome for the ``是`` or ``否`` arm (branch=yes|no)."""
-    tree = load_decision_tree()
+    tree = load_decision_tree(path)
     node = tree.get("node_index", {}).get(str(node_id), {})
     key = "branch_yes" if branch in ("yes", "是", "y") else "branch_no"
     text = str(node.get(key, "") or "").strip()
@@ -199,7 +204,7 @@ def get_node_branch_outcome(node_id: str, branch: str) -> str:
     return "继续下一步" if key == "branch_yes" else "等待 / 切换逻辑"
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=16)
 def load_decision_tree(path: Path | None = None) -> dict[str, Any]:
     """Parse ``二元决策.txt`` into sections + nodes for the UI tree."""
     txt_path = path or (PROMPT_DIR / _BINARY_DECISION_FILE)
@@ -555,7 +560,11 @@ def validate_gate_result_consistency(stage1: dict[str, Any]) -> list[str]:
     return errors
 
 
-def validate_stage2_trace_consistency(stage2: dict[str, Any]) -> list[str]:
+def validate_stage2_trace_consistency(
+    stage2: dict[str, Any],
+    *,
+    decision_tree_path: Path | None = None,
+) -> list[str]:
     """Return list of consistency error messages (empty if ok)."""
     errors: list[str] = []
     if stage2.get("gate_shortcircuited"):
@@ -595,7 +604,10 @@ def validate_stage2_trace_consistency(stage2: dict[str, Any]) -> list[str]:
             "use the final §11 order node or 10.3"
         )
 
-    allowed_node_ids = {*stage2_provider_node_ids(), "10.3"}
+    allowed_node_ids = {
+        *stage2_provider_node_ids(decision_tree_path),
+        "10.3",
+    }
     seen_node_ids: set[str] = set()
     for i, item in enumerate(trace):
         if isinstance(item, dict):

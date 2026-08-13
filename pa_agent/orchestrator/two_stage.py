@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 if TYPE_CHECKING:
@@ -488,6 +489,7 @@ def _build_empty_record(
     settings: Optional["Settings"],
     *,
     htf_context: dict[str, Any] | None = None,
+    prompt_dir: Path | None = None,
 ) -> AnalysisRecord:
     """Build a partial AnalysisRecord with meta populated from the frame."""
     ts_ms = now_local_ms()
@@ -557,13 +559,26 @@ def _build_empty_record(
         loaded_validation_fingerprint,
     )
 
+    decision_tree_path = (
+        Path(prompt_dir) / "\u4e8c\u5143\u51b3\u7b56.txt"
+        if prompt_dir is not None
+        else None
+    )
     runtime_identity = {
-        "analysis_runtime_fingerprint": analysis_runtime_fingerprint(),
+        "analysis_runtime_fingerprint": analysis_runtime_fingerprint(
+            prompt_dir=prompt_dir,
+        ),
         "loaded_validation_fingerprint": loaded_validation_fingerprint(),
         "validation_policy_version": VALIDATION_POLICY_VERSION,
         "provider_contract_digests": {
-            "stage1": provider_draft_schema_digest("stage1"),
-            "stage2": provider_draft_schema_digest("stage2"),
+            "stage1": provider_draft_schema_digest(
+                "stage1",
+                decision_tree_path=decision_tree_path,
+            ),
+            "stage2": provider_draft_schema_digest(
+                "stage2",
+                decision_tree_path=decision_tree_path,
+            ),
         },
     }
 
@@ -700,6 +715,18 @@ class TwoStageOrchestrator:
         defer_execution_policy: bool = False,
         allow_research_joint: bool = False,
     ) -> None:
+        assembler_tree = getattr(assembler, "decision_tree_path", None)
+        validator_tree = getattr(validator, "decision_tree_path", None)
+        if isinstance(assembler_tree, (str, Path)) and isinstance(
+            validator_tree, (str, Path)
+        ):
+            assembler_tree = Path(assembler_tree).resolve()
+            validator_tree = Path(validator_tree).resolve()
+            if assembler_tree != validator_tree:
+                raise ValueError(
+                    "prompt resource mismatch: assembler and validator must use "
+                    "the same decision-tree snapshot"
+                )
         self._client = client
         self._assembler = assembler
         self._router = router
@@ -723,6 +750,10 @@ class TwoStageOrchestrator:
     def initial_stage2_messages(self) -> list[dict[str, Any]]:
         """Return the clean Stage-2 request before any validation retry turns."""
         return copy.deepcopy(self._initial_stage2_messages)
+
+    def _runtime_prompt_dir(self) -> Path | None:
+        value = getattr(self._assembler, "prompt_dir", None)
+        return Path(value) if isinstance(value, (str, Path)) else None
 
     def _clone_role_client(self, provider: Any) -> tuple[Any, bool]:
         """Clone provider state when the client supports it; mocks stay compatible."""
@@ -830,7 +861,12 @@ class TwoStageOrchestrator:
             )
 
         # ── Step 1: Build partial record ──────────────────────────────────────
-        record = _build_empty_record(frame, self._settings, htf_context=htf_context)
+        record = _build_empty_record(
+            frame,
+            self._settings,
+            htf_context=htf_context,
+            prompt_dir=self._runtime_prompt_dir(),
+        )
         call_arm = self._call_arm
         call_attempts = list(record.call_attempts)
 
@@ -1779,6 +1815,7 @@ class TwoStageOrchestrator:
             frame,
             self._settings,
             htf_context=htf_context,
+            prompt_dir=self._runtime_prompt_dir(),
         )
         if cancel_token.is_set():
             preflight_record = preflight_record.model_copy(
@@ -1890,7 +1927,10 @@ class TwoStageOrchestrator:
                 baseline_settings.prompt
             ),
             router=self._router,
-            validator=JsonValidator(baseline_settings),
+            validator=JsonValidator(
+                baseline_settings,
+                prompt_dir=self._runtime_prompt_dir(),
+            ),
             pending_writer=SuppressedRecordWriter(),
             exp_reader=self._exp_reader,
             settings=baseline_settings,
@@ -2446,6 +2486,11 @@ class TwoStageOrchestrator:
                 catalog=catalog,
                 kline_frame=frame,
                 skip_next_bar=not enable_next_bar,
+                validator=(
+                    self._validator
+                    if isinstance(self._validator, JsonValidator)
+                    else None
+                ),
             ),
         )
         if cancel_token.is_set() or (joint_failure or {}).get(

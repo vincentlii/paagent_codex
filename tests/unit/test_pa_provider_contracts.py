@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 
 import jsonschema
 import pytest
 
 from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
 from pa_agent.ai.json_validator import JsonValidator, Ok, ValidationError
+from pa_agent.ai.prompt_assembler import PromptAssembler
 from pa_agent.ai.pa_provider_contracts import (
     STAGE1_DRAFT_SCHEMA,
     STAGE2_DRAFT_SCHEMA,
@@ -21,6 +23,7 @@ from pa_agent.ai.pa_provider_contracts import (
 from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
 from pa_agent.ai.retry_policy import should_retry
 from pa_agent.config.settings import ValidationSettings
+from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from tests.fixtures.ai_payloads import VALID_STAGE2_NO_ORDER
 from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
 
@@ -62,6 +65,30 @@ def test_provider_contract_renderer_uses_the_exact_runtime_schema() -> None:
     )[0]
     assert json.loads(schema_text) == schema
     assert len(rendered) < len(json.dumps(schema, ensure_ascii=False))
+
+
+def test_orchestrator_rejects_split_brain_prompt_resources(tmp_path: Path) -> None:
+    assembler = PromptAssembler(tmp_path)
+
+    with pytest.raises(ValueError, match="prompt resource mismatch"):
+        TwoStageOrchestrator(
+            client=object(),
+            assembler=assembler,
+            router=object(),
+            validator=JsonValidator(),
+            pending_writer=object(),
+            exp_reader=object(),
+        )
+
+    orchestrator = TwoStageOrchestrator(
+        client=object(),
+        assembler=assembler,
+        router=object(),
+        validator=JsonValidator(prompt_dir=tmp_path),
+        pending_writer=object(),
+        exp_reader=object(),
+    )
+    assert orchestrator._runtime_prompt_dir() == tmp_path
 
 
 def test_deepseek_style_draft_reports_all_contract_errors_at_once() -> None:
@@ -329,6 +356,58 @@ def test_stage1_draft_materializes_legacy_view_without_inventing_hypotheses() ->
         "PA.BAR.K1",
         "PA.BAR.K2",
     ]
+
+
+def test_materializer_uses_the_explicit_decision_tree_snapshot(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (
+        root / "prompt_engineering" / "\u4e8c\u5143\u51b3\u7b56.txt"
+    ).read_text("utf-8")
+    original = "### 1.2 \u662f\u5426\u80fd\u8bc6\u522b\u5e02\u573a\u5468\u671f\uff1f"
+    replacement = "### 1.2 \u81ea\u5b9a\u4e49\u5e02\u573a\u72b6\u6001\u95ee\u9898\uff1f"
+    assert original in source
+    tree_path = tmp_path / "\u4e8c\u5143\u51b3\u7b56.txt"
+    tree_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+    frame = make_frame()
+
+    result = materialize_stage1_draft(
+        _stage1_draft(),
+        catalog=build_analysis_fact_catalog(frame),
+        decision_tree_path=tree_path,
+    )
+
+    node = next(item for item in result["gate_trace"] if item["node_id"] == "1.2")
+    assert node["question"] == (
+        "\u81ea\u5b9a\u4e49\u5e02\u573a\u72b6\u6001\u95ee\u9898\uff1f"
+    )
+
+
+def test_provider_schema_digest_uses_the_explicit_decision_tree_snapshot(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (
+        root / "prompt_engineering" / "\u4e8c\u5143\u51b3\u7b56.txt"
+    ).read_text("utf-8")
+    custom_path = tmp_path / "\u4e8c\u5143\u51b3\u7b56.txt"
+    custom_path.write_text(
+        source.replace("### 11.4", "### 11.5", 1),
+        encoding="utf-8",
+    )
+
+    default_digest = provider_draft_schema_digest("stage2")
+    custom_digest = provider_draft_schema_digest(
+        "stage2",
+        decision_tree_path=custom_path,
+    )
+
+    assert custom_digest != default_digest
+    custom_nodes = schema_for_provider_draft(
+        "stage2",
+        decision_tree_path=custom_path,
+    )["properties"]["decision_trace"]["items"]["properties"]["node_id"]["enum"]
+    assert "11.5" in custom_nodes
+    assert "11.4" not in custom_nodes
 
 
 def test_stage1_materializer_owns_preflight_and_accepts_non_pa_context_nodes() -> None:

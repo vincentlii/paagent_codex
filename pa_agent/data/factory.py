@@ -1,6 +1,7 @@
 """Construct :class:`DataSource` implementations by kind id."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal
 
 from pa_agent.data.base import DataSource
@@ -244,13 +245,18 @@ def default_symbol_for_kind(kind: str | None) -> str:
     return _DEFAULT_SYMBOLS[normalize_data_source_kind(kind)]
 
 
-def create_data_source(kind: str | None, *, settings: Any | None = None) -> DataSource:
+def create_data_source(
+    kind: str | None,
+    *,
+    settings: Any | None = None,
+    config_dir: Path | None = None,
+) -> DataSource:
     """Instantiate a fresh data source for *kind* (not connected)."""
     normalized = normalize_data_source_kind(kind)
     if normalized == "tradingview":
         from pa_agent.data.tradingview import TradingViewSource
 
-        return TradingViewSource()
+        return TradingViewSource(alias_config_dir=config_dir)
     if normalized == "binance_usdm":
         from pa_agent.data.binance_usdm import BinanceUsdmSource
 

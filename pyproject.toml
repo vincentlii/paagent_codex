@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,30 +8,69 @@ version = "0.1.0"
 description = "Price Action AI assistant: MT5 kline data, two-stage LLM analysis (AGPL-3.0)"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "AGPL-3.0-or-later" }
+license = "AGPL-3.0-or-later"
 authors = [{ name = "PA Agent Team" }]
 dependencies = [
-    "numpy>=1.26",
-    "pandas>=2.2",
     "openai>=1.40",
+    "httpx>=0.27",
     "tiktoken>=0.7",
     "jsonschema>=4.22",
     "pydantic>=2.7",
-    "MetaTrader5>=5.0; sys_platform == 'win32'",
-    "tvdatafeed @ git+https://github.com/rongardF/tvdatafeed.git",
     "cryptography>=42",
-    "pywin32>=306; sys_platform == 'win32'",
-    "akshare>=1.14",
-    "baostock>=0.8",
-    "curl_cffi>=0.13",
-    "tushare>=1.4",
-    "cursor-sdk>=0.1.0",
 ]
 
 [project.optional-dependencies]
 gui = [
     "PyQt6>=6.6",
     "pyqtgraph>=0.13",
+    "numpy>=1.26",
+]
+tradingview = [
+    "pandas>=2.2",
+    "requests>=2.32",
+    "tvdatafeed @ git+https://github.com/rongardF/tvdatafeed.git@e6f6aaa7de439ac6e454d9b26d2760ded8dc4923",
+]
+native-exchanges = [
+    "curl_cffi>=0.13",
+]
+ashare = [
+    "pandas>=2.2",
+    "requests>=2.32",
+    "curl_cffi>=0.13",
+    "akshare>=1.14",
+    "baostock>=0.8",
+    "tushare>=1.4",
+]
+yfinance = [
+    "pandas>=2.2",
+    "yfinance>=0.2.65",
+]
+cursor = [
+    "cursor-sdk>=0.1.0",
+]
+notifications = [
+    "requests>=2.32",
+]
+mt5 = [
+    "MetaTrader5>=5.0; sys_platform == 'win32'",
+]
+vps = [
+    "curl_cffi>=0.13",
+]
+desktop = [
+    "PyQt6>=6.6",
+    "pyqtgraph>=0.13",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "requests>=2.32",
+    "tvdatafeed @ git+https://github.com/rongardF/tvdatafeed.git@e6f6aaa7de439ac6e454d9b26d2760ded8dc4923",
+    "curl_cffi>=0.13",
+    "akshare>=1.14",
+    "baostock>=0.8",
+    "tushare>=1.4",
+    "yfinance>=0.2.65",
+    "cursor-sdk>=0.1.0",
+    "MetaTrader5>=5.0; sys_platform == 'win32'",
 ]
 dev = [
     "pytest>=8",
@@ -39,6 +78,7 @@ dev = [
     "hypothesis>=6",
     "ruff>=0.5",
     "black>=24.4",
+    "build>=1.2",
 ]
 
 [project.scripts]
@@ -49,7 +89,10 @@ pa-agent-aabb = "pa_agent.experiments.cli:single_main"
 pa-agent-aabb-monitor = "pa_agent.experiments.cli:continuous_main"
 
 [tool.setuptools.packages.find]
-include = ["pa_agent*"]
+include = ["pa_agent*", "prompt_engineering*"]
+
+[tool.setuptools.package-data]
+prompt_engineering = ["**/*.txt", "**/*.md"]
 
 [tool.black]
 line-length = 100

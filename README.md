@@ -27,7 +27,7 @@
 
 | 项目     | 要求                                                                    |
 | -------- | ----------------------------------------------------------------------- |
-| 操作系统 | Windows 10 / 11、macOS 12+；Linux VPS 使用 TradingView Headless         |
+| 操作系统 | Windows 10 / 11、macOS 12+；Linux VPS 使用无 GUI 的 Headless 服务       |
 | Python   | 3.11+                                                                    |
 | 数据源   | MT5 / TradingView / yfinance / AkShare **至少配置一种**                  |
 | 网络     | 可访问所配置的 AI API（如 DeepSeek、PackyAPI 等）                        |
@@ -39,7 +39,7 @@
 桌面图形界面：
 
 ```cmd
-pip install -e ".[gui]"
+pip install -e ".[desktop]"
 python -m pa_agent.main
 ```
 
@@ -50,7 +50,7 @@ python -m pa_agent.main
 Linux VPS 不安装 Qt：
 
 ```bash
-pip install -e .
+pip install -e ".[vps]"
 pa-agent-headless --check
 pa-agent-headless --probe-data
 pa-agent-headless
@@ -58,9 +58,9 @@ pa-agent-headless
 
 Headless 会为每个配置资产独立拉取已收盘 K 线并自动调用 AI；同一快照成功后不会重复分析，失败只按有界退避重试。`--probe-data` 只验证行情、身份和合约规格，不调用模型。当前原生 paper 市场包括 Binance、OKX、Bitget 的 XAU 永续；完整安装、配置与 systemd 部署见 [`docs/linux_headless_deployment.md`](docs/linux_headless_deployment.md)。
 
-核心安装包含数据、AI、校验和审计依赖；`[gui]` 才额外安装 PyQt6 与 pyqtgraph。
+核心安装只包含分析、校验与审计依赖；`[desktop]` 提供完整桌面与数据源，`[vps]` 提供三家原生交易所 Headless 依赖，`[tradingview]` 单独提供 TradingView 数据源。Linux 若改用 TradingView，应安装 `.[vps,tradingview]`。
 
-> 若需运行包含 GUI 的完整测试（pytest）或代码格式化（ruff/black），额外安装：`pip install -e ".[gui,dev]"`。
+> 若需运行包含 GUI 的完整测试，使用：`pip install -e ".[desktop,dev]"`。发布与 CI 使用仓库内 `uv.lock`。
 
 ---
 
