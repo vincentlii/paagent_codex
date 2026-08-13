@@ -114,6 +114,14 @@ def test_analysis_record_persists_full_htf_bars_for_exact_replay() -> None:
     assert record.schema_version == 5
     assert len(record.htf_kline_data) == 20
     assert record.htf_kline_data[0]["seq"] == 1
+    assert len(record.role_runtime["loaded_validation_fingerprint"]) == 64
+    assert record.role_runtime["validation_policy_version"] == (
+        "structured-hard-prose-warning-v1"
+    )
+    assert set(record.role_runtime["provider_contract_digests"]) == {
+        "stage1",
+        "stage2",
+    }
 
 
 def test_higher_timeframe_uses_frozen_identity_when_provided() -> None:

@@ -223,6 +223,47 @@ def _sequence_chronology(
     return "overlap"
 
 
+_NO_LATER_CLOSED_BAR_PATTERNS = (
+    re.compile(
+        r"(?:尚无|没有|无)(?:任何)?(?:下一根|后续|更晚)[^。；;]*?"
+        r"(?:已收盘|收盘)[^。；;]*?(?:K线|棒)"
+    ),
+    re.compile(r"\bno\s+(?:later|subsequent|next)\s+(?:closed\s+)?bars?\b", re.I),
+)
+
+
+def _validate_vpa_closed_bar_chronology_narrative(
+    text: object,
+    *,
+    path: str,
+    evidence_items: list[dict[str, Any]],
+) -> list[str]:
+    """Reject only explicit false claims that a historical bar has no later close."""
+    value = str(text or "")
+    if not value:
+        return []
+    by_bar = {
+        str(item.get("bar_range")): item
+        for item in evidence_items
+        if re.fullmatch(r"K\d+", str(item.get("bar_range") or ""))
+    }
+    errors: list[str] = []
+    for clause in re.split(r"[。；;.!?！？]", value):
+        if not any(pattern.search(clause) for pattern in _NO_LATER_CLOSED_BAR_PATTERNS):
+            continue
+        for bar_label in dict.fromkeys(re.findall(r"K\d+", clause, re.I)):
+            canonical_label = bar_label.upper()
+            item = by_bar.get(canonical_label)
+            facts = item.get("facts") if isinstance(item, dict) else None
+            count = facts.get("later_closed_bar_count") if isinstance(facts, dict) else None
+            if isinstance(count, int) and count > 0:
+                errors.append(
+                    f"{path}: {canonical_label} already has {count} later closed bars; "
+                    "interpret their acceptance/rejection instead of claiming no follow-through data"
+                )
+    return errors
+
+
 def _drop_overlapping_vpa_sequence_claims(
     report_obj: dict[str, Any],
     evidence_items: dict[str, dict[str, Any]],
@@ -343,7 +384,10 @@ def _validate_vpa_report_grounding(
             evidence_items=cited,
             path=path,
         )
-        errors.extend(comparator_errors)
+        # Comparator wording is inferred from free prose. Keep exact findings
+        # auditable, but do not let phrase scope or negation parsing disable an
+        # otherwise valid VPA report.
+        warnings.extend(comparator_errors)
         warnings.extend(comparator_warnings)
         if require_comparator_reconciliation:
             warnings.extend(
@@ -354,6 +398,13 @@ def _validate_vpa_report_grounding(
                     path=path,
                 )
             )
+        errors.extend(
+            _validate_vpa_closed_bar_chronology_narrative(
+                text,
+                path=path,
+                evidence_items=cited,
+            )
+        )
         if check_k_references:
             errors.extend(
                 validate_vpa_k_references(
@@ -480,7 +531,7 @@ def _validate_joint_narratives(
         evidence_items=evidence_items,
         path="joint_arbitration.reason",
     )
-    errors.extend(comparator_errors)
+    warnings.extend(comparator_errors)
     warnings.extend(comparator_warnings)
     for field in (
         "trade_confidence_reasoning",
@@ -499,7 +550,7 @@ def _validate_joint_narratives(
                         path=path,
                     )
                 )
-                errors.extend(comparator_errors)
+                warnings.extend(comparator_errors)
                 warnings.extend(comparator_warnings)
     for index, watch_point in enumerate(patch.get("watch_points") or []):
         validate_common(

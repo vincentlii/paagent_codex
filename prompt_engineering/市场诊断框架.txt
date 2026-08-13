@@ -166,4 +166,4 @@ Gate 只判断市场框架是否足以进入阶段二，不判断最终是否交
 - 只有周期无法识别，或确认为 `extreme_tr`，才使用 `wait/unknown`。
 - VPA、HTF 冲突、低置信度、弱信号和保守模式都不是 Stage 1 的第二套 Gate。
 
-最终输出必须让 `cycle_position`、`alternative_cycle_position`、`direction`、`bar_analysis`、`pa_evidence`、`gate_trace` 与 `gate_result` 语义一致。程序验证事实、引用与越权；市场解释仍由模型负责。
+Provider Draft 中必须让主/替代假设的 `cycle_position` 与 `direction`、`bar_analysis`、`pa_evidence` 和 `gate_trace` 语义一致。顶层周期、方向、Setup 摘要与 `gate_result` 由程序从已声明假设和 Gate 路径物化；程序只验证事实、引用与越权，市场解释仍由模型负责。

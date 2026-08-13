@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import marshal
 from pathlib import Path
+
+VALIDATION_POLICY_VERSION = "structured-hard-prose-warning-v1"
 
 
 def analysis_runtime_fingerprint(
@@ -43,5 +46,36 @@ def analysis_runtime_fingerprint(
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def loaded_validation_fingerprint() -> str:
+    """Hash the validation code objects actually loaded by this process."""
+    from pa_agent.ai.coherence_checks import (
+        collect_stage1_quality_warnings,
+        validate_stage1_coherence,
+        validate_stage2_coherence,
+    )
+    from pa_agent.ai.json_validator import JsonValidator
+    from pa_agent.ai.role_validator import validate_vpa_evidence
+    from pa_agent.orchestrator.validation_retry import validate_with_retry
+
+    callables = (
+        JsonValidator.validate,
+        validate_stage1_coherence,
+        collect_stage1_quality_warnings,
+        validate_stage2_coherence,
+        validate_vpa_evidence,
+        validate_with_retry,
+    )
+    digest = hashlib.sha256()
+    digest.update(VALIDATION_POLICY_VERSION.encode("ascii"))
+    for function in callables:
+        digest.update(function.__module__.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(function.__qualname__.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(marshal.dumps(function.__code__))
         digest.update(b"\0")
     return digest.hexdigest()

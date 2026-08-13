@@ -35,11 +35,11 @@
 【两阶段流程】
 
 **阶段一：读懂市场**
-- 输出 cycle_position、direction、detected_patterns、gate_result 等。
+- 在 Provider Draft 中输出主/替代市场假设、detected_patterns 与 Gate 语义答案；程序物化顶层 cycle_position、direction 和 gate_result。
 - 不给出具体三价下单方案。
 
 **阶段二：单次决策**
-- 依据阶段一 + 路由加载的策略文件，输出 decision / decision_trace / terminal。
+- 依据阶段一 + 路由加载的策略文件，输出 decision、decision_intent 与 decision_trace；程序物化 Trader Equation 和 terminal。
 - **不**假设有历史成交经验库；仅依据当前 K 线与诊断 JSON。
 - 分析落盘由程序完成，无需在回复中提及「记录经验」。
 

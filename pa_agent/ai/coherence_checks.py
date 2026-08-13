@@ -85,14 +85,14 @@ _BEAR_COUNT_PATTERNS = (
     ),
     re.compile(r"(?<![A-Za-z0-9\u7b2c])(\d+)\s*(?:\u6839)?(?:\u9634\u7ebf|\u7a7a\u5934(?:K\u7ebf|\u68d2)?)"),
 )
-_CONTINUOUS_BULL_RE = re.compile(
-    r"continuous(?:ly)?\s+bull(?:ish)?|consecutive\s+bull(?:ish)?|"
-    r"\u8fde\u7eed.{0,8}(?:\u591a\u5934|\u4e0a\u6da8|\u9633\u7ebf)",
+_EXPLICIT_CONTINUOUS_BULL_BARS_RE = re.compile(
+    r"consecutive\s+(?:bull(?:ish)?)\s+(?:bars?|candles?)|"
+    r"\u8fde\u7eed\s*(?:\d+\s*\u6839\s*)?(?:\u9633\u7ebf|\u591a\u5934K\u7ebf)",
     re.IGNORECASE,
 )
-_CONTINUOUS_BEAR_RE = re.compile(
-    r"continuous(?:ly)?\s+bear(?:ish)?|consecutive\s+bear(?:ish)?|"
-    r"\u8fde\u7eed.{0,8}(?:\u7a7a\u5934|\u4e0b\u8dcc|\u9634\u7ebf)",
+_EXPLICIT_CONTINUOUS_BEAR_BARS_RE = re.compile(
+    r"consecutive\s+(?:bear(?:ish)?)\s+(?:bars?|candles?)|"
+    r"\u8fde\u7eed\s*(?:\d+\s*\u6839\s*)?(?:\u9634\u7ebf|\u7a7a\u5934K\u7ebf)",
     re.IGNORECASE,
 )
 _EXACT_BAR_COUNT_RE = re.compile(
@@ -200,6 +200,18 @@ _BAR_PRICE_FIELD_NAMES = {
     "收盘价": "close",
 }
 
+_EXPLICIT_WINDOW_PRICE_RANGE_RE = re.compile(
+    r"K(?P<left>\d+)\s*[-\u2013\u2014~\u81f3\u5230]\s*K(?P<right>\d+)"
+    r"(?P<context>[^\u3002\uff1b;.!?\uff01\uff1f\n]{0,120})",
+    re.I,
+)
+_PRICE_REGION_RE = re.compile(
+    r"(?P<first>-?\d+(?:\.\d+)?)\s*[-\u2013\u2014~\u81f3\u5230]\s*"
+    r"(?P<second>-?\d+(?:\.\d+)?)\s*"
+    r"(?:\u533a\u57df|\u533a\u95f4|\u8303\u56f4|range)",
+    re.I,
+)
+
 
 def validate_stage1_coherence(
     stage1: dict[str, Any],
@@ -258,6 +270,7 @@ def validate_stage1_coherence(
                 errors.append(f"bar_by_bar_summary[{index}].bar 不在当前K线窗口")
     errors.extend(_validate_stage1_bar_geometry(stage1, kline_frame))
     errors.extend(_validate_explicit_bar_price_claims(stage1, kline_frame))
+    errors.extend(_validate_explicit_window_price_range_claims(stage1, kline_frame))
     errors.extend(_validate_stage1_structured_facts(stage1, kline_frame))
     return errors
 
@@ -279,6 +292,7 @@ def collect_stage1_quality_warnings(
             )
     warnings.extend(_collect_stage1_narrative_warnings(stage1, kline_frame))
     warnings.extend(_validate_stage1_narrative_geometry(stage1, kline_frame))
+    warnings.extend(_validate_explicit_direction_runs(stage1, kline_frame))
     return warnings
 
 
@@ -309,6 +323,7 @@ def validate_stage2_coherence(
             )
     errors.extend(_validate_stage2_bar_references(stage2, kline_frame))
     errors.extend(_validate_explicit_bar_price_claims(stage2, kline_frame))
+    errors.extend(_validate_explicit_window_price_range_claims(stage2, kline_frame))
     return errors
 
 
@@ -452,6 +467,112 @@ def _validate_stage1_bar_geometry(stage1: dict[str, Any], frame: Any) -> list[st
             errors.append(f"{path}=trend_bull conflicts with program candle direction")
         elif label == "trend_bear" and feature.candle_direction != "bearish":
             errors.append(f"{path}=trend_bear conflicts with program candle direction")
+    return errors
+
+
+def _validate_explicit_window_price_range_claims(value: Any, frame: Any) -> list[str]:
+    """Check only an explicit K-window plus numeric price-range assertion."""
+    if frame is None:
+        return []
+    bars = {
+        int(getattr(bar, "seq", 0)): bar
+        for bar in getattr(frame, "bars", ()) or ()
+        if int(getattr(bar, "seq", 0) or 0) > 0
+    }
+    errors: list[str] = []
+    for path, text in _narrative_strings(value):
+        for window_match in _EXPLICIT_WINDOW_PRICE_RANGE_RE.finditer(text):
+            region_match = _PRICE_REGION_RE.search(window_match.group("context"))
+            if region_match is None:
+                continue
+            left = int(window_match.group("left"))
+            right = int(window_match.group("right"))
+            selected = [
+                bars.get(seq)
+                for seq in range(min(left, right), max(left, right) + 1)
+            ]
+            if not selected or any(bar is None for bar in selected):
+                continue
+            first_raw = region_match.group("first")
+            second_raw = region_match.group("second")
+            claimed_low, claimed_high = sorted((float(first_raw), float(second_raw)))
+            actual_low = min(float(bar.low) for bar in selected)
+            actual_high = max(float(bar.high) for bar in selected)
+            low_decimals = len(first_raw.partition(".")[2])
+            high_decimals = len(second_raw.partition(".")[2])
+            low_tolerance = 0.5 * (10 ** (-low_decimals)) + 1e-12
+            high_tolerance = 0.5 * (10 ** (-high_decimals)) + 1e-12
+            if (
+                abs(claimed_low - actual_low) > low_tolerance
+                or abs(claimed_high - actual_high) > high_tolerance
+            ):
+                errors.append(
+                    f"{path} claims K{left}-K{right} price range "
+                    f"{claimed_low:.12g}-{claimed_high:.12g}, but frozen window is "
+                    f"{actual_low:.12g}-{actual_high:.12g}"
+                )
+    return errors
+
+
+def _validate_explicit_direction_runs(value: Any, frame: Any) -> list[str]:
+    """Check locally bound all-bull/all-bear candle claims against OHLC."""
+    if frame is None:
+        return []
+    bars = {
+        int(getattr(bar, "seq", 0)): bar
+        for bar in getattr(frame, "bars", ()) or ()
+        if int(getattr(bar, "seq", 0) or 0) > 0
+    }
+    errors: list[str] = []
+    seen: set[tuple[str, int, int, str]] = set()
+    for path, text in _narrative_strings(value):
+        clauses = [
+            clause.strip()
+            for clause in _FACT_CLAUSE_SPLIT_RE.split(text)
+            if clause.strip()
+        ] or [text]
+        for clause in clauses:
+            range_matches = list(K_RANGE_RE.finditer(clause))
+            for index, match in enumerate(range_matches):
+                # A candle-run assertion belongs only to the immediately
+                # preceding range. Price-path language such as "continuous
+                # decline" is contextual PA interpretation, not a claim that
+                # every candle has the same direction.
+                scope_end = (
+                    range_matches[index + 1].start()
+                    if index + 1 < len(range_matches)
+                    else len(clause)
+                )
+                local_scope = clause[match.end() : min(scope_end, match.end() + 32)]
+                expected = (
+                    "bullish"
+                    if _EXPLICIT_CONTINUOUS_BULL_BARS_RE.search(local_scope)
+                    else "bearish"
+                    if _EXPLICIT_CONTINUOUS_BEAR_BARS_RE.search(local_scope)
+                    else None
+                )
+                if expected is None:
+                    continue
+                left, right = int(match.group(1)), int(match.group(2))
+                low, high = min(left, right), max(left, right)
+                key = (path, low, high, expected)
+                if key in seen:
+                    continue
+                seen.add(key)
+                selected = [bars.get(seq) for seq in range(low, high + 1)]
+                if not selected or any(bar is None for bar in selected):
+                    continue
+                valid = all(
+                    float(bar.close) > float(bar.open)
+                    if expected == "bullish"
+                    else float(bar.close) < float(bar.open)
+                    for bar in selected
+                )
+                if not valid:
+                    errors.append(
+                        f"{path} continuous {expected} claim for K{left}-K{right} "
+                        "conflicts with frozen candle directions"
+                    )
     return errors
 
 
@@ -1019,12 +1140,12 @@ def _validate_count_restatements(
                     "an exact bar count"
                 )
                 break
-    if _CONTINUOUS_BULL_RE.search(text):
+    if _EXPLICIT_CONTINUOUS_BULL_BARS_RE.search(text):
         errors.append(
             f"{path} continuous bullish claim must cite PA.WINDOW instead of "
             "restating an exact run"
         )
-    if _CONTINUOUS_BEAR_RE.search(text):
+    if _EXPLICIT_CONTINUOUS_BEAR_BARS_RE.search(text):
         errors.append(
             f"{path} continuous bearish claim must cite PA.WINDOW instead of "
             "restating an exact run"

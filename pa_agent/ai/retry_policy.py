@@ -1,6 +1,7 @@
 """Validation retry policy: which errors may retry and immutable field guards."""
 from __future__ import annotations
 
+import copy
 from typing import Any, Literal
 
 StageName = Literal["stage1", "stage2"]
@@ -79,8 +80,15 @@ def should_retry(
     *,
     attempt: int,
     settings: Any,
+    error_code: str = "",
 ) -> bool:
     """Whether another API call is warranted."""
+    if error_code == "provider_draft_contract":
+        return (
+            bool(invalid_fields or missing_fields)
+            and bool(getattr(settings, "retry_enabled", True))
+            and attempt < 1
+        )
     if category == "e":
         return False
     if attempt >= max_retries_for_category(category, settings):
@@ -115,6 +123,198 @@ def should_retry(
         # Default: one semantic retry if enabled
         return attempt < int(getattr(settings, "retry_max_semantic", 1) or 1)
     return False
+
+
+def contract_editable_pointers(issues: list[dict[str, Any]]) -> set[str]:
+    """Return the exact JSON Pointer permissions granted by contract issues."""
+    return {
+        str(issue.get("pointer", ""))
+        for issue in issues
+        if isinstance(issue, dict) and "pointer" in issue
+    }
+
+
+def detect_unallowed_draft_changes(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    editable_pointers: set[str],
+) -> list[str]:
+    """Reject every repair diff not covered by a reported contract issue."""
+    changes = _json_differences(before, after)
+    violations: list[str] = []
+    for pointer, old, new in changes:
+        if any(
+            pointer == allowed
+            or (allowed and pointer.startswith(allowed + "/"))
+            for allowed in editable_pointers
+        ):
+            continue
+        path = _pointer_to_path(pointer)
+        violations.append(f"{path}: {old!r} -> {new!r}")
+    return violations
+
+
+def project_allowed_draft_changes(
+    before: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    editable_pointers: set[str],
+) -> dict[str, Any]:
+    """Apply only explicitly authorized Provider Draft edits to the prior draft."""
+    if "" in editable_pointers:
+        return copy.deepcopy(candidate)
+    projected = copy.deepcopy(before)
+    for pointer in sorted(editable_pointers, key=lambda value: value.count("/")):
+        candidate_pointer = _semantic_candidate_pointer(
+            before,
+            candidate,
+            pointer,
+        )
+        if candidate_pointer is None:
+            continue
+        exists, value = _pointer_value(candidate, candidate_pointer)
+        if exists:
+            _assign_pointer(projected, pointer, copy.deepcopy(value))
+        else:
+            _remove_pointer(projected, pointer)
+    return projected
+
+
+def _semantic_candidate_pointer(
+    before: dict[str, Any],
+    candidate: dict[str, Any],
+    pointer: str,
+) -> str | None:
+    """Resolve trace edits by node identity when a repair reorders the array."""
+    parts = _pointer_parts(pointer)
+    if len(parts) < 3 or parts[0] not in {"gate_trace", "decision_trace"}:
+        return pointer
+    if not parts[1].isdigit():
+        return pointer
+    before_trace = before.get(parts[0])
+    candidate_trace = candidate.get(parts[0])
+    before_index = int(parts[1])
+    if (
+        not isinstance(before_trace, list)
+        or not isinstance(candidate_trace, list)
+        or not 0 <= before_index < len(before_trace)
+        or not isinstance(before_trace[before_index], dict)
+    ):
+        return pointer
+    node_id = str(before_trace[before_index].get("node_id") or "")
+    matches = [
+        index
+        for index, item in enumerate(candidate_trace)
+        if isinstance(item, dict) and str(item.get("node_id") or "") == node_id
+    ]
+    if not node_id or len(matches) != 1:
+        return None
+    parts[1] = str(matches[0])
+    return "/" + "/".join(_pointer_escape(part) for part in parts)
+
+
+def _pointer_parts(pointer: str) -> list[str]:
+    if not pointer:
+        return []
+    return [
+        part.replace("~1", "/").replace("~0", "~")
+        for part in pointer.lstrip("/").split("/")
+    ]
+
+
+def _pointer_value(obj: Any, pointer: str) -> tuple[bool, Any]:
+    value = obj
+    for part in _pointer_parts(pointer):
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return False, None
+    return True, value
+
+
+def _assign_pointer(obj: Any, pointer: str, value: Any) -> None:
+    parts = _pointer_parts(pointer)
+    if not parts:
+        return
+    parent = obj
+    for part in parts[:-1]:
+        parent = parent[int(part)] if isinstance(parent, list) else parent[part]
+    leaf = parts[-1]
+    if isinstance(parent, list):
+        index = int(leaf)
+        if index == len(parent):
+            parent.append(value)
+        else:
+            parent[index] = value
+    else:
+        parent[leaf] = value
+
+
+def _remove_pointer(obj: Any, pointer: str) -> None:
+    parts = _pointer_parts(pointer)
+    if not parts:
+        return
+    parent = obj
+    for part in parts[:-1]:
+        if isinstance(parent, list) and part.isdigit() and int(part) < len(parent):
+            parent = parent[int(part)]
+        elif isinstance(parent, dict) and part in parent:
+            parent = parent[part]
+        else:
+            return
+    leaf = parts[-1]
+    if isinstance(parent, list) and leaf.isdigit() and int(leaf) < len(parent):
+        parent.pop(int(leaf))
+    elif isinstance(parent, dict):
+        parent.pop(leaf, None)
+
+
+def _json_differences(
+    before: Any,
+    after: Any,
+    pointer: str = "",
+) -> list[tuple[str, Any, Any]]:
+    if isinstance(before, dict) and isinstance(after, dict):
+        changes: list[tuple[str, Any, Any]] = []
+        for key in sorted(set(before) | set(after)):
+            child = pointer + "/" + _pointer_escape(key)
+            if key not in before:
+                changes.append((child, "<missing>", after[key]))
+            elif key not in after:
+                changes.append((child, before[key], "<missing>"))
+            else:
+                changes.extend(_json_differences(before[key], after[key], child))
+        return changes
+    if isinstance(before, list) and isinstance(after, list):
+        if len(before) != len(after):
+            return [(pointer, before, after)]
+        changes = []
+        for index, (old, new) in enumerate(zip(before, after, strict=True)):
+            changes.extend(_json_differences(old, new, f"{pointer}/{index}"))
+        return changes
+    if type(before) is not type(after) or before != after:
+        return [(pointer, before, after)]
+    return []
+
+
+def _pointer_escape(value: Any) -> str:
+    return str(value).replace("~", "~0").replace("/", "~1")
+
+
+def _pointer_to_path(pointer: str) -> str:
+    if not pointer:
+        return "draft"
+    parts = [part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")]
+    out = ""
+    for part in parts:
+        if part.isdigit():
+            out += f"[{part}]"
+        else:
+            out += ("." if out else "") + part
+    return out
 
 
 def _starts_any(field: str, prefixes: tuple[str, ...]) -> bool:

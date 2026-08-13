@@ -203,6 +203,11 @@ insufficient_data 或没有 PA Entry Attempt。中文 `K线` /
 `entry_timing_relation` 收敛为 `insufficient_data`，不触发 LLM 重试；VPA 仍可输出背景量价信息、
 竞争解释和下一根已收盘 K 线的证据观察。这不是 VPA Gate，也不降低 PA 交易频率。
 
+VPA catalog 2.2 为每根已收盘棒提供 `later_closed_bar_count/range`，并为相对量 ratio 提供相对
+`1.0` 的有符号 `deviation_pct`。前者用于区分“尚无后续数据”和“已有数据但尚未确认”；后者用于
+区分比较方向与实际幅度。程序不根据偏离百分比定义放量、缩量、Absorption 或 Exhaustion，模型必须
+结合 Background、Location、Effort/Result、Leg/Wave Comparison 与 Follow-through 解释。
+
 `decision_effect` 只允许 `keep_brooks_baseline`、`require_confirmation`、`prefer_retest`、`lower_confidence`、`reject_current_attempt`。数据可用且 Stage 2 实际执行时，必须引用至少一项 Stage 1 已验证 evidence；任何非 baseline effect 还必须引用至少一项含真实相对量比较器的 evidence。无证据时只能明确 `neutral` 或 `insufficient_data`。
 
 VPA 不得：
@@ -228,7 +233,8 @@ Validator 只判断事实与权限，不判断某个 Spring、Absorption 或 Exh
 已验证 PA 分析失败。
 
 唯一新增的自由文本 hard check 是可复算关系的明确反述：相邻窗口净推进同向/反向、带明确
-K 范围的窗口方向标签，以及 HTF 已引用 OHLC 点位相对当前 K1.close 的上/下方。它们不判断
+K 范围的窗口方向标签、明确绑定 K 窗口的数值 high/low 区间、声称历史棒不存在任何已收盘后续棒，
+以及 HTF 已引用 OHLC 点位相对当前 K1.close 的上/下方。它们不判断
 Absorption、Exhaustion、Spring、Test、支撑阻力或磁力位是否专业成立。
 
 显式 `sequence_claim` 的倒序是 hard error；两个 evidence 窗口重叠时，该关系无法证明先后，
@@ -336,7 +342,7 @@ Gate 即使通过也固定返回 `ready_for_soft=false`。正式启用前还必�
 ```powershell
 python -B -m pytest tests/unit -q
 python -B -m pytest tests/property -q
-python -B -m pytest tests/integration -q
+python -B -m pytest tests/integration -q  # 默认排除 live；联网数据源冒烟测试使用 -m live
 python -B -m pytest tests/e2e -q
 python -B -m compileall -q pa_agent tools
 git diff --check

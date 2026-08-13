@@ -11,6 +11,16 @@ from pa_agent.monitoring.task_factory import (
     analysis_runtime_fingerprint,
     create_frozen_analysis_task,
 )
+from pa_agent.quality.runtime_fingerprint import loaded_validation_fingerprint
+
+
+def test_loaded_validation_fingerprint_is_stable_and_content_addressed() -> None:
+    first = loaded_validation_fingerprint()
+    second = loaded_validation_fingerprint()
+
+    assert first == second
+    assert len(first) == 64
+    assert set(first) <= set("0123456789abcdef")
 
 
 def _frame(*, close: float = 100.0, snapshot_ms: int = 10_000) -> KlineFrame:

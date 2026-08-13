@@ -43,6 +43,21 @@ STAGE1_GATE_NODE_IDS = (
 STAGE1_FORBIDDEN_GATE_NODES = frozenset({"0.3"})
 
 
+def stage2_provider_node_ids() -> tuple[str, ...]:
+    """Return model-owned Stage 2 node IDs from the canonical decision tree."""
+    return tuple(
+        node_id
+        for node_id in load_decision_tree().get("node_index", {})
+        if (
+            node_id != "10.3"
+            and (
+                node_id == "14"
+                or node_id.split(".", 1)[0] in _STAGE2_MODEL_SECTION_IDS
+            )
+        )
+    )
+
+
 def _gate_trace_sort_key(node_id: str) -> tuple[int, int, str]:
     """Numeric sort key for gate_trace node_id values used by the ordering validator.
 
@@ -580,11 +595,7 @@ def validate_stage2_trace_consistency(stage2: dict[str, Any]) -> list[str]:
             "use the final §11 order node or 10.3"
         )
 
-    allowed_node_ids = {
-        node_id
-        for node_id in load_decision_tree().get("node_index", {})
-        if node_id == "14" or node_id.split(".", 1)[0] in _STAGE2_MODEL_SECTION_IDS
-    }
+    allowed_node_ids = {*stage2_provider_node_ids(), "10.3"}
     seen_node_ids: set[str] = set()
     for i, item in enumerate(trace):
         if isinstance(item, dict):

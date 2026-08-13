@@ -7,10 +7,10 @@ from __future__ import annotations
 import copy
 from unittest.mock import MagicMock
 
-from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.router import route_strategy_files
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
+from tests.fixtures.validators import schema_test_validator
 
 from .conftest import VALID_STAGE1, VALID_STAGE2, make_reply
 
@@ -46,6 +46,7 @@ def _provider_drafts() -> tuple[dict, dict]:
     stage2.update({"protocol_version": "pa_draft_v2", "decision_intent": "trade"})
     stage2.pop("terminal")
     stage2.pop("next_cycle_prediction")
+    stage2.pop("gate_shortcircuited", None)
     stage2["decision"].pop("diagnosis_confidence")
     stage2["decision"].pop("diagnosis_confidence_reasoning")
     stage2["decision_trace"] = [
@@ -124,3 +125,38 @@ def test_provider_drafts_complete_the_real_orchestrator_path(
     assert any(item["node_id"] == "10.3" for item in record.stage2_decision["decision_trace"])
     assert record.stage1_response["content"].find('"protocol_version"') >= 0
     pending_writer.save_full.assert_called_once()
+
+
+def test_deepseek_style_contract_error_repairs_once_then_reaches_stage2(
+    frame, pending_writer, assembler, exp_reader,
+):
+    stage1, stage2 = _provider_drafts()
+    invalid_stage1 = copy.deepcopy(stage1)
+    invalid_stage1["diagnosis_confidence"] = "medium"
+    client = MagicMock()
+    client.stream_chat.side_effect = [
+        make_reply(invalid_stage1),
+        make_reply(stage1),
+        make_reply(stage2),
+    ]
+    orchestrator = TwoStageOrchestrator(
+        client=client,
+        assembler=assembler,
+        router=route_strategy_files,
+        validator=schema_test_validator(),
+        pending_writer=pending_writer,
+        exp_reader=exp_reader,
+    )
+
+    record = orchestrator.submit(
+        frame=frame, cancel_token=CancelToken(), on_event=lambda _event: None,
+    )
+
+    assert record.run_outcome["status"] == "completed"
+    assert record.stage2_decision["terminal"]["outcome"] == "trade"
+    assert client.stream_chat.call_count == 3
+    assert any(
+        event.get("code") == "provider_draft_contract"
+        and event.get("retry_policy") == "bounded_retry"
+        for event in record.validation_audit
+    )

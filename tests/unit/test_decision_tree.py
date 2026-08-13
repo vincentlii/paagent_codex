@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pa_agent.ai.decision_tree import (
+    STAGE1_GATE_NODE_IDS,
     build_stage2_gate_wait_response,
     format_bar_basis_suffix,
     format_trace_answer,
@@ -9,11 +10,28 @@ from pa_agent.ai.decision_tree import (
     merge_traces,
     plain_trace_question,
     question_with_bar_basis,
+    stage2_provider_node_ids,
     strip_question_bar_basis_suffix,
     validate_gate_result_consistency,
     validate_stage2_trace_consistency,
 )
 from tests.integration.conftest import SAMPLE_DECISION_TRACE, SAMPLE_GATE_TRACE, VALID_STAGE2
+
+
+def test_all_model_owned_trace_nodes_ask_a_binary_question() -> None:
+    tree = load_decision_tree()
+    node_ids = {*STAGE1_GATE_NODE_IDS, *stage2_provider_node_ids()}
+
+    non_binary = {
+        node_id: tree["node_index"][node_id]["question"]
+        for node_id in node_ids
+        if not (
+            "是否" in tree["node_index"][node_id]["question"]
+            or tree["node_index"][node_id]["question"].endswith("吗？")
+        )
+    }
+
+    assert non_binary == {}
 
 
 def test_question_with_bar_basis() -> None:

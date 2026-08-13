@@ -7,13 +7,17 @@ from pathlib import Path
 import pytest
 
 from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
+from pa_agent.ai.pa_provider_contracts import (
+    STAGE1_DRAFT_SCHEMA,
+    STAGE2_DRAFT_SCHEMA,
+    provider_draft_schema_digest,
+)
 from pa_agent.ai.prompt_assembler import VPA_KNOWLEDGE_MODULES, PromptAssembler
-from pa_agent.ai.pa_provider_contracts import STAGE1_DRAFT_SCHEMA, STAGE2_DRAFT_SCHEMA
-from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
+from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA
 from pa_agent.ai.role_contracts import JOINT_DECISION_SCHEMA, VPA_EVIDENCE_SCHEMA
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
-from pa_agent.config.settings import PromptSettings
 from pa_agent.config.paths import PROMPT_DIR
+from pa_agent.config.settings import PromptSettings
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
 
 
@@ -316,6 +320,27 @@ def test_stage1_output_reminder_present(assembler: PromptAssembler):
     assert "禁止输出 10.3、14 或 `gate_result`" in user
 
 
+def test_stage1_prompt_does_not_delegate_program_data_preflight(
+    assembler: PromptAssembler,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        assembler,
+        "_load",
+        lambda _filename: (
+            "## 1. 是否可以决策\n"
+            "### 1.1 数据是否足够？\n程序检查。\n"
+            "### 1.2 市场状态是否可识别？\n模型判断。\n"
+            "## 9. 入场信号二元检查\n"
+        ),
+    )
+    prompt = assembler._decision_tree_stage1()
+
+    assert "### 1.1" not in prompt
+    assert "§1.1 数据充足性已由程序预检" in prompt
+    assert "### 1.2" in prompt
+
+
 def test_required_schema_keys_are_visible_in_role_prompts(
     assembler: PromptAssembler,
 ) -> None:
@@ -334,6 +359,36 @@ def test_required_schema_keys_are_visible_in_role_prompts(
     assert sorted(
         key for key in _required_schema_keys(STAGE2_DRAFT_SCHEMA) if key not in stage2_prompt
     ) == []
+
+
+def test_pa_prompts_embed_the_runtime_provider_contract_digest(
+    assembler: PromptAssembler,
+) -> None:
+    frame = _make_frame()
+    stage1_prompt = "\n".join(
+        message["content"] for message in assembler.build_stage1(frame)
+    )
+    stage2_prompt = "\n".join(
+        message["content"]
+        for message in assembler.build_stage2(frame, {}, [], [])
+    )
+
+    assert provider_draft_schema_digest("stage1") in stage1_prompt
+    assert provider_draft_schema_digest("stage2") in stage2_prompt
+    assert "PA_PROVIDER_DRAFT_CONTRACT_BEGIN" in stage1_prompt
+    assert "PA_PROVIDER_DRAFT_CONTRACT_BEGIN" in stage2_prompt
+
+
+def test_stage1_prompt_does_not_request_program_owned_top_level_fields(
+) -> None:
+    assembler = PromptAssembler(PROMPT_DIR)
+    prompt = "\n".join(
+        message["content"] for message in assembler.build_stage1(_make_frame())
+    )
+
+    assert "最终输出必须让 `cycle_position`、`alternative_cycle_position`" not in prompt
+    assert "输出 cycle_position、direction、detected_patterns、gate_result 等" not in prompt
+    assert "禁止输出 10.3、14 或 `gate_result`" in prompt
 
 
 def test_stage1_bar_type_schema_matches_contextual_prompt_contract() -> None:
@@ -648,6 +703,8 @@ def test_stage2_output_contract_present(assembler: PromptAssembler):
     assert "程序复算价格几何" in user
     assert "decision_trace" in user
     assert "不要输出 `question/section/bar_range`、§10.3 或 `terminal`" in user
+    assert "section heading `11` is invalid" in user
+    assert "Every executable order must include node `14`" in user
 
 
 def test_stage2_pending_entry_and_stop_semantics_are_unambiguous(
@@ -1214,6 +1271,7 @@ def test_explicit_vpa_role_matches_schema_and_grounding_contract(
     assert "K0" in prompt
     assert "`net_progress_direction_relation`" in prompt
     assert "when it is `opposite`" in prompt
+    assert "a ratio sign alone does not justify strong activity wording" in prompt
     assert "Stage 1 MUST output `vpa_context`" not in prompt
     assert "Stage 2 MUST output `vpa_impact`" not in prompt
 

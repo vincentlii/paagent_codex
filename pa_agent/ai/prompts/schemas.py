@@ -595,7 +595,7 @@ _DECISION_BASE: dict = {
         "take_profit_price": {"type": ["number", "null"]},
         "take_profit_price_2": {"type": ["number", "null"]},
         "stop_loss_price": {"type": ["number", "null"]},
-        "reasoning": {"type": "string", "minLength": 1, "maxLength": 280},
+        "reasoning": {"type": "string", "minLength": 1, "maxLength": 1500},
         "diagnosis_confidence": {"type": "integer", "minimum": 0, "maximum": 100},
         "diagnosis_confidence_reasoning": {"type": "string"},
         "trade_confidence": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},

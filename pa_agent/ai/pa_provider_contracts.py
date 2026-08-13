@@ -6,30 +6,95 @@ protocol metadata, resolves declared evidence, and computes reproducible math.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from typing import Any
 
-from pa_agent.ai.decision_tree import load_decision_tree
+from pa_agent.ai.decision_tree import (
+    STAGE1_GATE_NODE_IDS,
+    load_decision_tree,
+    stage2_provider_node_ids,
+)
 from pa_agent.ai.fact_catalog import AnalysisFactCatalog
 from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
 from pa_agent.util.trade_metrics import compute_risk_reward, passes_trader_equation
 
-_DRAFT_TRACE_ITEM = {
-    "type": "object",
-    "required": ["node_id", "answer", "reason", "evidence_refs"],
-    "properties": {
-        "node_id": {"type": "string"},
-        "answer": {"type": "string", "enum": ["是", "否", "中性", "等待", "不适用"]},
-        "reason": {"type": "string"},
-        "branch": {"type": ["string", "null"]},
-        "next_node": {"type": ["string", "null"]},
-        "skipped": {"type": "boolean"},
-        "evidence_refs": {
-            "type": "array", "items": {"type": "string", "pattern": r"^PA\."},
-            "uniqueItems": True,
-        },
+_STAGE1_TRACE_ANSWER_ALIASES: dict[str, dict[str, tuple[str, str]]] = {
+    "2.2": {
+        "同向": ("是", "同向"),
+        "反向": ("是", "反向"),
+        "冲突": ("是", "反向"),
     },
-    "additionalProperties": False,
+    "2.3": {
+        "多头": ("是", "多头"),
+        "是多头": ("是", "多头"),
+        "空头": ("是", "空头"),
+        "是空头": ("是", "空头"),
+    },
 }
+
+
+def normalize_provider_draft(stage: str, draft: dict[str, Any]) -> dict[str, Any]:
+    """Normalize only lossless Provider Draft syntax aliases."""
+    result = copy.deepcopy(draft)
+    if stage == "stage2":
+        decision = result.get("decision")
+        if (
+            isinstance(decision, dict)
+            and decision.get("order_type") == "\u4e0d\u4e0b\u5355"
+            and decision.get("trade_confidence_reasoning") is None
+        ):
+            decision["trade_confidence_reasoning"] = ""
+        return result
+    if stage != "stage1":
+        return result
+
+    bar_analysis = result.get("bar_analysis")
+    if isinstance(bar_analysis, dict):
+        signal = bar_analysis.get("signal_bar")
+        if (
+            isinstance(signal, dict)
+            and signal.get("bar") is None
+            and signal.get("pattern") is None
+        ):
+            signal["pattern"] = ""
+
+    for item in result.get("gate_trace") or []:
+        if not isinstance(item, dict):
+            continue
+        node_id = str(item.get("node_id") or "")
+        alias = _STAGE1_TRACE_ANSWER_ALIASES.get(node_id, {}).get(
+            str(item.get("answer") or "").strip()
+        )
+        if alias is None:
+            continue
+        answer, branch = alias
+        item["answer"] = answer
+        if not item.get("branch"):
+            item["branch"] = branch
+    return result
+
+
+def _draft_trace_item(node_ids: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["node_id", "answer", "reason", "evidence_refs"],
+        "properties": {
+            "node_id": {"type": "string", "enum": list(node_ids)},
+            "answer": {
+                "type": "string",
+                "enum": ["是", "否", "中性", "等待", "不适用"],
+            },
+            "reason": {"type": "string"},
+            "branch": {"type": ["string", "null"]},
+            "evidence_refs": {
+                "type": "array",
+                "items": {"type": "string", "pattern": r"^PA\."},
+                "uniqueItems": True,
+            },
+        },
+        "additionalProperties": False,
+    }
 
 
 def _draft_hypothesis_schema() -> dict[str, Any]:
@@ -43,19 +108,29 @@ def _draft_hypothesis_schema() -> dict[str, Any]:
 
 
 def _stage1_draft_schema() -> dict[str, Any]:
-    schema = copy.deepcopy(STAGE1_SCHEMA)
-    removed = {
-        "cycle_position", "alternative_cycle_position", "direction", "entry_setup", "gate_result",
+    model_fields = (
+        "diagnosis_confidence",
+        "diagnosis_confidence_reasoning",
+        "spike_stage",
+        "climax_risk",
+        "market_phase",
+        "transition_risk",
+        "detected_patterns",
+        "key_signals",
+        "htf_context",
+        "support_levels",
+        "resistance_levels",
+        "risk_warning",
+        "bar_analysis",
+        "bar_by_bar_summary",
+    )
+    properties = {
+        key: copy.deepcopy(STAGE1_SCHEMA["properties"][key])
+        for key in model_fields
     }
-    schema["required"] = [key for key in schema["required"] if key not in removed]
-    schema["required"] += [
-        "protocol_version", "diagnosis_confidence_reasoning", "market_hypotheses",
-    ]
-    for key in removed:
-        schema["properties"].pop(key)
     hypothesis = _draft_hypothesis_schema()
-    schema["properties"]["protocol_version"] = {"const": "pa_draft_v2"}
-    schema["properties"]["market_hypotheses"] = {
+    properties["protocol_version"] = {"type": "string", "const": "pa_draft_v2"}
+    properties["market_hypotheses"] = {
         "type": "object",
         "required": ["primary", "alternatives"],
         "properties": {
@@ -64,8 +139,12 @@ def _stage1_draft_schema() -> dict[str, Any]:
         },
         "additionalProperties": False,
     }
-    schema["properties"]["gate_trace"]["items"] = _DRAFT_TRACE_ITEM
-    schema["properties"]["pa_evidence"] = {
+    properties["gate_trace"] = {
+        "type": "array",
+        "minItems": 1,
+        "items": _draft_trace_item(("1.1", *STAGE1_GATE_NODE_IDS)),
+    }
+    properties["pa_evidence"] = {
         "type": "object",
         "required": ["spike_analysis"],
         "properties": {
@@ -75,32 +154,261 @@ def _stage1_draft_schema() -> dict[str, Any]:
         },
         "additionalProperties": False,
     }
-    schema["allOf"] = [
-        rule for rule in schema.get("allOf", []) if "cycle_position" not in str(rule)
+    properties["incremental_delta"] = copy.deepcopy(
+        STAGE1_SCHEMA["properties"]["incremental_delta"]
+    )
+    semantic_rules = [
+        copy.deepcopy(rule)
+        for rule in STAGE1_SCHEMA.get("allOf", [])
+        if "cycle_position" not in str(rule)
     ]
-    return schema
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": [
+            "protocol_version",
+            *model_fields,
+            "market_hypotheses",
+            "pa_evidence",
+            "gate_trace",
+        ],
+        "properties": properties,
+        "allOf": semantic_rules,
+        "additionalProperties": False,
+    }
 
 
 def _stage2_draft_schema() -> dict[str, Any]:
-    schema = copy.deepcopy(STAGE2_SCHEMA)
-    schema["required"] = [
-        key for key in schema["required"] if key not in {"terminal", "next_cycle_prediction"}
-    ] + ["protocol_version", "decision_intent"]
-    schema["properties"].pop("terminal")
-    schema["properties"]["protocol_version"] = {"const": "pa_draft_v2"}
-    schema["properties"]["decision_intent"] = {
-        "type": "string", "enum": ["trade", "wait", "reject"],
-    }
-    schema["properties"]["decision_trace"]["items"] = _DRAFT_TRACE_ITEM
-    decision = schema["properties"]["decision"]
+    decision = copy.deepcopy(STAGE2_SCHEMA["properties"]["decision"])
     for key in ("diagnosis_confidence", "diagnosis_confidence_reasoning"):
         decision["required"].remove(key)
         decision["properties"].pop(key)
-    return schema
+    for rule in decision.get("allOf", []):
+        order_rule = rule.get("if", {}).get("properties", {}).get("order_type", {})
+        if order_rule.get("const") == "不下单":
+            rule["then"]["properties"]["estimated_win_rate_reasoning"] = {
+                "enum": [None, ""]
+            }
+    properties = {
+        "protocol_version": {"type": "string", "const": "pa_draft_v2"},
+        "decision_intent": {
+        "type": "string", "enum": ["trade", "wait", "reject"],
+        },
+        "decision": decision,
+        "bar_analysis": copy.deepcopy(STAGE2_SCHEMA["properties"]["bar_analysis"]),
+        "decision_trace": {
+            "type": "array",
+            "minItems": 1,
+            "items": _draft_trace_item(stage2_provider_node_ids()),
+        },
+        "next_bar_prediction": copy.deepcopy(
+            STAGE2_SCHEMA["properties"]["next_bar_prediction"]
+        ),
+    }
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": [
+            "protocol_version",
+            "decision_intent",
+            "decision",
+            "bar_analysis",
+            "decision_trace",
+        ],
+        "properties": properties,
+        "additionalProperties": False,
+    }
 
 
 STAGE1_DRAFT_SCHEMA = _stage1_draft_schema()
 STAGE2_DRAFT_SCHEMA = _stage2_draft_schema()
+
+
+def schema_for_provider_draft(stage: str) -> dict[str, Any]:
+    """Return an isolated provider contract for one PA stage."""
+    schemas = {"stage1": STAGE1_DRAFT_SCHEMA, "stage2": STAGE2_DRAFT_SCHEMA}
+    try:
+        return copy.deepcopy(schemas[stage])
+    except KeyError as exc:
+        raise ValueError(f"unknown PA provider stage: {stage}") from exc
+
+
+def _serialized_provider_schema(stage: str) -> str:
+    return json.dumps(
+        schema_for_provider_draft(stage),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def provider_draft_schema_digest(stage: str) -> str:
+    """Stable identity shared by prompts, validation, and audit tests."""
+    return hashlib.sha256(_serialized_provider_schema(stage).encode("utf-8")).hexdigest()
+
+
+def render_provider_draft_contract(stage: str) -> str:
+    """Render the minified exact runtime contract for schema-less providers."""
+    digest = provider_draft_schema_digest(stage)
+    return (
+        f"Provider contract digest: {digest}\n"
+        "PA_PROVIDER_DRAFT_CONTRACT_BEGIN\n"
+        + _serialized_provider_schema(stage)
+        + "\nPA_PROVIDER_DRAFT_CONTRACT_END"
+    )
+
+
+def _draft_issue(
+    path: str,
+    *,
+    kind: str,
+    message: str,
+    allowed: list[Any] | None = None,
+    blocks_materialization: bool = False,
+) -> dict[str, Any]:
+    parts = path.split(".") if path else []
+    return {
+        "path": path,
+        "pointer": "/" + "/".join(parts) if parts else "",
+        "kind": kind,
+        "message": message,
+        "allowed": list(allowed or []),
+        "blocks_materialization": blocks_materialization,
+    }
+
+
+def provider_draft_semantic_issues(
+    stage: str,
+    draft: dict[str, Any],
+    *,
+    catalog: AnalysisFactCatalog,
+) -> list[dict[str, Any]]:
+    """Validate provider-owned protocol semantics before canonical materialization."""
+    trace_name = "gate_trace" if stage == "stage1" else "decision_trace"
+    role = "pa_stage1" if stage == "stage1" else "pa_stage2"
+    trace = draft.get(trace_name)
+    if not isinstance(trace, list):
+        return []
+
+    issues: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    valid_ids = (
+        {"1.1", *STAGE1_GATE_NODE_IDS}
+        if stage == "stage1"
+        else set(stage2_provider_node_ids())
+    )
+    valid_trace_ids: list[str] = []
+    for index, item in enumerate(trace):
+        if not isinstance(item, dict):
+            continue
+        node_id = str(item.get("node_id") or "")
+        if node_id in valid_ids:
+            valid_trace_ids.append(node_id)
+        if node_id in seen:
+            issues.append(
+                _draft_issue(
+                    f"{trace_name}.{index}.node_id",
+                    kind="semantic_validation",
+                    message=f"{trace_name} node {node_id!r} must not be duplicated",
+                )
+            )
+        seen.add(node_id)
+        refs = item.get("evidence_refs")
+        if not isinstance(refs, list):
+            continue
+        for ref_index, ref in enumerate(refs):
+            if not isinstance(ref, str) or not ref.startswith("PA."):
+                continue
+            try:
+                catalog.resolve_references([ref], role=role)
+            except KeyError:
+                issues.append(
+                    _draft_issue(
+                        f"{trace_name}.{index}.evidence_refs.{ref_index}",
+                        kind="unknown_evidence",
+                        message=f"unknown or hidden Evidence ID: {ref}",
+                        blocks_materialization=True,
+                    )
+                )
+
+    if stage == "stage1":
+        answers = {
+            str(item.get("node_id")): str(item.get("answer"))
+            for item in trace
+            if isinstance(item, dict)
+        }
+        valid_early_stop = (
+            answers.get("1.2") in {"否", "等待"}
+            or answers.get("1.3") == "是"
+        )
+        if "2.5" not in valid_trace_ids and not valid_early_stop:
+            issues.append(
+                _draft_issue(
+                    trace_name,
+                    kind="incomplete_protocol_path",
+                    message="complete Stage 1 Gate path must evaluate node 2.5",
+                    blocks_materialization=True,
+                )
+            )
+        return issues
+
+    decision = draft.get("decision")
+    decision = decision if isinstance(decision, dict) else {}
+    executable = decision.get("order_type") in {"限价单", "突破单", "市价单"}
+    intent = draft.get("decision_intent")
+    if intent == "trade" and not executable:
+        issues.append(
+            _draft_issue(
+                "decision_intent",
+                kind="semantic_validation",
+                message="trade intent requires an executable PA candidate",
+                blocks_materialization=True,
+            )
+        )
+    if executable:
+        if not any(node_id.startswith("11.") for node_id in valid_trace_ids):
+            issues.append(
+                _draft_issue(
+                    trace_name,
+                    kind="incomplete_protocol_path",
+                    message="executable order requires one model-selected §11.1-§11.4 node",
+                )
+            )
+        if "14" not in valid_trace_ids:
+            issues.append(
+                _draft_issue(
+                    trace_name,
+                    kind="incomplete_protocol_path",
+                    message="executable order requires node 14 prohibition scan",
+                )
+            )
+        bar_analysis = draft.get("bar_analysis")
+        bar_analysis = bar_analysis if isinstance(bar_analysis, dict) else {}
+        signal = bar_analysis.get("signal_bar")
+        signal = signal if isinstance(signal, dict) else {}
+        entry = bar_analysis.get("entry_bar")
+        entry = entry if isinstance(entry, dict) else {}
+        declared_bars = (
+            decision.get("entry_basis_bar"),
+            signal.get("bar"),
+            entry.get("bar"),
+        )
+        has_trace_evidence = any(
+            isinstance(item, dict) and bool(item.get("evidence_refs"))
+            for item in trace
+        )
+        if not has_trace_evidence and not any(
+            isinstance(bar, str) and bar.startswith("K") for bar in declared_bars
+        ):
+            issues.append(
+                _draft_issue(
+                    trace_name,
+                    kind="missing_evidence",
+                    message="executable order requires model-declared PA evidence",
+                    blocks_materialization=True,
+                )
+            )
+    return issues
 
 
 def _materialize_trace(
@@ -113,8 +421,6 @@ def _materialize_trace(
         if node_id not in nodes:
             raise ValueError(f"unknown decision-tree node: {node_id}")
         refs = [str(item) for item in source.get("evidence_refs", [])]
-        if not refs and not bool(source.get("skipped")):
-            raise ValueError(f"decision-tree node {node_id} requires evidence_refs")
         resolved = catalog.resolve_references(refs, role=role)
         node = nodes[node_id]
         item = copy.deepcopy(source)
@@ -123,6 +429,8 @@ def _materialize_trace(
         item["section"] = node["section_title"]
         item["bar_range"] = resolved.bar_range or "不适用"
         result.append(item)
+    node_order = {node_id: index for index, node_id in enumerate(nodes)}
+    result.sort(key=lambda item: node_order[str(item["node_id"])])
     return result
 
 
@@ -165,8 +473,13 @@ def materialize_stage1_draft(
     result["alternative_cycle_position"] = alternatives[0]["cycle_position"] if alternatives else None
     result["direction"] = primary["direction"]
     result["entry_setup"] = primary["setup_hint"]
+    semantic_gate_trace = [
+        item
+        for item in result["gate_trace"]
+        if str(item.get("node_id")) != "1.1"
+    ]
     result["gate_trace"] = _materialize_trace(
-        result["gate_trace"], catalog=catalog, role="pa_stage1"
+        semantic_gate_trace, catalog=catalog, role="pa_stage1"
     )
     result["gate_result"] = _derive_gate_result(result["gate_trace"])
     spike_analysis = result.get("pa_evidence", {}).get("spike_analysis")
@@ -191,6 +504,7 @@ def _next_cycle_placeholder() -> dict[str, Any]:
 def _equation_trace(
     decision: dict[str, Any],
     bar_analysis: dict[str, Any],
+    decision_trace: list[dict[str, Any]],
     *,
     catalog: AnalysisFactCatalog,
 ) -> tuple[dict[str, Any], bool]:
@@ -214,7 +528,17 @@ def _equation_trace(
             for bar in bars
             if isinstance(bar, str) and bar.startswith("K")
         )
-    ) or ["PA.BAR.K1"]
+    )
+    if not refs:
+        refs = _stable_union(
+            *[
+                [str(ref) for ref in item.get("evidence_refs", [])]
+                for item in decision_trace
+                if isinstance(item, dict)
+            ]
+        )
+    if not refs:
+        raise ValueError("trader equation requires model-declared PA evidence")
     resolved = catalog.resolve_references(refs, role="pa_stage2")
     node = load_decision_tree()["node_index"]["10.3"]
     if metrics is None:
@@ -257,6 +581,7 @@ def materialize_stage2_draft(
         equation, equation_passes = _equation_trace(
             decision,
             result.get("bar_analysis") if isinstance(result.get("bar_analysis"), dict) else {},
+            trace,
             catalog=catalog,
         )
         insert_at = next(
@@ -265,6 +590,7 @@ def materialize_stage2_draft(
         )
         trace.insert(insert_at, equation)
     result["decision_trace"] = trace
+    result["gate_shortcircuited"] = False
     if intent == "trade" and equation_passes:
         terminal_node = next(
             (item["node_id"] for item in reversed(trace) if str(item["node_id"]).startswith("11.")),

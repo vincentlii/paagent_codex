@@ -600,10 +600,15 @@ def validate_htf_inference_only_narrative(text: object, *, path: str) -> list[st
 def local_close_position_claim_kinds(text: object) -> set[str]:
     """Return bar-internal close-location claims, not cross-window extrema."""
     value = str(text or "")
+    clauses = [
+        clause
+        for clause in re.split(r"[,\uFF0C;\uFF1B\u3002!?\uFF01\uFF1F\n]+", value)
+        if clause.strip()
+    ] or [value]
     return {
         kind
         for kind, patterns in _LOCAL_CLOSE_POSITION_PATTERNS.items()
-        if any(pattern.search(value) for pattern in patterns)
+        if any(pattern.search(clause) for clause in clauses for pattern in patterns)
     }
 
 

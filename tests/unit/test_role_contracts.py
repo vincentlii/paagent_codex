@@ -238,6 +238,49 @@ def test_vpa_sequence_claim_still_rejects_unknown_evidence() -> None:
     assert any("unknown evidence IDs" in item for item in result.hard_errors)
 
 
+def test_vpa_rejects_false_absence_of_already_closed_follow_through_bars() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    observation = payload["vpa_report"]["observations"][0]
+    observation["evidence_ids"] = ["vpa-e008", "vpa-e007"]
+    observation["interpretation"] = (
+        "K8与K7完成边界互动，但之后尚无下一根已收盘K线确认。"
+    )
+
+    result = validate_vpa_evidence(
+        json.dumps(payload, ensure_ascii=False),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert not result.ok
+    assert any(
+        "K7 already has 6 later closed bars" in item
+        for item in result.hard_errors
+    )
+
+
+def test_vpa_allows_unconfirmed_result_after_existing_closed_bars() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    observation = payload["vpa_report"]["observations"][0]
+    observation["evidence_ids"] = ["vpa-e007"]
+    observation["interpretation"] = (
+        "K7 already has later closed bars, but none confirms acceptance "
+        "outside the boundary."
+    )
+
+    result = validate_vpa_evidence(
+        json.dumps(payload, ensure_ascii=False),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert result.ok
+
+
 def test_vpa_overlapping_sequence_claim_is_dropped_without_failing_report() -> None:
     hypotheses = _hypotheses()
     catalog = build_vpa_evidence_catalog(make_frame())
@@ -268,7 +311,7 @@ def test_vpa_overlapping_sequence_claim_is_dropped_without_failing_report() -> N
     )
 
 
-def test_vpa_role_hard_rejects_an_explicit_comparator_contradiction() -> None:
+def test_vpa_role_audits_an_explicit_comparator_contradiction() -> None:
     hypotheses = _hypotheses()
     catalog = build_vpa_evidence_catalog(make_frame())
 
@@ -293,10 +336,10 @@ def test_vpa_role_hard_rejects_an_explicit_comparator_contradiction() -> None:
         catalog=catalog,
         pa_hypotheses=hypotheses,
     )
-    assert not conflict_result.ok
+    assert conflict_result.ok
     assert any(
         "conflicts with program relation" in item
-        for item in conflict_result.hard_errors
+        for item in conflict_result.warnings
     )
 
 
@@ -470,7 +513,7 @@ def test_vpa_no_entry_candidate_normalizes_timing_relation_without_retry() -> No
     )
 
 
-def test_vpa_rejects_only_explicit_sequence_direction_fact_contradiction() -> None:
+def test_vpa_audits_explicit_sequence_direction_prose_contradiction() -> None:
     hypotheses = _hypotheses()
     catalog = build_vpa_evidence_catalog(make_frame())
     payload = _vpa_payload(catalog, hypotheses)
@@ -486,11 +529,11 @@ def test_vpa_rejects_only_explicit_sequence_direction_fact_contradiction() -> No
         pa_hypotheses=hypotheses,
     )
 
-    assert not conflict.ok
+    assert conflict.ok
     assert any(
         "net close progress direction" in item
         and "conflicts with program relation" in item
-        for item in conflict.hard_errors
+        for item in conflict.warnings
     )
 
     payload["vpa_report"]["observations"][0]["interpretation"] = (
@@ -501,11 +544,11 @@ def test_vpa_rejects_only_explicit_sequence_direction_fact_contradiction() -> No
         catalog=catalog,
         pa_hypotheses=hypotheses,
     )
-    assert not chinese_conflict.ok
+    assert chinese_conflict.ok
     assert any(
         "window direction claim" in item
         or "net close progress direction" in item
-        for item in chinese_conflict.hard_errors
+        for item in chinese_conflict.warnings
     )
 
     payload["vpa_report"]["observations"][0]["interpretation"] = (

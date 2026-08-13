@@ -48,6 +48,10 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 程序允许显示精度舍入，但不得把价格绑定到错误 K 线。未明确绑定 OHLC 字段的 swing、
 结构位、通道和 Setup 解释仍由 LLM 负责。
 
+从自由文本推断出的窗口计数、连续阴阳线、量价 comparator 或专业标签冲突只进入质量审计，
+不得单独终止分析。硬阻断仅保留结构化契约、明确 OHLC/几何事实、Evidence 身份、权限、
+订单数学与执行安全。
+
 明确的相邻窗口净收盘推进方向，以及某个 `HTF.H#` OHLC 点位相对当前周期 K1 收盘价的
 上/下方，也属于可复算事实。程序可以拒绝“同向写成反向”或“上方点位写成下方目标”，
 但不能据此把窗口命名为推动/回调，也不能决定该点位是否真是支撑、阻力或磁力位。
@@ -108,6 +112,16 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 
 ## 不变量
 
+- `pa_draft_v2` 的 Provider Contract 是初始 Prompt、校验与定向修复的唯一结构来源；
+  Canonical Schema 只服务下游记录与兼容，不得反向要求模型重复程序字段。
+- PA Provider Contract 错误一次聚合；最多允许一次按 JSON Pointer 授权的修复。
+  程序只把被点名路径的候选修正投影回原 Draft，未授权的新增、删除、置空、数组重排或
+  语义变化不进入接受结果；投影结果必须重新通过完整校验，禁止通过宽松 normalizer 猜测模型意图。
+- VPA 修复按 hypothesis ID、证据集合或时序证据对匹配稳定语义，不按数组下标恢复，
+  也不得恢复校验明确要求修改的字段。
+- Trader Equation 只能引用模型已经声明且 Catalog 可解析的 PA Evidence ID；程序不得
+  用固定 K1 或任何合成引用填补缺失证据。
+
 - 已接受的结构化 Claim 对程序事实矛盾数为零。
 - VPA 权限越界数为零。
 - 同一分析内主周期与高周期的数据源身份一致。
@@ -128,9 +142,15 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 - VPA 明确 K 引用只能绑定到唯一单棒 evidence，或被已引用窗口覆盖；程序只补引用元数据，
   不替模型生成解释。相邻窗口的 `same/opposite/flat_or_unavailable` 由现有 facts 临时派生，
   不写回冻结 catalog，避免破坏历史 catalog identity。
+- VPA 单棒 evidence 明确给出该棒之后已经存在的已收盘棒数量与范围。程序只拒绝“没有任何
+  后续已收盘棒”这类可证明为假的时序陈述；“已有后续棒但尚未确认 acceptance/rejection”仍是合法解释。
+- 明确绑定 `K#-K#` 的数值价格区间必须与该冻结窗口的真实 high/low 一致；没有同句数值区间、
+  价格路径或结构标签不进入该检查。该规则不判断趋势、Trading Range 或突破是否成立。
 - 成交量可用性由 Provider provenance 与逐 bar `volume_state` 明确表达；真实观测零与缺失/歧义零
   不得合并。Seasonality 只使用严格早于分析窗的精确同槽历史，原始样本不写入 record，但其冻结
   hash 与边界摘要必须支持 catalog 身份重放。
+- 所有可用相对量 ratio 同时提供相对 `1.0` 的有符号 `deviation_pct`。`above/below` 只说明方向，
+  幅度与 VPA 含义仍由模型结合 Background、Location、Effort/Result 与后续行为解释，程序不设强弱阈值。
 - 新 VPA 窗口事实只对 PA 已引用的 `PA.WINDOW.K#` 注入，代码测量成交量覆盖、推进、路径、效率与
   重叠，不命名 leg、Spring、UTAD、Absorption、Exhaustion 或交易信号。
 - A/A/B/B 的主收益比较是 episode-level ITT：无下单/未触发为 `0R`，pending/ambiguous censored，

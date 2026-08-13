@@ -72,6 +72,8 @@ class ValidationError:
     invalid_fields: list[str] = field(default_factory=list)
     allowed_values: dict[str, list] = field(default_factory=dict)
     message: str = ""
+    code: str = ""
+    contract_issues: list[dict[str, Any]] = field(default_factory=list)
 
 
 Result = Ok | ValidationError
@@ -170,6 +172,215 @@ def format_model_json_for_context(raw_text: str) -> str | None:
     return stripped
 
 
+def _json_path(parts: list[Any]) -> str:
+    return ".".join(str(part) for part in parts) or "draft"
+
+
+def _json_pointer(parts: list[Any]) -> str:
+    if not parts:
+        return ""
+    escaped = [
+        str(part).replace("~", "~0").replace("/", "~1") for part in parts
+    ]
+    return "/" + "/".join(escaped)
+
+
+_VALIDATION_FIELD_PATH_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]*(?:(?:\.[A-Za-z_][A-Za-z0-9_]*)|(?:\[\d+\])|(?:\.\d+))*)"
+)
+
+
+def _validation_issue(field: str, *, allowed: list[Any] | None = None) -> dict[str, Any] | None:
+    """Map a downstream validation message back to one editable Draft path."""
+    text = str(field)
+    prefix, separator, remainder = text.partition(":")
+    if separator and prefix in {
+        "s1",
+        "s2",
+        "gate",
+        "trace",
+        "breakout_price",
+        "signal_chain",
+        "metrics",
+    }:
+        text = remainder
+    match = _VALIDATION_FIELD_PATH_RE.match(text.strip())
+    if match is None:
+        return None
+    path = match.group(1)
+    parts: list[str | int] = []
+    for name, bracket_index in re.findall(r"([A-Za-z_][A-Za-z0-9_]*|\d+)|\[(\d+)\]", path):
+        value = bracket_index or name
+        parts.append(int(value) if value.isdigit() else value)
+    normalized_path = _json_path(parts)
+    return {
+        "path": normalized_path,
+        "pointer": _json_pointer(parts),
+        "kind": "semantic_validation",
+        "message": str(field),
+        "allowed": list(allowed or []),
+    }
+
+
+def _merge_provider_issues(
+    issues: list[dict[str, Any]],
+    invalid_fields: list[str],
+    missing_fields: list[str],
+    allowed_values: dict[str, list[Any]],
+    *,
+    provider_obj: dict[str, Any],
+    canonical_obj: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Combine schema and downstream errors without duplicate editable paths."""
+    merged = list(issues)
+    seen = {
+        (
+            str(issue.get("pointer", "")),
+            str(issue.get("kind", "")),
+            str(issue.get("message", "")),
+        )
+        for issue in merged
+    }
+    for validation_field in [*missing_fields, *invalid_fields]:
+        issue = _validation_issue(
+            validation_field,
+            allowed=allowed_values.get(str(validation_field)),
+        )
+        if issue is None:
+            continue
+        issue = _remap_materialized_trace_issue(
+            issue,
+            provider_obj=provider_obj,
+            canonical_obj=canonical_obj,
+        )
+        key = (
+            str(issue.get("pointer", "")),
+            str(issue.get("kind", "")),
+            str(issue.get("message", "")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(issue)
+    return merged
+
+
+def _remap_materialized_trace_issue(
+    issue: dict[str, Any],
+    *,
+    provider_obj: dict[str, Any],
+    canonical_obj: dict[str, Any],
+) -> dict[str, Any]:
+    """Map canonical trace indexes back to the provider Draft by node identity."""
+    pointer = str(issue.get("pointer", ""))
+    parts = pointer.lstrip("/").split("/") if pointer else []
+    if len(parts) < 2 or parts[0] not in {"gate_trace", "decision_trace"}:
+        return issue
+    try:
+        canonical_index = int(parts[1])
+    except ValueError:
+        return issue
+    canonical_trace = canonical_obj.get(parts[0])
+    provider_trace = provider_obj.get(parts[0])
+    if (
+        not isinstance(canonical_trace, list)
+        or not isinstance(provider_trace, list)
+        or not 0 <= canonical_index < len(canonical_trace)
+        or not isinstance(canonical_trace[canonical_index], dict)
+    ):
+        return issue
+    node_id = str(canonical_trace[canonical_index].get("node_id") or "")
+    provider_index = next(
+        (
+            index
+            for index, item in enumerate(provider_trace)
+            if isinstance(item, dict) and str(item.get("node_id") or "") == node_id
+        ),
+        None,
+    )
+    if provider_index is None:
+        return issue
+    remapped = copy.deepcopy(issue)
+    canonical_trace_ref = f"{parts[0]}[{canonical_index}]"
+    parts[1] = str(provider_index)
+    provider_trace_ref = f"{parts[0]}[{provider_index}]"
+    remapped["pointer"] = "/" + "/".join(parts)
+    remapped["path"] = _json_path(
+        [int(part) if part.isdigit() else part for part in parts]
+    )
+    remapped["message"] = str(remapped.get("message", "")).replace(
+        canonical_trace_ref,
+        provider_trace_ref,
+    )
+    return remapped
+
+
+def _provider_contract_issues(errors: list[Any]) -> list[dict[str, Any]]:
+    """Collapse jsonschema cascades into complete, editable contract issues."""
+    issues: list[dict[str, Any]] = []
+    for error in sorted(
+        errors,
+        key=lambda item: (list(item.absolute_path), str(item.validator), item.message),
+    ):
+        base = list(error.absolute_path)
+        validator = str(error.validator)
+        entries: list[tuple[list[Any], str]] = []
+        if validator == "required":
+            names = re.findall(r"'([^']+)'", error.message)
+            entries = [(base + [name], "required") for name in names]
+        elif validator == "additionalProperties":
+            names = re.findall(r"'([^']+)'", error.message)
+            entries = [(base + [name], "additional_property") for name in names]
+        else:
+            entries = [(base, validator)]
+
+        for parts, kind in entries:
+            allowed: list[Any] = []
+            if validator == "enum":
+                allowed = list(error.validator_value)
+            elif validator == "const":
+                allowed = [error.validator_value]
+            elif validator == "type":
+                value = error.validator_value
+                allowed = list(value) if isinstance(value, list) else [value]
+            elif kind == "additional_property":
+                allowed = ["<remove>"]
+            issues.append(
+                {
+                    "path": _json_path(parts),
+                    "pointer": _json_pointer(parts),
+                    "kind": kind,
+                    "message": f"{_json_path(parts)}: {error.message}",
+                    "allowed": allowed,
+                }
+            )
+
+    deduplicated: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for issue in issues:
+        key = (str(issue["pointer"]), str(issue["kind"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(issue)
+
+    blocking = [
+        str(issue["pointer"])
+        for issue in deduplicated
+        if issue["kind"] in {"type", "required"}
+    ]
+    return [
+        issue
+        for issue in deduplicated
+        if not any(
+            parent
+            and str(issue["pointer"]).startswith(parent + "/")
+            and str(issue["pointer"]) != parent
+            for parent in blocking
+        )
+    ]
+
+
 # ── JsonValidator ─────────────────────────────────────────────────────────────
 
 class JsonValidator:
@@ -196,13 +407,9 @@ class JsonValidator:
         stage: Literal["stage1", "stage2"],
     ) -> dict[str, Any]:
         """Return an isolated schema for provider capability negotiation."""
-        from pa_agent.ai.pa_provider_contracts import (
-            STAGE1_DRAFT_SCHEMA,
-            STAGE2_DRAFT_SCHEMA,
-        )
+        from pa_agent.ai.pa_provider_contracts import schema_for_provider_draft
 
-        schemas = {"stage1": STAGE1_DRAFT_SCHEMA, "stage2": STAGE2_DRAFT_SCHEMA}
-        return copy.deepcopy(schemas[stage])
+        return schema_for_provider_draft(stage)
 
     def normalize_parsed(
         self,
@@ -298,41 +505,112 @@ class JsonValidator:
             )
 
         pre_normalized_obj = copy.deepcopy(obj)
-        if obj.get("protocol_version") == "pa_draft_v2":
+        is_provider_draft = obj.get("protocol_version") == "pa_draft_v2"
+        provider_contract_issues: list[dict[str, Any]] = []
+        if is_provider_draft:
             try:
                 import jsonschema  # type: ignore[import]
+
                 from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
                 from pa_agent.ai.pa_provider_contracts import (
-                    STAGE1_DRAFT_SCHEMA,
-                    STAGE2_DRAFT_SCHEMA,
                     materialize_stage1_draft,
                     materialize_stage2_draft,
+                    normalize_provider_draft,
+                    provider_draft_semantic_issues,
+                    schema_for_provider_draft,
                 )
 
-                draft_schema = STAGE1_DRAFT_SCHEMA if stage == "stage1" else STAGE2_DRAFT_SCHEMA
+                obj = normalize_provider_draft(stage, obj)
+                draft_schema = schema_for_provider_draft(stage)
                 draft_errors = list(jsonschema.Draft7Validator(draft_schema).iter_errors(obj))
-                if draft_errors:
-                    first = draft_errors[0]
-                    path = ".".join(str(part) for part in first.absolute_path)
-                    return ValidationError(
-                        category="b" if first.validator == "required" else "c",
-                        stage=stage,
-                        raw_text=raw_text,
-                        missing_fields=[first.message.split("'")[1]] if first.validator == "required" else [],
-                        invalid_fields=[] if first.validator == "required" else [path or "draft"],
-                        message=f"Provider draft validation failed: {first.message}",
-                    )
+                issues = _provider_contract_issues(draft_errors)
                 catalog = analysis_fact_catalog or build_analysis_fact_catalog(kline_frame)
+                issues.extend(
+                    provider_draft_semantic_issues(stage, obj, catalog=catalog)
+                )
+                deduplicated_issues: list[dict[str, Any]] = []
+                seen_issues: set[tuple[str, str, str]] = set()
+                for issue in issues:
+                    key = (
+                        str(issue.get("pointer", "")),
+                        str(issue.get("kind", "")),
+                        str(issue.get("message", "")),
+                    )
+                    if key in seen_issues:
+                        continue
+                    seen_issues.add(key)
+                    deduplicated_issues.append(issue)
+                issues = deduplicated_issues
+                if issues:
+                    missing = list(
+                        dict.fromkeys(
+                            issue["path"]
+                            for issue in issues
+                            if issue["kind"] == "required"
+                        )
+                    )
+                    invalid = list(
+                        dict.fromkeys(
+                            issue["path"]
+                            for issue in issues
+                            if issue["kind"] != "required"
+                        )
+                    )
+                    allowed = {
+                        issue["path"]: list(issue["allowed"])
+                        for issue in issues
+                        if issue.get("allowed")
+                    }
+                    provider_contract_issues = issues
                 obj = (
                     materialize_stage1_draft(obj, catalog=catalog)
                     if stage == "stage1"
                     else materialize_stage2_draft(obj, stage1=stage1_json or {}, catalog=catalog)
                 )
             except (KeyError, TypeError, ValueError) as exc:
+                if provider_contract_issues:
+                    missing = list(
+                        dict.fromkeys(
+                            issue["path"]
+                            for issue in provider_contract_issues
+                            if issue["kind"] == "required"
+                        )
+                    )
+                    invalid = list(
+                        dict.fromkeys(
+                            issue["path"]
+                            for issue in provider_contract_issues
+                            if issue["kind"] != "required"
+                        )
+                    )
+                    allowed = {
+                        issue["path"]: list(issue["allowed"])
+                        for issue in provider_contract_issues
+                        if issue.get("allowed")
+                    }
+                    return ValidationError(
+                        category="c" if invalid else "b",
+                        stage=stage,
+                        raw_text=raw_text,
+                        missing_fields=missing,
+                        invalid_fields=invalid,
+                        allowed_values=allowed,
+                        message=(
+                            "Provider draft contract failed with "
+                            f"{len(provider_contract_issues)} issue(s): "
+                            + "; ".join(
+                                issue["message"]
+                                for issue in provider_contract_issues[:8]
+                            )
+                        ),
+                        code="provider_draft_contract",
+                        contract_issues=provider_contract_issues,
+                    )
                 return ValidationError(
                     category="c", stage=stage, raw_text=raw_text,
                     invalid_fields=["provider_draft_materialization"],
                     message=f"Provider draft materialization failed: {exc}",
+                    code="provider_draft_materialization",
                 )
         obj = self.normalize_parsed(
             stage,
@@ -480,7 +758,7 @@ class JsonValidator:
             stage1_json=stage1_json,
             htf_context=htf_context,
         )
-        if not errors and not missing and not invalid:
+        if not errors and not missing and not invalid and not provider_contract_issues:
             return Ok(
                 obj=obj,
                 provider_obj=pre_normalized_obj,
@@ -507,6 +785,54 @@ class JsonValidator:
             if schema_error_count
             else f"validation error: {first_message}"
         )
+        if is_provider_draft and (
+            provider_contract_issues or errors or missing or invalid
+        ):
+            provider_contract_issues = _merge_provider_issues(
+                provider_contract_issues,
+                invalid,
+                missing,
+                allowed,
+                provider_obj=pre_normalized_obj,
+                canonical_obj=obj,
+            )
+            provider_missing = list(
+                dict.fromkeys(
+                    issue["path"]
+                    for issue in provider_contract_issues
+                    if issue["kind"] == "required"
+                )
+            )
+            provider_invalid = list(
+                dict.fromkeys(
+                    issue["path"]
+                    for issue in provider_contract_issues
+                    if issue["kind"] != "required"
+                )
+            )
+            provider_allowed = {
+                issue["path"]: list(issue["allowed"])
+                for issue in provider_contract_issues
+                if issue.get("allowed")
+            }
+            return ValidationError(
+                category="c" if provider_invalid else "b",
+                stage=stage,
+                raw_text=raw_text,
+                missing_fields=provider_missing,
+                invalid_fields=provider_invalid,
+                allowed_values=provider_allowed,
+                message=(
+                    "Provider draft validation failed with "
+                    f"{len(provider_contract_issues)} issue(s): "
+                    + "; ".join(
+                        issue["message"] for issue in provider_contract_issues[:8]
+                    )
+                ),
+                code="provider_draft_contract",
+                contract_issues=provider_contract_issues,
+            )
+
         return ValidationError(
             category=category,
             stage=stage,
@@ -580,7 +906,13 @@ class JsonValidator:
         """Audit exact syntax aliases accepted at the model boundary."""
         paths: list[str] = []
         if stage == "stage1":
-            paths.extend(["support_levels", "resistance_levels"])
+            paths.extend(
+                [
+                    "support_levels",
+                    "resistance_levels",
+                    "bar_analysis.signal_bar.pattern",
+                ]
+            )
             before_signals = before.get("key_signals")
             after_signals = after.get("key_signals")
             if isinstance(before_signals, list) and isinstance(after_signals, list):
@@ -601,6 +933,50 @@ class JsonValidator:
 
         events: list[dict[str, Any]] = []
         if stage == "stage1":
+            before_trace = before.get("gate_trace")
+            after_trace = after.get("gate_trace")
+            if isinstance(before_trace, list) and isinstance(after_trace, list):
+                before_by_id = {
+                    str(item.get("node_id")): item
+                    for item in before_trace
+                    if isinstance(item, dict) and item.get("node_id")
+                }
+                after_by_id = {
+                    str(item.get("node_id")): item
+                    for item in after_trace
+                    if isinstance(item, dict) and item.get("node_id")
+                }
+                for node_id in before_by_id.keys() & after_by_id.keys():
+                    for field in ("answer", "branch"):
+                        old_value = before_by_id[node_id].get(field)
+                        new_value = after_by_id[node_id].get(field)
+                        if old_value != new_value:
+                            events.append(
+                                {
+                                    "path": f"gate_trace.{node_id}.{field}",
+                                    "before": copy.deepcopy(old_value),
+                                    "after": copy.deepcopy(new_value),
+                                }
+                            )
+            if (
+                isinstance(before_trace, list)
+                and any(
+                    isinstance(item, dict) and str(item.get("node_id")) == "1.1"
+                    for item in before_trace
+                )
+                and isinstance(after_trace, list)
+                and not any(
+                    isinstance(item, dict) and str(item.get("node_id")) == "1.1"
+                    for item in after_trace
+                )
+            ):
+                events.append(
+                    {
+                        "path": "gate_trace.1.1",
+                        "before": "redundant_model_preflight",
+                        "after": "program_preflight_authoritative",
+                    }
+                )
             before_evidence = before.get("pa_evidence")
             after_evidence = after.get("pa_evidence")
             before_spike = (
@@ -637,6 +1013,57 @@ class JsonValidator:
                     }
                 )
         if stage == "stage2":
+            before_decision = before.get("decision")
+            after_decision = after.get("decision")
+            if (
+                isinstance(before_decision, dict)
+                and isinstance(after_decision, dict)
+                and before_decision.get("order_type") == "\u4e0d\u4e0b\u5355"
+                and before_decision.get("trade_confidence_reasoning") is None
+                and after_decision.get("trade_confidence_reasoning") == ""
+            ):
+                events.append(
+                    {
+                        "path": "decision.trade_confidence_reasoning",
+                        "before": None,
+                        "after": "",
+                    }
+                )
+            if (
+                isinstance(before_decision, dict)
+                and isinstance(after_decision, dict)
+                and before_decision.get("order_type") == "不下单"
+                and before_decision.get("estimated_win_rate_reasoning") == ""
+                and after_decision.get("estimated_win_rate_reasoning") is None
+            ):
+                events.append(
+                    {
+                        "path": "decision.estimated_win_rate_reasoning",
+                        "before": "",
+                        "after": None,
+                    }
+                )
+            before_trace = before.get("decision_trace")
+            after_trace = after.get("decision_trace")
+            if isinstance(before_trace, list) and isinstance(after_trace, list):
+                before_ids = [
+                    str(item.get("node_id"))
+                    for item in before_trace
+                    if isinstance(item, dict)
+                ]
+                after_ids = [
+                    str(item.get("node_id"))
+                    for item in after_trace
+                    if isinstance(item, dict) and item.get("node_id") != "10.3"
+                ]
+                if before_ids != after_ids and sorted(before_ids) == sorted(after_ids):
+                    events.append(
+                        {
+                            "path": "decision_trace.order",
+                            "before": before_ids,
+                            "after": after_ids,
+                        }
+                    )
             for field in ("next_bar_prediction", "next_cycle_prediction"):
                 old_prediction = before.get(field)
                 new_prediction = after.get(field)
@@ -656,8 +1083,6 @@ class JsonValidator:
                             "after": copy.deepcopy(new_prediction),
                         }
                     )
-            before_decision = before.get("decision")
-            after_decision = after.get("decision")
             if (
                 isinstance(before_decision, dict)
                 and isinstance(after_decision, dict)

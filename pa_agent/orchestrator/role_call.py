@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -60,6 +61,7 @@ def run_structured_role(
     events: list[dict[str, Any]] = []
     repairs = 0
     stable_source: dict[str, Any] | None = None
+    repair_editable_paths: tuple[tuple[str | int, ...], ...] = ()
 
     while True:
         reply = call_api(current)
@@ -76,6 +78,7 @@ def run_structured_role(
                     role,
                     stable_source,
                     candidate,
+                    editable_paths=repair_editable_paths,
                 )
                 raw = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
         result = validate(raw)
@@ -169,6 +172,7 @@ def run_structured_role(
             )
         if stable_source is None:
             stable_source = _parse_object(raw)
+        repair_editable_paths = _error_paths(errors)
         repairs += 1
         feedback = _repair_feedback(role, errors)
         events[-1]["retry_feedback"] = feedback
@@ -194,58 +198,28 @@ def _restore_stable_role_fields(
     role: str,
     source: dict[str, Any],
     candidate: dict[str, Any],
+    *,
+    editable_paths: tuple[tuple[str | int, ...], ...] = (),
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Keep first-attempt structured judgments stable during contract repair."""
-    paths = list(_STABLE_ROLE_PATHS.get(role, ()))
+    path_pairs = [(path, path) for path in _STABLE_ROLE_PATHS.get(role, ())]
     if role == "vpa_evidence":
-        report = source.get("vpa_report")
-        if isinstance(report, dict):
-            for index, assessment in enumerate(
-                report.get("hypothesis_assessments", [])
-            ):
-                if isinstance(assessment, dict):
-                    paths.extend(
-                        (
-                            ("vpa_report", "hypothesis_assessments", index, "hypothesis_id"),
-                            ("vpa_report", "hypothesis_assessments", index, "relation"),
-                        )
-                    )
-            for index, observation in enumerate(report.get("observations", [])):
-                if isinstance(observation, dict):
-                    paths.extend(
-                        (
-                            ("vpa_report", "observations", index, "finding_kind"),
-                            ("vpa_report", "observations", index, "interpretation_label"),
-                            ("vpa_report", "observations", index, "epistemic_status"),
-                        )
-                    )
-                    for claim_index, claim in enumerate(
-                        observation.get("sequence_claims", [])
-                    ):
-                        if isinstance(claim, dict):
-                            paths.append(
-                                (
-                                    "vpa_report",
-                                    "observations",
-                                    index,
-                                    "sequence_claims",
-                                    claim_index,
-                                    "relation",
-                                )
-                            )
+        path_pairs.extend(_vpa_identity_path_pairs(source, candidate))
 
     out = copy.deepcopy(candidate)
     events: list[dict[str, Any]] = []
-    for path in paths:
-        original = _get_nested(source, path)
-        current = _get_nested(out, path)
+    for source_path, candidate_path in path_pairs:
+        if _overlaps_any(candidate_path, editable_paths):
+            continue
+        original = _get_nested(source, source_path)
+        current = _get_nested(out, candidate_path)
         if original is _MISSING or original == current:
             continue
-        if not _set_nested(out, path, copy.deepcopy(original)):
+        if not _set_nested(out, candidate_path, copy.deepcopy(original)):
             continue
         events.append(
             {
-                "path": ".".join(str(part) for part in path),
+                "path": ".".join(str(part) for part in candidate_path),
                 "before": (
                     "missing_from_repair" if current is _MISSING else copy.deepcopy(current)
                 ),
@@ -254,6 +228,118 @@ def _restore_stable_role_fields(
             }
         )
     return out, events
+
+
+_PATH_PART = re.compile(r"([^.\[\]]+)|\[(\d+)\]")
+
+
+def _error_paths(errors: tuple[str, ...]) -> tuple[tuple[str | int, ...], ...]:
+    """Extract validator path prefixes; prose-only errors grant no edit scope."""
+    result: list[tuple[str | int, ...]] = []
+    for error in errors:
+        prefix, separator, _ = str(error).partition(":")
+        if not separator or prefix in {"", "<root>"} or " " in prefix:
+            continue
+        parts: list[str | int] = []
+        for match in _PATH_PART.finditer(prefix):
+            name, index = match.groups()
+            numeric = index if index is not None else name if name.isdigit() else None
+            parts.append(int(numeric) if numeric is not None else name)
+        if parts:
+            result.append(tuple(parts))
+    return tuple(dict.fromkeys(result))
+
+
+def _overlaps_any(
+    path: tuple[str | int, ...],
+    editable_paths: tuple[tuple[str | int, ...], ...],
+) -> bool:
+    return any(
+        path[: len(editable)] == editable or editable[: len(path)] == path
+        for editable in editable_paths
+    )
+
+
+def _unique_index_by(items: Any, identity: Callable[[dict[str, Any]], Any]) -> dict[Any, int]:
+    if not isinstance(items, list):
+        return {}
+    indexes: dict[Any, int] = {}
+    duplicates: set[Any] = set()
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        key = identity(item)
+        if key is None or key in indexes:
+            duplicates.add(key)
+            continue
+        indexes[key] = index
+    for key in duplicates:
+        indexes.pop(key, None)
+    return indexes
+
+
+def _vpa_identity_path_pairs(
+    source: dict[str, Any], candidate: dict[str, Any]
+) -> list[tuple[tuple[str | int, ...], tuple[str | int, ...]]]:
+    """Map stable VPA judgments by semantic identity, never array position."""
+    source_report = source.get("vpa_report")
+    candidate_report = candidate.get("vpa_report")
+    if not isinstance(source_report, dict) or not isinstance(candidate_report, dict):
+        return []
+    pairs: list[tuple[tuple[str | int, ...], tuple[str | int, ...]]] = []
+
+    def assessment_id(item: dict[str, Any]) -> Any:
+        return item.get("hypothesis_id")
+
+    source_assessments = _unique_index_by(
+        source_report.get("hypothesis_assessments"), assessment_id
+    )
+    candidate_assessments = _unique_index_by(
+        candidate_report.get("hypothesis_assessments"), assessment_id
+    )
+    for identity in source_assessments.keys() & candidate_assessments.keys():
+        pairs.append(
+            (
+                ("vpa_report", "hypothesis_assessments", source_assessments[identity], "relation"),
+                ("vpa_report", "hypothesis_assessments", candidate_assessments[identity], "relation"),
+            )
+        )
+
+    def observation_id(item: dict[str, Any]) -> Any:
+        return tuple(sorted(map(str, item.get("evidence_ids", [])))) or None
+
+    source_observations = _unique_index_by(source_report.get("observations"), observation_id)
+    candidate_observations = _unique_index_by(
+        candidate_report.get("observations"), observation_id
+    )
+    for identity in source_observations.keys() & candidate_observations.keys():
+        source_index = source_observations[identity]
+        candidate_index = candidate_observations[identity]
+        source_prefix = ("vpa_report", "observations", source_index)
+        candidate_prefix = ("vpa_report", "observations", candidate_index)
+        pairs.extend(
+            ((source_prefix + (field,), candidate_prefix + (field,)))
+            for field in ("finding_kind", "interpretation_label", "epistemic_status")
+        )
+        source_item = source_report["observations"][source_index]
+        candidate_item = candidate_report["observations"][candidate_index]
+        def claim_id(item: dict[str, Any]) -> Any:
+            return (
+                item.get("earlier_evidence_id"),
+                item.get("later_evidence_id"),
+            )
+        source_claims = _unique_index_by(source_item.get("sequence_claims"), claim_id)
+        candidate_claims = _unique_index_by(candidate_item.get("sequence_claims"), claim_id)
+        for claim_identity in source_claims.keys() & candidate_claims.keys():
+            pairs.append(
+                (
+                    source_prefix
+                    + ("sequence_claims", source_claims[claim_identity], "relation"),
+                    candidate_prefix
+                    + ("sequence_claims", candidate_claims[claim_identity], "relation"),
+                )
+            )
+    return pairs
 
 
 def _get_nested(value: Any, path: tuple[str | int, ...]) -> Any:

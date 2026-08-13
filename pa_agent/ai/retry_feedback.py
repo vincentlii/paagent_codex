@@ -117,7 +117,13 @@ def build_retry_feedback(
     missing = list(getattr(err, "missing_fields", None) or [])
     invalid = list(getattr(err, "invalid_fields", None) or [])
     allowed_values = dict(getattr(err, "allowed_values", None) or {})
-    detail = format_validation_errors(invalid, missing_fields=missing, max_items=24)
+    provider_contract = getattr(err, "code", "") == "provider_draft_contract"
+    item_limit = len(missing) + len(invalid) if provider_contract else 24
+    detail = format_validation_errors(
+        invalid,
+        missing_fields=missing,
+        max_items=max(24, item_limit),
+    )
     cat_zh = _CATEGORY_ZH.get(category, category)
 
     lines = [
@@ -132,15 +138,15 @@ def build_retry_feedback(
     lines.append("")
     lines.append("**必须修正（仅修下列项；其余字段保持与上一轮一致）：**")
     if missing:
-        for i, m in enumerate(missing[:24], 1):
+        for i, m in enumerate(missing[:item_limit], 1):
             lines.append(f"{i}. [缺少] {m}")
-    remaining_slots = max(0, 24 - min(len(missing), 24))
+    remaining_slots = max(0, item_limit - min(len(missing), item_limit))
     for i, inv in enumerate(
         invalid[:remaining_slots],
-        start=min(len(missing), 24) + 1,
+        start=min(len(missing), item_limit) + 1,
     ):
         lines.append(f"{i}. [无效] {inv}")
-    omitted = max(0, len(missing) + len(invalid) - 24)
+    omitted = max(0, len(missing) + len(invalid) - item_limit)
     if omitted:
         lines.append(
             f"- 另有 {omitted} 项未逐条展开；草稿中所有 "
@@ -155,13 +161,23 @@ def build_retry_feedback(
             lines.append(
                 f"- `{path}`: {json.dumps(values, ensure_ascii=False)}"
             )
+    if provider_contract:
+        from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
+
+        lines.extend(
+            [
+                "",
+                "**本次 Provider Draft 的唯一结构契约：**",
+                render_provider_draft_contract(stage),
+            ]
+        )
     editable_targets = extract_feedback_targets(invalid, missing)
     if "pa_evidence.fact_refs" in editable_targets:
         lines.append(
             "Additional editable path: pa_evidence.fact_refs. Add only the required "
             "catalog fact ID and preserve existing valid IDs."
         )
-    if previous_raw and _try_parse_obj(previous_raw) is not None:
+    if previous_raw and _try_parse_obj(previous_raw) is not None and not provider_contract:
         lines.append(
             f"- 上一轮草稿中被点名的具体字段已替换为 `{RETRY_REWRITE_SENTINEL}`；"
             "请整句重写这些字段，只保留最终结论。禁止写入核对、纠错、修正、应改为或旧句复述过程。"

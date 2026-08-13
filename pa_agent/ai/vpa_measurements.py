@@ -32,7 +32,7 @@ from pa_agent.data.volume_context import resolve_volume_observation
 class VpaMeasurementSpec:
     """Versioned measurement policy; values select data, never market meaning."""
 
-    version: str = "2.1"
+    version: str = "2.2"
     recent_limit: int = 8
     baseline_lookback: int = 20
     minimum_baseline_samples: int = 8
@@ -52,6 +52,12 @@ def _finite(value: float | int | None) -> float | None:
 
 def _round(value: float | None, digits: int = 3) -> float | None:
     return None if value is None else round(value, digits)
+
+
+def _ratio_deviation_pct(value: float | int | None) -> float | None:
+    """Express a ratio's signed distance from parity without interpreting it."""
+    number = _finite(value)
+    return _round((number - 1.0) * 100.0, 1) if number is not None else None
 
 
 def _comparison_label(value: float | None, reference: float | None) -> str:
@@ -415,6 +421,21 @@ def _pa_window_slices(
             and current.get("volume_complete")
             and prior.get("volume_complete")
         )
+        current_vs_prior_volume_ratio = _round(
+            current_volume / prior_volume
+            if volume_comparison_available
+            and current_volume is not None
+            and prior_volume is not None
+            and prior_volume > 0
+            else None
+        )
+        current_vs_prior_causal_rvol_ratio = _round(
+            current_causal_rvol / prior_causal_rvol
+            if current_causal_rvol is not None
+            and prior_causal_rvol is not None
+            and prior_causal_rvol > 0
+            else None
+        )
         facts = {
             "source_fact_id": f"PA.WINDOW.K{window_size}",
             "current_window": current["bar_range"],
@@ -426,13 +447,9 @@ def _pa_window_slices(
             "current_total_volume": current["total_volume"],
             "prior_total_volume": prior["total_volume"] if prior else None,
             "volume_comparison_available": volume_comparison_available,
-            "current_vs_prior_volume_ratio": _round(
-                current_volume / prior_volume
-                if volume_comparison_available
-                and current_volume is not None
-                and prior_volume is not None
-                and prior_volume > 0
-                else None
+            "current_vs_prior_volume_ratio": current_vs_prior_volume_ratio,
+            "current_vs_prior_volume_deviation_pct": _ratio_deviation_pct(
+                current_vs_prior_volume_ratio
             ),
             "current_vs_prior_volume_relation": _comparison_label(
                 current_volume if volume_comparison_available else None,
@@ -441,6 +458,9 @@ def _pa_window_slices(
             "current_median_causal_relative_volume": current[
                 "median_causal_relative_volume"
             ],
+            "current_median_causal_relative_volume_deviation_pct": (
+                _ratio_deviation_pct(current_causal_rvol)
+            ),
             "current_causal_relative_volume_sample_count": current[
                 "causal_relative_volume_sample_count"
             ],
@@ -450,15 +470,15 @@ def _pa_window_slices(
             "prior_median_causal_relative_volume": (
                 prior["median_causal_relative_volume"] if prior else None
             ),
+            "prior_median_causal_relative_volume_deviation_pct": (
+                _ratio_deviation_pct(prior_causal_rvol)
+            ),
             "prior_volume_vs_causal_baseline_relation": (
                 prior["volume_vs_causal_baseline_relation"] if prior else "unavailable"
             ),
-            "current_vs_prior_causal_rvol_ratio": _round(
-                current_causal_rvol / prior_causal_rvol
-                if current_causal_rvol is not None
-                and prior_causal_rvol is not None
-                and prior_causal_rvol > 0
-                else None
+            "current_vs_prior_causal_rvol_ratio": current_vs_prior_causal_rvol_ratio,
+            "current_vs_prior_causal_rvol_deviation_pct": _ratio_deviation_pct(
+                current_vs_prior_causal_rvol_ratio
             ),
             "current_vs_prior_causal_rvol_relation": _comparison_label(
                 current_causal_rvol,
@@ -686,17 +706,26 @@ def compute_vpa_measurements(
                 "baseline_min_samples": baseline_min_samples,
                 "baseline_median_volume": _round(base_median, 2),
                 "relative_volume": _round(relative_volume),
+                "relative_volume_deviation_pct": _ratio_deviation_pct(
+                    relative_volume
+                ),
                 "volume_vs_baseline_relation": _comparison_label(
                     volume if volume_available else None,
                     base_median,
                 ),
                 "volume_vs_previous_ratio": _round(volume_vs_previous),
+                "volume_vs_previous_deviation_pct": _ratio_deviation_pct(
+                    volume_vs_previous
+                ),
                 "volume_vs_previous_relation": _comparison_label(
                     volume if volume_available else None,
                     older_volume,
                 ),
                 "volume_percentile": _round(volume_percentile, 1),
                 "seasonality_relative_volume": _round(seasonal_rvol),
+                "seasonality_relative_volume_deviation_pct": (
+                    _ratio_deviation_pct(seasonal_rvol)
+                ),
                 "volume_vs_seasonality_relation": _comparison_label(
                     volume if volume_available else None,
                     seasonal_median,
@@ -933,6 +962,12 @@ def build_vpa_evidence_catalog(
     snapshot_hash = _snapshot_hash(frame)
     evidence: list[dict[str, Any]] = []
     for index, bar in enumerate(measurements.get("recent_bars", []), start=1):
+        bar_seq = int(bar["seq"])
+        later_closed_bar_count = sum(
+            1
+            for candidate in frame.bars
+            if bool(candidate.closed) and int(candidate.seq) < bar_seq
+        )
         evidence.append(
             {
                 "evidence_id": f"vpa-e{index:03d}",
@@ -953,11 +988,14 @@ def build_vpa_evidence_catalog(
                         "baseline_min_samples",
                         "baseline_median_volume",
                         "relative_volume",
+                        "relative_volume_deviation_pct",
                         "volume_vs_baseline_relation",
                         "volume_vs_previous_ratio",
+                        "volume_vs_previous_deviation_pct",
                         "volume_vs_previous_relation",
                         "volume_percentile",
                         "seasonality_relative_volume",
+                        "seasonality_relative_volume_deviation_pct",
                         "volume_vs_seasonality_relation",
                         "seasonality_sample_count",
                         "spread_atr",
@@ -980,6 +1018,14 @@ def build_vpa_evidence_catalog(
                         "low_minus_prior_20_low",
                         "low_vs_prior_20_low",
                     )
+                }
+                | {
+                    "later_closed_bar_count": later_closed_bar_count,
+                    "later_closed_bar_range": (
+                        f"K{bar_seq - 1}-K1"
+                        if later_closed_bar_count > 0
+                        else None
+                    ),
                 },
                 "time_context": bar["time_context"],
             }
@@ -1028,7 +1074,7 @@ def build_vpa_evidence_catalog(
         ),
     }
     catalog_core = {
-        "catalog_version": "2.1",
+        "catalog_version": "2.2",
         "measurement_spec": {
             "version": DEFAULT_VPA_MEASUREMENT_SPEC.version,
             "recent_limit": recent_limit,
@@ -1126,11 +1172,13 @@ def render_vpa_measurements(
 
     lines.append(
         "evidence_id | source | range | OHLC/direction | volume/available | "
-        "baseline_median/rvol/relation/sample_count/minimum | volume_vs_prev_ratio/relation | "
-        "percentile | seasonality_rvol/relation/n | comparator_alignment | spread_atr | close_position | body_atr | "
+        "baseline_median/rvol/deviation_pct/relation/sample_count/minimum | "
+        "volume_vs_prev_ratio/deviation_pct/relation | percentile | "
+        "seasonality_rvol/deviation_pct/relation/n | comparator_alignment | spread_atr | close_position | body_atr | "
         "close_to_close_progress_atr/relation | "
         "prior_5(high,low,high_delta/high_relation,low_delta/low_relation) | "
-        "prior_20(high,low,high_delta/high_relation,low_delta/low_relation) | time_bucket | day"
+        "prior_20(high,low,high_delta/high_relation,low_delta/low_relation) | "
+        "later_closed(count/range) | time_bucket | day"
     )
     for item in catalog["evidence"]:
         facts = item["facts"]
@@ -1144,12 +1192,17 @@ def render_vpa_measurements(
                 f"current={facts.get('current_window')} vs prior={facts.get('prior_window')}; "
                 f"volume_available={facts.get('volume_comparison_available')}; "
                 f"volume_ratio={facts.get('current_vs_prior_volume_ratio')}; "
+                "volume_deviation_pct="
+                f"{facts.get('current_vs_prior_volume_deviation_pct')}; "
                 f"volume_relation={facts.get('current_vs_prior_volume_relation')}; "
                 f"median_causal_rvol={facts.get('current_median_causal_relative_volume')}; "
+                "median_causal_rvol_deviation_pct="
+                f"{facts.get('current_median_causal_relative_volume_deviation_pct')}; "
                 "causal_rvol_relation="
                 f"{facts.get('current_volume_vs_causal_baseline_relation')}; "
                 "causal_rvol_comparison="
                 f"{facts.get('current_vs_prior_causal_rvol_ratio')}/"
+                f"{facts.get('current_vs_prior_causal_rvol_deviation_pct')}/"
                 f"{facts.get('current_vs_prior_causal_rvol_relation')}; "
                 f"progress_atr={facts.get('current_net_close_progress_atr')}/"
                 f"{facts.get('current_progress_direction')} vs "
@@ -1196,11 +1249,15 @@ def render_vpa_measurements(
             f"{facts.get('open')}/{facts.get('high')}/{facts.get('low')}/{facts.get('close')}/"
             f"{facts.get('candle_direction')} | {facts.get('volume')}/"
             f"{facts.get('volume_available')} | {facts.get('baseline_median_volume')}/"
-            f"{facts.get('relative_volume')}/{facts.get('volume_vs_baseline_relation')}/"
+            f"{facts.get('relative_volume')}/"
+            f"{facts.get('relative_volume_deviation_pct')}/"
+            f"{facts.get('volume_vs_baseline_relation')}/"
             f"{facts.get('baseline_sample_count')}/{facts.get('baseline_min_samples')} | "
             f"{facts.get('volume_vs_previous_ratio')}/"
+            f"{facts.get('volume_vs_previous_deviation_pct')}/"
             f"{facts.get('volume_vs_previous_relation')} | {facts.get('volume_percentile')} | "
             f"{facts.get('seasonality_relative_volume')}/"
+            f"{facts.get('seasonality_relative_volume_deviation_pct')}/"
             f"{facts.get('volume_vs_seasonality_relation')}/"
             f"{facts.get('seasonality_sample_count')} | {comparator_alignment} | "
             f"{facts.get('spread_atr')} | "
@@ -1213,6 +1270,8 @@ def render_vpa_measurements(
             f"{facts.get('prior_20_high')},{facts.get('prior_20_low')},"
             f"{facts.get('high_minus_prior_20_high')}/{facts.get('high_vs_prior_20_high')},"
             f"{facts.get('low_minus_prior_20_low')}/{facts.get('low_vs_prior_20_low')} | "
+            f"later_closed={facts.get('later_closed_bar_count')}/"
+            f"{facts.get('later_closed_bar_range')} | "
             f"{clock.get('time_bucket')} | "
             f"{clock.get('day_of_week')}"
         )

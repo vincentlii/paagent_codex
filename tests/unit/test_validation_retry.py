@@ -14,7 +14,9 @@ from pa_agent.ai.retry_feedback import (
 )
 from pa_agent.ai.retry_policy import (
     detect_immutable_field_changes,
+    detect_unallowed_draft_changes,
     extract_feedback_targets,
+    project_allowed_draft_changes,
     should_retry,
 )
 from pa_agent.config.settings import PromptSettings, Settings, ValidationSettings
@@ -25,6 +27,9 @@ from tests.integration.conftest import (
     VALID_STAGE2,
     make_frame,
     make_reply,
+)
+from tests.unit.test_pa_provider_contracts import (
+    _stage1_draft as _stage1_provider_draft,
 )
 
 
@@ -377,6 +382,283 @@ def test_draft_retry_guard_compares_provider_semantics_before_materialization() 
     changes = detect_immutable_field_changes("stage1", before, after)
 
     assert changes == ["market_hypotheses.primary.direction: 'bullish' → 'bearish'"]
+
+
+def test_provider_contract_repair_is_bounded_to_one_attempt() -> None:
+    settings = Settings(
+        prompt=PromptSettings(vpa_mode="off"),
+        validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
+    )
+    invalid = _stage1_provider_draft()
+    invalid["diagnosis_confidence"] = "medium"
+    calls = 0
+
+    def call_api(_messages: list[dict]):
+        nonlocal calls
+        calls += 1
+        return make_reply(invalid)
+
+    result = validate_with_retry(
+        stage="stage1",
+        messages=[{"role": "user", "content": "stage1"}],
+        reply=make_reply(invalid),
+        validator=JsonValidator(settings),
+        validation_settings=settings.validation,
+        validate_kwargs={"kline_frame": make_frame()},
+        call_api=call_api,
+    )
+
+    assert isinstance(result.result, ValidationError)
+    assert result.result.code == "provider_draft_contract"
+    assert result.attempts == 2
+    assert calls == 1
+
+
+def test_provider_repair_receives_schema_and_fact_issues_in_one_attempt() -> None:
+    settings = Settings(
+        prompt=PromptSettings(vpa_mode="off"),
+        validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
+    )
+    invalid = _stage1_provider_draft()
+    invalid["gate_trace"].insert(
+        0,
+        {
+            "node_id": "1.1",
+            "answer": "是",
+            "reason": "模型重复了程序数据预检。",
+            "evidence_refs": [],
+        },
+    )
+    node_22 = next(item for item in invalid["gate_trace"] if item["node_id"] == "2.2")
+    original_answer = node_22["answer"]
+    original_thesis = invalid["market_hypotheses"]["primary"]["thesis"]
+    node_22["answer"] = "无法解析的回答"
+    invalid["market_hypotheses"]["primary"]["thesis"] = (
+        "K1低点999999，因此可能支持延续。"
+    )
+    repaired = copy.deepcopy(invalid)
+    next(
+        item for item in repaired["gate_trace"] if item["node_id"] == "2.2"
+    )["answer"] = original_answer
+    repaired["market_hypotheses"]["primary"]["thesis"] = original_thesis
+    retry_messages: list[list[dict]] = []
+
+    def call_api(messages: list[dict]):
+        retry_messages.append(messages)
+        return make_reply(repaired)
+
+    result = validate_with_retry(
+        stage="stage1",
+        messages=[{"role": "user", "content": "stage1"}],
+        reply=make_reply(invalid),
+        validator=JsonValidator(settings),
+        validation_settings=settings.validation,
+        validate_kwargs={"kline_frame": make_frame()},
+        call_api=call_api,
+    )
+
+    assert isinstance(result.result, Ok)
+    assert result.attempts == 2
+    assert len(retry_messages) == 1
+    feedback = retry_messages[0][-1]["content"]
+    assert "gate_trace.4.answer" in feedback
+    assert "market_hypotheses.primary.thesis" in feedback
+
+
+def test_stage2_provider_repair_can_fix_invalid_section_node_and_append_node_14() -> None:
+    settings = Settings(
+        prompt=PromptSettings(vpa_mode="off"),
+        validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
+    )
+    valid = copy.deepcopy(VALID_STAGE2)
+    valid["protocol_version"] = "pa_draft_v2"
+    valid["decision_intent"] = "trade"
+    valid.pop("terminal")
+    valid.pop("next_cycle_prediction")
+    valid["decision"].pop("diagnosis_confidence")
+    valid["decision"].pop("diagnosis_confidence_reasoning")
+    valid["decision_trace"] = [
+        {
+            "node_id": item["node_id"],
+            "answer": item["answer"],
+            "reason": item["reason"],
+            **({"branch": item["branch"]} if item.get("branch") is not None else {}),
+            "evidence_refs": ["PA.WINDOW.K5"],
+        }
+        for item in VALID_STAGE2["decision_trace"]
+        if item["node_id"] != "10.3"
+    ]
+    invalid = copy.deepcopy(valid)
+    invalid["decision_trace"] = [
+        item for item in invalid["decision_trace"] if item["node_id"] != "14"
+    ]
+    next(
+        item for item in invalid["decision_trace"] if item["node_id"] == "11.2"
+    )["node_id"] = "11"
+    retry_messages: list[list[dict]] = []
+
+    def call_api(messages: list[dict]):
+        retry_messages.append(messages)
+        return make_reply(valid)
+
+    result = validate_with_retry(
+        stage="stage2",
+        messages=[{"role": "user", "content": "stage2"}],
+        reply=make_reply(invalid),
+        validator=JsonValidator(settings),
+        validation_settings=settings.validation,
+        validate_kwargs={"kline_frame": make_frame(), "stage1_json": VALID_STAGE1},
+        call_api=call_api,
+    )
+
+    assert isinstance(result.result, Ok)
+    assert result.attempts == 2
+    assert len(retry_messages) == 1
+    feedback = retry_messages[0][-1]["content"]
+    assert "decision_trace.6.node_id" in feedback
+    assert "node 14 prohibition scan" in feedback
+
+
+def test_provider_contract_feedback_lists_every_issue_without_sentinel_claim() -> None:
+    error = ValidationError(
+        category="b",
+        stage="stage1",
+        raw_text='{"protocol_version":"pa_draft_v2"}',
+        invalid_fields=[f"field.{index}" for index in range(30)],
+        message="provider draft contract failed",
+        code="provider_draft_contract",
+    )
+
+    text = build_retry_feedback(
+        error,
+        stage="stage1",
+        attempt=1,
+        max_attempts=1,
+        previous_raw=error.raw_text,
+    )
+
+    assert "field.29" in text
+    assert "__REWRITE_REQUIRED__" not in text
+    assert "PA_PROVIDER_DRAFT_CONTRACT_BEGIN" in text
+
+
+def test_provider_contract_repair_ignores_unreported_draft_change() -> None:
+    settings = Settings(
+        prompt=PromptSettings(vpa_mode="off"),
+        validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
+    )
+    invalid = _stage1_provider_draft()
+    invalid["diagnosis_confidence"] = "medium"
+    repaired = copy.deepcopy(invalid)
+    repaired["diagnosis_confidence"] = 62
+    repaired["market_hypotheses"]["primary"]["thesis"] = "changed during repair"
+
+    result = validate_with_retry(
+        stage="stage1",
+        messages=[{"role": "user", "content": "stage1"}],
+        reply=make_reply(invalid),
+        validator=JsonValidator(settings),
+        validation_settings=settings.validation,
+        validate_kwargs={"kline_frame": make_frame()},
+        call_api=lambda _messages: make_reply(repaired),
+    )
+
+    assert isinstance(result.result, Ok)
+    assert result.cheat_detected is False
+    assert result.result.provider_obj is not None
+    assert result.result.provider_obj["diagnosis_confidence"] == 62
+    assert (
+        result.result.provider_obj["market_hypotheses"]["primary"]["thesis"]
+        == invalid["market_hypotheses"]["primary"]["thesis"]
+    )
+
+
+def test_provider_contract_repair_projects_before_validating_new_claims() -> None:
+    settings = Settings(
+        prompt=PromptSettings(vpa_mode="off"),
+        validation=ValidationSettings(retry_max=3, retry_max_semantic=1),
+    )
+    invalid = _stage1_provider_draft()
+    invalid["diagnosis_confidence"] = "medium"
+    repaired = copy.deepcopy(invalid)
+    repaired["diagnosis_confidence"] = 62
+    repaired["market_hypotheses"]["primary"]["thesis"] = (
+        "K1低点999999，因此当前结构成立。"
+    )
+
+    result = validate_with_retry(
+        stage="stage1",
+        messages=[{"role": "user", "content": "stage1"}],
+        reply=make_reply(invalid),
+        validator=JsonValidator(settings),
+        validation_settings=settings.validation,
+        validate_kwargs={"kline_frame": make_frame()},
+        call_api=lambda _messages: make_reply(repaired),
+    )
+
+    assert isinstance(result.result, Ok)
+    assert result.result.provider_obj is not None
+    assert (
+        result.result.provider_obj["market_hypotheses"]["primary"]["thesis"]
+        == invalid["market_hypotheses"]["primary"]["thesis"]
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda draft: draft["market_hypotheses"]["primary"].pop("thesis"),
+        lambda draft: draft["market_hypotheses"]["primary"].update(thesis=None),
+        lambda draft: draft["market_hypotheses"]["alternatives"].reverse(),
+        lambda draft: draft["market_hypotheses"]["alternatives"].append(
+            copy.deepcopy(draft["market_hypotheses"]["primary"])
+        ),
+    ],
+)
+def test_provider_contract_diff_rejects_delete_null_reorder_and_array_growth(
+    mutate,
+) -> None:
+    before = _stage1_provider_draft()
+    before["market_hypotheses"]["alternatives"].append(
+        copy.deepcopy(before["market_hypotheses"]["alternatives"][0])
+    )
+    before["market_hypotheses"]["alternatives"][1]["direction"] = "bearish"
+    after = copy.deepcopy(before)
+    mutate(after)
+
+    violations = detect_unallowed_draft_changes(
+        before,
+        after,
+        editable_pointers={"/diagnosis_confidence"},
+    )
+
+    assert violations
+
+
+def test_bounded_projection_resolves_reordered_trace_by_node_id() -> None:
+    before = _stage1_provider_draft()
+    after = copy.deepcopy(before)
+    target = next(item for item in after["gate_trace"] if item["node_id"] == "2.3")
+    target["reason"] = "repaired direction evidence"
+    after["gate_trace"].reverse()
+    target_index = next(
+        index
+        for index, item in enumerate(before["gate_trace"])
+        if item["node_id"] == "2.3"
+    )
+
+    projected = project_allowed_draft_changes(
+        before,
+        after,
+        editable_pointers={f"/gate_trace/{target_index}/reason"},
+    )
+
+    assert [item["node_id"] for item in projected["gate_trace"]] == [
+        item["node_id"] for item in before["gate_trace"]
+    ]
+    assert projected["gate_trace"][target_index]["reason"] == (
+        "repaired direction evidence"
+    )
 
 
 def test_retry_parser_is_strict_json_only() -> None:

@@ -1,6 +1,7 @@
 """Validate model output with optional continuation retry."""
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,9 +14,12 @@ from pa_agent.ai.retry_feedback import (
     parse_json_object,
 )
 from pa_agent.ai.retry_policy import (
+    contract_editable_pointers,
     detect_immutable_field_changes,
+    detect_unallowed_draft_changes,
     extract_feedback_targets,
     max_retries_for_category,
+    project_allowed_draft_changes,
     should_retry,
 )
 from pa_agent.orchestrator.warning_events import group_warning_messages
@@ -95,6 +99,7 @@ def validate_with_retry(
     previous_raw: str | None = None
     previous_obj: dict[str, Any] | None = None
     previous_feedback_targets: set[str] = set()
+    previous_contract_editable: set[str] | None = None
     validation_events: list[dict[str, Any]] = []
 
     while True:
@@ -102,6 +107,45 @@ def validate_with_retry(
             getattr(current_reply, "content", None) or "",
             getattr(current_reply, "reasoning_content", None) or "",
         )
+        if (
+            attempt > 0
+            and previous_obj is not None
+            and previous_contract_editable is not None
+        ):
+            candidate_obj = parse_json_object(content)
+            if candidate_obj is not None:
+                ignored_changes = detect_unallowed_draft_changes(
+                    previous_obj,
+                    candidate_obj,
+                    editable_pointers=previous_contract_editable,
+                )
+                if ignored_changes:
+                    candidate_obj = project_allowed_draft_changes(
+                        previous_obj,
+                        candidate_obj,
+                        editable_pointers=previous_contract_editable,
+                    )
+                    content = json.dumps(candidate_obj, ensure_ascii=False)
+                    validation_events.append(
+                        {
+                            "attempt": attempt + 1,
+                            "category": "normalization",
+                            "code": "bounded_contract_projection",
+                            "severity": "normalization",
+                            "owner": stage,
+                            "retry_policy": "none",
+                            "message": (
+                                "unreported retry changes were ignored; only "
+                                "authorized JSON Pointers were applied"
+                            ),
+                            "missing_fields": [],
+                            "invalid_fields": [],
+                            "allowed_values": {},
+                            "raw_text": content,
+                            "retry_feedback": None,
+                            "ignored_change_count": len(ignored_changes),
+                        }
+                    )
         result = validator.validate(stage, content, **validate_kwargs)
 
         retry_cap = max_attempts
@@ -165,7 +209,11 @@ def validate_with_retry(
                         "normalization": dict(normalization),
                     }
                 )
-            if attempt > 0 and previous_obj is not None:
+            if (
+                attempt > 0
+                and previous_obj is not None
+                and previous_contract_editable is None
+            ):
                 immutable_changes = detect_immutable_field_changes(
                     stage,
                     previous_obj,
@@ -216,17 +264,20 @@ def validate_with_retry(
             )
 
         err = result
+        if err.code == "provider_draft_contract":
+            retry_cap = min(retry_cap, 1)
         retry_allowed = attempt < retry_cap and should_retry(
             err.category,
             err.invalid_fields,
             err.missing_fields,
             attempt=attempt,
             settings=validation_settings,
+            error_code=err.code,
         )
         event = {
             "attempt": attempt + 1,
             "category": err.category,
-            "code": "json_contract_violation",
+            "code": err.code or "json_contract_violation",
             "severity": "hard_error",
             "owner": stage,
             "retry_policy": "bounded_retry" if retry_allowed else "none",
@@ -274,6 +325,11 @@ def validate_with_retry(
             err.invalid_fields,
             err.missing_fields,
         )
+        previous_contract_editable = (
+            contract_editable_pointers(err.contract_issues)
+            if err.code == "provider_draft_contract"
+            else None
+        )
 
         feedback = build_retry_feedback(
             err,
@@ -289,10 +345,14 @@ def validate_with_retry(
             current_reply,
             provider_settings=provider_settings,
         ) + [{"role": "user", "content": feedback}]
-        retry_draft = build_sanitized_retry_draft(
-            previous_raw,
-            err.invalid_fields,
-            err.missing_fields,
+        retry_draft = (
+            previous_raw
+            if err.code == "provider_draft_contract"
+            else build_sanitized_retry_draft(
+                previous_raw,
+                err.invalid_fields,
+                err.missing_fields,
+            )
         )
         preserve_mimo = False
         if provider_settings is not None:

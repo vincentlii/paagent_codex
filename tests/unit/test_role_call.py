@@ -252,3 +252,135 @@ def test_role_repair_allows_citation_metadata_to_be_corrected() -> None:
         == "joint_arbitration.evidence_used"
         for event in result.validation_events
     )
+
+
+def test_vpa_repair_does_not_restore_the_field_named_by_validation() -> None:
+    replies = iter(
+        (
+            _Reply(
+                '{"vpa_report":{"background_relation":"supports",'
+                '"entry_timing_relation":"neutral",'
+                '"next_confirmation":{"state":"not_applicable"}}}'
+            ),
+            _Reply(
+                '{"vpa_report":{"background_relation":"neutral",'
+                '"entry_timing_relation":"neutral",'
+                '"next_confirmation":{"state":"not_applicable"}}}'
+            ),
+        )
+    )
+
+    def validate(raw: str) -> RoleValidationResult:
+        payload = json.loads(raw)
+        if payload["vpa_report"]["background_relation"] == "neutral":
+            return RoleValidationResult(payload)
+        return RoleValidationResult(
+            None,
+            ("vpa_report.background_relation: unsupported without evidence",),
+        )
+
+    result = run_structured_role(
+        role="vpa_evidence",
+        messages=[{"role": "user", "content": "Return JSON."}],
+        call_api=lambda messages: next(replies),
+        validate=validate,
+    )
+
+    assert result.ok
+    assert result.obj["vpa_report"]["background_relation"] == "neutral"
+    assert not any(
+        event.get("normalization", {}).get("path")
+        == "vpa_report.background_relation"
+        for event in result.validation_events
+    )
+
+
+def test_vpa_repair_preserves_assessment_relation_by_hypothesis_id_after_reorder() -> None:
+    first = {
+        "vpa_report": {
+            "hypothesis_assessments": [
+                {"hypothesis_id": "pa-primary", "relation": "supports"},
+                {"hypothesis_id": "pa-alternative-1", "relation": "challenges"},
+            ]
+        },
+        "broken": False,
+    }
+    repaired = {
+        "vpa_report": {
+            "hypothesis_assessments": [
+                {"hypothesis_id": "pa-alternative-1", "relation": "neutral"},
+                {"hypothesis_id": "pa-primary", "relation": "neutral"},
+            ]
+        },
+        "broken": True,
+    }
+    replies = iter((_Reply(json.dumps(first)), _Reply(json.dumps(repaired))))
+
+    def validate(raw: str) -> RoleValidationResult:
+        payload = json.loads(raw)
+        assessments = payload["vpa_report"]["hypothesis_assessments"]
+        relations = {item["hypothesis_id"]: item["relation"] for item in assessments}
+        if payload["broken"] and relations == {
+            "pa-primary": "supports",
+            "pa-alternative-1": "challenges",
+        }:
+            return RoleValidationResult(payload)
+        return RoleValidationResult(None, ("broken: true expected",))
+
+    result = run_structured_role(
+        role="vpa_evidence",
+        messages=[{"role": "user", "content": "Return JSON."}],
+        call_api=lambda messages: next(replies),
+        validate=validate,
+    )
+
+    assert result.ok
+    assessments = result.obj["vpa_report"]["hypothesis_assessments"]
+    assert [item["hypothesis_id"] for item in assessments] == [
+        "pa-alternative-1",
+        "pa-primary",
+    ]
+    assert [item["relation"] for item in assessments] == [
+        "challenges",
+        "supports",
+    ]
+
+
+def test_vpa_repair_accepts_dot_index_path_for_named_assessment_field() -> None:
+    first = {
+        "vpa_report": {
+            "hypothesis_assessments": [
+                {"hypothesis_id": "pa-primary", "relation": "supports"}
+            ]
+        }
+    }
+    repaired = {
+        "vpa_report": {
+            "hypothesis_assessments": [
+                {"hypothesis_id": "pa-primary", "relation": "neutral"}
+            ]
+        }
+    }
+    replies = iter((_Reply(json.dumps(first)), _Reply(json.dumps(repaired))))
+
+    def validate(raw: str) -> RoleValidationResult:
+        payload = json.loads(raw)
+        relation = payload["vpa_report"]["hypothesis_assessments"][0]["relation"]
+        if relation == "neutral":
+            return RoleValidationResult(payload)
+        return RoleValidationResult(
+            None,
+            ("vpa_report.hypothesis_assessments.0.relation: correction required",),
+        )
+
+    result = run_structured_role(
+        role="vpa_evidence",
+        messages=[{"role": "user", "content": "Return JSON."}],
+        call_api=lambda messages: next(replies),
+        validate=validate,
+    )
+
+    assert result.ok
+    assert result.obj["vpa_report"]["hypothesis_assessments"][0]["relation"] == (
+        "neutral"
+    )

@@ -6,6 +6,7 @@ import functools
 import json
 import logging
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -220,7 +221,13 @@ def _stage1_output_reminder_for_mode(
     Data preflight handles §1.1; the LLM owns all seven semantic gate nodes.
     """
     _ = analysis_mode  # reserved for future mode-specific tweaks
-    return _STAGE1_OUTPUT_REMINDER
+    from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
+
+    return (
+        f"{_STAGE1_OUTPUT_REMINDER}\n\n"
+        "## Exact Stage 1 provider contract\n"
+        f"{render_provider_draft_contract('stage1')}"
+    )
 
 
 def _stage1_tail_reminder() -> str:
@@ -228,7 +235,13 @@ def _stage1_tail_reminder() -> str:
 
 
 def _stage2_output_contract() -> str:
-    return _STAGE2_OUTPUT_CONTRACT
+    from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
+
+    return (
+        f"{_STAGE2_OUTPUT_CONTRACT}\n\n"
+        "## Exact Stage 2 provider contract\n"
+        f"{render_provider_draft_contract('stage2')}"
+    )
 
 
 def _stage2_tail_reminder() -> str:
@@ -497,25 +510,12 @@ _STAGE1_OUTPUT_REMINDER = """
 竞争假设；程序只提供可复算事实并物化决策树静态字段。Evidence first，hypothesis
 plural，label last。不得根据单一阈值机械分类，也不得为了满足格式制造替代假设。
 
-顶层必须包含：
-- `protocol_version`: 固定 `pa_draft_v2`
-- `diagnosis_confidence` 与 `diagnosis_confidence_reasoning`
-- `market_hypotheses`: `primary` 加 0-2 个 `alternatives`
-- 原有 `spike_stage/climax_risk/market_phase/transition_risk/detected_patterns/key_signals/htf_context`
-- 原有 `support_levels/resistance_levels/risk_warning/bar_analysis/bar_by_bar_summary`
-- `pa_evidence`: 只输出 `spike_analysis`
-- `gate_trace`: 只输出语义核心
-
-每个 hypothesis 必须包含：`cycle_position`、`direction`、`setup_hint`、`thesis`、
-`supporting_fact_refs`、`challenging_fact_refs`、`theory_rule_ids`、
-`confirmation_condition`、`disconfirmation_condition`。证据 ID 必须来自本次
-ANALYSIS_FACT_CATALOG。alternatives 可为空，禁止复制 primary 伪造不同观点。
-
-`gate_trace` 每项只含：`node_id`、`answer`、`reason`、`evidence_refs`，按需可含
-`branch/next_node/skipped`。不要输出 `question/section/bar_range`；程序按 node 与证据
-引用物化。只评估 §1-§2，禁止输出 10.3、14 或 `gate_result`。完整可决策路径应走到
-§2.5；§1.2 无法识别时在该节点停止，§1.3 极端混乱时在该节点停止。
-`bar_analysis` 保留 `last_closed_bar=K1`、`signal_bar` 与 `follow_through`；逐棒项保留 `trapped_side`。
+字段形状、必填项、类型和枚举只以紧随其后的自动生成 Provider Contract 为准，
+不要沿用旧版 Canonical JSON 的顶层镜像或静态 trace 字段。证据 ID 必须来自本次
+ANALYSIS_FACT_CATALOG；alternatives 可为空，禁止复制 primary 伪造不同观点。
+`gate_trace` 不要输出 `question/section/bar_range`，这些字段由程序物化。
+只评估 §1-§2，禁止输出 10.3、14 或 `gate_result`。完整可决策路径应走到 §2.5；
+§1.2 无法识别时在该节点停止，§1.3 极端混乱时在该节点停止。
 """.strip()
 
 _STAGE2_OUTPUT_CONTRACT = """
@@ -525,24 +525,16 @@ _STAGE2_OUTPUT_CONTRACT = """
 和 Trader Equation，并执行订单安全检查。
 Stage 2 是具体 PA 交易方案的唯一所有者；程序不替它选择 Setup 或入场时机。
 
-顶层必须包含：
-- `protocol_version`: 固定 `pa_draft_v2`
-- `decision_intent`: `trade|wait|reject`
-- `decision`、`bar_analysis`、`decision_trace`
-- `next_bar_prediction`（启用时）；`next_cycle_prediction` 为可选辅助任务
-
-`decision` 沿用原字段，但不要输出 `diagnosis_confidence` 或
-`diagnosis_confidence_reasoning`，程序从 Stage 1 冻结复制。若 `order_type=不下单`，
-方向、三价、交易置信度和胜率按 schema 置 null。
-`bar_analysis` 保留 `signal_bar`、`entry_bar`、`second_entry`；后者包含
-`is_second_entry/type`。`entry_bar` 必须包含 `bar/strength/follow_through/still_valid/freshness`。
-`signal_bar` 必须包含 `bar/quality/pattern/reason`；decision 保留 `invalidation_condition`。
-突破候选必须提供 `entry_basis_bar/entry_basis_extreme/entry_rule`。
-
-`decision_trace` 每项只含 `node_id/answer/reason/evidence_refs`，按需可含
-`branch/next_node/skipped`。不要输出 `question/section/bar_range`、§10.3 或 `terminal`：
-程序根据 Evidence ID、模型意图和确定性交易数学物化。模型仍需判断 §10.1/§10.2、
-Setup 是否成立、信号质量和是否执行；不得为了让方程通过而调整结构价格或胜率。
+字段形状、必填项、类型和枚举只以紧随其后的自动生成 Provider Contract 为准。
+不要输出 Stage 1 冻结字段、`gate_shortcircuited`、静态 trace 字段、§10.3、
+`terminal` 或 `next_cycle_prediction`；程序根据 Evidence ID、模型意图和确定性交易数学物化。
+`decision_trace` 不要输出 `question/section/bar_range`、§10.3 或 `terminal`。
+Trace protocol: `node_id` must be an exact question ID; section heading `11` is invalid,
+so choose the applicable `11.1`-`11.4`. Every executable order must include node `14`.
+若 `order_type=不下单`，方向、三价、交易置信度和胜率必须按 contract 置 null。
+`next_bar_prediction` 是启用时由 LLM 提供的辅助判断，不参与订单授权。
+模型仍需判断 §10.1/§10.2、Setup 是否成立、信号质量和是否执行；
+不得为了让方程通过而调整结构价格或胜率。`estimated_win_rate` 仍是未经统计校准的 PA 主观胜率先验。
 """.strip()
 
 _STAGE1_TAIL_REMINDER = (
@@ -809,10 +801,16 @@ class PromptAssembler:
 
     def _decision_tree_stage1(self) -> str:
         """Return global principles and the PA framework/setup sections 0-8."""
-        return self._load_before_heading(
+        content = self._load_before_heading(
             "二元决策.txt",
             _DECISION_TREE_STAGE2_HEADING,
         )
+        content = re.sub(
+            r"(?ms)^###\s+1\.1\b.*?(?=^###\s+1\.2\b)",
+            "§1.1 数据充足性已由程序预检；模型从 §1.2 开始判断。\n\n",
+            content,
+        )
+        return content
 
     def _decision_tree_stage2(self, *, include_global: bool) -> str:
         """Return execution sections 9-15, plus global principles if standalone."""
@@ -1004,6 +1002,11 @@ class PromptAssembler:
             f"```json\n{json.dumps(analysis_envelope, ensure_ascii=False, indent=2)}\n```\n\n"
             + (f"{knowledge}\n\n" if knowledge else "")
             + (f"{measurements}\n\n" if measurements else "")
+            + (
+                "Comparator relations such as above/below record direction only; "
+                "read the signed deviation_pct before judging magnitude, and a ratio "
+                "sign alone does not justify strong activity wording.\n\n"
+            )
             + """输出且只输出：
 {
   "vpa_report": {

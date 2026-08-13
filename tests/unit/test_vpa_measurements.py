@@ -60,11 +60,21 @@ def test_vpa_measurements_render_facts_without_trade_conclusions() -> None:
     assert first_facts["candle_direction"] == "bullish"
     assert first_facts["volume_vs_previous_ratio"] == 1.222
     assert first_facts["volume_vs_previous_relation"] == "above"
+    assert first_facts["volume_vs_previous_deviation_pct"] == 22.2
+    assert first_facts["relative_volume_deviation_pct"] == round(
+        (first_facts["relative_volume"] - 1.0) * 100.0,
+        1,
+    )
     assert first_facts["close_vs_previous_relation"] == "below"
     assert first_facts["prior_5_low"] == 100.0
     assert first_facts["low_minus_prior_5_low"] == -1.0
     assert first_facts["high_vs_prior_5_high"] == "below"
     assert first_facts["low_vs_prior_5_low"] == "below"
+    assert first_facts["later_closed_bar_count"] == 0
+    assert first_facts["later_closed_bar_range"] is None
+    eighth_facts = catalog["evidence"][7]["facts"]
+    assert eighth_facts["later_closed_bar_count"] == 7
+    assert eighth_facts["later_closed_bar_range"] == "K7-K1"
     assert "rvol" in text
     assert "percentile" in text
     assert "spread_atr" in text
@@ -73,10 +83,21 @@ def test_vpa_measurements_render_facts_without_trade_conclusions() -> None:
     assert "seasonality" in text
     assert "OHLC" in text
     assert "prior_5" in text
-    assert "1.222/above" in text
+    assert "later_closed=7/K7-K1" in text
+    assert "deviation_pct" in text
+    assert "1.222/22.2/above" in text
     assert "above" in text
     assert data["seasonality_context"]["seasonality_available"] is False
     assert data["seasonality_context"]["comparison"] == "history_not_provided"
+
+    window = next(
+        item for item in catalog["evidence"]
+        if item["evidence_id"] == "vpa-w005"
+    )["facts"]
+    assert window["current_vs_prior_volume_deviation_pct"] == round(
+        (window["current_vs_prior_volume_ratio"] - 1.0) * 100.0,
+        1,
+    )
 
     forbidden = (
         "absorption",
@@ -244,8 +265,9 @@ def test_pa_window_comparison_includes_causal_rvol_on_both_windows() -> None:
     assert facts["current_median_causal_relative_volume"] == 2.0
     assert facts["prior_median_causal_relative_volume"] == 1.0
     assert facts["current_vs_prior_causal_rvol_ratio"] == 2.0
+    assert facts["current_vs_prior_causal_rvol_deviation_pct"] == 100.0
     assert facts["current_vs_prior_causal_rvol_relation"] == "above"
-    assert "causal_rvol_comparison=2.0/above" in render_vpa_measurements(
+    assert "causal_rvol_comparison=2.0/100.0/above" in render_vpa_measurements(
         frame,
         selected_fact_refs={"PA.WINDOW.K5"},
     )

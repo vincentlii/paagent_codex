@@ -63,7 +63,7 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not live'"
 markers = [
     "unit: unit-level tests",
     "property: property-based tests (hypothesis)",

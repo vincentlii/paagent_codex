@@ -606,6 +606,22 @@ def _build_empty_record(
     requested_mode = resolve_vpa_mode(
         getattr(settings, "prompt", None) if settings is not None else None
     )
+    from pa_agent.ai.pa_provider_contracts import provider_draft_schema_digest
+    from pa_agent.quality.runtime_fingerprint import (
+        VALIDATION_POLICY_VERSION,
+        analysis_runtime_fingerprint,
+        loaded_validation_fingerprint,
+    )
+
+    runtime_identity = {
+        "analysis_runtime_fingerprint": analysis_runtime_fingerprint(),
+        "loaded_validation_fingerprint": loaded_validation_fingerprint(),
+        "validation_policy_version": VALIDATION_POLICY_VERSION,
+        "provider_contract_digests": {
+            "stage1": provider_draft_schema_digest("stage1"),
+            "stage2": provider_draft_schema_digest("stage2"),
+        },
+    }
 
     return AnalysisRecord(
         meta=meta,
@@ -624,6 +640,7 @@ def _build_empty_record(
         experience_loaded=[],
         exception=None,
         usage_total={},
+        role_runtime=runtime_identity,
         run_outcome=RunOutcome(
             status="internal_error",
             official_path="none",
@@ -2258,6 +2275,7 @@ class TwoStageOrchestrator:
                 *copy.deepcopy(role_calls),
             ]
             role_runtime = {
+                **copy.deepcopy(baseline.role_runtime),
                 "design": (
                     "pa_vpa_joint_research_v1"
                     if research_joint

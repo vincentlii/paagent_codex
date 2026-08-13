@@ -131,6 +131,71 @@ def test_stage1_null_signal_bar_requires_invalid_quality() -> None:
     assert "bar_analysis.signal_bar.quality must be invalid when bar is null" in errors
 
 
+def test_explicit_continuous_direction_range_is_a_quality_warning() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    frame = make_frame()
+    bearish_k4 = replace(
+        frame.bars[3],
+        open=frame.bars[3].close + 1.0,
+        close=frame.bars[3].close,
+    )
+    frame = replace(frame, bars=(*frame.bars[:3], bearish_k4, *frame.bars[4:]))
+    stage1["key_signals"] = ["K8-K4 连续阳线支持多头推进。"]
+
+    errors = _validate_stage1_hard(stage1, kline_frame=frame)
+    warnings = collect_stage1_quality_warnings(stage1, kline_frame=frame)
+
+    assert not any(
+        "key_signals[0]" in error and "continuous bullish" in error
+        for error in errors
+    )
+    assert any(
+        "key_signals[0]" in warning and "continuous bullish" in warning
+        for warning in warnings
+    )
+
+
+def test_continuous_price_move_is_not_reclassified_as_all_same_color_bars() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["key_signals"] = [
+        "K10-K1 \u8fde\u7eed\u4e0b\u8dcc\uff0c\u4f46\u671f\u95f4\u5141\u8bb8\u51fa\u73b0\u9633\u7ebf\u3002"
+    ]
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_mixed_frame())
+
+    assert not any("continuous bearish" in error for error in errors)
+
+
+def test_continuous_bar_claim_is_bound_to_its_adjacent_range_only() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["key_signals"] = [
+        "K40-K1 \u6574\u4f53\u9707\u8361\u4e0a\u884c\uff08K8-K4 \u8fde\u7eed 5 \u6839\u9633\u7ebf\uff09\uff0cK10-K1 \u968f\u540e\u56de\u64a4\u3002"
+    ]
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_mixed_frame())
+
+    direction_errors = [
+        error
+        for error in errors
+        if "continuous bullish" in error
+        and "conflicts with frozen candle directions" in error
+    ]
+    assert len(direction_errors) == 1
+    assert "K8-K4" in direction_errors[0]
+
+
+def test_window_followed_by_enumerated_subrun_does_not_block_stage1() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["gate_trace"][6]["reason"] = (
+        "K8-K1 \u867d\u6709\u4e09\u6839\u9633\u7ebf\uff0c\u4f46 K8\u3001K7\u3001K6 \u8fde\u7eed\u9634\u7ebf\u540e K3 \u548c K1 \u518d\u5ea6\u6536\u9634\uff0c"
+        "\u60ef\u6027\u5f3a\u5ea6\u4e0d\u8db3\u4ee5\u652f\u6301\u6fc0\u8fdb\u8ffd\u591a\u3002"
+    )
+
+    errors = _validate_stage1_hard(stage1, kline_frame=make_mixed_frame())
+
+    assert not any("continuous bearish" in error for error in errors)
+
+
 def test_stage1_proceed_requires_mandatory_trace_nodes() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["gate_trace"] = [
@@ -407,6 +472,20 @@ def test_exact_close_at_low_wording_is_a_quality_warning_not_hard_failure() -> N
     )
 
 
+def test_local_close_position_parser_does_not_cross_clause_boundary() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["bar_by_bar_summary"][4]["reason"] = (
+        "K5 \u6536\u76d8\u63a5\u8fd1\u9ad8\u70b9\uff0c\u4f4e\u70b9 4020 \u4e3a K5-K1 \u7a97\u53e3\u4f4e\u70b9\u3002"
+    )
+
+    warnings = collect_stage1_quality_warnings(
+        stage1,
+        kline_frame=make_mixed_frame(),
+    )
+
+    assert not any("local close position" in item for item in warnings)
+
+
 def test_explicit_bar_price_claim_must_match_the_frozen_bar() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["gate_trace"][0]["reason"] = "K6低点为2020.00，随后价格重心上移。"
@@ -417,6 +496,40 @@ def test_explicit_bar_price_claim_must_match_the_frozen_bar() -> None:
         "K6.low" in error and "2020.00" in error and "2018" in error
         for error in errors
     )
+
+
+def test_explicit_window_price_range_must_match_the_named_window() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["key_signals"] = ["K20-K1价格在2020-2048区间内反复运行。"]
+
+    errors = _validate_stage1_hard(stage1, kline_frame=make_frame())
+
+    assert any(
+        "key_signals[0]" in error
+        and "K20-K1" in error
+        and "frozen window is 1990" in error
+        for error in errors
+    )
+
+
+def test_explicit_window_price_range_allows_matching_display_values() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["key_signals"] = ["K20-K1 price remained within the 1990-2048 range."]
+
+    errors = _validate_stage1_hard(stage1, kline_frame=make_frame())
+
+    assert not any("frozen window" in error for error in errors)
+
+
+def test_explicit_window_price_range_parser_stays_within_its_clause() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["key_signals"] = [
+        "K20-K1 remained rotational. Another segment traded in the 2020-2048 range."
+    ]
+
+    errors = _validate_stage1_hard(stage1, kline_frame=make_frame())
+
+    assert not any("frozen window" in error for error in errors)
 
 
 def test_explicit_bar_price_claim_handles_field_before_k_reference() -> None:
@@ -604,7 +717,7 @@ def test_declared_prior_window_comparison_can_ground_k1_new_high_claim() -> None
     assert not any("unbounded" in error for error in errors)
 
 
-def test_mixed_window_cannot_be_described_with_wrong_count_or_continuous_direction() -> None:
+def test_mixed_window_cannot_restate_wrong_exact_bullish_count() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["key_signals"] = [
         "K8-K1 has 7 bullish bars and is continuously bullish."
@@ -613,7 +726,11 @@ def test_mixed_window_cannot_be_described_with_wrong_count_or_continuous_directi
     errors = validate_stage1_coherence(stage1, kline_frame=make_mixed_frame())
 
     assert any("bullish count" in error for error in errors)
-    assert any("continuous bullish" in error for error in errors)
+    assert not any(
+        "continuous bullish" in error
+        and "conflicts with frozen candle directions" in error
+        for error in errors
+    )
 
 
 def test_k_label_before_candle_direction_is_not_parsed_as_a_count() -> None:
