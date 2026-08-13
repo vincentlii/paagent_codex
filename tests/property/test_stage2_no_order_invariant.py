@@ -20,6 +20,12 @@ _PRICE_FIELDS = (
     "stop_loss_price",
 )
 
+_REQUIRED_EXECUTION_PRICE_FIELDS = (
+    "entry_price",
+    "take_profit_price",
+    "stop_loss_price",
+)
+
 
 def _no_order() -> dict:
     return copy.deepcopy(VALID_STAGE2_NO_ORDER)
@@ -73,7 +79,7 @@ def test_breakout_order_direction_extreme_mismatch_is_rejected_not_rewritten() -
     assert obj["decision"]["entry_basis_extreme"] == "low"
 
 
-@given(field=st.sampled_from(_PRICE_FIELDS))
+@given(field=st.sampled_from(_REQUIRED_EXECUTION_PRICE_FIELDS))
 @h_settings(max_examples=20)
 def test_executable_order_with_null_price_remains_a_schema_error(field: str) -> None:
     obj = _order()
@@ -83,3 +89,10 @@ def test_executable_order_with_null_price_remains_a_schema_error(field: str) -> 
     assert isinstance(result, ValidationError), (field, result)
     assert result.category == "c"
     assert obj == before
+
+
+def test_executable_order_with_null_tp2_is_accepted() -> None:
+    obj = _order()
+    obj["decision"]["take_profit_price_2"] = None
+
+    assert isinstance(validator.validate("stage2", json.dumps(obj)), Ok)

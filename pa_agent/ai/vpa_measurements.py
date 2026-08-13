@@ -32,7 +32,7 @@ from pa_agent.data.volume_context import resolve_volume_observation
 class VpaMeasurementSpec:
     """Versioned measurement policy; values select data, never market meaning."""
 
-    version: str = "2.2"
+    version: str = "2.3"
     recent_limit: int = 8
     baseline_lookback: int = 20
     minimum_baseline_samples: int = 8
@@ -96,6 +96,8 @@ def evidence_has_relative_volume_comparison(item: Mapping[str, Any] | None) -> b
             "volume_vs_seasonality_relation",
             "current_volume_vs_causal_baseline_relation",
             "current_vs_prior_causal_rvol_relation",
+            "current_volume_vs_seasonality_relation",
+            "current_vs_prior_seasonality_adjusted_rvol_relation",
         )
     )
 
@@ -282,6 +284,11 @@ def _sequence_stats(
     *,
     baseline_lookback: int,
     baseline_min_samples: int,
+    seasonality_samples: dict[str, list[float]],
+    seasonality_boundary_valid: bool,
+    timezone_basis: str,
+    market_session: str,
+    min_seasonality_samples: int,
 ) -> dict[str, Any] | None:
     """Measure a contiguous PA-selected window without assigning a VPA label."""
     if len(bars_with_indices) < 2:
@@ -344,6 +351,42 @@ def _sequence_stats(
             continue
         causal_rvol.append(value / baseline_median)
     median_causal_rvol = median(causal_rvol) if causal_rvol else None
+    seasonal_references: list[float] = []
+    seasonal_sample_counts: list[int] = []
+    seasonal_fallback_levels: set[str] = set()
+    if seasonality_boundary_valid:
+        for _index, bar in bars_with_indices:
+            context = _time_context(
+                bar.ts_open,
+                timezone_basis=timezone_basis,
+                market_session=market_session,
+            )
+            reference, count, _key, fallback_level = _seasonality_reference(
+                context,
+                seasonality_samples,
+                min_samples=min_seasonality_samples,
+            )
+            if reference is None or reference <= 0:
+                continue
+            seasonal_references.append(reference)
+            seasonal_sample_counts.append(count)
+            if fallback_level:
+                seasonal_fallback_levels.add(fallback_level)
+    seasonality_complete = bool(
+        seasonality_boundary_valid
+        and volume_complete
+        and len(seasonal_references) == len(bars_with_indices)
+    )
+    expected_seasonal_volume = (
+        sum(seasonal_references) if seasonality_complete else None
+    )
+    seasonality_adjusted_volume_ratio = (
+        total_volume / expected_seasonal_volume
+        if total_volume is not None
+        and expected_seasonal_volume is not None
+        and expected_seasonal_volume > 0
+        else None
+    )
     return {
         "bar_range": f"K{oldest.seq}-K{newest.seq}",
         "total_volume": _round(total_volume, 2),
@@ -362,6 +405,23 @@ def _sequence_stats(
             median_causal_rvol,
             1.0,
         ),
+        "seasonality_expected_volume": _round(expected_seasonal_volume, 2),
+        "seasonality_adjusted_volume_ratio": _round(
+            seasonality_adjusted_volume_ratio
+        ),
+        "seasonality_adjusted_volume_deviation_pct": _ratio_deviation_pct(
+            seasonality_adjusted_volume_ratio
+        ),
+        "volume_vs_seasonality_relation": _comparison_label(
+            seasonality_adjusted_volume_ratio,
+            1.0,
+        ),
+        "seasonality_covered_bar_count": len(seasonal_references),
+        "seasonality_minimum_sample_count": (
+            min(seasonal_sample_counts) if seasonal_sample_counts else 0
+        ),
+        "seasonality_fallback_levels": sorted(seasonal_fallback_levels),
+        "seasonality_complete": seasonality_complete,
         "bar_count": len(bars_with_indices),
     }
 
@@ -375,6 +435,11 @@ def _pa_window_slices(
     window_sizes: tuple[int, ...],
     baseline_lookback: int,
     baseline_min_samples: int,
+    seasonality_samples: dict[str, list[float]],
+    seasonality_boundary_valid: bool,
+    timezone_basis: str,
+    market_session: str,
+    min_seasonality_samples: int,
 ) -> list[dict[str, Any]]:
     """Build neutral slices for PA fact windows; no window is interpreted here."""
     comparisons: list[dict[str, Any]] = []
@@ -388,6 +453,11 @@ def _pa_window_slices(
             geometry,
             baseline_lookback=baseline_lookback,
             baseline_min_samples=baseline_min_samples,
+            seasonality_samples=seasonality_samples,
+            seasonality_boundary_valid=seasonality_boundary_valid,
+            timezone_basis=timezone_basis,
+            market_session=market_session,
+            min_seasonality_samples=min_seasonality_samples,
         )
         prior = None
         if len(bars) >= window_size * 2:
@@ -401,6 +471,11 @@ def _pa_window_slices(
                 geometry,
                 baseline_lookback=baseline_lookback,
                 baseline_min_samples=baseline_min_samples,
+                seasonality_samples=seasonality_samples,
+                seasonality_boundary_valid=seasonality_boundary_valid,
+                timezone_basis=timezone_basis,
+                market_session=market_session,
+                min_seasonality_samples=min_seasonality_samples,
             )
         if current is None:
             continue
@@ -415,6 +490,14 @@ def _pa_window_slices(
         )
         prior_causal_rvol = (
             _finite(prior.get("median_causal_relative_volume")) if prior else None
+        )
+        current_seasonal_rvol = _finite(
+            current.get("seasonality_adjusted_volume_ratio")
+        )
+        prior_seasonal_rvol = (
+            _finite(prior.get("seasonality_adjusted_volume_ratio"))
+            if prior
+            else None
         )
         volume_comparison_available = bool(
             prior
@@ -436,8 +519,16 @@ def _pa_window_slices(
             and prior_causal_rvol > 0
             else None
         )
+        current_vs_prior_seasonal_rvol_ratio = _round(
+            current_seasonal_rvol / prior_seasonal_rvol
+            if current_seasonal_rvol is not None
+            and prior_seasonal_rvol is not None
+            and prior_seasonal_rvol > 0
+            else None
+        )
         facts = {
             "source_fact_id": f"PA.WINDOW.K{window_size}",
+            "window_size": window_size,
             "current_window": current["bar_range"],
             "prior_window": prior["bar_range"] if prior else None,
             "current_observed_volume_count": current["observed_volume_count"],
@@ -483,6 +574,61 @@ def _pa_window_slices(
             "current_vs_prior_causal_rvol_relation": _comparison_label(
                 current_causal_rvol,
                 prior_causal_rvol,
+            ),
+            "current_seasonality_expected_volume": current[
+                "seasonality_expected_volume"
+            ],
+            "current_seasonality_adjusted_volume_ratio": current[
+                "seasonality_adjusted_volume_ratio"
+            ],
+            "current_seasonality_adjusted_volume_deviation_pct": current[
+                "seasonality_adjusted_volume_deviation_pct"
+            ],
+            "current_volume_vs_seasonality_relation": current[
+                "volume_vs_seasonality_relation"
+            ],
+            "current_seasonality_covered_bar_count": current[
+                "seasonality_covered_bar_count"
+            ],
+            "current_seasonality_minimum_sample_count": current[
+                "seasonality_minimum_sample_count"
+            ],
+            "current_seasonality_fallback_levels": current[
+                "seasonality_fallback_levels"
+            ],
+            "current_seasonality_complete": current["seasonality_complete"],
+            "prior_seasonality_expected_volume": (
+                prior["seasonality_expected_volume"] if prior else None
+            ),
+            "prior_seasonality_adjusted_volume_ratio": (
+                prior["seasonality_adjusted_volume_ratio"] if prior else None
+            ),
+            "prior_seasonality_adjusted_volume_deviation_pct": (
+                prior["seasonality_adjusted_volume_deviation_pct"] if prior else None
+            ),
+            "prior_volume_vs_seasonality_relation": (
+                prior["volume_vs_seasonality_relation"] if prior else "unavailable"
+            ),
+            "prior_seasonality_covered_bar_count": (
+                prior["seasonality_covered_bar_count"] if prior else 0
+            ),
+            "prior_seasonality_minimum_sample_count": (
+                prior["seasonality_minimum_sample_count"] if prior else 0
+            ),
+            "prior_seasonality_fallback_levels": (
+                prior["seasonality_fallback_levels"] if prior else []
+            ),
+            "prior_seasonality_complete": bool(
+                prior and prior["seasonality_complete"]
+            ),
+            "current_vs_prior_seasonality_adjusted_rvol_ratio": (
+                current_vs_prior_seasonal_rvol_ratio
+            ),
+            "current_vs_prior_seasonality_adjusted_rvol_deviation_pct": (
+                _ratio_deviation_pct(current_vs_prior_seasonal_rvol_ratio)
+            ),
+            "current_vs_prior_seasonality_adjusted_rvol_relation": (
+                _comparison_label(current_seasonal_rvol, prior_seasonal_rvol)
             ),
             "current_net_close_progress_atr": current["net_close_progress_atr"],
             "prior_net_close_progress_atr": (
@@ -870,6 +1016,11 @@ def compute_vpa_measurements(
             window_sizes=tuple(sorted(set(pa_window_sizes))),
             baseline_lookback=normalized_lookback,
             baseline_min_samples=baseline_min_samples,
+            seasonality_samples=samples,
+            seasonality_boundary_valid=seasonality_boundary_valid,
+            timezone_basis=timezone_basis,
+            market_session=market_session,
+            min_seasonality_samples=min_seasonality_samples,
         ),
     }
 
@@ -1074,7 +1225,7 @@ def build_vpa_evidence_catalog(
         ),
     }
     catalog_core = {
-        "catalog_version": "2.2",
+        "catalog_version": "2.3",
         "measurement_spec": {
             "version": DEFAULT_VPA_MEASUREMENT_SPEC.version,
             "recent_limit": recent_limit,
@@ -1204,6 +1355,17 @@ def render_vpa_measurements(
                 f"{facts.get('current_vs_prior_causal_rvol_ratio')}/"
                 f"{facts.get('current_vs_prior_causal_rvol_deviation_pct')}/"
                 f"{facts.get('current_vs_prior_causal_rvol_relation')}; "
+                "seasonality_adjusted_rvol="
+                f"{facts.get('current_seasonality_adjusted_volume_ratio')}/"
+                f"{facts.get('current_seasonality_adjusted_volume_deviation_pct')}/"
+                f"{facts.get('current_volume_vs_seasonality_relation')} "
+                f"coverage={facts.get('current_seasonality_covered_bar_count')}/"
+                f"{facts.get('window_size', facts.get('current_window'))} "
+                f"complete={facts.get('current_seasonality_complete')}; "
+                "seasonality_adjusted_comparison="
+                f"{facts.get('current_vs_prior_seasonality_adjusted_rvol_ratio')}/"
+                f"{facts.get('current_vs_prior_seasonality_adjusted_rvol_deviation_pct')}/"
+                f"{facts.get('current_vs_prior_seasonality_adjusted_rvol_relation')}; "
                 f"progress_atr={facts.get('current_net_close_progress_atr')}/"
                 f"{facts.get('current_progress_direction')} vs "
                 f"{facts.get('prior_net_close_progress_atr')}/"

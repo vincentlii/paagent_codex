@@ -715,7 +715,9 @@ def test_stage2_pending_entry_and_stop_semantics_are_unambiguous(
     user = messages[1]["content"]
 
     assert "bar_analysis" in user
-    assert "结构三价" in user
+    assert "entry、结构 stop、TP1" in user
+    assert "可选的结构延伸 TP2" in user
+    assert "否则 `take_profit_price_2=null`" in user
     assert "模型仍需判断 §10.1/§10.2" in user
     assert "follow_through=false` 当作失败跟随，应写 `pending`" not in user
 

@@ -7,6 +7,7 @@ from pa_agent.util.trade_metrics import (
     format_estimated_win_rate_reasoning,
     is_long_direction,
     passes_trader_equation,
+    validate_take_profit_2_geometry,
 )
 
 
@@ -33,3 +34,15 @@ def test_format_estimated_win_rate_from_model_field():
     }
     assert format_estimated_win_rate(decision) == "47%"
     assert "47" in format_estimated_win_rate_reasoning(decision)
+
+
+def test_optional_tp2_does_not_invalidate_tp1_execution_geometry() -> None:
+    decision = {
+        "order_direction": "做多",
+        "entry_price": 100.0,
+        "stop_loss_price": 98.0,
+        "take_profit_price": 103.0,
+        "take_profit_price_2": None,
+    }
+
+    assert validate_take_profit_2_geometry(decision) == []

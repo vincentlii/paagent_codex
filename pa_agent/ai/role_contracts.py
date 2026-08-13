@@ -47,8 +47,8 @@ class PaTradeMath(BaseModel):
     risk: float
     reward_to_tp1: float
     reward_risk_ratio: float
-    reward_to_tp2: float
-    reward_risk_ratio_tp2: float
+    reward_to_tp2: float | None
+    reward_risk_ratio_tp2: float | None
     risk_atr: float | None
     entry_distance_from_current_close_atr: float | None
     risk_pct_of_entry: float | None
@@ -75,7 +75,7 @@ class PaWindowContext(BaseModel):
     entry_fraction_from_low: float
     stop_fraction_from_low: float
     tp1_fraction_from_low: float
-    tp2_fraction_from_low: float
+    tp2_fraction_from_low: float | None
 
 
 class PaSetupCandidate(BaseModel):
@@ -101,7 +101,7 @@ class PaSetupCandidate(BaseModel):
     trigger: str | None
     stop_loss_price: float
     take_profit_price: float
-    take_profit_price_2: float
+    take_profit_price_2: float | None
     invalidation: str | None
     trade_math: PaTradeMath
     window_context: list[PaWindowContext] = Field(default_factory=list)

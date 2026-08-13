@@ -2,7 +2,7 @@
 
 Apply only when PA identifies a breakout area, boundary test, failed breakout or retest. PA owns structure and order logic; VPA supplies additional volume-conditioned quality evidence.
 
-A breakout is not confirmed by its breakout bar. Evaluate later closed bars: hold beyond boundary, acceptable extension, return inside and fail, or a retest that cannot regain/lose the boundary. Distinguish "no later closed response yet" from "failed"; the former normally calls for `require_confirmation` or `prefer_retest`, not rejection.
+A breakout is not confirmed by its breakout bar. Evaluate later closed bars: hold beyond boundary, acceptable extension, return inside and fail, or a retest that cannot regain/lose the boundary. Distinguish "no later closed response yet" from "failed"; the former is unresolved evidence, not rejection.
 
 Read the sequence in three states:
 
@@ -18,4 +18,4 @@ Avoid “liquidity sweep”; use “boundary breach and recovery candidate” ab
 
 An upside breach that closes back inside can be an Upthrust/UT candidate only in a credible range context; a downside breach and recovery can be a Spring candidate under the symmetric conditions. Outside that context, use failed-breakout or boundary-rejection language. A failed failure, where price reclaims the breakout direction after trapping the first attempt, still requires later acceptance.
 
-`prefer_retest` can refine entry timing for an already-valid PA direction. Never create orders, change direction or replace PA prices with a VPA target.
+A retest can provide cleaner timing evidence for an already-valid PA direction. Describe the evidence and the missing confirmation only. Never create orders, change direction or replace PA prices with a VPA target.

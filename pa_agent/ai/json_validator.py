@@ -1160,14 +1160,19 @@ class JsonValidator:
                     "allowed": {f: [None] for f in violated},
                 }
         elif order_type in ("限价单", "突破单", "市价单"):
-            violated = [f for f in price_fields if decision.get(f) is None]
+            required_fields = [
+                "entry_price",
+                "take_profit_price",
+                "stop_loss_price",
+                "order_direction",
+            ]
+            violated = [f for f in required_fields if decision.get(f) is None]
             if violated:
                 return {
                     "fields": violated,
                     "allowed": {
                         "entry_price": ["<finite number>"],
                         "take_profit_price": ["<finite number>"],
-                        "take_profit_price_2": ["<finite number>"],
                         "stop_loss_price": ["<finite number>"],
                         "order_direction": ["做多", "做空"],
                     },

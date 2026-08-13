@@ -642,7 +642,7 @@ _DECISION_BASE: dict = {
                 "properties": {
                     "entry_price": {"type": "number"},
                     "take_profit_price": {"type": "number"},
-                    "take_profit_price_2": {"type": "number"},
+                    "take_profit_price_2": {"type": ["number", "null"]},
                     "stop_loss_price": {"type": "number"},
                     "order_direction": {"type": "string", "enum": ["做多", "做空"]},
                     "trade_confidence": {"type": "integer", "minimum": 0, "maximum": 100},

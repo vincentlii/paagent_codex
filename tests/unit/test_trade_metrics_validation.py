@@ -82,6 +82,17 @@ def test_valid_structural_trade_metrics_pass() -> None:
     assert isinstance(_validate(copy.deepcopy(VALID_STAGE2)), Ok)
 
 
+def test_executable_plan_with_no_independent_tp2_remains_valid() -> None:
+    stage2 = copy.deepcopy(VALID_STAGE2)
+    stage2["decision"]["take_profit_price_2"] = None
+
+    result = _validate(stage2)
+
+    assert isinstance(result, Ok)
+    assert result.obj["decision"]["take_profit_price_2"] is None
+    assert result.obj["execution_disposition"]["status"] == "eligible"
+
+
 def test_rr_below_one_passes_when_trader_equation_is_positive() -> None:
     stage2 = copy.deepcopy(VALID_STAGE2)
     stage2["decision"]["take_profit_price"] = 2068.0

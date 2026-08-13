@@ -2,7 +2,7 @@
 
 ## Role
 
-VPA is PA Agent's independent volume-price evidence role. Brooks PA defines market framework, direction, setup, gate and Router. VPA supplements or challenges that framework with volume-conditioned evidence about Background and the current Entry Attempt; a separate joint LLM role arbitrates. VPA never creates a second Strategy Router, changes PA `cycle_position`/`direction`/`gate_result`, creates an order when PA says `不下单`, reverses direction, or bypasses a PA gate.
+VPA is PA Agent's independent volume-price evidence role. Brooks PA defines market framework, direction, setup, gate and Router. VPA supplements or challenges that framework with volume-conditioned evidence about Background and the current Entry Attempt; a downstream arbiter combines the roles. VPA never creates a second Strategy Router, changes PA `cycle_position`/`direction`/`gate_result`, creates an order when PA says `不下单`, reverses direction, or bypasses a PA gate.
 
 Program measurements are facts. VPA interpretation is a hypothesis. Do not label events mechanically.
 
@@ -85,7 +85,7 @@ Use `epistemic_status` to separate a plausible candidate from a confirmed sequen
 
 `next_confirmation.state` is `pending_closed_bar` when future evidence is required and `not_applicable` only when no future confirmation applies. The program derives `requires_closed_bar` from that state; do not output it. Anchor the trigger to an explicit K-line extreme or named structural boundary. If future relative activity matters, name its program-computable comparator. Never use K0, a forming bar, an unclosed bar or the candidate bar itself as confirmation.
 
-Background relation and Entry Attempt timing relation are separate questions. Evidence may support the PA background while challenging present timing. Conversely, unresolved VPA evidence does not veto a complete Brooks setup. The later joint arbiter may keep the baseline, require confirmation, prefer a retest, lower trade confidence, or reject only the current attempt. Numeric `estimated_win_rate` is never recalibrated from VPA; a no-order materialization may clear the field solely to satisfy the no-order schema, while the frozen PA estimate remains preserved in audit data.
+Background relation and Entry Attempt timing relation are separate questions. Evidence may support the PA background while challenging present timing. Conversely, unresolved VPA evidence does not veto a complete Brooks setup. Report whether the present volume-price evidence is supportive, neutral, conflicting or still unresolved, and state the next observable closed-bar evidence when needed. Do not prescribe the downstream action. Numeric `estimated_win_rate` is outside this role; the frozen PA estimate remains preserved in audit data.
 
 ## Distribution-preservation safeguards
 

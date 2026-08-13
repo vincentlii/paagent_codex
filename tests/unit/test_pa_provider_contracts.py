@@ -415,6 +415,31 @@ def test_stage2_draft_inherits_diagnosis_and_materializes_math_trace_terminal() 
     assert result["next_cycle_prediction"]["unpredictable"] is True
 
 
+def test_stage2_provider_draft_accepts_an_explicitly_absent_tp2() -> None:
+    frame = make_frame()
+    catalog = build_analysis_fact_catalog(frame)
+    stage1 = materialize_stage1_draft(_stage1_draft(), catalog=catalog)
+    draft = copy.deepcopy(VALID_STAGE2)
+    draft["protocol_version"] = "pa_draft_v2"
+    draft["decision_intent"] = "trade"
+    draft.pop("terminal")
+    draft.pop("next_cycle_prediction")
+    draft["decision"].pop("diagnosis_confidence")
+    draft["decision"].pop("diagnosis_confidence_reasoning")
+    draft["decision"]["take_profit_price_2"] = None
+    draft["decision_trace"] = [
+        item
+        for item in _trace_draft(VALID_STAGE2["decision_trace"])
+        if item["node_id"] != "10.3"
+    ]
+
+    jsonschema.Draft7Validator(STAGE2_DRAFT_SCHEMA).validate(draft)
+    result = materialize_stage2_draft(draft, stage1=stage1, catalog=catalog)
+
+    assert result["decision"]["take_profit_price_2"] is None
+    jsonschema.Draft7Validator(STAGE2_SCHEMA).validate(result)
+
+
 def test_stage2_contract_reports_invalid_section_node_and_missing_prohibition_scan() -> None:
     frame = make_frame()
     catalog = build_analysis_fact_catalog(frame)

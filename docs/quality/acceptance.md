@@ -11,6 +11,8 @@
 5. VPA `off` 模式中的 VPA Prompt、测量、Schema 与历史字段泄漏为 0。
 6. 普通 PA Stage 1/Stage 2 的 VPA 内容泄漏为 0；Joint 输出订单、价格、胜率或 PA trace 的权限越界为 0。
 7. 自由文本 regex 质量发现触发 validation retry 或阻断 PA-only 正式结果的次数为 0。
+8. 可执行候选缺少独立 TP2 时的错误拒绝为 0；存在 TP2 时错误几何被执行的次数为 0。
+9. VPA 知识模块泄漏 Joint action enum，或窗口 seasonality 在不完整/非因果覆盖下产出可用关系的次数为 0。
 
 ## 结构与鲁棒性
 
@@ -31,6 +33,8 @@
 
 - PA `estimated_win_rate` 是明确标注为未校准的 Setup 主观先验，可参与 Brooks Trader
   Equation；不得伪装成历史统计。VPA、外部固定阈值或单次样本不得修改它或建立第二道数字 Gate。
+- Stop 必须来自当前 Setup 的结构失效判断；固定跳数、ATR 倍数或区间比例不得替代该判断。
+  TP1 是执行与方程基线；TP2 仅是有独立结构依据时的可选研究字段。
 - 任何 Joint 生产晋级提案前至少收集 300 个独立 Snapshot 与 100 个有明确结果的匹配样本；
   最终样本量按预注册效应量和统计功效重新计算。
 - 相比 PA-only，触发频率下降超过 15% 时，必须由扣除成本后的 EV、MAE 或回撤改善支持。

@@ -94,6 +94,16 @@ def test_official_plan_uses_only_validated_pa_fields() -> None:
     assert plan.dedupe_key == "task-1"
 
 
+def test_official_plan_keeps_tp2_optional() -> None:
+    record = _record()
+    record.stage2_decision["decision"]["take_profit_price_2"] = None
+
+    plan = official_paper_plan(record, _spec(), dedupe_key="task-optional-tp2")
+
+    assert plan is not None
+    assert plan.take_profit_price_2 is None
+
+
 def test_official_plan_respects_program_execution_disposition() -> None:
     record = _record()
     record.stage2_decision["execution_disposition"] = {

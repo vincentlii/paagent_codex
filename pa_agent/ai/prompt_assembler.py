@@ -520,8 +520,8 @@ ANALYSIS_FACT_CATALOG；alternatives 可为空，禁止复制 primary 伪造不�
 
 _STAGE2_OUTPUT_CONTRACT = """
 ## Stage 2 Provider Draft v2
-只输出裸 JSON。Stage 2 负责 Brooks Setup、信号与入场时机、结构三价、PA 主观胜率
-先验及最终 `trade|wait|reject` 意图；程序复算价格几何、RR、Breakeven、Expectancy
+只输出裸 JSON。Stage 2 负责 Brooks Setup、信号与入场时机、entry、结构 stop、TP1、
+可选的结构延伸 TP2、PA 主观胜率先验及最终 `trade|wait|reject` 意图；程序复算价格几何、RR、Breakeven、Expectancy
 和 Trader Equation，并执行订单安全检查。
 Stage 2 是具体 PA 交易方案的唯一所有者；程序不替它选择 Setup 或入场时机。
 
@@ -535,6 +535,10 @@ so choose the applicable `11.1`-`11.4`. Every executable order must include node
 `next_bar_prediction` 是启用时由 LLM 提供的辅助判断，不参与订单授权。
 模型仍需判断 §10.1/§10.2、Setup 是否成立、信号质量和是否执行；
 不得为了让方程通过而调整结构价格或胜率。`estimated_win_rate` 仍是未经统计校准的 PA 主观胜率先验。
+先基于本轮 Background、Location、Setup、信号与反证形成定性概率排序，再给数值；
+教学材料中的通用频率不得复制为本轮胜率，Breakeven 也不得反推胜率。
+TP1 是执行目标和 Trader Equation 唯一回报基础；仅在存在可核对的独立远端结构目标时填写 TP2，
+否则 `take_profit_price_2=null`，不得为满足字段或美化收益凭空投射。
 """.strip()
 
 _STAGE1_TAIL_REMINDER = (

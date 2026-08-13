@@ -73,6 +73,17 @@ PA_THEORY_RULES: Final[dict[str, str]] = {
         "A trade requires coherent probability, reward and risk assumptions; setup quality does "
         "not bypass the trader equation."
     ),
+    "BROOKS.RISK.STRUCTURAL_INVALIDATION": (
+        "A protective stop belongs beyond the price action that invalidates the current setup. "
+        "A signal-bar extreme is one possible anchor, not a universal stop; an unaffordable "
+        "structural stop changes sizing, timing, or trade eligibility rather than being tightened "
+        "to improve the equation."
+    ),
+    "BROOKS.PROBABILITY.CONTEXTUAL_PRIOR": (
+        "Setup probabilities are context-dependent subjective priors until calibrated on the "
+        "same instrument, timeframe, data source and execution protocol. Teaching frequencies "
+        "rank hypotheses but must not be copied into the current trade's numeric win rate."
+    ),
     "BROOKS.UNCERTAINTY.COMPETING_HYPOTHESES": (
         "When several cycle or direction interpretations remain plausible, preserve alternatives "
         "and reduce certainty instead of forcing one label."

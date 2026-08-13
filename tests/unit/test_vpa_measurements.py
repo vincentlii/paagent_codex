@@ -343,6 +343,83 @@ def test_vpa_seasonality_requires_adapter_supplied_same_slot_history() -> None:
     assert data["recent_bars"][0]["seasonality_relative_volume"] == 1.5
 
 
+def test_pa_window_volume_is_adjusted_by_each_exact_seasonal_slot() -> None:
+    frame = _frame([200] * 5 + [100] * 20)
+    slot_samples = {
+        f"{hour:02d}:{minute:02d}": [100.0] * 8
+        for hour, minute in (
+            (22, 13), (22, 12), (22, 11), (22, 10), (22, 9),
+            (22, 8), (22, 7), (22, 6), (22, 5), (22, 4),
+        )
+    }
+    frame = KlineFrame(
+        symbol=frame.symbol,
+        timeframe=frame.timeframe,
+        bars=frame.bars,
+        indicators=frame.indicators,
+        snapshot_ts_local_ms=frame.snapshot_ts_local_ms,
+        data_metadata={
+            "seasonality_samples": slot_samples,
+            "seasonality_slot_scheme": "local_clock_exact",
+            "seasonality_history_end_ts_open": 1_699_998_000_000,
+            "seasonality_history_is_causal": True,
+            "seasonality_min_samples": 8,
+        },
+    )
+
+    data = compute_vpa_measurements(frame)
+    comparison = next(
+        item
+        for item in data["measurement_slices"]
+        if item["facts"]["source_fact_id"] == "PA.WINDOW.K5"
+    )
+    facts = comparison["facts"]
+    catalog = build_vpa_evidence_catalog(frame)
+    rendered = render_vpa_measurements(
+        catalog=catalog,
+        selected_fact_refs={"PA.WINDOW.K5"},
+    )
+
+    assert catalog["catalog_version"] == "2.3"
+    assert facts["current_seasonality_complete"] is True
+    assert facts["prior_seasonality_complete"] is True
+    assert facts["current_seasonality_covered_bar_count"] == 5
+    assert facts["current_seasonality_adjusted_volume_ratio"] == 2.0
+    assert facts["prior_seasonality_adjusted_volume_ratio"] == 1.0
+    assert facts["current_vs_prior_seasonality_adjusted_rvol_ratio"] == 2.0
+    assert facts["current_vs_prior_seasonality_adjusted_rvol_relation"] == "above"
+    assert "seasonality_adjusted_rvol=2.0/100.0/above coverage=5/5 complete=True" in rendered
+
+
+def test_pa_window_seasonality_stays_unavailable_with_partial_slot_coverage() -> None:
+    frame = _frame([200] * 5 + [100] * 20)
+    frame = KlineFrame(
+        symbol=frame.symbol,
+        timeframe=frame.timeframe,
+        bars=frame.bars,
+        indicators=frame.indicators,
+        snapshot_ts_local_ms=frame.snapshot_ts_local_ms,
+        data_metadata={
+            "seasonality_samples": {"22:13": [100.0] * 8},
+            "seasonality_slot_scheme": "local_clock_exact",
+            "seasonality_history_end_ts_open": 1_699_998_000_000,
+            "seasonality_history_is_causal": True,
+            "seasonality_min_samples": 8,
+        },
+    )
+
+    facts = next(
+        item["facts"]
+        for item in compute_vpa_measurements(frame)["measurement_slices"]
+        if item["facts"]["source_fact_id"] == "PA.WINDOW.K5"
+    )
+
+    assert facts["current_seasonality_complete"] is False
+    assert facts["current_seasonality_covered_bar_count"] == 1
+    assert facts["current_seasonality_adjusted_volume_ratio"] is None
+    assert facts["current_volume_vs_seasonality_relation"] == "unavailable"
+
+
 def test_vpa_seasonality_reports_insufficient_exact_slot_samples() -> None:
     frame = _frame([150] * 12)
     frame = KlineFrame(

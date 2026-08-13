@@ -16,4 +16,4 @@ PA owns H1/H2, L1/L2, signal-bar quality and structural invalidation. VPA may ex
 
 At an extended channel end, weakening with-trend pushes challenge continuation timing more than weakening counter-trend pullbacks do. Keep these comparisons separate. Wedge, MTR and final-flag semantics remain PA diagnoses; VPA exhaustion evidence can support "do not chase" but never legalize a counter-trend order.
 
-`require_confirmation` fits unresolved pullback response. `prefer_retest` fits a PA-valid breakout/pullback with weak immediate participation. `lower_confidence` requires independent volume evidence. `reject_current_attempt` needs independent conflict plus a PA-consistent failure of the current attempt; it never rejects the larger setup or creates the opposite trade.
+When the pullback response is unresolved, describe exactly what later closed-bar response is missing. When immediate participation is weak relative to a named comparator, distinguish that fact from a failed setup. A material timing conflict needs independent volume evidence plus a PA-consistent failure of the current attempt; VPA still does not judge the larger Setup or create the opposite trade.

@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0017`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0020`。
 
 ## 核心目标
 
@@ -28,7 +28,7 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
 - `JointDecisionProposal`：联合裁决者在既有 PA 候选中选择当前 Entry Attempt、
   时机或等待条件，并只携带可影响时机/置信度的有界补丁。
 - `PaTradeMath`：程序根据候选价格和 PA 主观胜率先验计算的风险、TP1 回报、RR、
-  盈亏平衡胜率和期望值；不生成胜率。
+  盈亏平衡胜率和期望值；TP2 存在时另算研究扩展回报，不生成胜率。
 - `ExecutionPolicyResult`：程序对订单合法性、风险边界与运行模式的最终约束结果。
 - `RunOutcome`：`completed`、`completed_with_warnings`、`degraded_pa_only`、
   `unavailable_input`、`unavailable_provider`、`invalid_model_output`、`cancelled`
@@ -60,7 +60,7 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 
 1. 程序解析一次数据源身份并冻结主周期、高周期和成交量事实。
 2. PA Stage 1 以 `pa_draft_v2` 产生市场框架、主假设、可为空的真实替代假设及证据引用；程序物化静态 trace 与 Gate。
-3. PA Stage 2 以 `pa_draft_v2` 形成不含 VPA 的 Setup、结构三价、PA 胜率先验与交易意图；程序继承 Stage 1 置信度并复算 Trader Equation、terminal 与执行安全。
+3. PA Stage 2 以 `pa_draft_v2` 形成不含 VPA 的 Setup、entry、结构 stop、TP1、可选 TP2、PA 胜率先验与交易意图；程序继承 Stage 1 置信度并复算 Trader Equation、terminal 与执行安全。
 4. `compile_pa_handoff(...)` 只复制 PA 语义并补充可复算的订单数学、身份和窗口位置事实。
 5. VPA Evidence Analyst 独立检查量价证据；生产 Shadow 到此结束，正式结果仍是 PA-only。
 6. 隔离的 A/A/B/B 研究 B 臂才调用 Joint Arbiter，在既有 PA candidate 内输出有界补丁。
@@ -111,6 +111,8 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
   Prompt 版本。同一行情的重复臂、重跑或跨版本复核都不得增加独立样本数。
 - PA `estimated_win_rate` 是未校准的 Setup 主观先验，仍参与 Brooks Trader Equation；
   不得称为历史统计。VPA、固定外部阈值与单次样本不得修改它或新增概率 Gate。
+- 教材概率只允许对竞争假设作定性排序。没有同品种、同周期、同数据源、同执行协议的
+  calibration 标识时，LLM 不得复制通用频率或由盈亏平衡点反推当前胜率。
 
 ## 不变量
 
@@ -134,6 +136,10 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
   可执行订单必须使用具体 K 线、布尔跟随状态和 `still_valid=true`。
 - `stop_loss_price` 是盘中触价的保护性止损；`invalidation_condition` 是分析假设的
   重判条件，可能要求收盘确认。OHLC 回放只报告保护止损触达，不得冒充分析假设已失效。
+- 保护止损必须锚定当前 Setup 的结构失效。信号棒、摆动或边界极点仅在其穿越会否定
+  当前尝试时采用；程序提供 ATR/窗口位置等风险尺度，但不得机械决定结构 stop。
+- TP1 是执行目标和 Trader Equation 的唯一回报基础。TP2 仅在存在独立、可核对的远端
+  结构目标时填写；null 不降低置信度、不触发 retry、不抑制合法订单。
 - Stage 1 的 `entry_setup` 是框架层提示，不是交易授权。`gate_result=proceed` 后，Stage 2
   独立负责 Brooks Setup、可选触发/失效文案与订单裁决；任何有效可执行 Stage 2 订单都形成
   PA candidate，候选存在性不得依赖限价单/市价单可为空的 `entry_rule`。
@@ -155,6 +161,8 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
   幅度与 VPA 含义仍由模型结合 Background、Location、Effort/Result 与后续行为解释，程序不设强弱阈值。
 - 新 VPA 窗口事实只对 PA 已引用的 `PA.WINDOW.K#` 注入，代码测量成交量覆盖、推进、路径、效率与
   重叠，不命名 leg、Spring、UTAD、Absorption、Exhaustion 或交易信号。
+- VPA catalog 2.3 对已引用窗口可按每根棒自己的严格因果精确时槽基线汇总
+  seasonality-adjusted relative volume；只有全窗口覆盖时才给关系，部分覆盖保持 unavailable。
 - A/A/B/B 的主收益比较是 episode-level ITT：无下单/未触发为 `0R`，pending/ambiguous censored，
   缺失 arm 保留并阻止验收；per-protocol 只作处理交付诊断。
 - E2E/fixture 不得触发正式交易 CSV、通知或其他生产副作用；复盘连续性读写必须使用同一个

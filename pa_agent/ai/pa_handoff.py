@@ -58,11 +58,11 @@ def _window_context(
         current_close = float(catalog.fact("PA.BAR.K1").value["close"])
     except (KeyError, TypeError, ValueError):
         return []
-    prices = {
+    prices: dict[str, float | None] = {
         "entry": float(decision["entry_price"]),
         "stop": float(decision["stop_loss_price"]),
         "tp1": float(decision["take_profit_price"]),
-        "tp2": float(decision["take_profit_price_2"]),
+        "tp2": _finite(decision.get("take_profit_price_2")),
     }
     result: list[PaWindowContext] = []
     seen: set[str] = set()
@@ -111,10 +111,10 @@ def _window_context(
                     low,
                     high,
                 ),
-                tp2_fraction_from_low=_fraction_from_low(
-                    prices["tp2"],
-                    low,
-                    high,
+                tp2_fraction_from_low=(
+                    _fraction_from_low(prices["tp2"], low, high)
+                    if prices["tp2"] is not None
+                    else None
                 ),
             )
         )
@@ -140,8 +140,10 @@ def _trade_math(decision: dict[str, Any], frame: KlineFrame) -> PaTradeMath:
     reward = float(rr["reward"])
     entry = float(decision["entry_price"])
     tp1 = float(decision["take_profit_price"])
-    tp2 = float(decision["take_profit_price_2"])
-    reward_tp2 = tp2 - entry if tp1 > entry else entry - tp2
+    tp2 = _finite(decision.get("take_profit_price_2"))
+    reward_tp2 = (
+        tp2 - entry if tp1 > entry else entry - tp2
+    ) if tp2 is not None else None
     atr = _finite(frame.indicators.atr14[0]) if frame.indicators.atr14 else None
     current_close = _finite(frame.bars[0].close) if frame.bars else None
     win_rate = int(win_rate_raw)
@@ -151,7 +153,7 @@ def _trade_math(decision: dict[str, Any], frame: KlineFrame) -> PaTradeMath:
         reward_to_tp1=reward,
         reward_risk_ratio=float(rr["ratio"]),
         reward_to_tp2=reward_tp2,
-        reward_risk_ratio_tp2=reward_tp2 / risk,
+        reward_risk_ratio_tp2=(reward_tp2 / risk if reward_tp2 is not None else None),
         risk_atr=risk / atr if atr is not None and atr > 0 else None,
         entry_distance_from_current_close_atr=(
             abs(entry - current_close) / atr
@@ -186,7 +188,6 @@ def _candidate(
         "entry_price",
         "stop_loss_price",
         "take_profit_price",
-        "take_profit_price_2",
     )
     if order_direction not in _ORDER_DIRECTIONS or any(
         _finite(decision.get(field)) is None for field in numeric_fields
@@ -239,7 +240,7 @@ def _candidate(
         trigger=trigger,
         stop_loss_price=float(decision["stop_loss_price"]),
         take_profit_price=float(decision["take_profit_price"]),
-        take_profit_price_2=float(decision["take_profit_price_2"]),
+        take_profit_price_2=_finite(decision.get("take_profit_price_2")),
         invalidation=invalidation,
         trade_math=_trade_math(decision, frame),
         window_context=_window_context(

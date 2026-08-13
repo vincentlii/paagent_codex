@@ -102,12 +102,15 @@ def _parse_win_rate(value: object) -> float | None:
 def validate_take_profit_2_geometry(
     decision: dict[str, Any],
 ) -> list[str]:
-    """Ensure TP2 is beyond TP1 in the profit direction (no RR cap on TP2)."""
+    """Validate an optional TP2 extension without making it an execution gate."""
     entry = decision.get("entry_price")
     tp1 = decision.get("take_profit_price")
     tp2 = decision.get("take_profit_price_2")
     sl = decision.get("stop_loss_price")
     direction = decision.get("order_direction")
+
+    if tp2 is None:
+        return []
 
     try:
         e = float(entry)
@@ -115,7 +118,7 @@ def validate_take_profit_2_geometry(
         t2 = float(tp2)
         s = float(sl)
     except (TypeError, ValueError):
-        return ["decision.take_profit_price_2: required finite number when placing an order"]
+        return ["decision.take_profit_price_2: must be a finite number when provided"]
 
     long = is_long_direction(direction)
     if long is True:

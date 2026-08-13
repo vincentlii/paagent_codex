@@ -78,6 +78,22 @@ def test_limit_plan_without_entry_rule_compiles_one_structured_candidate() -> No
     assert handoff.price_snapshot_hash
 
 
+def test_candidate_keeps_tp2_optional_without_inventing_an_extension() -> None:
+    stage2 = _planned_limit()
+    stage2["decision"]["take_profit_price_2"] = None
+
+    candidate = compile_pa_handoff(
+        VALID_STAGE1,
+        stage2,
+        make_frame(),
+    ).setup_candidates[0]
+
+    assert candidate.take_profit_price_2 is None
+    assert candidate.trade_math.reward_to_tp2 is None
+    assert candidate.trade_math.reward_risk_ratio_tp2 is None
+    assert candidate.window_context[0].tp2_fraction_from_low is None
+
+
 @pytest.mark.parametrize(
     ("order_type", "entry_rule", "basis_bar", "basis_extreme", "timing_state"),
     [

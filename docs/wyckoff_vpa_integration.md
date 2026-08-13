@@ -48,6 +48,10 @@ epoch 转换到明确的 `timezone_basis`，再按精确 `HH:MM` 对齐；优先
 不得用当前窗口自身构造基线。VPA 开启时只在首次抓取中回填有界历史，后续刷新合并同源缓存；
 VPA 关闭时保持原 PA 请求量。
 
+Catalog 2.3 还可对 PA 已选择的窗口逐棒匹配各自精确时槽，并汇总
+seasonality-adjusted relative volume。只有窗口内每根棒都有足量、严格更早的时槽样本且
+volume 完整时才输出窗口关系；部分覆盖不会外推，也不会把已有单棒比较冒充完整窗口比较。
+
 ## 3. 运行模式
 
 ### `off`
@@ -138,7 +142,8 @@ VPA 失败不会使 PA 分析伪装失败；记录标记 `completed_with_warning
 - `source=volume` 只说明该 evidence 含有量字段，不等于存在 VPA 信息增量。至少一个因果基线、前棒、seasonality 或相邻序列比较关系必须为程序实际算出的 `above/equal/below`；只有 raw volume、比较器均为 `unavailable` 时必须按证据不足处理。
 - `real`、`tick`、`proxy`、`unknown` 按数据源元数据解释。tick/proxy 只能做同源相对比较，unknown 不得声称真实成交量。
 - `vpa-w###` 是仅针对冻结 PA handoff 已引用 `PA.WINDOW.K#` 注入的中性测量切片，提供成交量覆盖、
-  因果 RVOL、净推进、累计 spread、路径长度、效率和重叠；它不自动检测 leg、phase 或事件。
+  因果 RVOL、可用时的逐棒时段归一化 RVOL、净推进、累计 spread、路径长度、效率和重叠；
+  它不自动检测 leg、phase 或事件。
   `vpa-c` 仅为旧冻结 catalog 的可重放兼容格式，新运行不再生成。
 - PA-window 切片临时派生 `net_progress_direction_relation=same|opposite|flat_or_unavailable`，仅防止
   明确方向反述；它不判断两个窗口是否构成可比的 Brooks leg。
@@ -157,8 +162,8 @@ VPA Evidence Analyst 只能引用本次 Prompt 实际可见的 evidence ID。程
 PA 链先固化为 `PaHypothesisSet`：
 
 - `primary` 与 `alternative`
-- `setup_candidates`：真实 `order_type`、方向、entry/stop/TP、可选 Setup/trigger/invalidation
-- `trade_math`：程序复算 risk、TP1/TP2 reward、两级 RR、风险与入场距离的 ATR 尺度、风险占 entry 百分比、盈亏平衡胜率、PA 主观先验和期望值
+- `setup_candidates`：真实 `order_type`、方向、entry/stop/TP1、可选 TP2 与可选 Setup/trigger/invalidation
+- `trade_math`：程序复算 risk、TP1 reward、RR、风险与入场距离的 ATR 尺度、风险占 entry 百分比、盈亏平衡胜率、PA 主观先验和期望值；TP2 存在时另算研究扩展 reward/RR
 - `window_context`：仅对 Stage 1 已引用 `PA.WINDOW` 输出 high/low、极值 K 线及各价格从低点起的数值位置，不生成“上沿/中部”标签
 - `cycle_position`、`direction`、`gate_result`
 - 冻结价格 snapshot hash 与完整 handoff digest
@@ -203,7 +208,7 @@ insufficient_data 或没有 PA Entry Attempt。中文 `K线` /
 `entry_timing_relation` 收敛为 `insufficient_data`，不触发 LLM 重试；VPA 仍可输出背景量价信息、
 竞争解释和下一根已收盘 K 线的证据观察。这不是 VPA Gate，也不降低 PA 交易频率。
 
-VPA catalog 2.2 为每根已收盘棒提供 `later_closed_bar_count/range`，并为相对量 ratio 提供相对
+VPA catalog 2.3 为每根已收盘棒提供 `later_closed_bar_count/range`，并为相对量 ratio 提供相对
 `1.0` 的有符号 `deviation_pct`。前者用于区分“尚无后续数据”和“已有数据但尚未确认”；后者用于
 区分比较方向与实际幅度。程序不根据偏离百分比定义放量、缩量、Absorption 或 Exhaustion，模型必须
 结合 Background、Location、Effort/Result、Leg/Wave Comparison 与 Follow-through 解释。
@@ -276,7 +281,9 @@ assistant turn，并要求只修复反馈列出的字段或引用、其余值逐
   方向和 Brooks 路由独立完成 Setup、trigger、invalidation 与订单裁决。Stage 1 的
   `entry_setup` 只是框架提示；只有完整 Stage 2 计划通过校验后，程序才建立
   `PaSetupCandidate` 供 VPA 对照，并可在隔离研究中交给 Joint 裁决。
-- entry、stop、TP1、TP2 必须各有结构依据。RR 是复算结果，不能通过扩大止损、把止损塞进噪音或缩小目标凑方程。
+- entry、stop 与 TP1 必须各有结构依据；TP2 只有存在独立远端结构目标时才填写，否则为 null。
+  Stop 先回答当前 Setup 在何处失效，信号棒极点不是通用答案。RR 是复算结果，不能通过扩大止损、
+  把止损塞进噪音、缩小目标或反推胜率凑方程。
 - §9.0P 计划型限价只校验做多 `entry < K1.close`、做空 `entry > K1.close`。程序不因 K1 历史影线触价猜测未来挂单失效。
 - 未提供已验证 tick size 时，程序不猜测、不静默改价。
 - `decision_confidence_threshold` 是模型之后的执行策略，只应用一次并写入审计 trace。
