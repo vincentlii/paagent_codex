@@ -627,3 +627,58 @@ def test_zero_new_bars_never_reuses_incremental_context(tmp_path, monkeypatch) -
 
     assert found is None
     assert new_count is None
+
+
+def test_paused_runtime_publishes_status_without_polling_market(tmp_path) -> None:
+    monitor, source, _audit, _service, _clock = _monitor(tmp_path)
+    published = []
+
+    class _Control:
+        @staticmethod
+        def read():
+            return SimpleNamespace(desired_state="paused", error=None)
+
+    class _Status:
+        @staticmethod
+        def write(payload):
+            published.append(payload)
+
+    class _OneIteration:
+        checks = 0
+
+        def is_set(self):
+            self.checks += 1
+            return self.checks > 1
+
+        @staticmethod
+        def wait(_timeout):
+            return True
+
+    original_stop = monitor._stop
+    monitor._control_store = _Control()
+    monitor._status_store = _Status()
+    monitor._stop = _OneIteration()
+    try:
+        monitor.run_forever()
+    finally:
+        monitor._stop = original_stop
+        monitor.shutdown()
+
+    assert len(published) >= 1
+    assert published[0]["service_state"] == "paused"
+    assert published[0]["applied_control_generation"] == 0
+    assert published[0]["scheduler"]["unfinished"] == 0
+    assert source.connected == 0
+
+
+def test_pause_during_snapshot_preparation_blocks_submission(tmp_path) -> None:
+    monitor, source, _audit, service, _clock = _monitor(tmp_path)
+
+    result = monitor.poll_once(submission_allowed=lambda: False)
+    monitor.shutdown()
+
+    assert result.prepared == 1
+    assert result.accepted == 0
+    assert result.skipped == 1
+    assert service.submitted == []
+    assert source.connected == 1

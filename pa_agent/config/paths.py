@@ -31,6 +31,9 @@ class RuntimePaths:
     analysis_audit_db_path: Path
     monitoring_audit_db_path: Path
     paper_trading_db_path: Path
+    runtime_dir: Path
+    runtime_status_path: Path
+    runtime_control_path: Path
 
 
 def resolve_runtime_paths(
@@ -48,6 +51,7 @@ def resolve_runtime_paths(
         project_root or Path(__file__).resolve().parent.parent.parent
     )
     state = _resolved_path(env.get("PA_AGENT_HOME") or project)
+    runtime = _resolved_path(env.get("PA_AGENT_OPERATION_DIR") or state / "runtime")
     prompt = _resolved_path(
         env.get("PA_AGENT_PROMPT_DIR") or project / "prompt_engineering"
     )
@@ -73,6 +77,9 @@ def resolve_runtime_paths(
         analysis_audit_db_path=records / "audit" / "analysis.sqlite3",
         monitoring_audit_db_path=records / "audit" / "monitoring.sqlite3",
         paper_trading_db_path=state / "trade_records" / "paper.sqlite3",
+        runtime_dir=runtime,
+        runtime_status_path=runtime / "status" / "status.json",
+        runtime_control_path=runtime / "control" / "control.json",
     )
 
 

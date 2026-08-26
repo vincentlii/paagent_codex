@@ -12,7 +12,7 @@ from typing import Any
 
 from pa_agent.config.paths import RuntimePaths
 from pa_agent.config.settings import MonitoringAssetSettings, Settings
-from pa_agent.config.vpa import vpa_is_enabled
+from pa_agent.config.vpa import resolve_production_vpa_mode, vpa_is_enabled
 from pa_agent.data.factory import (
     resolved_identity_for_source,
     volume_metadata_for_source,
@@ -26,6 +26,8 @@ from pa_agent.data.snapshot_bundle import build_snapshot_bundle
 from pa_agent.data.volume_context import merge_bar_history, snapshot_fetch_count
 from pa_agent.monitoring.scheduler import AnalysisTask, JobCompletion
 from pa_agent.monitoring.task_factory import create_frozen_analysis_task, frame_snapshot_hash
+from pa_agent.operations.projection import build_review_projection
+from pa_agent.operations.runtime_state import RuntimeControlStore, RuntimeStatusStore
 from pa_agent.records.analysis_history import (
     compute_incremental_bar_delta,
     find_latest_successful_record_for_frame,
@@ -79,6 +81,8 @@ class HeadlessMonitor:
         paper_execution: Any | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         wall_time_ms: Callable[[], int] | None = None,
+        control_store: RuntimeControlStore | None = None,
+        status_store: RuntimeStatusStore | None = None,
     ) -> None:
         self._settings = settings
         self._paths = paths
@@ -88,6 +92,12 @@ class HeadlessMonitor:
         self._paper_execution = paper_execution
         self._monotonic = monotonic
         self._wall_time_ms = wall_time_ms or (lambda: int(time.time() * 1000))
+        self._control_store = control_store or RuntimeControlStore(paths.runtime_control_path)
+        self._status_store = status_store or RuntimeStatusStore(paths.runtime_status_path)
+        self._started_at_ms = int(self._wall_time_ms())
+        self._review_projection: dict[str, Any] | None = None
+        self._review_projection_at_ms = 0
+        self._applied_control_generation = 0
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._closed = False
@@ -115,7 +125,11 @@ class HeadlessMonitor:
     def request_stop(self) -> None:
         self._stop.set()
 
-    def poll_once(self) -> PollCycleResult:
+    def poll_once(
+        self,
+        *,
+        submission_allowed: Callable[[], bool] | None = None,
+    ) -> PollCycleResult:
         """Fetch every eligible asset once and enqueue accepted snapshots."""
         with self._lock:
             if self._closed:
@@ -145,6 +159,9 @@ class HeadlessMonitor:
                     self._record_fetch_failure(state, exc)
                     continue
                 prepared += 1
+                if submission_allowed is not None and not submission_allowed():
+                    skipped += 1
+                    continue
                 outcome = self._submit_prepared(state, task)
                 if outcome == "accepted":
                     accepted += 1
@@ -163,9 +180,97 @@ class HeadlessMonitor:
     def run_forever(self) -> None:
         """Poll until a signal or caller requests cooperative shutdown."""
         interval = float(self._settings.monitoring.poll_interval_seconds)
+        heartbeat_interval = min(5.0, interval)
+        next_poll_at = self._monotonic()
         while not self._stop.is_set():
-            self.poll_once()
-            self._stop.wait(interval)
+            now = self._monotonic()
+            control = self._control_store.read()
+            paused = control.desired_state == "paused"
+            if not paused and now >= next_poll_at:
+                self.poll_once(
+                    submission_allowed=lambda: (
+                        self._control_store.read().desired_state == "running"
+                    )
+                )
+                next_poll_at = self._monotonic() + interval
+                control = self._control_store.read()
+                paused = control.desired_state == "paused"
+            self._applied_control_generation = int(getattr(control, "generation", 0))
+            self._publish_runtime_status(paused=paused, control_error=control.error)
+            wait_seconds = heartbeat_interval
+            if not paused:
+                wait_seconds = min(wait_seconds, max(0.05, next_poll_at - self._monotonic()))
+            self._stop.wait(wait_seconds)
+
+    def runtime_snapshot(
+        self,
+        *,
+        paused: bool,
+        control_error: str | None = None,
+        service_state: str | None = None,
+    ) -> dict[str, Any]:
+        """Return the credential-free operational projection for the dashboard."""
+        with self._lock:
+            assets = [
+                {
+                    "source": state.config.source,
+                    "venue": state.config.exchange,
+                    "symbol": state.config.symbol,
+                    "timeframe": state.config.timeframe,
+                    "connected": state.connected,
+                    "in_flight": state.in_flight_task_id is not None,
+                    "last_analysis_status": state.last_analysis_status,
+                    "fetch_failures": state.fetch_failures,
+                    "latest_closed_bar_ts": state.prepared_closed_bar_ts,
+                }
+                for state in self._states
+            ]
+        return {
+            "service_state": service_state or ("paused" if paused else "running"),
+            "started_at_ms": self._started_at_ms,
+            "heartbeat_stale_after_seconds": max(
+                30,
+                int(float(self._settings.monitoring.poll_interval_seconds) * 2 + 15),
+            ),
+            "applied_control_generation": self._applied_control_generation,
+            "mode": {
+                "vpa": resolve_production_vpa_mode(self._settings.prompt),
+                "paper_trading": bool(self._settings.paper_trading.enabled),
+                "decision_stance": self._settings.general.decision_stance,
+            },
+            "scheduler": self._service.snapshot(),
+            "assets": assets,
+            "control_error": control_error,
+        }
+
+    def _publish_runtime_status(
+        self,
+        *,
+        paused: bool,
+        control_error: str | None = None,
+        service_state: str | None = None,
+    ) -> None:
+        try:
+            now_ms = int(self._wall_time_ms())
+            if (
+                self._review_projection is None
+                or now_ms - self._review_projection_at_ms >= 30_000
+            ):
+                self._review_projection = build_review_projection(
+                    self._paths.analysis_audit_db_path,
+                    self._paths.paper_trading_db_path,
+                )
+                self._review_projection_at_ms = now_ms
+            self._status_store.write({
+                **self.runtime_snapshot(
+                    paused=paused,
+                    control_error=control_error,
+                    service_state=service_state,
+                ),
+                **self._review_projection,
+            })
+        except (OSError, TypeError, ValueError):
+            logger.exception("Runtime status publication failed")
 
     def wait_idle(self, timeout: float | None = None) -> bool:
         return bool(self._service.wait_idle(timeout))
@@ -263,6 +368,11 @@ class HeadlessMonitor:
             self._closed = True
             self._stop.set()
             data_futures = tuple(self._data_futures)
+        self._publish_runtime_status(
+            paused=True,
+            control_error=None,
+            service_state="stopping",
+        )
         timeout = float(self._settings.monitoring.shutdown_timeout_seconds)
         deadline = self._monotonic() + timeout
         self._service.shutdown(wait=False)

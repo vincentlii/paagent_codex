@@ -1,0 +1,27 @@
+[Unit]
+Description=PA Agent authenticated loopback dashboard
+After=local-fs.target
+
+[Service]
+Type=simple
+User=pa-agent-dashboard
+Group=pa-agent-dashboard
+SupplementaryGroups=pa-agent-control
+WorkingDirectory=/opt/pa-agent
+Environment=PA_AGENT_OPERATION_DIR=/var/lib/pa-agent-control
+LoadCredential=pa_agent_dashboard_token:/etc/pa-agent/dashboard_token
+ExecStartPre=/opt/miniconda3/envs/pa-agent/bin/pa-agent-dashboard --check
+ExecStart=/opt/miniconda3/envs/pa-agent/bin/pa-agent-dashboard --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=10s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pa-agent-control/control
+ReadOnlyPaths=/var/lib/pa-agent-control/status
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

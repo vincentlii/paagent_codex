@@ -8,6 +8,7 @@ def test_runtime_paths_separate_read_only_assets_from_writable_state(tmp_path) -
     state_root = tmp_path / "state"
     prompt_root = tmp_path / "prompts"
     settings_path = tmp_path / "private" / "settings.json"
+    operation_root = tmp_path / "operations"
 
     paths = resolve_runtime_paths(
         project_root=project_root,
@@ -15,6 +16,7 @@ def test_runtime_paths_separate_read_only_assets_from_writable_state(tmp_path) -
             "PA_AGENT_HOME": str(state_root),
             "PA_AGENT_PROMPT_DIR": str(prompt_root),
             "PA_AGENT_SETTINGS_PATH": str(settings_path),
+            "PA_AGENT_OPERATION_DIR": str(operation_root),
         },
     )
 
@@ -27,6 +29,9 @@ def test_runtime_paths_separate_read_only_assets_from_writable_state(tmp_path) -
     assert paths.monitoring_audit_db_path == state_root.resolve() / "records" / "audit" / "monitoring.sqlite3"
     assert paths.trade_records_dir == state_root.resolve() / "trade_records"
     assert paths.paper_trading_db_path == state_root.resolve() / "trade_records" / "paper.sqlite3"
+    assert paths.runtime_dir == operation_root.resolve()
+    assert paths.runtime_status_path == operation_root.resolve() / "status" / "status.json"
+    assert paths.runtime_control_path == operation_root.resolve() / "control" / "control.json"
 
 
 def test_runtime_paths_preserve_checkout_layout_without_overrides(tmp_path) -> None:

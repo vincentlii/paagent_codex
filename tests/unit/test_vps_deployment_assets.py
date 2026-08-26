@@ -30,6 +30,9 @@ def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     root = Path(__file__).resolve().parents[2]
     environment = (root / "environment-vps.yml").read_text("utf-8")
     service = (root / "deploy" / "systemd" / "pa-agent.service").read_text("utf-8")
+    dashboard_service = (
+        root / "deploy" / "systemd" / "pa-agent-dashboard.service"
+    ).read_text("utf-8")
     installer = (root / "deploy" / "install_vps.sh").read_text("utf-8")
     ci = (root / ".github" / "workflows" / "ci.yml").read_text("utf-8")
     attributes = (root / ".gitattributes").read_text("utf-8")
@@ -41,12 +44,27 @@ def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     assert "ExecStart=" in service and "pa-agent-headless" in service
     assert "--probe-data" not in service
     assert "LoadCredential=pa_agent_api_key:" in service
+    assert "pa-agent-dashboard" in dashboard_service
+    assert "--host 127.0.0.1" in dashboard_service
+    assert "LoadCredential=pa_agent_dashboard_token:" in dashboard_service
+    assert "pa_agent_api_key" not in dashboard_service
+    assert "User=pa-agent-dashboard" in dashboard_service
+    assert "PA_AGENT_OPERATION_DIR=/var/lib/pa-agent-control" in dashboard_service
+    assert "ReadWritePaths=/var/lib/pa-agent-control/control" in dashboard_service
+    assert "ReadOnlyPaths=/var/lib/pa-agent-control/status" in dashboard_service
+    assert "ReadWritePaths=/var/lib/pa-agent\n" not in dashboard_service
+    assert "NoNewPrivileges=true" in dashboard_service
     assert "systemctl enable" not in installer
     assert '"$ENV_UV" export' in installer
     assert "--frozen" in installer
     assert "--require-hashes" in installer
     assert 'trap \'rm -f "$LOCK_REQUIREMENTS"\' EXIT' in installer
     assert "YOUR_API_KEY" not in installer
+    assert "pa-agent-dashboard.service" in installer
+    assert "CONTROL_GROUP=pa-agent-control" in installer
+    assert "/var/lib/pa-agent-control/status" in installer
+    assert "/var/lib/pa-agent-control/control" in installer
+    assert '-m 2750 /var/lib/pa-agent-control' in installer
     assert 'cd "$APP_DIR"' in installer
     assert "${APP_DIR:-" not in installer
     assert "${STATE_DIR:-" not in installer

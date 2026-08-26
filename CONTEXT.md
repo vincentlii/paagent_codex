@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0022`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0023`。
 
 ## 核心目标
 
@@ -99,6 +99,12 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
   `analysis_success=1` 并进入跨重启去重。Provider、内部或持久化失败保留原 task 身份并执行有界退避。
 - Headless 每个资产持有独立数据源；Qt 不进入服务进程。源码与 Prompt 可只读，全部运行状态归属
   `PA_AGENT_HOME`。
+- Headless 只向 operation directory 的 `status/status.json` 发布无凭据运行投影，并读取
+  `control/control.json` 的 `running/paused` desired state。暂停只阻止新任务，不能改写、
+  中断或重判已有 PA/VPA 分析；进程生命周期仍由 systemd 管理。
+- VPS Dashboard 使用独立 Unix 用户，只能访问共享 operation directory。生产审计库与
+  Paper 账本由 Headless 以 SQLite read-only 模式投影，Dashboard 不得直接打开数据库、
+  配置目录或 Provider credential。
 - GUI 的业务结果与线程完成是两个事件。取消后保留 QThread 到真实退出；关闭窗口不得销毁仍在
   运行的分析、准备、快照、刷新或追问线程。
 

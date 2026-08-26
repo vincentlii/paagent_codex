@@ -11,6 +11,7 @@
 - Miniconda：`/opt/miniconda3`
 - Conda 环境：`pa-agent`
 - 运行状态：`/var/lib/pa-agent`
+- Dashboard 共享投影与控制：`/var/lib/pa-agent-control`
 - 非代码配置：`/etc/pa-agent`
 
 先安装 Miniconda，再把已验收的代码版本放到 `/opt/pa-agent`。Miniconda 安装包和
@@ -56,6 +57,14 @@ printf %s "$PA_KEY" | sudo install -o root -g pa-agent -m 0640 /dev/stdin /etc/p
 unset PA_KEY
 ```
 
+再创建独立的 Dashboard 密码。它不能与 LLM API Key 共用：
+
+```bash
+read -rsp 'Dashboard password (16+ chars): ' DASH_KEY; echo
+printf %s "$DASH_KEY" | sudo install -o root -g pa-agent-dashboard -m 0640 /dev/stdin /etc/pa-agent/dashboard_token
+unset DASH_KEY
+```
+
 编辑 `/etc/pa-agent/pa-agent.env`：
 
 ```dotenv
@@ -70,7 +79,7 @@ PA_AGENT_BASE_URL=https://api.deepseek.com
 
 ```bash
 BIN=/opt/miniconda3/envs/pa-agent/bin
-COMMON_ENV='PA_AGENT_HOME=/var/lib/pa-agent PA_AGENT_PROMPT_DIR=/opt/pa-agent/prompt_engineering PA_AGENT_API_KEY_FILE=/etc/pa-agent/api_key'
+COMMON_ENV='PA_AGENT_HOME=/var/lib/pa-agent PA_AGENT_OPERATION_DIR=/var/lib/pa-agent-control PA_AGENT_PROMPT_DIR=/opt/pa-agent/prompt_engineering PA_AGENT_API_KEY_FILE=/etc/pa-agent/api_key'
 ```
 
 1. 离线检查配置、Prompt、依赖和目录权限：
@@ -108,15 +117,43 @@ sudo -u pa-agent env PA_AGENT_HOME=/var/lib/pa-agent "$BIN/pa-agent-paper-report
 四步都通过后再启动：
 
 ```bash
-sudo systemctl enable --now pa-agent
+sudo systemctl enable --now pa-agent pa-agent-dashboard
 sudo systemctl status pa-agent
+sudo systemctl status pa-agent-dashboard
 sudo journalctl -u pa-agent -f
 ```
 
 服务启动前只运行 `--check`。`--probe-data` 不放入自动重启链路，避免交易所短暂断线
 导致 systemd 重启风暴。运行时失败按有界退避重试，同一闭合快照不会重复分析。
 
-## 6. 更新与回滚
+## 6. Web 控制看板
+
+Dashboard 只监听 VPS 的 `127.0.0.1:8765`，不要直接开放公网端口。在本机建立
+SSH tunnel：
+
+```bash
+ssh -L 8765:127.0.0.1:8765 <VPS_USER>@<VPS_HOST>
+```
+
+随后打开 <http://127.0.0.1:8765>。用户名可填 `admin`，密码是
+`/etc/pa-agent/dashboard_token` 中设置的独立密码。
+
+看板提供：
+
+- Bot 心跳、并发队列、资产连接和最近分析状态；
+- 最近 PA 决策、VPA evidence 摘要和 Paper 账户；
+- “暂停分析”：不再接收新快照，正在运行的分析安全完成；
+- “恢复运行”：恢复轮询，若已有新闭合 K 线则按原去重规则分析。
+
+看板不能改 Prompt、风险参数、资产列表或 Joint 权限，也不能直接发起模型分析、
+真实下单或执行 shell。进程启停与重启仍使用 `systemctl`。这是有意的权限边界，
+避免 Web 控制面改变交易语义。
+
+Dashboard 以独立的 `pa-agent-dashboard` 用户运行，只能访问
+`/var/lib/pa-agent-control`。它不能读取 `/var/lib/pa-agent`、分析数据库、Paper 数据库
+或 LLM API Key；上述内容由可信 Headless 进程生成脱敏只读投影。
+
+## 7. 更新与回滚
 
 更新前先记录当前 commit，并停止服务：
 
@@ -132,7 +169,7 @@ sudo bash deploy/install_vps.sh
 重新执行 `--check`、`--probe-data`、`--once` 后再启动。回滚时切回之前记录的 commit，
 再次运行安装脚本和四步验收。不要删除 `/var/lib/pa-agent`，paper 与审计数据都在那里。
 
-## 7. 运行边界
+## 8. 运行边界
 
 - Binance、OKX、Bitget 合约是否可用以启动时公开 metadata 为准。
 - OKX quantity 是合约张数，`contract_multiplier` 来自 `ctVal * ctMult`；模拟盈亏、
