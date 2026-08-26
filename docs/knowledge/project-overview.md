@@ -1,11 +1,10 @@
 ---
 lifecycle: active
-capability: implemented
-verification_scope:
-  - local
-last_verified: 2026-08-26
-verified_commit: 2e2d8b5
-canonical_sources:
+capability: not-applicable
+verification_scope: not-verified
+最后核验: 2026-08-26
+核验提交: f8fffc0
+权威来源:
   - CONTEXT.md
   - docs/architecture/ADR-0001-analysis-authority.md
   - docs/architecture/ADR-0009-production-shadow-research-joint.md

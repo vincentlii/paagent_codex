@@ -1,11 +1,10 @@
 ---
 lifecycle: active
-capability: implemented
-verification_scope:
-  - local
-last_verified: 2026-08-26
-verified_commit: 2e2d8b5
-canonical_sources:
+capability: not-applicable
+verification_scope: not-verified
+最后核验: 2026-08-26
+核验提交: f8fffc0
+权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
   - docs/architecture/ADR-0023-vps-observability-and-control-plane.md
@@ -100,7 +99,7 @@ canonical_sources:
 
 ## 最近知识变更
 
-- `311b12a`：批准仓库内、单一事实源的项目知识库设计。
+- `311b12a`：记录仓库内、单一事实源的项目知识库设计草案；实施完成状态由最终维护阶段同步。
 - `2e2d8b5`：给出六阶段实施和验收计划。
 
 后续功能、验证范围、可复用根因或弃用状态改变时，按 [维护手册](maintenance.md) 更新本页。
