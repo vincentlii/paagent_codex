@@ -1,6 +1,6 @@
 ---
 lifecycle: active
-capability: not-applicable
+capability: no-go
 verification_scope: not-verified
 最后核验: 2026-08-26
 核验提交: f8fffc0
@@ -37,6 +37,7 @@ flowchart TD
     VPA --> SHADOW[Shadow evidence / warning]
     PA --> RECORD
     SHADOW --> RECORD
+    RECORD --> SQLITE[SQLite projection]
     RECORD --> PAPER[Paper counterfactual / reporting]
     RECORD -. frozen sample .-> AABB[Independent A/A/B/B research]
     AABB --> JOINT[Bounded Joint B-arm patch]
@@ -93,8 +94,8 @@ flowchart TD
 | 数据身份、时序、关键 OHLC 无效 | `unavailable_input`，不调用模型或产生订单 |
 | PA Provider 不可用 | `unavailable_provider`，保留诊断和有界重试语义 |
 | PA Draft 一次定向修复后仍无效 | `invalid_model_output`，不产生可执行订单 |
-| VPA Shadow 失败 | 保留有效 PA，记录 `completed_with_warnings` 或 `degraded_pa_only` |
-| Joint B 臂失败 | 研究臂保留 PA baseline，不污染正式结果 |
+| VPA Shadow 失败 | 保留有效 PA，固定记录 `completed_with_warnings` 与失败角色 |
+| Joint B 臂失败 | `degraded_pa_only`，研究臂保留 PA baseline，不污染正式结果 |
 | 持久化失败 | 不记“幽灵成功”，成功去重历史只接收完整落盘分析 |
 | Dashboard/控制文件无效 | Headless fail-closed 暂停新任务，保留明确 `control_error` |
 | 未分类内部错误 | `internal_error`，保留可诊断上下文，不伪装为 Provider 错误 |

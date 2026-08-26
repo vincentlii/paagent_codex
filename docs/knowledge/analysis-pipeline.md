@@ -1,6 +1,6 @@
 ---
 lifecycle: active
-capability: not-applicable
+capability: no-go
 verification_scope: not-verified
 最后核验: 2026-08-26
 核验提交: f8fffc0
@@ -111,7 +111,7 @@ Paper 或未来执行器只读取 effective execution semantics。TP2 是可选�
 | 判断者 | LLM 比较 Background、Location、Effort/Result、Leg/Wave、acceptance/rejection 和 competing hypotheses |
 | 程序操作 | Evidence identity、bar range、明确量价事实、权限和 sequence chronology 校验 |
 | 输出 | `VpaEvidenceReport`：support/challenge/neutral/insufficient 与后续确认条件 |
-| 失败 | 保留有效 PA，记录 warning、`completed_with_warnings` 或 `degraded_pa_only` |
+| 失败 | 保留有效 PA，固定记录 `completed_with_warnings` 与 VPA 失败角色 |
 
 VPA 不是审批 Gate。它不能创建 Setup、翻转方向、修改 `cycle_position`/`gate_result`、订单价格或 `estimated_win_rate`。正式结果仍是 PA Stage 2。
 
@@ -146,7 +146,7 @@ Joint 只能在已有 PA candidate 内给出有界 timing/confidence patch，不
 | --- | --- | --- |
 | `completed` | 全部要求角色和持久化成功 | 是 |
 | `completed_with_warnings` | 正式 PA 有效，附带非致命 warning | 是 |
-| `degraded_pa_only` | VPA/附加角色失败，PA-only 保留 | 是 |
+| `degraded_pa_only` | 隔离研究 Joint 失败，研究臂退回 PA baseline | 是（研究 arm） |
 | `unavailable_input` | 数据、身份或 Snapshot 不可用 | 否 |
 | `unavailable_provider` | Provider/API/网络不可用 | 否 |
 | `invalid_model_output` | 模型输出在有界修复后仍不可信 | 否 |

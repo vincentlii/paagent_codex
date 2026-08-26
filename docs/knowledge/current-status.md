@@ -35,7 +35,7 @@ verification_scope: not-verified
 | 请求/运行模式 | capability | 正式结果 | verification_scope | 当前结论 |
 | --- | --- | --- | --- | --- |
 | `off` | implemented | PA Stage 2 | local + 历史 CI/全量回归证据 | VPA Prompt、测量、Schema 和历史字段应零泄漏 |
-| `shadow` | implemented | PA Stage 2 | local + 历史 CI/全量回归证据 | VPA 独立追加；失败保留 PA-only 并记录 warning/降级 |
+| `shadow` | implemented | PA Stage 2 | local + 历史 CI/全量回归证据 | VPA 独立追加；失败保留 PA-only 并记录 `completed_with_warnings` |
 | 正式运行请求 `soft` | no-go | 收敛为 `shadow` | local + 历史回归证据 | 不授权 Joint |
 | 隔离 A/A/B/B B 臂 | research-only | 研究臂结果 | local + 历史回归证据 | Joint 只输出有界 patch，不进入正式分析 |
 | 真实订单执行 | no-go | 无 | not-verified | 当前仅 Paper，不声明提交真实订单 |
