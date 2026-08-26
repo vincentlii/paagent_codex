@@ -1,10 +1,10 @@
 # PA Agent 项目知识库设计规范
 
-设计状态：`Draft for written review`
+设计状态：`Accepted`
 
 设计日期：2026-08-26
 
-实施状态：尚未实施；完成后改为 `Implemented` 并链接知识库入口
+实施状态：`Implemented`；入口见 [`docs/knowledge/README.md`](../../knowledge/README.md)，步骤见[实施计划](../plans/2026-08-26-project-knowledge-base.md)
 
 ## 1. 背景与目标
 
