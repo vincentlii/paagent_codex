@@ -51,7 +51,7 @@ verification_scope: not-verified
 | Paper OHLC v2 与结果隔离 | implemented | local；2026-08-13 历史回归 | 反事实不等于真实成交或真实 PnL |
 | 持续 A/A/B/B | research-only | local；2026-08-13 历史回归 | 缺少足够独立 Snapshot 和明确结果，不能晋级 |
 | Linux Headless 与发布依赖 | implemented | 历史 CI/wheel smoke；VPS not-verified | 需要真实 Linux kernel、systemd、目录权限和重启恢复验收 |
-| VPS Dashboard | implemented | local focused verification | `f8fffc0`，晚于完整审计；需实机权限、loopback、SSH tunnel 和 desired/applied 验证 |
+| VPS Dashboard | implemented | not re-verified in this knowledge task | `f8fffc0` 含 focused unit tests，但晚于完整审计；需重跑测试及实机权限、loopback、SSH tunnel、desired/applied 验证 |
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
 
 “历史全量回归”只表示 [2026-08-13 审计报告](../quality/pre_release_final_audit_20260813.md)记录的 `1169 passed, 7 deselected`，不能自动覆盖之后的功能提交。
@@ -99,7 +99,8 @@ verification_scope: not-verified
 
 ## 最近知识变更
 
-- `311b12a`：记录仓库内、单一事实源的项目知识库设计草案；实施完成状态由最终维护阶段同步。
+- `311b12a`：记录仓库内、单一事实源的项目知识库设计；实施完成后设计状态已同步为 `Accepted`。
 - `2e2d8b5`：给出六阶段实施和验收计划。
+- `f28aea2`：知识库主题、维护流程和 `AGENTS.md` 强制入口完成接入；中间提交保留各阶段内容与审查修正。
 
 后续功能、验证范围、可复用根因或弃用状态改变时，按 [维护手册](maintenance.md) 更新本页。
