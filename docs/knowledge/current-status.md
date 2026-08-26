@@ -1,6 +1,6 @@
 ---
 lifecycle: active
-capability: not-applicable
+capability: no-go
 verification_scope: not-verified
 最后核验: 2026-08-26
 核验提交: f8fffc0
