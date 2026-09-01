@@ -45,6 +45,7 @@ _CENSORED_STATUSES = frozenset(
 )
 _CENSORED_OUTCOMES = frozenset({"pending", "unresolved", "ambiguous"})
 _TRADE_OUTCOMES = frozenset({"win", "loss", "breakeven"})
+_PA_VPA_PROTOCOL_VERSIONS = ("pa_vpa_aabb_v1", "pa_vpa_aabb_v2")
 
 
 def _is_executable_order(value: object) -> bool:
@@ -306,6 +307,7 @@ class AnalysisExperimentStore:
         symbol: str | None = None,
         timeframe: str | None = None,
         cohort_id: str | None = None,
+        protocol_version: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
@@ -319,6 +321,9 @@ class AnalysisExperimentStore:
         if cohort_id:
             clauses.append("cohort_id = ?")
             values.append(cohort_id)
+        if protocol_version:
+            clauses.append("protocol_version = ?")
+            values.append(protocol_version)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         try:
             with self._connect() as connection:
@@ -536,6 +541,7 @@ class AnalysisExperimentStore:
             symbol=symbol,
             timeframe=timeframe,
             cohort_id=cohort_id,
+            protocol_versions=_PA_VPA_PROTOCOL_VERSIONS,
         )
         if isinstance(rows, dict):
             return {**rows, "ready_for_soft": False}
@@ -611,6 +617,7 @@ class AnalysisExperimentStore:
             symbol=symbol,
             timeframe=timeframe,
             cohort_id=cohort_id,
+            protocol_versions=_PA_VPA_PROTOCOL_VERSIONS,
         )
         if isinstance(rows, dict):
             return {**rows, "ready_for_soft": False}
@@ -700,6 +707,7 @@ class AnalysisExperimentStore:
         symbol: str | None,
         timeframe: str | None,
         cohort_id: str | None,
+        protocol_versions: tuple[str, ...] | None = None,
     ) -> list[sqlite3.Row] | dict[str, Any]:
         clauses: list[str] = []
         values: list[Any] = []
@@ -712,6 +720,10 @@ class AnalysisExperimentStore:
         if cohort_id:
             clauses.append("e.cohort_id = ?")
             values.append(cohort_id)
+        if protocol_versions:
+            placeholders = ",".join("?" for _item in protocol_versions)
+            clauses.append(f"e.protocol_version IN ({placeholders})")
+            values.extend(protocol_versions)
         try:
             with self._connect() as connection:
                 self._ensure_schema(connection)
@@ -746,6 +758,7 @@ class AnalysisExperimentStore:
         symbol: str | None,
         timeframe: str | None,
         cohort_id: str | None,
+        protocol_versions: tuple[str, ...] | None = None,
     ) -> list[sqlite3.Row] | dict[str, Any]:
         clauses: list[str] = []
         values: list[Any] = []
@@ -758,6 +771,10 @@ class AnalysisExperimentStore:
         if cohort_id:
             clauses.append("e.cohort_id = ?")
             values.append(cohort_id)
+        if protocol_versions:
+            placeholders = ",".join("?" for _item in protocol_versions)
+            clauses.append(f"e.protocol_version IN ({placeholders})")
+            values.extend(protocol_versions)
         try:
             with self._connect() as connection:
                 self._ensure_schema(connection)

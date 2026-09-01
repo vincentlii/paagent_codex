@@ -17,7 +17,7 @@ verification_scope: local
 
 当前 Codex 升级分支从 `965f2df` 创建；该提交是 vNext 的现有功能与知识基线。Codex Analysis
 Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker、role Adapter 与生产 Factory
-选择 seam；尚未配置真实 Codex Job publisher，也未完成真实账号、VPS、回放或交易增益验证。
+选择 seam、Backend A/A/B/B 冻结协议与隔离统计；尚未配置真实 Codex Job publisher，也未完成真实账号、VPS、回放或交易增益验证。
 
 项目已具备进入真实 VPS 安装、预检和无人值守 Paper 验证的工程基础，但尚不能写成“VPS 已验证”或“PA+VPA 已提高盈利”。2026-08-13 的 `1169 passed, 7 deselected` 是绑定当时审计基线的历史证据；Dashboard 是审计后新增能力，需要在目标 Linux/VPS 环境补充实机验证。
 
@@ -62,6 +62,7 @@ Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker�
 | Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、JSON/outbox 已用模拟 subprocess 验证；Provider Draft Schema 仍由 PA Validator 判定；尚未做真实账号调用 |
 | Codex Analysis Backend | research-only | local focused | 已有 Job 身份绑定、一次定向修复上限、脱敏错误分类、熔断、完整 Direct PA 冷回退与 Factory mode seam；未配置 Codex 时 `auto/codex_only` fail-closed，默认仍为 `deepseek_only` |
 | Codex audit projection | implemented | local focused | `analysis_calls` 投影 backend、provider、job/thread identity 与 Evidence 调用/字节量；完整 JSON record 仍是唯一原始记录 |
+| Analysis Backend A/A/B/B | research-only | local focused | `analysis_backend_aabb_v1` 预登记四臂、ABBA/BAAB、独立 runtime、禁 fallback、失败臂 coverage、cohort 去重与成本/重复性摘要已实现；尚无真实 Codex 样本，不能晋级 |
 
 “历史全量回归”只表示 [2026-08-13 审计报告](../quality/pre_release_final_audit_20260813.md)记录的 `1169 passed, 7 deselected`，不能自动覆盖之后的功能提交。
 

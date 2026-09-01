@@ -154,6 +154,11 @@ VPA 不是审批 Gate。它不能创建 Setup、翻转方向、修改 `cycle_pos
 
 Joint 只能在已有 PA candidate 内给出有界 timing/confidence patch，不复制完整 Stage 2，不创建订单价格、Setup 或胜率。生产请求 `soft` 收敛为 `shadow`。
 
+Analysis Backend 另有独立 `analysis_backend_aabb_v1`：A1/A2 为 DeepSeek Direct，B1/B2 为
+Codex Agent。它复用 Frozen Snapshot、Router、Validator 和 PA-only authority，但不复用 PA/VPA
+实验的 treatment 语义或统计集合。四臂禁用 provider/backend fallback；不可用臂保留在 coverage，
+只评价完整 Backend system value，不能把差异单独归因于 Agentic runtime。
+
 ## 10. 持久化、Paper 与运行投影
 
 | 项目 | 内容 |

@@ -86,6 +86,34 @@ def test_experiment_store_keeps_running_manifest_and_four_arm_ledger(tmp_path: P
     assert '"status": "completed"' in artifact.read_text(encoding="utf-8")
 
 
+def test_pa_vpa_reports_exclude_backend_aabb_protocol(tmp_path: Path) -> None:
+    store = AnalysisExperimentStore(tmp_path / "analysis.sqlite3")
+    for experiment_id, protocol in (
+        ("pa-vpa", "pa_vpa_aabb_v1"),
+        ("backend", "analysis_backend_aabb_v1"),
+    ):
+        cohort_prefix = "a" if experiment_id == "pa-vpa" else "b"
+        manifest = _manifest(experiment_id, cohort_id=cohort_prefix * 64)
+        manifest["protocol_version"] = protocol
+        assert store.start_experiment(manifest).ok
+        for arm_id in manifest["arm_sequence"]:
+            arm = _arm(arm_id, f"{experiment_id}-{arm_id}")
+            if experiment_id == "backend":
+                arm["assigned_mode"] = "deepseek_direct" if arm_id.startswith("A") else "codex_agent"
+            assert store.record_arm(experiment_id, arm).ok
+        assert store.finish_experiment(
+            experiment_id,
+            status="completed",
+            protocol_report={"valid": True, "errors": []},
+            external_comparison={},
+        ).ok
+
+    report = store.frequency_report(min_unique_snapshots=1)
+
+    assert report["assigned_arms"] == 4
+    assert report["protocol_versions"] == ["pa_vpa_aabb_v1"]
+
+
 def test_continuous_snapshot_claim_is_atomic_retryable_and_bounded(tmp_path: Path) -> None:
     store = AnalysisExperimentStore(tmp_path / "analysis.sqlite3")
     common = {

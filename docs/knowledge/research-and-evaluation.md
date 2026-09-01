@@ -42,6 +42,14 @@ B1/B2 使用 Codex Agent，其他 Snapshot、Domain code、Router、Validator、
 该协议只回答完整 Backend system value；由于模型家族和执行方式同时变化，不得把差异单独归因为
 Agentic investigation。实验 arm 关闭 runtime fallback，Codex availability failure 保留在 ITT。
 
+实现由独立 [`backend_aabb.py`](../../pa_agent/experiments/backend_aabb.py) 冻结 Backend pair、共享设置、
+contract 与 source/runtime digest。四臂在调用前写入现有实验 ledger；成功 record 仍写入唯一
+`AnalysisRecord v5`，失败 arm 保持 assigned/unpersisted。Backend 汇总按 `(cohort_id,
+market_snapshot_hash)` 去重，现有 PA/VPA frequency/counterfactual 查询则显式限定 PA/VPA protocol，
+两类实验不得混算。executor 必须回传实际构造 Backend 的脱敏 runtime fingerprint 并与冻结 cohort
+核对；同一 cohort/Snapshot 的重复 assignment 视为冲突并阻止验收，不能用后续成功覆盖先前失败。
+20 Snapshot 仅代表工程 repeatability 可审查，不代表交易晋级。
+
 ## A/A/B/B 协议
 
 1. 模型调用前登记 A1、A2、B1、B2，不能按成功结果补登记。
