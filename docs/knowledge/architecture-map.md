@@ -2,12 +2,13 @@
 lifecycle: active
 capability: no-go
 verification_scope: not-verified
-最后核验: 2026-08-26
-核验提交: f8fffc0
+最后核验: 2026-09-01
+核验提交: 965f2df
 权威来源:
   - CONTEXT.md
   - docs/architecture/ADR-0001-analysis-authority.md
   - docs/architecture/ADR-0023-vps-observability-and-control-plane.md
+  - docs/architecture/ADR-0024-codex-analysis-backend.md
 ---
 
 # 架构图谱
@@ -26,7 +27,8 @@ flowchart TD
     IDENT --> SNAP[Same-source frozen Snapshot Bundle]
     DATA --> SNAP
     SNAP --> FACTS[Deterministic quality + Evidence Context]
-    FACTS --> S1[PA Stage 1 Draft v2]
+    FACTS --> BACKEND[AnalysisRoleBackend]
+    BACKEND -->|Direct or Codex| S1[PA Stage 1 Draft v2]
     S1 --> M1[Materialize + validate + Gate]
     M1 -->|proceed| S2[PA Stage 2 Draft v2]
     M1 -->|stop| RECORD[Records + audit]
@@ -43,7 +45,7 @@ flowchart TD
     AABB --> JOINT[Bounded Joint B-arm patch]
     JOINT --> RSTORE[Research artifacts and statistics]
     HEAD --> PROJ[Sanitized runtime projection]
-    DASH[VPS Dashboard] -->|desired running/paused| CTRL[Control file]
+    DASH[VPS Dashboard] -->|desired state/backend| CTRL[Control file]
     CTRL --> HEAD
     PROJ --> DASH
     SYSTEMD[systemd] --> HEAD
@@ -62,6 +64,7 @@ flowchart TD
 | Snapshot | [`snapshot_bundle.py`](../../pa_agent/data/snapshot_bundle.py)、[`snapshot_identity.py`](../../pa_agent/data/snapshot_identity.py) | 同源冻结输入和稳定身份 | 不在排队或分析中静默刷新行情 |
 | 确定性 Evidence | [`fact_catalog.py`](../../pa_agent/ai/fact_catalog.py)、[`market_features.py`](../../pa_agent/ai/market_features.py)、[`vpa_measurements.py`](../../pa_agent/ai/vpa_measurements.py) | OHLCV、窗口、比较量、指标和可引用事实 | 不把数值模式命名为 PA/VPA 结构 |
 | Prompt 与知识装配 | [`prompt_assembler.py`](../../pa_agent/ai/prompt_assembler.py)、[`pa_theory.py`](../../pa_agent/ai/pa_theory.py)、[`vpa_context_profile.py`](../../pa_agent/ai/vpa_context_profile.py) | 按 PA Context 注入 Brooks/VPA 知识和 Provider Contract | 不建立第二个 Strategy Router |
+| Analysis Backend | ADR-0024 规划的 `AnalysisRoleBackend` | 在同一 Draft/Validator 前切换 Direct 与受约束 Codex role execution | 不拥有 Snapshot、Router、materializer、Risk、持久化或交易权限 |
 | PA 编排 | [`two_stage.py`](../../pa_agent/orchestrator/two_stage.py) | Stage 1/2 调用、取消、定向修复、失败状态和记录 | 不用 normalizer 猜测专业结论 |
 | PA materializer/validator | [`pa_provider_contracts.py`](../../pa_agent/ai/pa_provider_contracts.py)、[`json_validator.py`](../../pa_agent/ai/json_validator.py) | 静态 trace、Gate、方程、明确事实/权限/安全校验 | 不因自由文本专业措辞差异硬拒绝 |
 | PA 交接 | [`pa_handoff.py`](../../pa_agent/ai/pa_handoff.py) | 复制已验证 PA 语义并补订单数学、身份、已引用窗口数值位置 | 不补 Setup、位置标签、方向或结论 |
@@ -77,7 +80,8 @@ flowchart TD
 
 **数据面**从行情身份开始，经 Snapshot、PA/VPA、records、Paper 和研究 artifact。它包含敏感配置、完整分析证据和交易候选，归 Headless 用户与 `PA_AGENT_HOME` 所有。
 
-**控制面**只包含 Headless 发布到 operation directory 的脱敏状态，以及 Dashboard 写入的 `running/paused` desired state：
+**控制面**只包含 Headless 发布到 operation directory 的脱敏状态，以及 Dashboard 写入的
+`running/paused` desired state 与 ADR-0024 限定的 `deepseek_only/auto/codex_only` desired backend：
 
 - `generation` 表示最新控制请求；`applied_control_generation` 表示 Headless 已应用的版本。
 - “已写入暂停”不等于“已经生效”，Dashboard 必须比较 desired/applied generation 与 runtime state。
@@ -86,6 +90,8 @@ flowchart TD
 - Dashboard 绑定 `127.0.0.1`/`localhost`，推荐经 SSH tunnel 访问。
 
 详见 [ADR-0023](../architecture/ADR-0023-vps-observability-and-control-plane.md)。
+Codex Backend 的隔离、完整链 fallback 和 backend A/A/B/B 见
+[ADR-0024](../architecture/ADR-0024-codex-analysis-backend.md)。
 
 ## 失败边界
 
@@ -108,6 +114,6 @@ flowchart TD
 | Context Prompt、A/A/B/B、运行时 | [0004](../architecture/ADR-0004-context-sliced-prompts.md)、[0005](../architecture/ADR-0005-offline-pa-vpa-aabb.md)、[0006](../architecture/ADR-0006-bounded-multi-asset-runtime.md)、[0007](../architecture/ADR-0007-linux-headless-runtime.md) |
 | Record、Shadow/Joint、instrument/data/Paper | [0008](../architecture/ADR-0008-canonical-record-and-validation-boundaries.md) 至 [0015](../architecture/ADR-0015-runtime-recovery-and-frozen-execution-facts.md) |
 | Reasoning、事实/执行、Evidence、风险/VPA | [0016](../architecture/ADR-0016-role-based-reasoning-profiles.md) 至 [0020](../architecture/ADR-0020-contextual-risk-probability-and-vpa-seasonality.md) |
-| 持续研究、发布资源、VPS 控制面 | [0021](../architecture/ADR-0021-continuous-paired-joint-research.md)、[0022](../architecture/ADR-0022-runtime-resource-and-release-reproducibility.md)、[0023](../architecture/ADR-0023-vps-observability-and-control-plane.md) |
+| 持续研究、发布资源、VPS 控制面、Codex Backend | [0021](../architecture/ADR-0021-continuous-paired-joint-research.md)、[0022](../architecture/ADR-0022-runtime-resource-and-release-reproducibility.md)、[0023](../architecture/ADR-0023-vps-observability-and-control-plane.md)、[0024](../architecture/ADR-0024-codex-analysis-backend.md) |
 
 继续阅读：[分析链路](analysis-pipeline.md) · [原则与边界](principles-and-boundaries.md) · [当前状态](current-status.md)

@@ -1,7 +1,7 @@
 # PA Agent Domain Context
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
-`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0023`。
+`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0024`。
 
 ## 核心目标
 
@@ -37,6 +37,12 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
   持续配对研究单元；SQLite 租约只管理执行与恢复，不参与市场判断。
 - `RuntimeResourceSnapshot`：一次运行实际加载的 `prompt_dir`、Provider Contract digest 与代码/Prompt
   fingerprint；三者必须同源，并进入 record/cohort 身份。
+- `AnalysisRoleBackend`：Stage 1、Stage 2、VPA 与研究 Joint 的模型分析 seam；Adapter 只能返回
+  Provider Draft 和运行审计，不能拥有 materializer、Router、Validator、Risk 或持久化。
+- `FrozenAgentJob`：绑定同一 Snapshot cutoff、role、attempt、contract、knowledge、AGENTS、Skills、
+  model 和预算 digest 的不可变 Codex 任务。不同角色不得共享会话。
+- `AgentRuntimeFingerprint`：一次 Agent 调用实际使用的 Codex CLI、model、reasoning profile、
+  AGENTS、Skills、Evidence interface 与知识清单身份；必须进入 record/cohort。
 
 ## 权限边界
 
@@ -47,6 +53,9 @@ LLM 负责依赖上下文且允许多种合理解释的内容：市场背景、A
 Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 
 程序不能从指标或自由文本反推交易语义；LLM 不能改写程序事实、凭空创造证据或绕过订单安全。
+
+Direct LLM 与 Codex Agent 只是同一分析权限的两种 Backend。Codex 可以在 FrozenAgentJob 内按需读取
+授权 Evidence，但不能扩大数据时间边界、选择其他交易体系或改变 PA/VPA/Joint 的权限。
 
 明确写成 `K# + open/high/low/close + 数值` 的声明属于程序事实，必须与冻结快照一致；
 程序允许显示精度舍入，但不得把价格绑定到错误 K 线。未明确绑定 OHLC 字段的 swing、
@@ -71,6 +80,9 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 7. Stage 2 的模型候选保持不可变；程序订单数学与置信度只生成 `execution_disposition`，
    Paper/未来执行器只消费 effective order 语义。
 8. 程序验证补丁与执行安全，随后持久化完整审计链。
+
+选择 Codex Backend 时，步骤 2、3、5、6 各自使用新的 ephemeral 任务；下游只接收已验证的结构化
+上游 Artifact，不继承聊天历史。Codex 输出仍先进入现有 Provider Draft/materializer/Validator 链。
 
 这是一条信息依赖链，不代表 VPA 从属于 PA，也不允许形成第二套 Strategy Router。
 

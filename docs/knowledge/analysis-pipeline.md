@@ -2,13 +2,14 @@
 lifecycle: active
 capability: no-go
 verification_scope: not-verified
-最后核验: 2026-08-26
-核验提交: f8fffc0
+最后核验: 2026-09-01
+核验提交: 965f2df
 权威来源:
   - CONTEXT.md
   - pa_agent/orchestrator/two_stage.py
   - docs/architecture/ADR-0017-deterministic-facts-and-execution-semantics.md
   - docs/architecture/ADR-0018-evidence-context-and-provider-drafts.md
+  - docs/architecture/ADR-0024-codex-analysis-backend.md
 ---
 
 # 分析链路
@@ -53,6 +54,13 @@ Snapshot 一旦排队即冻结；分析期间 GUI 暂停网络刷新，Headless 
 | 失败 | 事实不完整时标记 unavailable/insufficient，不机械补标签；关键数据契约失败则 `unavailable_input` |
 
 程序生成多种可复算证据和候选上下文，不预先决定趋势、推动/回调、Spring、UTAD、Absorption 或 Setup。
+
+### 3.1 Analysis Backend seam
+
+Stage 1、Stage 2 和 VPA 的模型角色可以由 Direct 或 Codex Backend 执行，但两者必须返回同一
+Provider Draft/role draft，并进入相同 materializer、Validator、Router、Risk 与持久化链。
+Codex 只在同一 Frozen Snapshot 内按需读取授权 Evidence；每个角色使用独立 ephemeral 任务，
+Stage 2 不继承 Stage 1 chat history。该能力在完成实现和研究门禁前为 `research-only`。
 
 ## 4. PA Stage 1 Draft、物化与 Gate
 
@@ -136,7 +144,7 @@ Joint 只能在已有 PA candidate 内给出有界 timing/confidence patch，不
 | 操作者 | [`pa_agent/records/`](../../pa_agent/records/)、[`pa_agent/execution/`](../../pa_agent/execution/)、[`pa_agent/operations/`](../../pa_agent/operations/) |
 | 输出 | JSON record、audit、SQLite projection、Paper ledger/report、脱敏 runtime status |
 | 程序原则 | 只有完整落盘成功进入去重历史；真实 outcome、反事实 outcome、Paper v1/v2 分离 |
-| 控制 | Dashboard 写 desired state；Headless 应用并发布 applied generation；systemd 管进程 |
+| 控制 | Dashboard 写 desired state/backend；Headless 在安全边界应用并发布 applied generation；systemd 管进程 |
 
 同柱成交路径无法确定时保持 ambiguous/censored，不猜测先后；反事实 Paper 不能称为真实 PnL。
 

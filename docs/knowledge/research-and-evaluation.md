@@ -2,12 +2,13 @@
 lifecycle: active
 capability: research-only
 verification_scope: not-verified
-最后核验: 2026-08-26
-核验提交: f8fffc0
+最后核验: 2026-09-01
+核验提交: 965f2df
 权威来源:
   - docs/architecture/ADR-0005-offline-pa-vpa-aabb.md
   - docs/architecture/ADR-0021-continuous-paired-joint-research.md
   - docs/quality/acceptance.md
+  - docs/architecture/ADR-0024-codex-analysis-backend.md
 ---
 
 # 研究与评价
@@ -33,6 +34,13 @@ verification_scope: not-verified
 | A/A/B/B B 臂 | Joint research result | B1/B2 测 Joint 组内随机性 |
 
 VPA-enabled 模型自称“没有改变 baseline”不是反事实证据。Prompt Context 已改变注意力，必须用同一冻结 Snapshot 独立运行 A 和 B。
+
+## Analysis Backend A/A/B/B
+
+`analysis_backend_aabb_v1` 与 PA/VPA A/A/B/B 是两个不同问题：A1/A2 使用当前 DeepSeek Direct，
+B1/B2 使用 Codex Agent，其他 Snapshot、Domain code、Router、Validator、Risk 和知识版本保持一致。
+该协议只回答完整 Backend system value；由于模型家族和执行方式同时变化，不得把差异单独归因为
+Agentic investigation。实验 arm 关闭 runtime fallback，Codex availability failure 保留在 ITT。
 
 ## A/A/B/B 协议
 

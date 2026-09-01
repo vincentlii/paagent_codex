@@ -3,8 +3,8 @@ lifecycle: active
 capability: not-applicable
 verification_scope: not-verified
 issue_status: monitoring
-最后核验: 2026-08-26
-核验提交: f8fffc0
+最后核验: 2026-09-01
+核验提交: 965f2df
 权威来源:
   - AGENTS.md
   - CONTEXT.md
@@ -202,6 +202,28 @@ issue_status: monitoring
 - **正确原则：**DeepSeek OpenAI-compatible 使用其原生字段；requested 与实际 applied 分别记录；不支持时显式降级而非伪装。
 - **当前实现/证据：**[ADR-0016](../architecture/ADR-0016-role-based-reasoning-profiles.md)、[AGENTS](../../AGENTS.md)。
 - **复发检查：**核对实际请求 payload、Provider response/日志和 record 中每角色 applied profile。
+
+### PH-18 Agent 改造吞并 PA authority 与知识截断
+
+- `issue_status`：active prevention。
+- **症状：**Codex 自行选择交易体系，程序信号先投票锚定方向，Wyckoff 成为隐性 Gate，或知识只取固定前 N 段；Stage 1/Stage 2 被 CLI 工作流替代。
+- **影响：**Brooks Router、竞争假设、结构止损、Trader Equation 与 PA-only 正式结果被削弱，分析看似更长但不再是同一 PA Agent。
+- **根因：**把 Codex 当成新的自治交易系统，而不是现有 Draft/Validator 前的 Analysis Backend。
+- **错误修法：**从旧 `codex-paagent` 复制框架、fast scanner、五信号投票和截断知识包。
+- **正确原则：**当前 vNext 是唯一源码；Codex 只实现 `AnalysisRoleBackend`，知识由 PA Context/Router 授权，输出继续进入同一 materializer、Validator、Risk 和正式 PA authority。
+- **当前实现/证据：**[ADR-0024](../architecture/ADR-0024-codex-analysis-backend.md)；代码实现和 VPS 验证尚未完成。
+- **复发检查：**任何 Codex 代码若能命名 Setup、绕过 Router、直接写 DB/订单，或在 Prompt 外读取未授权知识，立即停止 Phase。
+
+### PH-19 长会话、Backend 混合与 availability/quality 混淆
+
+- `issue_status`：active prevention。
+- **症状：**定时任务 resume 旧对话；Stage 2 继承未经验证的 Stage 1 prose；Codex 输出质量错误被 DeepSeek 静默兜底；同一交易链混用两个 Backend。
+- **影响：**上下文污染、不可重放、ITT 幸存者偏差和无法解释的正式决策。
+- **根因：**没有把 Snapshot、role、attempt、runtime fingerprint 和失败类型作为稳定身份。
+- **错误修法：**无限 retry、自动换模型重写，或只保存最后成功结果。
+- **正确原则：**每个 role 独立 ephemeral；只传已验证 Artifact；fallback 仅限 availability，且从 Direct Stage 1 重启完整链；实验禁用 fallback 并保留失败 arm。
+- **当前实现/证据：**[ADR-0024](../architecture/ADR-0024-codex-analysis-backend.md)。
+- **复发检查：**审计 role session、backend、failure kind、fallback reason、Snapshot/runtime digests 和 ITT coverage。
 
 ## 使用方式
 

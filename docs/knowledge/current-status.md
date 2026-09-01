@@ -2,19 +2,21 @@
 lifecycle: active
 capability: no-go
 verification_scope: not-verified
-最后核验: 2026-08-26
-核验提交: f8fffc0
+最后核验: 2026-09-01
+核验提交: 965f2df
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
   - docs/architecture/ADR-0023-vps-observability-and-control-plane.md
+  - docs/architecture/ADR-0024-codex-analysis-backend.md
 ---
 
 # 当前状态
 
 ## 结论
 
-当前功能基线是 `f8fffc0`：在 `pre-vps-ready-20260813`（`5daeccd`）基础上新增隔离 VPS Dashboard。知识库设计和实施计划分别锚定 `311b12a`、`2e2d8b5`，不改变交易运行逻辑。
+当前 Codex 升级分支从 `965f2df` 创建；该提交是 vNext 的现有功能与知识基线。Codex Analysis
+Backend 已完成 ADR-0024 设计冻结，但尚未在本阶段声明实现、VPS 验证或交易增益。
 
 项目已具备进入真实 VPS 安装、预检和无人值守 Paper 验证的工程基础，但尚不能写成“VPS 已验证”或“PA+VPA 已提高盈利”。2026-08-13 的 `1169 passed, 7 deselected` 是绑定当时审计基线的历史证据；Dashboard 是审计后新增能力，需要在目标 Linux/VPS 环境补充实机验证。
 
@@ -25,6 +27,7 @@ verification_scope: not-verified
 | `e7e415b` / `pre-vps-audit-20260813` | 回退检查点 | 上线前 P0-P4 审计前状态 |
 | `5daeccd` / `pre-vps-ready-20260813` | 发布审计锚点 | P0-P4 软件实现和当时全量非 live 审计完成 |
 | `f8fffc0` | 当前功能基线 | 新增隔离 VPS 控制 Dashboard，晚于 2026-08-13 全量审计 |
+| `965f2df` | Codex 升级基线 | `convergence-vnext` 上创建隔离 worktree 的固定起点 |
 | `311b12a` | 文档设计 | 项目知识库设计规范 |
 | `2e2d8b5` | 文档计划 | 知识库实施计划 |
 
@@ -53,6 +56,7 @@ verification_scope: not-verified
 | Linux Headless 与发布依赖 | implemented | 历史 CI/wheel smoke；VPS not-verified | 需要真实 Linux kernel、systemd、目录权限和重启恢复验收 |
 | VPS Dashboard | implemented | not re-verified in this knowledge task | `f8fffc0` 含 focused unit tests，但晚于完整审计；需重跑测试及实机权限、loopback、SSH tunnel、desired/applied 验证 |
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
+| Codex Analysis Backend | research-only / implementing | not-verified | ADR-0024 已接受；默认必须保持 `deepseek_only`，未完成回放、VPS 和 Paper 门禁前不得晋级 |
 
 “历史全量回归”只表示 [2026-08-13 审计报告](../quality/pre_release_final_audit_20260813.md)记录的 `1169 passed, 7 deselected`，不能自动覆盖之后的功能提交。
 
@@ -63,6 +67,7 @@ verification_scope: not-verified
 - 尚未在目标 VPS 验证 Linux 用户、systemd、`PA_AGENT_HOME`、共享 operation directory 和 SQLite read-only projection 权限。
 - 尚未在目标 VPS 验证真实 Provider、行情源、venue symbol/contract metadata、网络超时与速率限制。
 - Dashboard 尚需验证仅监听 loopback、SSH tunnel、desired/applied generation 和 Headless 不可写越权。
+- ChatGPT account auth、Codex CLI、独立 Unix 用户、只读 sandbox、worker restart 和 rate limit 尚未在目标 VPS 验证。
 
 ### 交易与研究未验证
 

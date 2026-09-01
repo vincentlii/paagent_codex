@@ -18,12 +18,16 @@
 11. 同一分析中 Prompt、Provider Contract、materializer、validator 与审计 digest 的资源目录漂移为 0。
 12. wheel 安装后缺失 `prompt_engineering` 知识文件的次数为 0。
 13. 不同 `PA_AGENT_HOME/config` 之间 TradingView 用户别名缓存污染为 0。
+14. Codex 的跨 Snapshot、超 cutoff、未授权 Knowledge/Evidence 读取被接受的次数为 0。
+15. Codex 绕过 Draft materializer、Brooks Router、Validator、Risk、Trader Equation 或直接写生产数据库/交易状态的次数为 0。
+16. Codex 与 DeepSeek 在同一正式 PA Stage 链中混用，或因 Schema、事实、权限和专业判断失败触发 availability fallback 的次数为 0。
 
 ## 结构与鲁棒性
 
 - 认证支持严格结构输出的 Provider，首次结构成功率目标不低于 99.5%。
 - 1000 组合法格式和措辞扰动中，错误硬拒绝率低于 1%。
 - Provider 返回 400、401、429、5xx、timeout、截断 JSON 时均得到可解释状态。
+- Codex CLI/auth/worker/evidence runtime 故障必须得到可解释 availability 状态；Codex role 每次使用独立 ephemeral 任务。
 - SQLite busy、磁盘写入失败、数据断连时不产生幽灵成功记录。
 
 ## 性能
@@ -35,6 +39,8 @@
 - GUI 连续 1000 次取消、切换品种与关闭，不发生 `QThread` 生命周期崩溃。
 - Windows 与 Linux CI 必须使用 `uv.lock` 运行全部 `not live` 测试；CI 不得访问真实行情、Provider
   或交易 API。wheel smoke 必须从安装位置读取 Prompt，并证明 Headless import 不加载 Qt。
+- Codex 初始静态 Context p95 不高于匹配 Direct Prompt 的 40%，包含 Evidence retrieval 的总输入
+  p95 不高于 Direct 的 75%；完整运行仍受现有 300 秒 p95、250k token p95 和 1.35 倍研究成本上限约束。
 
 ## 交易与研究
 

@@ -4,6 +4,9 @@
 
 Accepted
 
+> `desired_backend` 的窄范围分析 Backend 切换由 ADR-0024 增补；本文禁止在线修改
+> Prompt、策略、Risk、资产和进程权限的其他控制边界继续有效。
+
 ## 决策
 
 VPS Dashboard 是独立进程和独立 Unix 用户，不导入分析编排器，不持有 LLM 或交易所
