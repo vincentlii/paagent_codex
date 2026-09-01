@@ -104,6 +104,22 @@ Headless 启动失败时检查：
 | requested low 但 applied high | Provider 不支持映射或请求方言不匹配 | 分别记录 requested/applied；比较 cohort 时按 applied 隔离 |
 | 专业判断偏差 | 合法结构、事实无矛盾，但 PA/VPA 解释可争议 | 交易复盘/换更强模型/重复研究，不新增硬 validator |
 
+## Codex Analysis Worker
+
+- 每个 role 必须出现新的 ephemeral task，不允许 `resume` 或共享自然语言会话。
+- CLI 必须为 read-only、approval `never`，并禁用 shell、Web、image、用户 config/rules；唯一工具为
+  `required=true` 的 `pa_evidence` stdio MCP。
+- VPS 只允许 ChatGPT account auth；使用 `codex login --device-auth`，`auth.json` 按密码管理，
+  不设置 `OPENAI_API_KEY`/`CODEX_API_KEY` fallback。
+- `job_digest`、resource digest、output schema、Evidence audit 或 role 不一致均按不可接受结果处理，
+  不摄取 outbox、不写 canonical record。
+- 排障先区分 CLI/auth/rate-limit/timeout/MCP startup 等 availability failure，与 schema、事实、
+  authority、专业判断等 analysis failure；只有前一类可进入后续定义的 cold fallback。
+
+命令与认证行为以 [OpenAI Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)、
+[Codex authentication](https://learn.chatgpt.com/docs/auth) 和
+[Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) 为准。
+
 ## 数据与 VPA 降级
 
 **先检查程序事实：**bars 是否已收盘、volume 是否 available、真实零与缺失零、proxy/tick volume、RVOL baseline coverage、seasonality 是否严格因果。

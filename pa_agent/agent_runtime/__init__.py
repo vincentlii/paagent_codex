@@ -8,6 +8,10 @@ from pa_agent.agent_runtime.frozen_job import (
     FrozenAgentJobManifest,
     FrozenAgentJobStore,
 )
+from pa_agent.agent_runtime.runtime_assets import (
+    CodexRuntimeAssets,
+    load_codex_runtime_assets,
+)
 
 __all__ = [
     "AgentJobBudget",
@@ -16,4 +20,6 @@ __all__ = [
     "FrozenAgentJobManifest",
     "FrozenAgentJobStore",
     "FrozenEvidenceGateway",
+    "CodexRuntimeAssets",
+    "load_codex_runtime_assets",
 ]

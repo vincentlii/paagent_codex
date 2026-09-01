@@ -57,8 +57,9 @@ Backend 已完成 ADR-0024 设计冻结，但尚未在本阶段声明实现、VP
 | VPS Dashboard | implemented | not re-verified in this knowledge task | `f8fffc0` 含 focused unit tests，但晚于完整审计；需重跑测试及实机权限、loopback、SSH tunnel、desired/applied 验证 |
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
 | Analysis Backend seam | implemented | local focused | Direct Adapter 已覆盖 PA Stage 1/2、VPA、Joint transport，并保持现有 Draft/Validator；Codex Adapter 尚未实现 |
-| Frozen Agent Job / Evidence | implemented | local focused | 确定性 manifest、原子目录发布、resource digest、角色事实/知识 allowlist、cutoff 与调用/字节预算已实现；尚未接入 Codex CLI worker |
-| Codex Analysis Backend | research-only / implementing | not-verified | ADR-0024 已接受；默认必须保持 `deepseek_only`，未完成回放、VPS 和 Paper 门禁前不得晋级 |
+| Frozen Agent Job / Evidence | implemented | local focused | 确定性 manifest、原子目录发布、resource digest、角色事实/知识 allowlist、cutoff 与调用/字节预算已实现 |
+| Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、schema/outbox 已用模拟 subprocess 验证；尚未做真实账号调用 |
+| Codex Analysis Backend | research-only / implementing | not-verified | Worker 尚未接入 ProductionOrchestratorFactory；默认必须保持 `deepseek_only`，未完成回放、VPS 和 Paper 门禁前不得晋级 |
 
 “历史全量回归”只表示 [2026-08-13 审计报告](../quality/pre_release_final_audit_20260813.md)记录的 `1169 passed, 7 deselected`，不能自动覆盖之后的功能提交。
 

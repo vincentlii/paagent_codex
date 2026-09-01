@@ -66,6 +66,7 @@ flowchart TD
 | Prompt 与知识装配 | [`prompt_assembler.py`](../../pa_agent/ai/prompt_assembler.py)、[`pa_theory.py`](../../pa_agent/ai/pa_theory.py)、[`vpa_context_profile.py`](../../pa_agent/ai/vpa_context_profile.py) | 按 PA Context 注入 Brooks/VPA 知识和 Provider Contract | 不建立第二个 Strategy Router |
 | Analysis Backend | [`analysis_role_backend.py`](../../pa_agent/ai/analysis_role_backend.py) | 通过同一 role interface 执行 Direct；Codex Adapter 按 ADR-0024 分阶段接入 | 不拥有 Snapshot、Router、materializer、Risk、持久化或交易权限 |
 | Frozen Agent Runtime | [`agent_runtime/`](../../pa_agent/agent_runtime/) | 绑定 role、attempt、Snapshot cutoff、schema、facts、knowledge、AGENTS/skill、runtime 与预算，并原子发布只读 Job | Evidence 只读取 Job 内冻结资源；篡改、越界和超预算 fail closed |
+| Codex CLI Worker | [`codex_worker.py`](../../pa_agent/agent_runtime/codex_worker.py)、[`evidence_mcp.py`](../../pa_agent/agent_runtime/evidence_mcp.py) | 每个 role 启动 ephemeral `codex exec`，只启用 required frozen-evidence MCP，校验 schema 后发布 outbox | ChatGPT-only auth；禁用 shell、Web、用户配置和 session resume |
 | PA 编排 | [`two_stage.py`](../../pa_agent/orchestrator/two_stage.py) | Stage 1/2 调用、取消、定向修复、失败状态和记录 | 不用 normalizer 猜测专业结论 |
 | PA materializer/validator | [`pa_provider_contracts.py`](../../pa_agent/ai/pa_provider_contracts.py)、[`json_validator.py`](../../pa_agent/ai/json_validator.py) | 静态 trace、Gate、方程、明确事实/权限/安全校验 | 不因自由文本专业措辞差异硬拒绝 |
 | PA 交接 | [`pa_handoff.py`](../../pa_agent/ai/pa_handoff.py) | 复制已验证 PA 语义并补订单数学、身份、已引用窗口数值位置 | 不补 Setup、位置标签、方向或结论 |

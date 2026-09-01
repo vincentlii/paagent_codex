@@ -1,0 +1,49 @@
+"""Load and fingerprint the packaged Codex analysis rules and role skills."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from importlib.resources import files
+from types import MappingProxyType
+from typing import Mapping
+
+_SKILL_PATHS = {
+    "stage1": "skills/stage1/SKILL.md",
+    "stage2": "skills/stage2/SKILL.md",
+    "vpa_evidence": "skills/vpa_evidence/SKILL.md",
+    "joint_arbiter": "skills/joint_arbiter/SKILL.md",
+}
+
+
+@dataclass(frozen=True)
+class CodexRuntimeAssets:
+    runtime_version: str
+    agents_text: str
+    skill_documents: Mapping[str, str]
+
+
+def load_codex_runtime_assets() -> CodexRuntimeAssets:
+    root = files("pa_agent.agent_runtime").joinpath("assets")
+    agents_text = root.joinpath("AGENTS.md").read_text(encoding="utf-8")
+    skills = {
+        role: root.joinpath(path).read_text(encoding="utf-8")
+        for role, path in _SKILL_PATHS.items()
+    }
+    payload = {
+        "AGENTS.md": agents_text,
+        **{path: skills[role] for role, path in _SKILL_PATHS.items()},
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    return CodexRuntimeAssets(
+        runtime_version=f"codex-runtime-v1-{digest[:16]}",
+        agents_text=agents_text,
+        skill_documents=MappingProxyType(skills),
+    )

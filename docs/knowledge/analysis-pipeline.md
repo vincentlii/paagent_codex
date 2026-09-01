@@ -68,6 +68,12 @@ output schema、角色可见 facts/knowledge、Runtime AGENTS/skill 与预算，
 `FrozenEvidenceGateway` 不获取行情、不重新计算交易信号，只返回 Job 内的事实、K 线和知识；每次
 访问进入内存审计，cutoff 越界、digest 篡改、角色越权或调用/字节超预算均拒绝。
 
+Codex CLI Worker 使用 `codex exec --ephemeral --sandbox read-only --output-schema`。运行时忽略
+用户 config/rules，强制 ChatGPT login，禁用 shell、Web、image 与 skill dependency install，
+并要求 frozen-evidence stdio MCP 成功启动。AGENTS 与单一 role skill 从 Job 内已绑定的 Runtime
+资产生成；CLI JSONL 只提取 thread ID 与 token usage，不长期保存 reasoning stream。可信 Worker
+再次校验 output schema 与 Evidence audit 后才发布 outbox；Codex 进程不直接写数据库。
+
 ## 4. PA Stage 1 Draft、物化与 Gate
 
 | 项目 | 内容 |

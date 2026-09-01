@@ -94,6 +94,7 @@ include = ["pa_agent*", "prompt_engineering*"]
 
 [tool.setuptools.package-data]
 prompt_engineering = ["**/*.txt", "**/*.md"]
+"pa_agent.agent_runtime" = ["assets/**/*.md"]
 
 [tool.black]
 line-length = 100

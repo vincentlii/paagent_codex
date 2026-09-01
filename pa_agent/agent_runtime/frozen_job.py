@@ -58,6 +58,7 @@ def _require_digest(value: str, name: str) -> str:
 class AgentJobBudget:
     max_evidence_calls: int = 8
     max_evidence_bytes: int = 65_536
+    max_initial_context_bytes: int = 32_768
     max_wall_seconds: int = 180
     max_output_bytes: int = 65_536
 
