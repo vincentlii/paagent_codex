@@ -57,10 +57,11 @@ Snapshot 一旦排队即冻结；分析期间 GUI 暂停网络刷新，Headless 
 
 ### 3.1 Analysis Backend seam
 
-Stage 1、Stage 2 和 VPA 的模型角色可以由 Direct 或 Codex Backend 执行，但两者必须返回同一
-Provider Draft/role draft，并进入相同 materializer、Validator、Router、Risk 与持久化链。
-Codex 只在同一 Frozen Snapshot 内按需读取授权 Evidence；每个角色使用独立 ephemeral 任务，
-Stage 2 不继承 Stage 1 chat history。该能力在完成实现和研究门禁前为 `research-only`。
+Stage 1、Stage 2、VPA 和研究 Joint 的模型调用现已通过 `AnalysisRoleBackend` interface；当前
+`DirectAnalysisRoleBackend` 保持原 Provider、structured output、role profile 和 fallback 行为。
+后续 Codex Adapter 必须返回同一 Provider Draft/role draft，并进入相同 materializer、Validator、
+Router、Risk 与持久化链。Codex 只在同一 Frozen Snapshot 内按需读取授权 Evidence；每个角色使用
+独立 ephemeral 任务，Stage 2 不继承 Stage 1 chat history。Codex 能力仍为 `research-only`。
 
 ## 4. PA Stage 1 Draft、物化与 Gate
 

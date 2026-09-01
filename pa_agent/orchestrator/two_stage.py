@@ -36,8 +36,12 @@ if TYPE_CHECKING:
     from pa_agent.records.experience_reader import ExperienceReader
     from pa_agent.records.pending_writer import PendingWriter
 
+from pa_agent.ai.analysis_role_backend import (
+    AnalysisRoleBackend,
+    AnalysisRoleRequest,
+    DirectAnalysisRoleBackend,
+)
 from pa_agent.ai.json_validator import Ok, ValidationError
-from pa_agent.ai.model_call_runner import ModelCallRunner
 from pa_agent.ai.pa_handoff import compile_pa_handoff
 from pa_agent.ai.provider_failures import ModelCallFailure
 from pa_agent.ai.reasoning_profiles import resolve_reasoning_profile
@@ -229,6 +233,7 @@ def _call_attempt_entry(
         "status": status,
         "validation_category": validation_category,
         "error_type": error_type,
+        "analysis_backend": model_call_meta.get("analysis_backend", "direct"),
         "provider_id": model_call_meta.get("provider_id"),
         "structured_output_mode": model_call_meta.get("structured_output_mode"),
         "thinking": model_call_meta.get("thinking"),
@@ -710,6 +715,7 @@ class TwoStageOrchestrator:
         exp_reader: "ExperienceReader",
         settings: Optional["Settings"] = None,
         *,
+        analysis_backend: AnalysisRoleBackend | None = None,
         call_arm: str = "baseline",
         allow_provider_fallback: bool = True,
         defer_execution_policy: bool = False,
@@ -734,6 +740,12 @@ class TwoStageOrchestrator:
         self._pending_writer = pending_writer
         self._exp_reader = exp_reader
         self._settings = settings
+        self._analysis_backend = analysis_backend or DirectAnalysisRoleBackend(
+            client=client,
+            settings=settings,
+            allow_provider_fallback=allow_provider_fallback,
+            logger=logger,
+        )
         self._call_arm = call_arm
         self._allow_provider_fallback = allow_provider_fallback
         self._defer_execution_policy = defer_execution_policy
@@ -1923,6 +1935,12 @@ class TwoStageOrchestrator:
 
         baseline_runner = TwoStageOrchestrator(
             client=baseline_client,
+            analysis_backend=DirectAnalysisRoleBackend(
+                client=baseline_client,
+                settings=baseline_settings,
+                allow_provider_fallback=False,
+                logger=logger,
+            ),
             assembler=self._assembler.clone_with_prompt_settings(
                 baseline_settings.prompt
             ),
@@ -2039,6 +2057,13 @@ class TwoStageOrchestrator:
             messages: list[dict[str, Any]],
             validate: Callable[[str], Any],
         ) -> tuple[StructuredRoleResult | None, dict[str, Any] | None]:
+            role_backend = DirectAnalysisRoleBackend(
+                client=client,
+                settings=role_settings,
+                allow_provider_fallback=False,
+                logger=logger,
+            )
+
             def call_api(current_messages: list[dict[str, Any]]) -> Any:
                 profile = self._thinking_profile(role)
                 attempt = 1 + sum(
@@ -2047,18 +2072,17 @@ class TwoStageOrchestrator:
                     if item.get("arm") == role and item.get("stage") == role
                 )
                 try:
-                    result = ModelCallRunner(
-                        client,
-                        role_settings.provider,
-                    ).run_stream(
-                        current_messages,
-                        stage=role,
-                        schema=schema,
+                    result = role_backend.run(
+                        AnalysisRoleRequest(
+                            role=role,
+                            messages=current_messages,
+                            schema=schema,
+                            thinking=profile.thinking,
+                            reasoning_effort=profile.reasoning_effort,
+                        ),
                         on_reasoning_token=None,
                         on_content_token=None,
                         cancel_token=cancel_token,
-                        thinking=profile.thinking,
-                        reasoning_effort=profile.reasoning_effort,
                     )
                 except ModelCallFailure as exc:
                     failed = _call_attempt_entry(
@@ -2074,10 +2098,6 @@ class TwoStageOrchestrator:
                     ]
                     role_calls.append(failed)
                     raise
-                self._annotate_model_reply(
-                    result,
-                    provider_fallback_used=False,
-                )
                 reply = result.reply
                 role_replies.append(reply)
                 role_calls.append(
@@ -2567,190 +2587,23 @@ class TwoStageOrchestrator:
         stage_label: str,
         on_attempt_error: Callable[[Exception], None] | None = None,
     ) -> Any:
-        """Run one typed, bounded model call with an optional ephemeral fallback."""
-        provider = (
-            self._settings.provider
-            if self._settings is not None
-            else getattr(self._client, "_settings", None)
-        )
-        if provider is None:
-            from pa_agent.config.settings import AIProviderSettings
-
-            provider = AIProviderSettings(structured_output_mode="text")
+        """Run one typed role through the selected analysis backend."""
         schema_for = getattr(self._validator, "schema_for", None)
         schema = schema_for(stage) if callable(schema_for) else None
-        original_model = (
-            self._settings.provider.model if self._settings is not None else ""
-        )
-        try:
-            result = ModelCallRunner(self._client, provider).run_stream(
-                messages,
-                stage=stage,
+        del stage_label  # retained in the stable orchestrator helper interface
+        return self._analysis_backend.run(
+            AnalysisRoleRequest(
+                role=stage,
+                messages=messages,
                 schema=schema,
-                on_reasoning_token=on_reasoning_token,
-                on_content_token=on_content_token,
-                cancel_token=cancel_token,
                 thinking=thinking,
                 reasoning_effort=reasoning_effort,
-                on_attempt_error=on_attempt_error,
-            )
-            self._annotate_model_reply(result, provider_fallback_used=False)
-            return result.reply
-        except ModelCallFailure as primary_failure:
-            if (
-                not primary_failure.failure.retryable
-                or not self._allow_provider_fallback
-            ):
-                raise
-            fallback = self._build_ephemeral_fallback(original_model)
-            if fallback is None:
-                raise
-            name, fallback_client, fallback_provider = fallback
-            logger.info(
-                "%s provider unavailable (%s); trying ephemeral %s fallback",
-                stage_label,
-                primary_failure.failure.kind,
-                name,
-            )
-            try:
-                fallback_result = ModelCallRunner(
-                    fallback_client,
-                    fallback_provider,
-                ).run_stream(
-                    messages,
-                    stage=stage,
-                    schema=schema,
-                    on_reasoning_token=on_reasoning_token,
-                    on_content_token=on_content_token,
-                    cancel_token=cancel_token,
-                    thinking=thinking,
-                    reasoning_effort=reasoning_effort,
-                    on_attempt_error=on_attempt_error,
-                )
-            except ModelCallFailure as fallback_failure:
-                combined_attempts = (
-                    *(
-                        {
-                            **dict(attempt),
-                            "provider_role": "primary",
-                        }
-                        for attempt in primary_failure.attempts
-                    ),
-                    *(
-                        {
-                            **dict(attempt),
-                            "provider_role": "fallback",
-                        }
-                        for attempt in fallback_failure.attempts
-                    ),
-                )
-                raise ModelCallFailure(
-                    fallback_failure.failure,
-                    original=fallback_failure.original,
-                    attempts=combined_attempts,
-                ) from fallback_failure
-            self._annotate_model_reply(
-                fallback_result,
-                provider_fallback_used=True,
-                prior_attempts=primary_failure.attempts,
-            )
-            return fallback_result.reply
-
-    @staticmethod
-    def _annotate_model_reply(
-        result: Any,
-        *,
-        provider_fallback_used: bool,
-        prior_attempts: tuple[dict, ...] = (),
-    ) -> None:
-        provider_id = str(result.capabilities.provider_id)
-        transport_attempts = [
-            {
-                **dict(attempt),
-                "provider_role": "primary",
-            }
-            for attempt in prior_attempts
-        ]
-        transport_attempts.extend(
-            {
-                **dict(attempt),
-                "provider_role": (
-                    "fallback" if provider_fallback_used else "primary"
-                ),
-                "provider_id": provider_id,
-            }
-            for attempt in result.attempts
-        )
-        last_attempt = result.attempts[-1] if result.attempts else {}
-        try:
-            result.reply._pa_model_call_meta = {
-                "provider_id": provider_id,
-                "structured_output_mode": result.structured_output_mode,
-                "thinking": last_attempt.get("thinking"),
-                "reasoning_effort": last_attempt.get("reasoning_effort"),
-                "requested_thinking": last_attempt.get("requested_thinking"),
-                "requested_reasoning_effort": last_attempt.get(
-                    "requested_reasoning_effort"
-                ),
-                "effective_thinking": last_attempt.get("effective_thinking"),
-                "effective_reasoning_effort": last_attempt.get(
-                    "effective_reasoning_effort"
-                ),
-                "provider_fallback_used": provider_fallback_used,
-                "transport_attempts": transport_attempts,
-            }
-        except (AttributeError, TypeError):
-            logger.debug("Provider reply does not support call metadata annotation")
-
-    def _build_ephemeral_fallback(
-        self,
-        original_model: str,
-    ) -> tuple[str, Any, Any] | None:
-        """Build a run-scoped fallback without mutating or saving user settings."""
-        if self._settings is None:
-            return None
-        candidate = self._settings.model_copy(deep=True)
-        name = ""
-        error: str | None = None
-
-        from pa_agent.ai.cursor_connector import (
-            apply_cursor_provider_to_settings,
-            is_openclaw_cs_model,
-        )
-        from pa_agent.ai.qclaw_connector import (
-            apply_qclaw_provider_to_settings,
-            is_openclaw_model,
-        )
-        from pa_agent.ai.workbuddy_connector import (
-            apply_workbuddy_provider_to_settings,
-            is_openclaw_wb_model,
-        )
-
-        if is_openclaw_wb_model(original_model):
-            name = "WorkBuddy"
-            error = apply_workbuddy_provider_to_settings(candidate)
-        elif is_openclaw_cs_model(original_model):
-            name = "Cursor"
-            error = apply_cursor_provider_to_settings(
-                candidate,
-                preferred_model=original_model,
-            )
-        elif is_openclaw_model(original_model):
-            name = "QClaw"
-            error = apply_qclaw_provider_to_settings(candidate)
-        else:
-            return None
-        if error:
-            logger.warning("%s fallback unavailable: %s", name, error)
-            return None
-
-        from pa_agent.ai.client_factory import create_ai_client
-
-        return (
-            name,
-            create_ai_client(candidate.provider, logger_=logger),
-            candidate.provider,
-        )
+            ),
+            on_reasoning_token=on_reasoning_token,
+            on_content_token=on_content_token,
+            cancel_token=cancel_token,
+            on_attempt_error=on_attempt_error,
+        ).reply
 
     @staticmethod
     def _provider_failure_payload(

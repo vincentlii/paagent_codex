@@ -96,6 +96,7 @@ def test_happy_path(frame, pending_writer, assembler, exp_reader):
     # Record has both stages populated
     assert record.stage1_diagnosis is not None
     assert record.stage2_decision is not None
+    assert {item["analysis_backend"] for item in record.call_attempts} == {"direct"}
 
     # save_full was called (not save_partial)
     pending_writer.save_full.assert_called_once_with(record)

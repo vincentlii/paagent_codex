@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pa_agent.ai.analysis_role_backend import DirectAnalysisRoleBackend
 from pa_agent.ai.client_factory import create_ai_client
 from pa_agent.ai.json_validator import JsonValidator
 from pa_agent.ai.prompt_assembler import PromptAssembler
@@ -36,6 +37,11 @@ class ProductionOrchestratorFactory:
     def __call__(self, _task: AnalysisTask) -> TwoStageOrchestrator:
         settings = self._settings.model_copy(deep=True)
         client = create_ai_client(settings.provider, logger_=self._logger)
+        analysis_backend = DirectAnalysisRoleBackend(
+            client=client,
+            settings=settings,
+            logger=self._logger,
+        )
         experience_reader = ExperienceReader(
             experience_dir=self._experience_dir,
             logger=self._logger,
@@ -47,6 +53,7 @@ class ProductionOrchestratorFactory:
         )
         return TwoStageOrchestrator(
             client=client,
+            analysis_backend=analysis_backend,
             assembler=assembler,
             router=route_strategy_files,
             validator=JsonValidator(settings, prompt_dir=self._prompt_dir),

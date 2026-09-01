@@ -212,6 +212,9 @@ def test_production_factory_does_not_share_mutable_model_state(
     assert first is not second
     assert clients[0] is not clients[1]
     assert assemblers[0] is not assemblers[1]
+    assert built[0].analysis_backend is not built[1].analysis_backend
+    assert built[0].analysis_backend.client is clients[0]
+    assert built[1].analysis_backend.client is clients[1]
     assert built[0].settings is not built[1].settings
     assert validator_paths == [tmp_path, tmp_path]
 

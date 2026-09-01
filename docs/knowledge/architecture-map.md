@@ -64,7 +64,7 @@ flowchart TD
 | Snapshot | [`snapshot_bundle.py`](../../pa_agent/data/snapshot_bundle.py)、[`snapshot_identity.py`](../../pa_agent/data/snapshot_identity.py) | 同源冻结输入和稳定身份 | 不在排队或分析中静默刷新行情 |
 | 确定性 Evidence | [`fact_catalog.py`](../../pa_agent/ai/fact_catalog.py)、[`market_features.py`](../../pa_agent/ai/market_features.py)、[`vpa_measurements.py`](../../pa_agent/ai/vpa_measurements.py) | OHLCV、窗口、比较量、指标和可引用事实 | 不把数值模式命名为 PA/VPA 结构 |
 | Prompt 与知识装配 | [`prompt_assembler.py`](../../pa_agent/ai/prompt_assembler.py)、[`pa_theory.py`](../../pa_agent/ai/pa_theory.py)、[`vpa_context_profile.py`](../../pa_agent/ai/vpa_context_profile.py) | 按 PA Context 注入 Brooks/VPA 知识和 Provider Contract | 不建立第二个 Strategy Router |
-| Analysis Backend | ADR-0024 规划的 `AnalysisRoleBackend` | 在同一 Draft/Validator 前切换 Direct 与受约束 Codex role execution | 不拥有 Snapshot、Router、materializer、Risk、持久化或交易权限 |
+| Analysis Backend | [`analysis_role_backend.py`](../../pa_agent/ai/analysis_role_backend.py) | 通过同一 role interface 执行 Direct；Codex Adapter 按 ADR-0024 分阶段接入 | 不拥有 Snapshot、Router、materializer、Risk、持久化或交易权限 |
 | PA 编排 | [`two_stage.py`](../../pa_agent/orchestrator/two_stage.py) | Stage 1/2 调用、取消、定向修复、失败状态和记录 | 不用 normalizer 猜测专业结论 |
 | PA materializer/validator | [`pa_provider_contracts.py`](../../pa_agent/ai/pa_provider_contracts.py)、[`json_validator.py`](../../pa_agent/ai/json_validator.py) | 静态 trace、Gate、方程、明确事实/权限/安全校验 | 不因自由文本专业措辞差异硬拒绝 |
 | PA 交接 | [`pa_handoff.py`](../../pa_agent/ai/pa_handoff.py) | 复制已验证 PA 语义并补订单数学、身份、已引用窗口数值位置 | 不补 Setup、位置标签、方向或结论 |

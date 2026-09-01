@@ -7,10 +7,12 @@ from unittest.mock import MagicMock, patch
 import openai
 import pytest
 
+from pa_agent.ai.analysis_role_backend import (
+    AnalysisRoleRequest,
+    DirectAnalysisRoleBackend,
+)
 from pa_agent.ai.provider_failures import ModelCallFailure
 from pa_agent.config.settings import Settings
-from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
-from tests.fixtures.validators import schema_test_validator
 
 
 def _reply() -> MagicMock:
@@ -28,29 +30,26 @@ def _reply() -> MagicMock:
     )
 
 
-def _orchestrator(settings: Settings, client: MagicMock) -> TwoStageOrchestrator:
-    return TwoStageOrchestrator(
+def _backend(settings: Settings, client: MagicMock) -> DirectAnalysisRoleBackend:
+    return DirectAnalysisRoleBackend(
         client=client,
-        assembler=MagicMock(),
-        router=MagicMock(),
-        validator=schema_test_validator(),
-        pending_writer=MagicMock(),
-        exp_reader=MagicMock(),
         settings=settings,
     )
 
 
-def _call(orchestrator: TwoStageOrchestrator) -> object:
-    return orchestrator._stream_chat_resilient(
-        [{"role": "user", "content": "return json"}],
-        stage="stage1",
+def _call(backend: DirectAnalysisRoleBackend) -> object:
+    return backend.run(
+        AnalysisRoleRequest(
+            role="stage1",
+            messages=[{"role": "user", "content": "return json"}],
+            schema={"type": "object"},
+            thinking=True,
+            reasoning_effort="max",
+        ),
         on_reasoning_token=None,
         on_content_token=None,
         cancel_token=MagicMock(is_set=MagicMock(return_value=False)),
-        thinking=True,
-        reasoning_effort="max",
-        stage_label="Stage 1",
-    )
+    ).reply
 
 
 def test_stream_chat_uses_bounded_ephemeral_fallback_without_mutating_settings() -> None:
@@ -66,22 +65,22 @@ def test_stream_chat_uses_bounded_ephemeral_fallback_without_mutating_settings()
     )
     fallback = MagicMock()
     fallback.stream_chat.return_value = _reply()
-    orchestrator = _orchestrator(settings, primary)
+    backend = _backend(settings, primary)
     fallback_provider = settings.provider.model_copy(
         update={"structured_output_mode": "text"}
     )
 
     with patch.object(
-        orchestrator,
+        backend,
         "_build_ephemeral_fallback",
         return_value=("QClaw", fallback, fallback_provider),
     ) as build:
-        result = _call(orchestrator)
+        result = _call(backend)
 
     assert result.content
     assert primary.stream_chat.call_count == 2
     assert fallback.stream_chat.call_count == 1
-    build.assert_called_once_with("openclaw")
+    build.assert_called_once_with()
     assert settings.model_dump() == before
     assert result._pa_model_call_meta["provider_fallback_used"] is True
     assert [
@@ -100,13 +99,13 @@ def test_non_retryable_provider_failure_never_falls_back(status_code: int) -> No
         response=response,
         body=None,
     )
-    orchestrator = _orchestrator(settings, client)
+    backend = _backend(settings, client)
 
     with (
-        patch.object(orchestrator, "_build_ephemeral_fallback") as build,
+        patch.object(backend, "_build_ephemeral_fallback") as build,
         pytest.raises(ModelCallFailure) as caught,
     ):
-        _call(orchestrator)
+        _call(backend)
 
     assert caught.value.failure.status_code == status_code
     assert caught.value.failure.retryable is False
@@ -118,8 +117,14 @@ def test_ephemeral_fallback_builds_from_a_clone() -> None:
     settings = Settings()
     settings.provider.model = "openclaw"
     before = deepcopy(settings.model_dump())
-    orchestrator = _orchestrator(settings, MagicMock())
-    built_client = object()
+    primary = MagicMock()
+    primary.stream_chat.side_effect = openai.APIConnectionError(
+        request=MagicMock(),
+        message="Connection error.",
+    )
+    backend = _backend(settings, primary)
+    built_client = MagicMock()
+    built_client.stream_chat.return_value = _reply()
 
     def apply(candidate: Settings) -> None:
         candidate.provider.base_url = "http://127.0.0.1:53555/v1"
@@ -136,10 +141,8 @@ def test_ephemeral_fallback_builds_from_a_clone() -> None:
         patch("pa_agent.ai.workbuddy_connector.is_openclaw_wb_model", return_value=False),
         patch("pa_agent.ai.client_factory.create_ai_client", return_value=built_client),
     ):
-        result = orchestrator._build_ephemeral_fallback("openclaw")
+        result = _call(backend)
 
-    assert result is not None
-    assert result[0] == "QClaw"
-    assert result[1] is built_client
-    assert result[2].api_key == "runtime-only"
+    assert result.content
+    assert built_client.stream_chat.call_count == 1
     assert settings.model_dump() == before

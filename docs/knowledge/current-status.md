@@ -56,6 +56,7 @@ Backend 已完成 ADR-0024 设计冻结，但尚未在本阶段声明实现、VP
 | Linux Headless 与发布依赖 | implemented | 历史 CI/wheel smoke；VPS not-verified | 需要真实 Linux kernel、systemd、目录权限和重启恢复验收 |
 | VPS Dashboard | implemented | not re-verified in this knowledge task | `f8fffc0` 含 focused unit tests，但晚于完整审计；需重跑测试及实机权限、loopback、SSH tunnel、desired/applied 验证 |
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
+| Analysis Backend seam | implemented | local focused | Direct Adapter 已覆盖 PA Stage 1/2、VPA、Joint transport，并保持现有 Draft/Validator；Codex Adapter 尚未实现 |
 | Codex Analysis Backend | research-only / implementing | not-verified | ADR-0024 已接受；默认必须保持 `deepseek_only`，未完成回放、VPS 和 Paper 门禁前不得晋级 |
 
 “历史全量回归”只表示 [2026-08-13 审计报告](../quality/pre_release_final_audit_20260813.md)记录的 `1169 passed, 7 deselected`，不能自动覆盖之后的功能提交。
