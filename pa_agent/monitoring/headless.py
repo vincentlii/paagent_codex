@@ -83,6 +83,7 @@ class HeadlessMonitor:
         wall_time_ms: Callable[[], int] | None = None,
         control_store: RuntimeControlStore | None = None,
         status_store: RuntimeStatusStore | None = None,
+        backend_switcher: Callable[[str], bool] | None = None,
     ) -> None:
         self._settings = settings
         self._paths = paths
@@ -98,6 +99,10 @@ class HeadlessMonitor:
         self._review_projection: dict[str, Any] | None = None
         self._review_projection_at_ms = 0
         self._applied_control_generation = 0
+        self._applied_backend = "deepseek_only"
+        self._backend_switcher = backend_switcher or (
+            lambda mode: mode == "deepseek_only"
+        )
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._closed = False
@@ -185,22 +190,84 @@ class HeadlessMonitor:
         while not self._stop.is_set():
             now = self._monotonic()
             control = self._control_store.read()
-            paused = control.desired_state == "paused"
+            paused, control_error = self._apply_control(
+                control,
+                verify_latest=True,
+            )
             if not paused and now >= next_poll_at:
                 self.poll_once(
                     submission_allowed=lambda: (
-                        self._control_store.read().desired_state == "running"
+                        self._submission_matches_applied_control()
                     )
                 )
                 next_poll_at = self._monotonic() + interval
                 control = self._control_store.read()
-                paused = control.desired_state == "paused"
-            self._applied_control_generation = int(getattr(control, "generation", 0))
-            self._publish_runtime_status(paused=paused, control_error=control.error)
+                paused, control_error = self._apply_control(
+                    control,
+                    verify_latest=True,
+                )
+            self._publish_runtime_status(paused=paused, control_error=control_error)
             wait_seconds = heartbeat_interval
             if not paused:
                 wait_seconds = min(wait_seconds, max(0.05, next_poll_at - self._monotonic()))
             self._stop.wait(wait_seconds)
+
+    def _apply_control(
+        self,
+        control: Any,
+        *,
+        verify_latest: bool = False,
+    ) -> tuple[bool, str | None]:
+        """Apply one desired state only at an idle backend boundary."""
+        desired_state = str(getattr(control, "desired_state", "paused"))
+        desired_backend = str(
+            getattr(control, "desired_backend", "deepseek_only")
+            or "deepseek_only"
+        )
+        error = getattr(control, "error", None)
+        if error:
+            return True, str(error)
+        if desired_backend != self._applied_backend:
+            if not self._service.wait_idle(0):
+                return True, "backend_switch_draining"
+            if verify_latest:
+                latest = self._control_store.read()
+                if (
+                    int(getattr(latest, "generation", 0))
+                    != int(getattr(control, "generation", 0))
+                    or str(
+                        getattr(latest, "desired_backend", "deepseek_only")
+                        or "deepseek_only"
+                    )
+                    != desired_backend
+                ):
+                    return True, "backend_switch_pending"
+            try:
+                switched = bool(self._backend_switcher(desired_backend))
+            except Exception:
+                logger.exception("Analysis backend switch failed")
+                switched = False
+            if not switched:
+                return True, "backend_unavailable"
+            self._applied_backend = desired_backend
+            with self._lock:
+                for state in self._states:
+                    state.prepared_task = None
+                    state.prepared_closed_bar_ts = None
+                    state.prepared_frame_hash = None
+        self._applied_control_generation = int(getattr(control, "generation", 0))
+        return desired_state == "paused", None
+
+    def _submission_matches_applied_control(self) -> bool:
+        control = self._control_store.read()
+        return (
+            getattr(control, "desired_state", "paused") == "running"
+            and str(
+                getattr(control, "desired_backend", "deepseek_only")
+                or "deepseek_only"
+            )
+            == self._applied_backend
+        )
 
     def runtime_snapshot(
         self,
@@ -237,6 +304,7 @@ class HeadlessMonitor:
                 "vpa": resolve_production_vpa_mode(self._settings.prompt),
                 "paper_trading": bool(self._settings.paper_trading.enabled),
                 "decision_stance": self._settings.general.decision_stance,
+                "analysis_backend": self._applied_backend,
             },
             "scheduler": self._service.snapshot(),
             "assets": assets,
@@ -524,6 +592,7 @@ class HeadlessMonitor:
             incremental_new_bar_count=new_count,
             created_at_ms=now_ms,
             instrument_spec=spec,
+            analysis_backend_mode=self._applied_backend,
         )
         with self._lock:
             state.fetch_failures = 0

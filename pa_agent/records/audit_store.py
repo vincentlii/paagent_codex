@@ -43,7 +43,7 @@ class AuditRebuildResult:
 class AnalysisAuditStore:
     """Index completed or partial analysis records without owning their source data."""
 
-    _SCHEMA_VERSION: ClassVar[int] = 11
+    _SCHEMA_VERSION: ClassVar[int] = 12
     _ENTRY_STATUSES: ClassVar[frozenset[str]] = frozenset(
         {"not_traded", "pending", "filled", "expired", "cancelled"}
     )
@@ -624,10 +624,17 @@ class AnalysisAuditStore:
                 status TEXT NOT NULL,
                 validation_category TEXT,
                 error_type TEXT,
+                analysis_backend TEXT NOT NULL DEFAULT 'direct',
+                provider_id TEXT,
+                job_digest TEXT,
+                codex_thread_id TEXT,
+                evidence_call_count INTEGER NOT NULL DEFAULT 0,
+                evidence_response_bytes INTEGER NOT NULL DEFAULT 0,
                 created_at_ms INTEGER NOT NULL,
                 PRIMARY KEY (run_id, arm, stage, attempt)
             )
             """)
+        self._ensure_analysis_call_columns(connection)
         connection.execute("""
             CREATE TABLE IF NOT EXISTS vpa_observations (
                 run_id TEXT NOT NULL REFERENCES analysis_runs(run_id) ON DELETE CASCADE,
@@ -785,6 +792,27 @@ class AnalysisAuditStore:
             if column not in existing:
                 connection.execute(f"ALTER TABLE analysis_runs ADD COLUMN {column} {definition}")
 
+    @staticmethod
+    def _ensure_analysis_call_columns(connection: sqlite3.Connection) -> None:
+        """Extend the rebuildable call ledger with Codex runtime observability."""
+        existing = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(analysis_calls)").fetchall()
+        }
+        required = {
+            "analysis_backend": "TEXT NOT NULL DEFAULT 'direct'",
+            "provider_id": "TEXT",
+            "job_digest": "TEXT",
+            "codex_thread_id": "TEXT",
+            "evidence_call_count": "INTEGER NOT NULL DEFAULT 0",
+            "evidence_response_bytes": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, definition in required.items():
+            if column not in existing:
+                connection.execute(
+                    f"ALTER TABLE analysis_calls ADD COLUMN {column} {definition}"
+                )
+
     @classmethod
     def _replace_calls(
         cls,
@@ -801,8 +829,10 @@ class AnalysisAuditStore:
                     run_id, arm, stage, attempt, request_hash, response_hash,
                     prompt_tokens, completion_tokens, cached_prompt_tokens,
                     total_tokens, latency_ms, status, validation_category,
-                    error_type, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error_type, analysis_backend, provider_id, job_digest,
+                    codex_thread_id, evidence_call_count,
+                    evidence_response_bytes, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.meta.run_id,
@@ -819,6 +849,12 @@ class AnalysisAuditStore:
                     str(raw.get("status") or "unknown"),
                     str(raw.get("validation_category") or "") or None,
                     str(raw.get("error_type") or "") or None,
+                    str(raw.get("analysis_backend") or "direct"),
+                    str(raw.get("provider_id") or "") or None,
+                    str(raw.get("job_digest") or "") or None,
+                    str(raw.get("codex_thread_id") or "") or None,
+                    max(0, int(raw.get("evidence_call_count") or 0)),
+                    max(0, int(raw.get("evidence_response_bytes") or 0)),
                     int(raw.get("created_at_ms") or cls._now_ms()),
                 ),
             )
@@ -1045,6 +1081,9 @@ class AnalysisAuditStore:
             "vpa_evidence": canonical_vpa,
             "joint_arbitration": canonical_joint.get("joint_arbitration"),
             "run_outcome": run_outcome,
+            "backend_fallback": copy.deepcopy(
+                role_execution.get("backend_fallback")
+            ),
             "decision_review": decision_review,
         }
         baseline_stage2 = (

@@ -13,6 +13,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 DesiredState = Literal["running", "paused"]
+AnalysisBackendMode = Literal["deepseek_only", "auto", "codex_only"]
 _FORBIDDEN_STATUS_KEYS = (
     "api_key",
     "password",
@@ -25,8 +26,9 @@ _FORBIDDEN_STATUS_KEYS = (
 
 @dataclass(frozen=True)
 class RuntimeControlState:
-    schema_version: int = 1
+    schema_version: int = 2
     desired_state: DesiredState = "running"
+    desired_backend: AnalysisBackendMode = "deepseek_only"
     generation: int = 0
     updated_at_ms: int = 0
     actor: str = "default"
@@ -62,16 +64,23 @@ class RuntimeControlStore:
             return RuntimeControlState()
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
+            schema_version = int(raw.get("schema_version", 1))
+            if schema_version not in {1, 2}:
+                raise ValueError("unsupported control schema")
             desired = str(raw["desired_state"])
             if desired not in {"running", "paused"}:
                 raise ValueError("invalid desired_state")
+            desired_backend = str(raw.get("desired_backend") or "deepseek_only")
+            if desired_backend not in {"deepseek_only", "auto", "codex_only"}:
+                raise ValueError("invalid desired_backend")
             generation = int(raw.get("generation", 0))
             updated_at_ms = int(raw.get("updated_at_ms", 0))
             if generation < 0 or updated_at_ms < 0:
                 raise ValueError("negative control metadata")
             return RuntimeControlState(
-                schema_version=1,
+                schema_version=2,
                 desired_state=desired,  # type: ignore[arg-type]
+                desired_backend=desired_backend,  # type: ignore[arg-type]
                 generation=generation,
                 updated_at_ms=updated_at_ms,
                 actor=str(raw.get("actor") or "unknown")[:64],
@@ -91,6 +100,27 @@ class RuntimeControlStore:
             current = self.read()
             state = RuntimeControlState(
                 desired_state=desired_state,
+                desired_backend=current.desired_backend,
+                generation=current.generation + 1,
+                updated_at_ms=int(self._now_ms()),
+                actor=(str(actor).strip() or "unknown")[:64],
+            )
+            _atomic_write_json(self._path, asdict(state))
+            return state
+
+    def set_desired_backend(
+        self,
+        desired_backend: AnalysisBackendMode,
+        *,
+        actor: str,
+    ) -> RuntimeControlState:
+        if desired_backend not in {"deepseek_only", "auto", "codex_only"}:
+            raise ValueError("unsupported analysis backend")
+        with self._lock:
+            current = self.read()
+            state = RuntimeControlState(
+                desired_state=current.desired_state,
+                desired_backend=desired_backend,
                 generation=current.generation + 1,
                 updated_at_ms=int(self._now_ms()),
                 actor=(str(actor).strip() or "unknown")[:64],

@@ -682,3 +682,48 @@ def test_pause_during_snapshot_preparation_blocks_submission(tmp_path) -> None:
     assert result.skipped == 1
     assert service.submitted == []
     assert source.connected == 1
+
+
+def test_backend_control_applies_only_after_scheduler_is_idle(tmp_path) -> None:
+    applied = []
+    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+    monitor._backend_switcher = lambda mode: applied.append(mode) or True
+    service.wait_idle = lambda _timeout=None: False
+    control = SimpleNamespace(
+        desired_state="running",
+        desired_backend="auto",
+        generation=4,
+        error=None,
+    )
+
+    paused, error = monitor._apply_control(control)
+    assert paused is True
+    assert error == "backend_switch_draining"
+    assert applied == []
+    assert monitor._applied_control_generation == 0
+
+    service.wait_idle = lambda _timeout=None: True
+    paused, error = monitor._apply_control(control)
+    assert paused is False
+    assert error is None
+    assert applied == ["auto"]
+    assert monitor._applied_control_generation == 4
+    assert monitor.runtime_snapshot(paused=False)["mode"]["analysis_backend"] == "auto"
+
+
+def test_unavailable_backend_control_fails_closed(tmp_path) -> None:
+    monitor, _source, _audit, _service, _clock = _monitor(tmp_path)
+    monitor._backend_switcher = lambda _mode: False
+    control = SimpleNamespace(
+        desired_state="running",
+        desired_backend="codex_only",
+        generation=2,
+        error=None,
+    )
+
+    paused, error = monitor._apply_control(control)
+
+    assert paused is True
+    assert error == "backend_unavailable"
+    assert monitor._applied_control_generation == 0
+    assert monitor.runtime_snapshot(paused=True)["mode"]["analysis_backend"] == "deepseek_only"

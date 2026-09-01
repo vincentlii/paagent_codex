@@ -755,9 +755,11 @@ class TwoStageOrchestrator:
             allow_provider_fallback=allow_provider_fallback,
             logger=logger,
         )
-        configured_vpa_mode = str(
-            getattr(getattr(settings, "prompt", None), "vpa_mode", "off") or "off"
-        ).lower()
+        from pa_agent.config.vpa import resolve_vpa_mode
+
+        configured_vpa_mode = resolve_vpa_mode(
+            getattr(settings, "prompt", None)
+        )
         if (
             self._analysis_backend.backend_id == "codex_agent"
             and configured_vpa_mode in {"shadow", "soft"}

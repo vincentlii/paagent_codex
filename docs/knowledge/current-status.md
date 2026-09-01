@@ -16,8 +16,8 @@ verification_scope: local
 ## 结论
 
 当前 Codex 升级分支从 `965f2df` 创建；该提交是 vNext 的现有功能与知识基线。Codex Analysis
-Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker 与 role Adapter；尚未接入
-ProductionOrchestratorFactory，也未完成真实账号、VPS、回放或交易增益验证。
+Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker、role Adapter 与生产 Factory
+选择 seam；尚未配置真实 Codex Job publisher，也未完成真实账号、VPS、回放或交易增益验证。
 
 项目已具备进入真实 VPS 安装、预检和无人值守 Paper 验证的工程基础，但尚不能写成“VPS 已验证”或“PA+VPA 已提高盈利”。2026-08-13 的 `1169 passed, 7 deselected` 是绑定当时审计基线的历史证据；Dashboard 是审计后新增能力，需要在目标 Linux/VPS 环境补充实机验证。
 
@@ -55,12 +55,13 @@ ProductionOrchestratorFactory，也未完成真实账号、VPS、回放或交易
 | Paper OHLC v2 与结果隔离 | implemented | local；2026-08-13 历史回归 | 反事实不等于真实成交或真实 PnL |
 | 持续 A/A/B/B | research-only | local；2026-08-13 历史回归 | 缺少足够独立 Snapshot 和明确结果，不能晋级 |
 | Linux Headless 与发布依赖 | implemented | 历史 CI/wheel smoke；VPS not-verified | 需要真实 Linux kernel、systemd、目录权限和重启恢复验收 |
-| VPS Dashboard | implemented | not re-verified in this knowledge task | `f8fffc0` 含 focused unit tests，但晚于完整审计；需重跑测试及实机权限、loopback、SSH tunnel、desired/applied 验证 |
+| VPS Dashboard | implemented | local focused | 只能请求 pause/resume 和 `deepseek_only/auto/codex_only`；Backend 在 task/cohort 冻结且仅在 scheduler idle 后 applied。仍需实机权限、loopback、SSH tunnel 验证 |
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
 | Analysis Backend seam | implemented | local focused | Direct 与 Codex Adapter 均返回现有 Provider Draft；Codex 仍只接 PA Stage 1/2，VPA shadow/soft 在未接通前显式拒绝，避免静默改走 Direct |
 | Frozen Agent Job / Evidence | implemented | local focused | 确定性 manifest、原子目录发布、resource digest、角色事实/知识 allowlist、cutoff 与调用/字节预算已实现 |
 | Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、JSON/outbox 已用模拟 subprocess 验证；Provider Draft Schema 仍由 PA Validator 判定；尚未做真实账号调用 |
-| Codex Analysis Backend | research-only | local focused | 已有 Job 身份绑定、一次定向修复上限、脱敏错误分类、熔断和完整 Direct PA 冷回退；fallback provenance 在持久化前写入且可见 callback 不混链。尚未接入 ProductionOrchestratorFactory |
+| Codex Analysis Backend | research-only | local focused | 已有 Job 身份绑定、一次定向修复上限、脱敏错误分类、熔断、完整 Direct PA 冷回退与 Factory mode seam；未配置 Codex 时 `auto/codex_only` fail-closed，默认仍为 `deepseek_only` |
+| Codex audit projection | implemented | local focused | `analysis_calls` 投影 backend、provider、job/thread identity 与 Evidence 调用/字节量；完整 JSON record 仍是唯一原始记录 |
 
 “历史全量回归”只表示 [2026-08-13 审计报告](../quality/pre_release_final_audit_20260813.md)记录的 `1169 passed, 7 deselected`，不能自动覆盖之后的功能提交。
 

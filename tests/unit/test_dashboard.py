@@ -110,3 +110,56 @@ def test_dashboard_requires_auth_and_accepts_audited_pause(tmp_path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_dashboard_accepts_only_bounded_backend_control(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    RuntimeStatusStore(paths.runtime_status_path).write(
+        {
+            "service_state": "running",
+            "applied_control_generation": 0,
+            "mode": {"analysis_backend": "deepseek_only"},
+            "assets": [],
+            "scheduler": {},
+        }
+    )
+    server = create_server(
+        DashboardConfig(host="127.0.0.1", port=0, token="a-secure-test-token"),
+        paths,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        body = json.dumps({"action": "set_backend", "backend": "auto"})
+        connection.request(
+            "POST",
+            "/api/control",
+            body=body,
+            headers={
+                "Authorization": _authorization("a-secure-test-token"),
+                "Content-Type": "application/json",
+                "X-PA-Agent-Control": "1",
+            },
+        )
+        assert connection.getresponse().status == 202
+        state = RuntimeControlStore(paths.runtime_control_path).read()
+        assert state.desired_backend == "auto"
+
+        invalid = json.dumps({"action": "set_backend", "backend": "custom-model"})
+        connection.request(
+            "POST",
+            "/api/control",
+            body=invalid,
+            headers={
+                "Authorization": _authorization("a-secure-test-token"),
+                "Content-Type": "application/json",
+                "X-PA-Agent-Control": "1",
+            },
+        )
+        assert connection.getresponse().status == 400
+        assert RuntimeControlStore(paths.runtime_control_path).read().desired_backend == "auto"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

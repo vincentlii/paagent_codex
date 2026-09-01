@@ -17,7 +17,12 @@ from pa_agent.monitoring.service import MultiAssetAnalysisService
 from pa_agent.util.threading import OrchestratorEvent
 
 
-def _task(symbol: str, index: int = 0) -> AnalysisTask:
+def _task(
+    symbol: str,
+    index: int = 0,
+    *,
+    backend_mode: str = "deepseek_only",
+) -> AnalysisTask:
     frame = SimpleNamespace(symbol=symbol, timeframe="1h")
     return AnalysisTask.create(
         source="tradingview",
@@ -26,7 +31,10 @@ def _task(symbol: str, index: int = 0) -> AnalysisTask:
         timeframe="1h",
         snapshot_hash=f"{index + 1:064x}",
         cohort_id="b" * 64,
-        payload=FrozenAnalysisPayload(frame=frame),
+        payload=FrozenAnalysisPayload(
+            frame=frame,
+            analysis_backend_mode=backend_mode,
+        ),
     )
 
 
@@ -217,6 +225,59 @@ def test_production_factory_does_not_share_mutable_model_state(
     assert built[1].analysis_backend.client is clients[1]
     assert built[0].settings is not built[1].settings
     assert validator_paths == [tmp_path, tmp_path]
+
+
+def test_production_factory_honors_backend_frozen_on_task(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from pa_agent.monitoring import production
+    from pa_agent.orchestrator.backend_fallback import FullChainFallbackOrchestrator
+
+    direct_clients: list[object] = []
+
+    def create_client(*_args, **_kwargs):
+        client = object()
+        direct_clients.append(client)
+        return client
+
+    monkeypatch.setattr(production, "create_ai_client", create_client)
+    monkeypatch.setattr(production, "ExperienceReader", lambda **_kwargs: object())
+    monkeypatch.setattr(production, "PromptAssembler", lambda **_kwargs: object())
+    monkeypatch.setattr(production, "JsonValidator", lambda *_args, **_kwargs: object())
+    built = []
+
+    class _Orchestrator:
+        def __init__(self, **kwargs):
+            self.analysis_backend = kwargs["analysis_backend"]
+            built.append(self)
+
+        def submit(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(production, "TwoStageOrchestrator", _Orchestrator)
+    codex_backends = []
+
+    def codex_factory(_task, _settings):
+        backend = SimpleNamespace(backend_id="codex_agent")
+        codex_backends.append(backend)
+        return backend
+
+    factory = production.ProductionOrchestratorFactory(
+        settings=Settings(),
+        pending_writer=object(),
+        prompt_dir=tmp_path,
+        experience_dir=tmp_path,
+        codex_backend_factory=codex_factory,
+    )
+
+    codex_only = factory(_task("XAUUSD", backend_mode="codex_only"))
+    automatic = factory(_task("EURUSD", 1, backend_mode="auto"))
+
+    assert codex_only.analysis_backend is codex_backends[0]
+    assert isinstance(automatic, FullChainFallbackOrchestrator)
+    assert len(direct_clients) == 1
+    assert factory.activate_backend_mode("auto") is True
 
 
 def test_scheduler_audit_failure_is_visible_in_service_metrics() -> None:

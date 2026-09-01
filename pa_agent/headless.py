@@ -331,6 +331,7 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
             prompt_dir=paths.prompt_dir,
         ),
         paper_execution=paper_execution,
+        backend_switcher=orchestrator_factory.activate_backend_mode,
     )
 
 

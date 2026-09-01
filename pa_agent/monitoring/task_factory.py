@@ -170,16 +170,24 @@ def _analysis_settings_payload(settings: Any) -> dict[str, Any]:
     }
 
 
-def analysis_cohort_id(settings: Any, analysis_fingerprint: str) -> str:
+def analysis_cohort_id(
+    settings: Any,
+    analysis_fingerprint: str,
+    *,
+    analysis_backend_mode: str = "deepseek_only",
+) -> str:
     """Identify the model, settings, code, and prompt version for one run."""
     runtime = _validated_digest(analysis_fingerprint, "analysis_fingerprint")
-    return _stable_hash(
-        {
-            "contract": "production_analysis_v2",
-            "settings": _analysis_settings_payload(settings),
-            "analysis_fingerprint": runtime,
-        }
-    )
+    if analysis_backend_mode not in {"deepseek_only", "auto", "codex_only"}:
+        raise ValueError("unsupported analysis backend mode")
+    payload = {
+        "contract": "production_analysis_v2",
+        "settings": _analysis_settings_payload(settings),
+        "analysis_fingerprint": runtime,
+    }
+    if analysis_backend_mode != "deepseek_only":
+        payload["analysis_backend_mode"] = analysis_backend_mode
+    return _stable_hash(payload)
 
 
 def create_frozen_analysis_task(
@@ -194,10 +202,13 @@ def create_frozen_analysis_task(
     incremental_new_bar_count: int | None = None,
     instrument_spec: Any | None = None,
     created_at_ms: int | None = None,
+    analysis_backend_mode: str = "deepseek_only",
 ) -> AnalysisTask:
     """Deep-freeze one validated snapshot before it enters the scheduler."""
     if not isinstance(frame, KlineFrame):
         raise TypeError("frame must be a KlineFrame")
+    if analysis_backend_mode not in {"deepseek_only", "auto", "codex_only"}:
+        raise ValueError("unsupported analysis backend mode")
     frozen_frame = copy.deepcopy(frame)
     frozen_htf = copy.deepcopy(htf_context)
     incremental_count = (
@@ -220,6 +231,7 @@ def create_frozen_analysis_task(
         previous_record=frozen_previous,
         incremental_new_bar_count=incremental_count,
         instrument_spec=copy.deepcopy(instrument_spec),
+        analysis_backend_mode=analysis_backend_mode,
     )
     return AnalysisTask.create(
         source=source,
@@ -231,7 +243,11 @@ def create_frozen_analysis_task(
             frozen_htf,
             incremental_identity,
         ),
-        cohort_id=analysis_cohort_id(settings, analysis_fingerprint),
+        cohort_id=analysis_cohort_id(
+            settings,
+            analysis_fingerprint,
+            analysis_backend_mode=analysis_backend_mode,
+        ),
         payload=payload,
         created_at_ms=created_at_ms,
     )

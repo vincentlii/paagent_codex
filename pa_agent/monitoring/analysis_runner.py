@@ -39,6 +39,7 @@ class FrozenAnalysisPayload:
     previous_record: Any | None = field(default=None, compare=False, repr=False)
     incremental_new_bar_count: int | None = None
     instrument_spec: Any | None = field(default=None, compare=True, repr=False)
+    analysis_backend_mode: str = "deepseek_only"
 
 
 class IndependentAnalysisHandler:

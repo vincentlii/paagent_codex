@@ -64,7 +64,7 @@ flowchart TD
 | Snapshot | [`snapshot_bundle.py`](../../pa_agent/data/snapshot_bundle.py)、[`snapshot_identity.py`](../../pa_agent/data/snapshot_identity.py) | 同源冻结输入和稳定身份 | 不在排队或分析中静默刷新行情 |
 | 确定性 Evidence | [`fact_catalog.py`](../../pa_agent/ai/fact_catalog.py)、[`market_features.py`](../../pa_agent/ai/market_features.py)、[`vpa_measurements.py`](../../pa_agent/ai/vpa_measurements.py) | OHLCV、窗口、比较量、指标和可引用事实 | 不把数值模式命名为 PA/VPA 结构 |
 | Prompt 与知识装配 | [`prompt_assembler.py`](../../pa_agent/ai/prompt_assembler.py)、[`pa_theory.py`](../../pa_agent/ai/pa_theory.py)、[`vpa_context_profile.py`](../../pa_agent/ai/vpa_context_profile.py) | 按 PA Context 注入 Brooks/VPA 知识和 Provider Contract | 不建立第二个 Strategy Router |
-| Analysis Backend | [`analysis_role_backend.py`](../../pa_agent/ai/analysis_role_backend.py) | 通过同一 role interface 执行 Direct；Codex Adapter 按 ADR-0024 分阶段接入 | 不拥有 Snapshot、Router、materializer、Risk、持久化或交易权限 |
+| Analysis Backend | [`analysis_role_backend.py`](../../pa_agent/ai/analysis_role_backend.py)、[`monitoring/production.py`](../../pa_agent/monitoring/production.py) | 通过同一 role interface 执行 Direct/Codex；Backend mode 冻结进 task/cohort，Factory 只按冻结值构建 | 不拥有 Snapshot、Router、materializer、Risk、持久化或交易权限；未配置 Codex 不得静默降级 |
 | Frozen Agent Runtime | [`agent_runtime/`](../../pa_agent/agent_runtime/) | 绑定 role、attempt、Snapshot cutoff、schema、facts、knowledge、AGENTS/skill、runtime 与预算，并原子发布只读 Job | Evidence 只读取 Job 内冻结资源；篡改、越界和超预算 fail closed |
 | Codex CLI Worker | [`codex_worker.py`](../../pa_agent/agent_runtime/codex_worker.py)、[`evidence_mcp.py`](../../pa_agent/agent_runtime/evidence_mcp.py) | 每个 role 启动 ephemeral `codex exec`，只启用 required frozen-evidence MCP，校验 JSON 完整性与 Evidence audit 后发布 outbox | Provider Draft Schema 仍由 PA Validator 判定；ChatGPT-only auth；禁用 shell、Web、用户配置和 session resume |
 | Backend 冷回退 | [`backend_fallback.py`](../../pa_agent/orchestrator/backend_fallback.py)、[`codex_analysis_backend.py`](../../pa_agent/ai/codex_analysis_backend.py) | availability 故障丢弃 Codex 可见输出并从 Stage 1 重跑完整 Direct PA 链；持久化前记录 provenance | 不因 Schema、事实、权限、Job identity 或专业判断失败回退；不混用两条链的角色结果 |
@@ -77,7 +77,7 @@ flowchart TD
 | Records/audit | [`pa_agent/records/`](../../pa_agent/records/)、[`monitoring/audit.py`](../../pa_agent/monitoring/audit.py) | 完整分析、审计、投影、回放和质量统计 | 不把运行投影当成权威原始记录 |
 | 多资产运行时 | [`pa_agent/monitoring/`](../../pa_agent/monitoring/) | 同资产 FIFO、全局有界并发、独立 client/orchestrator、恢复 | 不共享可变模型会话或跨资产复用身份 |
 | Operation projection | [`pa_agent/operations/`](../../pa_agent/operations/) | 脱敏 runtime status 和 desired control state | 不承载交易分析 authority |
-| Dashboard | [`dashboard.py`](../../pa_agent/dashboard.py)、[`dashboard_page.py`](../../pa_agent/dashboard_page.py) | loopback Web UI、Basic token、状态读取和暂停/恢复请求 | 不读内部 DB、配置、Provider key，不启动/停止 systemd service |
+| Dashboard | [`dashboard.py`](../../pa_agent/dashboard.py)、[`dashboard_page.py`](../../pa_agent/dashboard_page.py) | loopback Web UI、Basic token、状态读取、暂停/恢复与三值 Backend 请求 | 不修改 model/reasoning/Prompt/Skill/知识/Risk，不读内部 DB、配置、Provider key，不启动/停止 systemd service |
 
 ## 数据面与控制面
 
@@ -89,6 +89,8 @@ flowchart TD
 - `generation` 表示最新控制请求；`applied_control_generation` 表示 Headless 已应用的版本。
 - “已写入暂停”不等于“已经生效”，Dashboard 必须比较 desired/applied generation 与 runtime state。
 - 暂停只阻止新任务；进行中的冻结分析安全完成，不被 Dashboard 中断或重判。
+- Backend 切换先阻止新 Snapshot，等待 scheduler 全局 idle；mode 写入新 task 与 cohort，已排队任务不重标。
+- 未配置 Codex 时 `auto/codex_only` 不推进 applied generation；`deepseek_only` 始终是逃生路径。
 - systemd 管理进程启动、停止和重启。Dashboard 不是进程管理器。
 - Dashboard 绑定 `127.0.0.1`/`localhost`，推荐经 SSH tunnel 访问。
 

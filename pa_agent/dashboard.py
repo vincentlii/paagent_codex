@@ -51,8 +51,16 @@ def _health(runtime: dict[str, Any] | None, *, now_ms: int) -> dict[str, str]:
     state = str(runtime.get("service_state") or "running")
     if state == "paused":
         message = "新行情分析已暂停; 进行中的任务会安全完成。"
-        if runtime.get("control_error"):
+        control_error = str(runtime.get("control_error") or "")
+        if control_error == "invalid_control_state":
             message = "控制状态文件无效, Bot 已按 fail-closed 原则暂停。"
+        elif control_error in {
+            "backend_switch_draining",
+            "backend_switch_pending",
+        }:
+            message = "Backend 正在等待安全边界切换, 新分析已暂停。"
+        elif control_error == "backend_unavailable":
+            message = "请求的 Backend 尚不可用, 新分析已按 fail-closed 原则暂停。"
         return {"state": "paused", "label": "已暂停", "message": message}
     if state != "running":
         return {"state": "offline", "label": "Bot 已停止", "message": "运行进程正在停止或尚未重新启动。"}
@@ -72,8 +80,14 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
     control_view["applied"] = (
         isinstance(applied_generation, int)
         and not isinstance(applied_generation, bool)
-        and applied_generation >= control.generation
+        and applied_generation == control.generation
+        and control.error is None
         and runtime_view.get("service_state") == expected_service_state
+        and str(
+            (runtime_view.get("mode") or {}).get("analysis_backend")
+            or "deepseek_only"
+        )
+        == control.desired_backend
     )
     return {
         "schema_version": 1,
@@ -172,13 +186,23 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 self._json(400, {"error": "invalid_json"})
                 return
             action = body.get("action") if isinstance(body, dict) else None
-            if action not in {"pause", "resume"}:
+            if action not in {"pause", "resume", "set_backend"}:
                 self._json(400, {"error": "unsupported_action"})
                 return
-            state = control_store.set_desired_state(
-                "paused" if action == "pause" else "running",
-                actor="dashboard",
-            )
+            if action == "set_backend":
+                backend = body.get("backend")
+                if backend not in {"deepseek_only", "auto", "codex_only"}:
+                    self._json(400, {"error": "unsupported_backend"})
+                    return
+                state = control_store.set_desired_backend(
+                    backend,
+                    actor="dashboard",
+                )
+            else:
+                state = control_store.set_desired_state(
+                    "paused" if action == "pause" else "running",
+                    actor="dashboard",
+                )
             self._json(202, {"ok": True, "applied": False, "control": asdict(state)})
 
         def log_message(self, _format: str, *_args: Any) -> None:

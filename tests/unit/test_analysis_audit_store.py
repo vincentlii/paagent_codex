@@ -190,6 +190,12 @@ def _record(
                 "latency_ms": 1200.5,
                 "status": "validated",
                 "validation_category": None,
+                "analysis_backend": "codex_agent",
+                "provider_id": "openai_codex",
+                "job_digest": "a" * 64,
+                "codex_thread_id": "thread-audit-1",
+                "evidence_call_count": 3,
+                "evidence_response_bytes": 4096,
             }
         ],
         validation_audit=[
@@ -255,7 +261,14 @@ def test_audit_store_indexes_official_run_and_manual_outcome(tmp_path: Path) -> 
     assert review["pa_evidence"]["fact_refs"] == ["PA.WINDOW.K5", "PA.BAR.K1"]
     assert review["vpa_impact"]["decision_effect"] == "prefer_retest"
     assert json.loads(run["authority_violations_json"]) == []
-    assert store.get_calls("run-audit-test")[0]["cached_prompt_tokens"] == 25
+    call = store.get_calls("run-audit-test")[0]
+    assert call["cached_prompt_tokens"] == 25
+    assert call["analysis_backend"] == "codex_agent"
+    assert call["provider_id"] == "openai_codex"
+    assert call["job_digest"] == "a" * 64
+    assert call["codex_thread_id"] == "thread-audit-1"
+    assert call["evidence_call_count"] == 3
+    assert call["evidence_response_bytes"] == 4096
     observations = store.get_vpa_observations("run-audit-test")
     assert observations[0]["bar_range"] == "K2-K1"
     assert observations[0]["epistemic_status"] == "candidate"
