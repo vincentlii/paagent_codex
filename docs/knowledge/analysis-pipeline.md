@@ -63,6 +63,11 @@ Stage 1、Stage 2、VPA 和研究 Joint 的模型调用现已通过 `AnalysisRol
 Router、Risk 与持久化链。Codex 只在同一 Frozen Snapshot 内按需读取授权 Evidence；每个角色使用
 独立 ephemeral 任务，Stage 2 不继承 Stage 1 chat history。Codex 能力仍为 `research-only`。
 
+Codex 调用前必须生成 Frozen Agent Job。Job 以 canonical JSON digest 绑定 Snapshot cutoff、请求、
+output schema、角色可见 facts/knowledge、Runtime AGENTS/skill 与预算，并以完整目录原子发布。
+`FrozenEvidenceGateway` 不获取行情、不重新计算交易信号，只返回 Job 内的事实、K 线和知识；每次
+访问进入内存审计，cutoff 越界、digest 篡改、角色越权或调用/字节超预算均拒绝。
+
 ## 4. PA Stage 1 Draft、物化与 Gate
 
 | 项目 | 内容 |
