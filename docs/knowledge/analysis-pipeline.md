@@ -58,8 +58,8 @@ Snapshot 一旦排队即冻结；分析期间 GUI 暂停网络刷新，Headless 
 ### 3.1 Analysis Backend seam
 
 Stage 1、Stage 2、VPA 和研究 Joint 的模型调用现已通过 `AnalysisRoleBackend` interface；当前
-`DirectAnalysisRoleBackend` 保持原 Provider、structured output、role profile 和 fallback 行为。
-后续 Codex Adapter 必须返回同一 Provider Draft/role draft，并进入相同 materializer、Validator、
+`DirectAnalysisRoleBackend` 保持原 Provider、structured output、role profile 和 fallback 行为；
+`CodexAnalysisRoleBackend` 已返回同一 Provider Draft/role draft，并进入相同 materializer、Validator、
 Router、Risk 与持久化链。Codex 只在同一 Frozen Snapshot 内按需读取授权 Evidence；每个角色使用
 独立 ephemeral 任务，Stage 2 不继承 Stage 1 chat history。Codex 能力仍为 `research-only`。
 
@@ -71,8 +71,14 @@ output schema、角色可见 facts/knowledge、Runtime AGENTS/skill 与预算，
 Codex CLI Worker 使用 `codex exec --ephemeral --sandbox read-only --output-schema`。运行时忽略
 用户 config/rules，强制 ChatGPT login，禁用 shell、Web、image 与 skill dependency install，
 并要求 frozen-evidence stdio MCP 成功启动。AGENTS 与单一 role skill 从 Job 内已绑定的 Runtime
-资产生成；CLI JSONL 只提取 thread ID 与 token usage，不长期保存 reasoning stream。可信 Worker
-再次校验 output schema 与 Evidence audit 后才发布 outbox；Codex 进程不直接写数据库。
+资产生成；CLI JSONL 只提取 thread ID 与 token usage，不长期保存 reasoning stream。Worker 校验
+输出大小、UTF-8、JSON 完整性与 Evidence audit 后发布 outbox；Provider Draft 字段与专业语义继续
+由 PA Validator 判断，并且 Codex 每个角色最多一次定向修复。Codex 进程不直接写数据库。
+
+Adapter 接受 Worker 结果前再次核对 role、messages、output schema、Snapshot hash、cutoff 与 attempt。
+CLI/auth/rate-limit/timeout 等 availability 故障可请求从 Stage 1 开始的完整 Direct PA 冷回退；主链
+所有可见 callback 在成功前缓冲，失败后全部丢弃，Direct fallback 来源在 record 持久化前写入。
+Schema、事实、权限、Job identity 与专业判断失败不可触发 fallback。
 
 ## 4. PA Stage 1 Draft、物化与 Gate
 

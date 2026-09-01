@@ -21,12 +21,12 @@ def _builder() -> FrozenAgentJobBuilder:
     )
 
 
-def _job(*, role: str = "stage1"):
+def _job(*, role: str = "stage1", attempt: int = 1):
     return _builder().build(
         task_id="task-1",
         request_id="request-1",
         role=role,
-        attempt=1,
+        attempt=attempt,
         snapshot_hash="a" * 64,
         cutoff_ts_open=1_725_000_000_000,
         messages=[{"role": "user", "content": "diagnose"}],

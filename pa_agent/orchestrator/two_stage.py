@@ -41,6 +41,7 @@ from pa_agent.ai.analysis_role_backend import (
     AnalysisRoleRequest,
     DirectAnalysisRoleBackend,
 )
+from pa_agent.ai.codex_analysis_backend import FullChainFallbackRequired
 from pa_agent.ai.json_validator import Ok, ValidationError
 from pa_agent.ai.pa_handoff import compile_pa_handoff
 from pa_agent.ai.provider_failures import ModelCallFailure
@@ -251,6 +252,14 @@ def _call_attempt_entry(
         ),
         "transport_attempts": copy.deepcopy(
             model_call_meta.get("transport_attempts") or []
+        ),
+        "job_digest": model_call_meta.get("job_digest"),
+        "codex_thread_id": model_call_meta.get("thread_id"),
+        "evidence_call_count": max(
+            0, int(model_call_meta.get("evidence_call_count") or 0)
+        ),
+        "evidence_response_bytes": max(
+            0, int(model_call_meta.get("evidence_response_bytes") or 0)
         ),
         "created_at_ms": int(datetime.now().timestamp() * 1000),
     }
@@ -746,6 +755,16 @@ class TwoStageOrchestrator:
             allow_provider_fallback=allow_provider_fallback,
             logger=logger,
         )
+        configured_vpa_mode = str(
+            getattr(getattr(settings, "prompt", None), "vpa_mode", "off") or "off"
+        ).lower()
+        if (
+            self._analysis_backend.backend_id == "codex_agent"
+            and configured_vpa_mode in {"shadow", "soft"}
+        ):
+            raise ValueError(
+                "Codex backend does not yet support the VPA shadow/soft role path"
+            )
         self._call_arm = call_arm
         self._allow_provider_fallback = allow_provider_fallback
         self._defer_execution_policy = defer_execution_policy
@@ -754,7 +773,19 @@ class TwoStageOrchestrator:
 
     def _validation_settings(self) -> Any:
         if self._settings is not None and hasattr(self._settings, "validation"):
-            return self._settings.validation
+            settings = self._settings.validation
+            limit = getattr(self._analysis_backend, "validation_retry_limit", None)
+            if isinstance(limit, int) and limit >= 0:
+                return settings.model_copy(
+                    update={
+                        "retry_max": min(settings.retry_max, limit),
+                        "retry_max_semantic": min(
+                            settings.retry_max_semantic,
+                            limit,
+                        ),
+                    }
+                )
+            return settings
         from pa_agent.config.settings import ValidationSettings
 
         return ValidationSettings()
@@ -823,6 +854,7 @@ class TwoStageOrchestrator:
         incremental_new_bar_count: int | None = None,
         htf_context: dict[str, Any] | None = None,
         frozen_vpa_catalog: dict[str, Any] | None = None,
+        backend_fallback_context: dict[str, Any] | None = None,
     ) -> AnalysisRecord:
         """Run the two-stage analysis pipeline and return an AnalysisRecord.
 
@@ -870,6 +902,7 @@ class TwoStageOrchestrator:
                 incremental_new_bar_count=incremental_new_bar_count,
                 htf_context=htf_context,
                 frozen_vpa_catalog=frozen_vpa_catalog,
+                backend_fallback_context=backend_fallback_context,
             )
 
         # ── Step 1: Build partial record ──────────────────────────────────────
@@ -879,6 +912,17 @@ class TwoStageOrchestrator:
             htf_context=htf_context,
             prompt_dir=self._runtime_prompt_dir(),
         )
+        if backend_fallback_context:
+            record = record.model_copy(
+                update={
+                    "role_runtime": {
+                        **copy.deepcopy(record.role_runtime),
+                        "backend_fallback": copy.deepcopy(
+                            backend_fallback_context
+                        ),
+                    }
+                }
+            )
         call_arm = self._call_arm
         call_attempts = list(record.call_attempts)
 
@@ -954,6 +998,8 @@ class TwoStageOrchestrator:
         from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
 
         analysis_catalog = build_analysis_fact_catalog(frame)
+        frozen_snapshot_hash = analysis_catalog.snapshot_hash
+        frozen_cutoff_ts_open = int(frame.bars[0].ts_open)
         run_assembler = self._assembler.clone_with_analysis_fact_catalog(analysis_catalog)
 
         # ── Step 3: Stage 1 started ───────────────────────────────────────────
@@ -1031,7 +1077,11 @@ class TwoStageOrchestrator:
                     status="request_failed",
                     error_type=type(exc).__name__,
                 ),
+                snapshot_hash=frozen_snapshot_hash,
+                cutoff_ts_open=frozen_cutoff_ts_open,
             )
+        except FullChainFallbackRequired:
+            raise
         except ModelCallFailure as exc:
             if exc.failure.kind == "cancelled":
                 record = _with_run_outcome(
@@ -1133,6 +1183,8 @@ class TwoStageOrchestrator:
                     status="request_failed",
                     error_type=type(exc).__name__,
                 ),
+                snapshot_hash=frozen_snapshot_hash,
+                cutoff_ts_open=frozen_cutoff_ts_open,
             )
             if not s1_streamed_reasoning and r.reasoning_content:
                 _emit_buffered_stream(r.reasoning_content, on_stage1_reasoning)
@@ -1161,6 +1213,8 @@ class TwoStageOrchestrator:
                 call_api=_call_s1_retry,
                 provider_settings=getattr(self._settings, "provider", None),
             )
+        except FullChainFallbackRequired:
+            raise
         except ModelCallFailure as exc:
             failure = self._provider_failure_payload(exc, stage="stage1")
             failure["phase"] = "validation_retry"
@@ -1430,7 +1484,11 @@ class TwoStageOrchestrator:
                     status="request_failed",
                     error_type=type(exc).__name__,
                 ),
+                snapshot_hash=frozen_snapshot_hash,
+                cutoff_ts_open=frozen_cutoff_ts_open,
             )
+        except FullChainFallbackRequired:
+            raise
         except ModelCallFailure as exc:
             if exc.failure.kind == "cancelled":
                 record = record.model_copy(
@@ -1566,6 +1624,8 @@ class TwoStageOrchestrator:
                     status="request_failed",
                     error_type=type(exc).__name__,
                 ),
+                snapshot_hash=frozen_snapshot_hash,
+                cutoff_ts_open=frozen_cutoff_ts_open,
             )
             if not s2_streamed_reasoning and r.reasoning_content:
                 _emit_buffered_stream(r.reasoning_content, on_stage2_reasoning)
@@ -1591,6 +1651,8 @@ class TwoStageOrchestrator:
                 call_api=_call_s2_retry,
                 provider_settings=getattr(self._settings, "provider", None),
             )
+        except FullChainFallbackRequired:
+            raise
         except ModelCallFailure as exc:
             failure = self._provider_failure_payload(exc, stage="stage2")
             failure["phase"] = "validation_retry"
@@ -1813,6 +1875,7 @@ class TwoStageOrchestrator:
         incremental_new_bar_count: int | None,
         htf_context: dict[str, Any] | None,
         frozen_vpa_catalog: dict[str, Any] | None,
+        backend_fallback_context: dict[str, Any] | None,
     ) -> AnalysisRecord:
         """Run PA, independent VPA evidence, and a bounded joint arbiter."""
         from pa_agent.ai.json_validator import JsonValidator
@@ -1829,6 +1892,17 @@ class TwoStageOrchestrator:
             htf_context=htf_context,
             prompt_dir=self._runtime_prompt_dir(),
         )
+        if backend_fallback_context:
+            preflight_record = preflight_record.model_copy(
+                update={
+                    "role_runtime": {
+                        **copy.deepcopy(preflight_record.role_runtime),
+                        "backend_fallback": copy.deepcopy(
+                            backend_fallback_context
+                        ),
+                    }
+                }
+            )
         if cancel_token.is_set():
             preflight_record = preflight_record.model_copy(
                 update={
@@ -1970,6 +2044,7 @@ class TwoStageOrchestrator:
             previous_record=previous_record,
             incremental_new_bar_count=incremental_new_bar_count,
             htf_context=htf_context,
+            backend_fallback_context=backend_fallback_context,
         )
         if baseline.exception is not None or cancel_token.is_set():
             if cancel_token.is_set():
@@ -2586,6 +2661,8 @@ class TwoStageOrchestrator:
         reasoning_effort: str,
         stage_label: str,
         on_attempt_error: Callable[[Exception], None] | None = None,
+        snapshot_hash: str | None = None,
+        cutoff_ts_open: int | None = None,
     ) -> Any:
         """Run one typed role through the selected analysis backend."""
         schema_for = getattr(self._validator, "schema_for", None)
@@ -2598,6 +2675,8 @@ class TwoStageOrchestrator:
                 schema=schema,
                 thinking=thinking,
                 reasoning_effort=reasoning_effort,
+                snapshot_hash=snapshot_hash,
+                cutoff_ts_open=cutoff_ts_open,
             ),
             on_reasoning_token=on_reasoning_token,
             on_content_token=on_content_token,

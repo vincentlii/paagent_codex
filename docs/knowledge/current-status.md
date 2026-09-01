@@ -1,7 +1,7 @@
 ---
 lifecycle: active
 capability: no-go
-verification_scope: not-verified
+verification_scope: local
 最后核验: 2026-09-01
 核验提交: 965f2df
 权威来源:
@@ -16,7 +16,8 @@ verification_scope: not-verified
 ## 结论
 
 当前 Codex 升级分支从 `965f2df` 创建；该提交是 vNext 的现有功能与知识基线。Codex Analysis
-Backend 已完成 ADR-0024 设计冻结，但尚未在本阶段声明实现、VPS 验证或交易增益。
+Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker 与 role Adapter；尚未接入
+ProductionOrchestratorFactory，也未完成真实账号、VPS、回放或交易增益验证。
 
 项目已具备进入真实 VPS 安装、预检和无人值守 Paper 验证的工程基础，但尚不能写成“VPS 已验证”或“PA+VPA 已提高盈利”。2026-08-13 的 `1169 passed, 7 deselected` 是绑定当时审计基线的历史证据；Dashboard 是审计后新增能力，需要在目标 Linux/VPS 环境补充实机验证。
 
@@ -56,10 +57,10 @@ Backend 已完成 ADR-0024 设计冻结，但尚未在本阶段声明实现、VP
 | Linux Headless 与发布依赖 | implemented | 历史 CI/wheel smoke；VPS not-verified | 需要真实 Linux kernel、systemd、目录权限和重启恢复验收 |
 | VPS Dashboard | implemented | not re-verified in this knowledge task | `f8fffc0` 含 focused unit tests，但晚于完整审计；需重跑测试及实机权限、loopback、SSH tunnel、desired/applied 验证 |
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
-| Analysis Backend seam | implemented | local focused | Direct Adapter 已覆盖 PA Stage 1/2、VPA、Joint transport，并保持现有 Draft/Validator；Codex Adapter 尚未实现 |
+| Analysis Backend seam | implemented | local focused | Direct 与 Codex Adapter 均返回现有 Provider Draft；Codex 仍只接 PA Stage 1/2，VPA shadow/soft 在未接通前显式拒绝，避免静默改走 Direct |
 | Frozen Agent Job / Evidence | implemented | local focused | 确定性 manifest、原子目录发布、resource digest、角色事实/知识 allowlist、cutoff 与调用/字节预算已实现 |
-| Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、schema/outbox 已用模拟 subprocess 验证；尚未做真实账号调用 |
-| Codex Analysis Backend | research-only / implementing | not-verified | Worker 尚未接入 ProductionOrchestratorFactory；默认必须保持 `deepseek_only`，未完成回放、VPS 和 Paper 门禁前不得晋级 |
+| Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、JSON/outbox 已用模拟 subprocess 验证；Provider Draft Schema 仍由 PA Validator 判定；尚未做真实账号调用 |
+| Codex Analysis Backend | research-only | local focused | 已有 Job 身份绑定、一次定向修复上限、脱敏错误分类、熔断和完整 Direct PA 冷回退；fallback provenance 在持久化前写入且可见 callback 不混链。尚未接入 ProductionOrchestratorFactory |
 
 “历史全量回归”只表示 [2026-08-13 审计报告](../quality/pre_release_final_audit_20260813.md)记录的 `1169 passed, 7 deselected`，不能自动覆盖之后的功能提交。
 

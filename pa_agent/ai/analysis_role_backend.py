@@ -22,6 +22,8 @@ class AnalysisRoleRequest:
     thinking: bool
     reasoning_effort: str
     structured_output: bool = True
+    snapshot_hash: str | None = None
+    cutoff_ts_open: int | None = None
 
 
 @dataclass(frozen=True)

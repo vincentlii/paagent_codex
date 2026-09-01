@@ -13,8 +13,6 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from jsonschema import ValidationError, validate
-
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJob, FrozenAgentJobStore
 from pa_agent.ai.deepseek_client import AIUsage
 
@@ -31,8 +29,28 @@ class CodexWorkerError(RuntimeError):
     """Codex worker failed before producing a trusted role draft."""
 
 
-class CodexWorkerTimeout(CodexWorkerError):
+class CodexWorkerAvailabilityError(CodexWorkerError):
+    """Codex execution is temporarily unavailable."""
+
+
+class CodexWorkerAuthenticationError(CodexWorkerAvailabilityError):
+    """The isolated Codex home has no usable ChatGPT authentication."""
+
+
+class CodexWorkerRateLimited(CodexWorkerAvailabilityError):
+    """Codex execution was rate limited."""
+
+
+class CodexWorkerUnavailable(CodexWorkerAvailabilityError):
+    """Codex failed for an availability reason not classified more narrowly."""
+
+
+class CodexWorkerTimeout(CodexWorkerAvailabilityError):
     """Codex exceeded the frozen job wall-clock budget."""
+
+
+class CodexWorkerOutputError(CodexWorkerError):
+    """Codex produced output that cannot enter PA Agent validation."""
 
 
 @dataclass(frozen=True)
@@ -109,20 +127,26 @@ class CodexCliWorker:
             except subprocess.TimeoutExpired as exc:
                 raise CodexWorkerTimeout("Codex job exceeded wall-clock budget") from exc
             if completed.returncode != 0:
-                raise CodexWorkerError(
-                    f"Codex CLI exited with status {completed.returncode}"
+                raise _classify_failed_process(
+                    completed.returncode,
+                    completed.stderr,
                 )
             if not output_tmp.is_file():
-                raise CodexWorkerError("Codex CLI did not publish a final message")
+                raise CodexWorkerOutputError(
+                    "Codex CLI did not publish a final message"
+                )
             encoded = output_tmp.read_bytes()
             if not encoded or len(encoded) > job.budget.max_output_bytes:
-                raise CodexWorkerError("Codex output is empty or exceeds byte budget")
+                raise CodexWorkerOutputError(
+                    "Codex output is empty or exceeds byte budget"
+                )
             content = encoded.decode("utf-8")
             try:
                 parsed = json.loads(content)
-                validate(instance=parsed, schema=dict(job.output_schema))
-            except (UnicodeError, json.JSONDecodeError, ValidationError) as exc:
-                raise CodexWorkerError(f"Codex output schema validation failed: {exc}") from exc
+            except (UnicodeError, json.JSONDecodeError) as exc:
+                raise CodexWorkerOutputError(
+                    "Codex output is not valid JSON"
+                ) from exc
             thread_id, usage = self._parse_events(completed.stdout)
             evidence_events = self._read_evidence_audit(audit_tmp, job)
             latency_ms = max(0.0, (time.monotonic() - started) * 1000)
@@ -295,7 +319,7 @@ class CodexCliWorker:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise CodexWorkerError("Codex JSONL stream is malformed") from exc
+                raise CodexWorkerOutputError("Codex JSONL stream is malformed") from exc
             event_type = str(event.get("type") or "")
             if event_type == "thread.started":
                 thread_id = str(event.get("thread_id") or "") or None
@@ -311,7 +335,7 @@ class CodexCliWorker:
                     total_tokens=prompt + completion,
                 )
             elif event_type in {"turn.failed", "error"}:
-                raise CodexWorkerError("Codex reported a failed turn")
+                raise CodexWorkerUnavailable("Codex reported a failed turn")
         return thread_id, usage
 
     @staticmethod
@@ -324,13 +348,26 @@ class CodexCliWorker:
         try:
             raw = json.loads(audit_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise CodexWorkerError("Evidence audit is unreadable") from exc
+            raise CodexWorkerOutputError("Evidence audit is unreadable") from exc
         if raw.get("job_digest") != job.manifest.job_digest:
-            raise CodexWorkerError("Evidence audit job digest mismatch")
+            raise CodexWorkerOutputError("Evidence audit job digest mismatch")
         events = raw.get("events") or []
         if not isinstance(events, list) or any(not isinstance(item, dict) for item in events):
-            raise CodexWorkerError("Evidence audit events are malformed")
+            raise CodexWorkerOutputError("Evidence audit events are malformed")
         return tuple(dict(item) for item in events)
+
+
+def _classify_failed_process(returncode: int, stderr: str | None) -> CodexWorkerError:
+    """Classify stderr locally while returning only a secret-free public message."""
+    detail = str(stderr or "").lower()
+    suffix = f" (exit status {returncode})"
+    if any(token in detail for token in ("401", "403", "unauthorized", "login", "auth")):
+        return CodexWorkerAuthenticationError("Codex authentication failed" + suffix)
+    if "429" in detail or "rate limit" in detail:
+        return CodexWorkerRateLimited("Codex was rate limited" + suffix)
+    if "timed out" in detail or "timeout" in detail:
+        return CodexWorkerTimeout("Codex execution timed out" + suffix)
+    return CodexWorkerUnavailable("Codex CLI was unavailable" + suffix)
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
