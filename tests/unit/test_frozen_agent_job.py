@@ -21,7 +21,12 @@ def _builder() -> FrozenAgentJobBuilder:
     )
 
 
-def _job(*, role: str = "stage1", attempt: int = 1):
+def _job(
+    *,
+    role: str = "stage1",
+    attempt: int = 1,
+    runtime_identity: dict | None = None,
+):
     return _builder().build(
         task_id="task-1",
         request_id="request-1",
@@ -62,6 +67,7 @@ def _job(*, role: str = "stage1", attempt: int = 1):
         },
         allowed_knowledge_ids=("brooks/context",),
         budget=AgentJobBudget(max_evidence_calls=3, max_evidence_bytes=512),
+        backend_runtime_identity=runtime_identity,
     )
 
 

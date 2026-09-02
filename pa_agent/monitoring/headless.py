@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass
 from typing import Any
@@ -84,6 +84,7 @@ class HeadlessMonitor:
         control_store: RuntimeControlStore | None = None,
         status_store: RuntimeStatusStore | None = None,
         backend_switcher: Callable[[str], bool] | None = None,
+        backend_runtime_identity: Mapping[str, Any] | None = None,
     ) -> None:
         self._settings = settings
         self._paths = paths
@@ -103,6 +104,7 @@ class HeadlessMonitor:
         self._backend_switcher = backend_switcher or (
             lambda mode: mode == "deepseek_only"
         )
+        self._backend_runtime_identity = dict(backend_runtime_identity or {})
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._closed = False
@@ -593,6 +595,11 @@ class HeadlessMonitor:
             created_at_ms=now_ms,
             instrument_spec=spec,
             analysis_backend_mode=self._applied_backend,
+            analysis_backend_identity=(
+                self._backend_runtime_identity
+                if self._applied_backend != "deepseek_only"
+                else None
+            ),
         )
         with self._lock:
             state.fetch_failures = 0

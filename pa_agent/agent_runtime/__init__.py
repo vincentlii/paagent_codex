@@ -12,6 +12,7 @@ from pa_agent.agent_runtime.runtime_assets import (
     CodexRuntimeAssets,
     load_codex_runtime_assets,
 )
+from pa_agent.agent_runtime.publisher import CodexJobPublisher
 
 __all__ = [
     "AgentJobBudget",
@@ -22,4 +23,5 @@ __all__ = [
     "FrozenEvidenceGateway",
     "CodexRuntimeAssets",
     "load_codex_runtime_assets",
+    "CodexJobPublisher",
 ]

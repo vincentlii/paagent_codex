@@ -175,6 +175,7 @@ def analysis_cohort_id(
     analysis_fingerprint: str,
     *,
     analysis_backend_mode: str = "deepseek_only",
+    analysis_backend_identity: Mapping[str, Any] | None = None,
 ) -> str:
     """Identify the model, settings, code, and prompt version for one run."""
     runtime = _validated_digest(analysis_fingerprint, "analysis_fingerprint")
@@ -187,6 +188,10 @@ def analysis_cohort_id(
     }
     if analysis_backend_mode != "deepseek_only":
         payload["analysis_backend_mode"] = analysis_backend_mode
+        identity = dict(analysis_backend_identity or {})
+        if not identity:
+            raise ValueError("non-Direct backend requires frozen runtime identity")
+        payload["analysis_backend_identity"] = identity
     return _stable_hash(payload)
 
 
@@ -203,6 +208,7 @@ def create_frozen_analysis_task(
     instrument_spec: Any | None = None,
     created_at_ms: int | None = None,
     analysis_backend_mode: str = "deepseek_only",
+    analysis_backend_identity: Mapping[str, Any] | None = None,
 ) -> AnalysisTask:
     """Deep-freeze one validated snapshot before it enters the scheduler."""
     if not isinstance(frame, KlineFrame):
@@ -232,6 +238,11 @@ def create_frozen_analysis_task(
         incremental_new_bar_count=incremental_count,
         instrument_spec=copy.deepcopy(instrument_spec),
         analysis_backend_mode=analysis_backend_mode,
+        analysis_backend_identity=(
+            copy.deepcopy(dict(analysis_backend_identity or {}))
+            if analysis_backend_mode != "deepseek_only"
+            else {}
+        ),
     )
     return AnalysisTask.create(
         source=source,
@@ -247,6 +258,7 @@ def create_frozen_analysis_task(
             settings,
             analysis_fingerprint,
             analysis_backend_mode=analysis_backend_mode,
+            analysis_backend_identity=analysis_backend_identity,
         ),
         payload=payload,
         created_at_ms=created_at_ms,

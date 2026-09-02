@@ -17,10 +17,20 @@ RestartSec=10s
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
 ReadWritePaths=/var/lib/pa-agent-control/control
 ReadOnlyPaths=/var/lib/pa-agent-control/status
+ReadOnlyPaths=/opt/pa-agent /opt/miniconda3/envs/pa-agent
 RestrictAddressFamilies=AF_INET AF_INET6
 
 [Install]

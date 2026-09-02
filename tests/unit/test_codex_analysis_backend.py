@@ -51,7 +51,14 @@ def _result(*, thread_id: str = "thread-1") -> CodexWorkerResult:
 
 
 def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: Path) -> None:
-    published = FrozenAgentJobStore(tmp_path).publish(_job())
+    runtime_identity = {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "xhigh",
+        "runtime_version": "runtime-v1",
+    }
+    published = FrozenAgentJobStore(tmp_path).publish(
+        _job(runtime_identity=runtime_identity)
+    )
     worker = MagicMock()
     worker.run.return_value = _result()
     attempts: list[int] = []
@@ -60,7 +67,11 @@ def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: P
         attempts.append(attempt)
         return published
 
-    backend = CodexAnalysisRoleBackend(worker=worker, publish_job=publish)
+    backend = CodexAnalysisRoleBackend(
+        worker=worker,
+        publish_job=publish,
+        runtime_identity=runtime_identity,
+    )
     streamed: list[str] = []
     result = backend.run(
         _request(),
@@ -75,6 +86,10 @@ def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: P
     assert result.runtime["job_digest"] == published.name
     assert result.runtime["evidence_call_count"] == 1
     assert result.runtime["evidence_response_bytes"] == 20
+    assert result.runtime["initial_context_bytes"] > 0
+    assert result.runtime["model"] == "gpt-5.6-terra"
+    assert result.runtime["effective_reasoning_effort"] == "xhigh"
+    assert result.runtime["runtime_version"] == "runtime-v1"
     assert result.runtime["thread_id"] == "thread-1"
     assert result.reply._pa_model_call_meta["analysis_backend"] == "codex_agent"
     assert streamed == ['{"cycle":"trading_range"}']
@@ -92,6 +107,9 @@ def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: P
     assert ledger["codex_thread_id"] == "thread-1"
     assert ledger["evidence_call_count"] == 1
     assert ledger["evidence_response_bytes"] == 20
+    assert ledger["initial_context_bytes"] == result.runtime["initial_context_bytes"]
+    assert ledger["model"] == "gpt-5.6-terra"
+    assert ledger["runtime_version"] == "runtime-v1"
 
 
 def test_auto_mode_requests_full_chain_fallback_only_for_availability(
@@ -113,9 +131,29 @@ def test_auto_mode_requests_full_chain_fallback_only_for_availability(
             on_content_token=None,
             cancel_token=None,
         )
-
     assert caught.value.failure.kind == "timeout"
     assert caught.value.failure.retryable is True
+
+
+def test_auto_mode_treats_job_spool_oserror_as_full_chain_availability() -> None:
+    def unavailable(_request: AnalysisRoleRequest, _attempt: int) -> Path:
+        raise OSError("spool is read-only")
+
+    backend = CodexAnalysisRoleBackend(
+        worker=MagicMock(),
+        publish_job=unavailable,
+        request_full_chain_fallback=True,
+    )
+
+    with pytest.raises(FullChainFallbackRequired) as caught:
+        backend.run(
+            _request(),
+            on_reasoning_token=None,
+            on_content_token=None,
+            cancel_token=None,
+        )
+
+    assert caught.value.failure.kind == "unavailable"
 
 
 def test_output_failure_never_requests_fallback(tmp_path: Path) -> None:
@@ -175,14 +213,14 @@ def test_backend_rejects_published_job_not_bound_to_current_request(
     worker.run.assert_not_called()
 
 
-def test_job_publication_error_is_normalized_and_never_falls_back() -> None:
+def test_job_publication_oserror_is_sanitized_availability() -> None:
     backend = CodexAnalysisRoleBackend(
         worker=MagicMock(),
         publish_job=MagicMock(side_effect=OSError("disk-secret")),
         request_full_chain_fallback=True,
     )
 
-    with pytest.raises(ModelCallFailure) as caught:
+    with pytest.raises(FullChainFallbackRequired) as caught:
         backend.run(
             _request(),
             on_reasoning_token=None,
@@ -190,7 +228,7 @@ def test_job_publication_error_is_normalized_and_never_falls_back() -> None:
             cancel_token=None,
         )
 
-    assert caught.value.failure.kind == "invalid_request"
+    assert caught.value.failure.kind == "unavailable"
     assert "disk-secret" not in str(caught.value)
 
 
@@ -273,17 +311,18 @@ def test_codex_backend_clamps_validator_repairs_without_mutating_settings() -> N
     assert settings.validation.retry_max == original_retry_max
 
 
-def test_codex_backend_does_not_silently_enter_direct_vpa_role_path() -> None:
+def test_codex_backend_can_own_pa_roles_while_vpa_remains_independent() -> None:
     settings = Settings(prompt=PromptSettings(vpa_mode="shadow"))
 
-    with pytest.raises(ValueError, match="VPA shadow/soft"):
-        TwoStageOrchestrator(
-            client=object(),
-            analysis_backend=MagicMock(backend_id="codex_agent"),
-            assembler=MagicMock(prompt_dir=None),
-            router=object(),
-            validator=MagicMock(prompt_dir=None),
-            pending_writer=object(),
-            exp_reader=object(),
-            settings=settings,
-        )
+    orchestrator = TwoStageOrchestrator(
+        client=None,
+        analysis_backend=MagicMock(backend_id="codex_agent"),
+        assembler=MagicMock(prompt_dir=None),
+        router=object(),
+        validator=MagicMock(prompt_dir=None),
+        pending_writer=object(),
+        exp_reader=object(),
+        settings=settings,
+    )
+
+    assert orchestrator._analysis_backend.backend_id == "codex_agent"

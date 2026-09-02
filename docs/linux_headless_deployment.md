@@ -13,6 +13,7 @@
 - 运行状态：`/var/lib/pa-agent`
 - Dashboard 共享投影与控制：`/var/lib/pa-agent-control`
 - 非代码配置：`/etc/pa-agent`
+- Codex ChatGPT auth 与临时 Job：`/var/lib/pa-agent/codex`（仅 `pa-agent` 用户可读写）
 
 先安装 Miniconda，再把已验收的代码版本放到 `/opt/pa-agent`。Miniconda 安装包和
 校验值应从官方文档获取：<https://docs.anaconda.com/miniconda/>。
@@ -75,6 +76,44 @@ PA_AGENT_BASE_URL=https://api.deepseek.com
 `PA_AGENT_MODEL` 必须填写服务商实际开放的 API model id。套餐名称和 API model id
 不一定相同，不应猜测填写。
 
+### 3.1 可选 Codex Analysis Backend
+
+Codex 默认关闭。先按 [OpenAI Codex 认证文档](https://learn.chatgpt.com/docs/auth.md)安装当前
+Codex CLI，再以独立的 `pa-agent-codex` 服务用户完成 headless device auth：
+
+```bash
+sudo -u pa-agent-codex env \
+  HOME=/var/lib/pa-agent-codex \
+  CODEX_HOME=/var/lib/pa-agent-codex/home \
+  /usr/local/bin/codex login --device-auth
+
+sudo -u pa-agent-codex env \
+  HOME=/var/lib/pa-agent-codex \
+  CODEX_HOME=/var/lib/pa-agent-codex/home \
+  /usr/local/bin/codex login status
+```
+
+device auth 需要先在个人 ChatGPT security settings 或 workspace permissions 中允许；浏览器中
+完成一次性代码授权。`auth.json` 含可刷新 access token，按密码处理，不复制进仓库、日志或
+Dashboard。若正式环境支持 Enterprise access token 或 workload identity，应另行评审并优先使用
+短期身份；本版本不会静默改用 OpenAI API Key。
+
+认证成功后编辑 `/etc/pa-agent/pa-agent-codex.env`：
+
+```dotenv
+PA_AGENT_CODEX_ENABLED=1
+PA_AGENT_CODEX_MODEL=<CLI实际可用的model-id>
+PA_AGENT_CODEX_REASONING=high
+PA_AGENT_CODEX_BINARY=/usr/local/bin/codex
+PA_AGENT_CODEX_STATE_DIR=/var/lib/pa-agent-codex
+PA_AGENT_CODEX_MAX_WORKERS=2
+```
+
+不要猜测 model id；使用部署时 CLI 实际返回且实验 cohort 已冻结的值。`--check` 会在启用时验证
+binary executable digest、model、reasoning、Runtime AGENTS/Skills 版本和隔离 spool 目录；这些
+值共同进入 task cohort。检查不会联网或替你登录。首次应先保持 Dashboard
+`deepseek_only`，完成 `codex_only` 单次 dry run 后才允许 `auto`。
+
 ## 4. 上线前四步验收
 
 ```bash
@@ -86,6 +125,29 @@ COMMON_ENV='PA_AGENT_HOME=/var/lib/pa-agent PA_AGENT_OPERATION_DIR=/var/lib/pa-a
 
 ```bash
 sudo -u pa-agent env $COMMON_ENV "$BIN/pa-agent-headless" --check
+```
+
+若已启用 Codex，`COMMON_ENV` 还需包含 `/etc/pa-agent/pa-agent-codex.env` 中的 Codex 变量；直接
+使用 `systemctl start pa-agent` 时 systemd 会自动加载。手工验收可先执行：
+
+```bash
+set -a
+. /etc/pa-agent/pa-agent-codex.env
+set +a
+sudo -u pa-agent env $COMMON_ENV \
+  PA_AGENT_CODEX_ENABLED="$PA_AGENT_CODEX_ENABLED" \
+  PA_AGENT_CODEX_MODEL="$PA_AGENT_CODEX_MODEL" \
+  PA_AGENT_CODEX_REASONING="$PA_AGENT_CODEX_REASONING" \
+  PA_AGENT_CODEX_BINARY="$PA_AGENT_CODEX_BINARY" \
+  PA_AGENT_CODEX_STATE_DIR="$PA_AGENT_CODEX_STATE_DIR" \
+  "$BIN/pa-agent-headless" --check
+
+sudo -u pa-agent-codex env \
+  PA_AGENT_CODEX_STATE_DIR="$PA_AGENT_CODEX_STATE_DIR" \
+  PA_AGENT_CODEX_MODEL="$PA_AGENT_CODEX_MODEL" \
+  PA_AGENT_CODEX_REASONING="$PA_AGENT_CODEX_REASONING" \
+  PA_AGENT_CODEX_BINARY="$PA_AGENT_CODEX_BINARY" \
+  "$BIN/pa-agent-codex-worker" --check
 ```
 
 2. 只访问公开行情 API，不调用 LLM：
@@ -117,7 +179,8 @@ sudo -u pa-agent env PA_AGENT_HOME=/var/lib/pa-agent "$BIN/pa-agent-paper-report
 四步都通过后再启动：
 
 ```bash
-sudo systemctl enable --now pa-agent pa-agent-dashboard
+sudo systemctl enable --now pa-agent-codex-worker pa-agent pa-agent-dashboard
+sudo systemctl status pa-agent-codex-worker
 sudo systemctl status pa-agent
 sudo systemctl status pa-agent-dashboard
 sudo journalctl -u pa-agent -f
@@ -144,6 +207,7 @@ ssh -L 8765:127.0.0.1:8765 <VPS_USER>@<VPS_HOST>
 - 最近 PA 决策、VPA evidence 摘要和 Paper 账户；
 - “暂停分析”：不再接收新快照，正在运行的分析安全完成；
 - “恢复运行”：恢复轮询，若已有新闭合 K 线则按原去重规则分析。
+- `deepseek_only / codex_only / auto` Backend 请求；仅在 scheduler idle 后 applied，已有 Job 不换标。
 
 看板不能改 Prompt、风险参数、资产列表或 Joint 权限，也不能直接发起模型分析、
 真实下单或执行 shell。进程启停与重启仍使用 `systemctl`。这是有意的权限边界，
@@ -152,6 +216,14 @@ ssh -L 8765:127.0.0.1:8765 <VPS_USER>@<VPS_HOST>
 Dashboard 以独立的 `pa-agent-dashboard` 用户运行，只能访问
 `/var/lib/pa-agent-control`。它不能读取 `/var/lib/pa-agent`、分析数据库、Paper 数据库
 或 LLM API Key；上述内容由可信 Headless 进程生成脱敏只读投影。
+
+Codex CLI 由独立 `pa-agent-codex` worker 执行。Headless 只能向共享 spool 发布 digest-bound Job
+与读取结果；Codex 用户只能只读 Job，不能遍历 `/var/lib/pa-agent`、生产数据库、Paper ledger 或
+systemd API credential。systemd 将 `/opt/pa-agent` 和 Python environment 设为只读，只允许
+`/var/lib/pa-agent-codex/{home,runtime,outbox,inbox,results}` 写入；CLI 每个 role 使用 `--ephemeral`、
+`--sandbox read-only`、`--ask-for-approval never`，关闭 shell/Web，并只启用 required Frozen
+Evidence MCP。Codex 输出先写 outbox，再由 PA Validator、Router、Risk 和 canonical writer 接管；
+Codex 本身不直接改代码、配置、Risk、Paper 或订单。
 
 ## 7. 更新与回滚
 
@@ -178,3 +250,5 @@ sudo bash deploy/install_vps.sh
 - VPA 不创建 Setup、不翻转 PA 方向、不修改主观胜率；其增量价值需由配对研究验证。
 - 当前只有 paper execution。接入真实交易前必须另做私有 API、幂等订单、持仓同步、
   kill switch、时钟偏差、精度和异常恢复审计。
+- ChatGPT auth、rate limit、模型可用性和 Codex CLI flag 仍须在目标 VPS 实测；本地静态检查不等于
+  真实账号或长期运行已验证。

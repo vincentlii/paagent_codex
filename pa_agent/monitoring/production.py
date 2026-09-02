@@ -43,10 +43,7 @@ class ProductionOrchestratorFactory:
             return True
         if mode not in {"auto", "codex_only"}:
             return False
-        from pa_agent.config.vpa import resolve_vpa_mode
-
-        configured_vpa = resolve_vpa_mode(getattr(self._settings, "prompt", None))
-        return self._codex_backend_factory is not None and configured_vpa == "off"
+        return self._codex_backend_factory is not None
 
     def __call__(self, task: AnalysisTask) -> Any:
         mode = str(
@@ -60,9 +57,16 @@ class ProductionOrchestratorFactory:
 
         settings = self._settings.model_copy(deep=True)
         assert self._codex_backend_factory is not None
+        from pa_agent.config.vpa import vpa_is_enabled
+
+        auxiliary_client = (
+            create_ai_client(settings.provider, logger_=self._logger)
+            if vpa_is_enabled(settings.prompt)
+            else None
+        )
         primary = self._build_orchestrator(
             settings=settings,
-            client=None,
+            client=auxiliary_client,
             analysis_backend=self._codex_backend_factory(task, settings),
         )
         if mode == "codex_only":

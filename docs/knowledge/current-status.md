@@ -2,8 +2,8 @@
 lifecycle: active
 capability: no-go
 verification_scope: local
-最后核验: 2026-09-01
-核验提交: 965f2df
+最后核验: 2026-09-02
+核验提交: d04764b
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -16,8 +16,9 @@ verification_scope: local
 ## 结论
 
 当前 Codex 升级分支从 `965f2df` 创建；该提交是 vNext 的现有功能与知识基线。Codex Analysis
-Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker、role Adapter 与生产 Factory
-选择 seam、Backend A/A/B/B 冻结协议与隔离统计；尚未配置真实 Codex Job publisher，也未完成真实账号、VPS、回放或交易增益验证。
+Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker、role Adapter、真实 Frozen
+Job publisher、环境驱动的生产 Factory 以及 Backend A/A/B/B 冻结协议与隔离统计。Codex 接入保持
+opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证。
 
 项目已具备进入真实 VPS 安装、预检和无人值守 Paper 验证的工程基础，但尚不能写成“VPS 已验证”或“PA+VPA 已提高盈利”。2026-08-13 的 `1169 passed, 7 deselected` 是绑定当时审计基线的历史证据；Dashboard 是审计后新增能力，需要在目标 Linux/VPS 环境补充实机验证。
 
@@ -57,10 +58,10 @@ Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker�
 | Linux Headless 与发布依赖 | implemented | 历史 CI/wheel smoke；VPS not-verified | 需要真实 Linux kernel、systemd、目录权限和重启恢复验收 |
 | VPS Dashboard | implemented | local focused | 只能请求 pause/resume 和 `deepseek_only/auto/codex_only`；Backend 在 task/cohort 冻结且仅在 scheduler idle 后 applied。仍需实机权限、loopback、SSH tunnel 验证 |
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
-| Analysis Backend seam | implemented | local focused | Direct 与 Codex Adapter 均返回现有 Provider Draft；Codex 仍只接 PA Stage 1/2，VPA shadow/soft 在未接通前显式拒绝，避免静默改走 Direct |
+| Analysis Backend seam | implemented | local focused | Direct 与 Codex Adapter 均返回现有 Provider Draft；Codex 只接 PA Stage 1/2。VPA Shadow 仍由隔离 Direct role 提供二级证据且不改变 PA official path；生产 `soft` 仍收敛为 Shadow |
 | Frozen Agent Job / Evidence | implemented | local focused | 确定性 manifest、原子目录发布、resource digest、角色事实/知识 allowlist、cutoff 与调用/字节预算已实现 |
 | Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、JSON/outbox 已用模拟 subprocess 验证；Provider Draft Schema 仍由 PA Validator 判定；尚未做真实账号调用 |
-| Codex Analysis Backend | research-only | local focused | 已有 Job 身份绑定、一次定向修复上限、脱敏错误分类、熔断、完整 Direct PA 冷回退与 Factory mode seam；未配置 Codex 时 `auto/codex_only` fail-closed，默认仍为 `deepseek_only` |
+| Codex Analysis Backend | research-only | local focused | 已有有界 core context publisher、Job 身份绑定、一次定向修复上限、脱敏错误分类、熔断、完整 Direct PA 冷回退与环境 Factory；未启用或配置错误时 fail-closed，部署默认仍为 `deepseek_only` |
 | Codex audit projection | implemented | local focused | `analysis_calls` 投影 backend、provider、job/thread identity 与 Evidence 调用/字节量；完整 JSON record 仍是唯一原始记录 |
 | Analysis Backend A/A/B/B | research-only | local focused | `analysis_backend_aabb_v1` 预登记四臂、ABBA/BAAB、独立 runtime、禁 fallback、失败臂 coverage、cohort 去重与成本/重复性摘要已实现；尚无真实 Codex 样本，不能晋级 |
 
@@ -73,7 +74,7 @@ Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker�
 - 尚未在目标 VPS 验证 Linux 用户、systemd、`PA_AGENT_HOME`、共享 operation directory 和 SQLite read-only projection 权限。
 - 尚未在目标 VPS 验证真实 Provider、行情源、venue symbol/contract metadata、网络超时与速率限制。
 - Dashboard 尚需验证仅监听 loopback、SSH tunnel、desired/applied generation 和 Headless 不可写越权。
-- ChatGPT account auth、Codex CLI、独立 Unix 用户、只读 sandbox、worker restart 和 rate limit 尚未在目标 VPS 验证。
+- ChatGPT account auth、Codex CLI、独立 `pa-agent-codex` 用户、只读 sandbox、spool worker restart 和 rate limit 尚未在目标 VPS 验证。部署资产已把 Codex home/runtime/outbox 与生产 DB、Paper ledger、DeepSeek credential 分离，但 OS 权限仍需目标机负向验收。
 
 ### 交易与研究未验证
 

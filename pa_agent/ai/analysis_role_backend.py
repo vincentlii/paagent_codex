@@ -24,6 +24,7 @@ class AnalysisRoleRequest:
     structured_output: bool = True
     snapshot_hash: str | None = None
     cutoff_ts_open: int | None = None
+    agent_context: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

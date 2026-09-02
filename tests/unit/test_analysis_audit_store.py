@@ -196,6 +196,9 @@ def _record(
                 "codex_thread_id": "thread-audit-1",
                 "evidence_call_count": 3,
                 "evidence_response_bytes": 4096,
+                "initial_context_bytes": 2048,
+                "model": "gpt-5.6-terra",
+                "runtime_version": "runtime-v1",
             }
         ],
         validation_audit=[
@@ -269,6 +272,9 @@ def test_audit_store_indexes_official_run_and_manual_outcome(tmp_path: Path) -> 
     assert call["codex_thread_id"] == "thread-audit-1"
     assert call["evidence_call_count"] == 3
     assert call["evidence_response_bytes"] == 4096
+    assert call["initial_context_bytes"] == 2048
+    assert call["model"] == "gpt-5.6-terra"
+    assert call["runtime_version"] == "runtime-v1"
     observations = store.get_vpa_observations("run-audit-test")
     assert observations[0]["bar_range"] == "K2-K1"
     assert observations[0]["epistemic_status"] == "candidate"

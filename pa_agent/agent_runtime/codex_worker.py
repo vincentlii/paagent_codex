@@ -126,6 +126,10 @@ class CodexCliWorker:
                 )
             except subprocess.TimeoutExpired as exc:
                 raise CodexWorkerTimeout("Codex job exceeded wall-clock budget") from exc
+            except OSError as exc:
+                raise CodexWorkerUnavailable(
+                    "Codex process could not be started"
+                ) from exc
             if completed.returncode != 0:
                 raise _classify_failed_process(
                     completed.returncode,

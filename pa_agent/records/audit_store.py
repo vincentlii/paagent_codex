@@ -43,7 +43,7 @@ class AuditRebuildResult:
 class AnalysisAuditStore:
     """Index completed or partial analysis records without owning their source data."""
 
-    _SCHEMA_VERSION: ClassVar[int] = 12
+    _SCHEMA_VERSION: ClassVar[int] = 14
     _ENTRY_STATUSES: ClassVar[frozenset[str]] = frozenset(
         {"not_traded", "pending", "filled", "expired", "cancelled"}
     )
@@ -626,8 +626,11 @@ class AnalysisAuditStore:
                 error_type TEXT,
                 analysis_backend TEXT NOT NULL DEFAULT 'direct',
                 provider_id TEXT,
+                model TEXT,
+                runtime_version TEXT,
                 job_digest TEXT,
                 codex_thread_id TEXT,
+                initial_context_bytes INTEGER NOT NULL DEFAULT 0,
                 evidence_call_count INTEGER NOT NULL DEFAULT 0,
                 evidence_response_bytes INTEGER NOT NULL DEFAULT 0,
                 created_at_ms INTEGER NOT NULL,
@@ -802,8 +805,11 @@ class AnalysisAuditStore:
         required = {
             "analysis_backend": "TEXT NOT NULL DEFAULT 'direct'",
             "provider_id": "TEXT",
+            "model": "TEXT",
+            "runtime_version": "TEXT",
             "job_digest": "TEXT",
             "codex_thread_id": "TEXT",
+            "initial_context_bytes": "INTEGER NOT NULL DEFAULT 0",
             "evidence_call_count": "INTEGER NOT NULL DEFAULT 0",
             "evidence_response_bytes": "INTEGER NOT NULL DEFAULT 0",
         }
@@ -829,10 +835,11 @@ class AnalysisAuditStore:
                     run_id, arm, stage, attempt, request_hash, response_hash,
                     prompt_tokens, completion_tokens, cached_prompt_tokens,
                     total_tokens, latency_ms, status, validation_category,
-                    error_type, analysis_backend, provider_id, job_digest,
-                    codex_thread_id, evidence_call_count,
+                    error_type, analysis_backend, provider_id, model,
+                    runtime_version, job_digest,
+                    codex_thread_id, initial_context_bytes, evidence_call_count,
                     evidence_response_bytes, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.meta.run_id,
@@ -851,8 +858,11 @@ class AnalysisAuditStore:
                     str(raw.get("error_type") or "") or None,
                     str(raw.get("analysis_backend") or "direct"),
                     str(raw.get("provider_id") or "") or None,
+                    str(raw.get("model") or "") or None,
+                    str(raw.get("runtime_version") or "") or None,
                     str(raw.get("job_digest") or "") or None,
                     str(raw.get("codex_thread_id") or "") or None,
+                    max(0, int(raw.get("initial_context_bytes") or 0)),
                     max(0, int(raw.get("evidence_call_count") or 0)),
                     max(0, int(raw.get("evidence_response_bytes") or 0)),
                     int(raw.get("created_at_ms") or cls._now_ms()),

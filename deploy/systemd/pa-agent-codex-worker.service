@@ -1,0 +1,36 @@
+[Unit]
+Description=PA Agent isolated Codex analysis worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=pa-agent-codex
+Group=pa-agent-codex
+SupplementaryGroups=pa-agent-codex-spool
+WorkingDirectory=/opt/pa-agent
+EnvironmentFile=/etc/pa-agent/pa-agent-codex.env
+ExecStartPre=/opt/miniconda3/envs/pa-agent/bin/pa-agent-codex-worker --check
+ExecStart=/opt/miniconda3/envs/pa-agent/bin/pa-agent-codex-worker
+Restart=on-failure
+RestartSec=10s
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/opt/pa-agent /opt/miniconda3/envs/pa-agent /var/lib/pa-agent-codex/jobs
+ReadWritePaths=/var/lib/pa-agent-codex/home /var/lib/pa-agent-codex/runtime /var/lib/pa-agent-codex/outbox
+ReadWritePaths=/var/lib/pa-agent-codex/inbox /var/lib/pa-agent-codex/results
+
+[Install]
+WantedBy=multi-user.target

@@ -6,7 +6,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from pa_agent.agent_runtime.codex_worker import CodexCliConfig, CodexCliWorker
+import pytest
+
+from pa_agent.agent_runtime.codex_worker import (
+    CodexCliConfig,
+    CodexCliWorker,
+    CodexWorkerUnavailable,
+)
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from tests.unit.test_frozen_agent_job import _job
 
@@ -106,6 +112,27 @@ def test_worker_maps_timeout_without_returning_partial_output(tmp_path: Path) ->
         raise AssertionError("timeout must fail closed")
 
     assert not list((tmp_path / "outbox").glob("*.json"))
+
+
+def test_worker_maps_process_start_oserror_to_availability(tmp_path: Path) -> None:
+    published = FrozenAgentJobStore(tmp_path / "jobs").publish(_job())
+
+    def unavailable(_command, **_kwargs):
+        raise PermissionError("not executable")
+
+    worker = CodexCliWorker(
+        CodexCliConfig(
+            codex_home=tmp_path / "home",
+            runtime_root=tmp_path / "runtime",
+            outbox_root=tmp_path / "outbox",
+            model="gpt-5.6-terra",
+            reasoning_effort="high",
+        ),
+        process_runner=unavailable,
+    )
+
+    with pytest.raises(CodexWorkerUnavailable):
+        worker.run(published)
 
 
 def test_worker_leaves_schema_judgment_to_pa_validator(tmp_path: Path) -> None:

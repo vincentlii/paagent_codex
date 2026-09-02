@@ -155,6 +155,7 @@ class FrozenAgentJobBuilder:
         knowledge_documents: Mapping[str, str],
         allowed_knowledge_ids: tuple[str, ...] | list[str],
         budget: AgentJobBudget,
+        backend_runtime_identity: Mapping[str, Any] | None = None,
     ) -> FrozenAgentJob:
         if role not in _ROLE_FACT_DOMAINS:
             raise ValueError(f"unsupported agent role: {role}")
@@ -190,6 +191,7 @@ class FrozenAgentJobBuilder:
             "runtime_version": self._runtime_version,
             "agents_text": self._agents_text,
             "skills": self._role_skills(role),
+            "backend_runtime_identity": dict(backend_runtime_identity or {}),
         }
         resources = {
             "request.json": request,
@@ -291,6 +293,8 @@ class FrozenAgentJobStore:
                 temporary / "manifest.json",
                 _canonical_bytes(job.manifest.as_dict()),
             )
+            if os.name == "posix":
+                temporary.chmod(0o550)
             os.replace(temporary, target)
         except Exception:
             self._remove_partial(temporary)

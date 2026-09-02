@@ -111,6 +111,11 @@ Headless 启动失败时检查：
   `required=true` 的 `pa_evidence` stdio MCP。
 - VPS 只允许 ChatGPT account auth；使用 `codex login --device-auth`，`auth.json` 按密码管理，
   不设置 `OPENAI_API_KEY`/`CODEX_API_KEY` fallback。
+- `PA_AGENT_CODEX_ENABLED` 默认关闭；启用前必须设置非空 model，并确认 Codex binary、Prompt 目录、
+  `$PA_AGENT_HOME/codex/{home,jobs,runtime,outbox}` 权限通过离线 `--check`。
+- systemd 以独立 `pa-agent-codex` 用户运行 spool worker。Headless 只写 Job/inbox、读取 result；
+  Codex 只读 Job，只写独立 home/runtime/outbox/inbox/result，不能访问 `/var/lib/pa-agent` 或
+  systemd credential。真实 VPS 上必须对源码、生产 DB、Paper ledger 和 credential 做负向读取/写入测试。
 - `job_digest`、resource digest、output schema、Evidence audit 或 role 不一致均按不可接受结果处理，
   不摄取 outbox、不写 canonical record。
 - 排障先区分 CLI/auth/rate-limit/timeout/MCP startup 等 availability failure，与 schema、事实、

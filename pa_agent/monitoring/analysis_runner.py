@@ -40,6 +40,7 @@ class FrozenAnalysisPayload:
     incremental_new_bar_count: int | None = None
     instrument_spec: Any | None = field(default=None, compare=True, repr=False)
     analysis_backend_mode: str = "deepseek_only"
+    analysis_backend_identity: Mapping[str, Any] = field(default_factory=dict)
 
 
 class IndependentAnalysisHandler:

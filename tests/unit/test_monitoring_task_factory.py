@@ -282,9 +282,21 @@ def test_backend_mode_is_frozen_into_payload_and_cohort() -> None:
         source="tradingview",
         analysis_fingerprint="a" * 64,
         analysis_backend_mode="codex_only",
+        analysis_backend_identity={"model": "gpt-test", "runtime_version": "v1"},
     )
 
     assert direct.payload.analysis_backend_mode == "deepseek_only"
     assert codex.payload.analysis_backend_mode == "codex_only"
     assert direct.cohort_id != codex.cohort_id
     assert direct.task_id != codex.task_id
+
+    changed_runtime = create_frozen_analysis_task(
+        _frame(),
+        None,
+        settings,
+        source="tradingview",
+        analysis_fingerprint="a" * 64,
+        analysis_backend_mode="codex_only",
+        analysis_backend_identity={"model": "gpt-test-2", "runtime_version": "v1"},
+    )
+    assert changed_runtime.cohort_id != codex.cohort_id

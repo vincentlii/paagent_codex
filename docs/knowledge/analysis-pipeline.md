@@ -67,6 +67,13 @@ Codex 调用前必须生成 Frozen Agent Job。Job 以 canonical JSON digest 绑
 output schema、角色可见 facts/knowledge、Runtime AGENTS/skill 与预算，并以完整目录原子发布。
 `FrozenEvidenceGateway` 不获取行情、不重新计算交易信号，只返回 Job 内的事实、K 线和知识；每次
 访问进入内存审计，cutoff 越界、digest 篡改、角色越权或调用/字节超预算均拒绝。
+`initial_context_bytes` 只表示 Job request 中 core-context JSON 的 UTF-8 字节数，是初始输入下界；
+它不包含 CLI wrapper、AGENTS、Skill、schema 或模型端 tokenization，不能当作总 Prompt/token 数。
+
+生产 publisher 不复制 Direct 路径的完整超长 Prompt。初始输入只包含角色、Snapshot identity、
+已验证的上阶段 handoff、Router manifest、HTF 摘要和有界历史；完整 price-only facts、K 线与
+PA Agent 选择的知识 allowlist 放入 Frozen Job，由 Codex 按需读取。知识选择权仍属于 PA Agent，
+Codex 不能遍历仓库或自行引入另一套交易体系。Stage 2 只接收结构化 Stage 1 handoff，不继承会话。
 
 Codex CLI Worker 使用 `codex exec --ephemeral --sandbox read-only --output-schema`。运行时忽略
 用户 config/rules，强制 ChatGPT login，禁用 shell、Web、image 与 skill dependency install，
@@ -75,10 +82,21 @@ Codex CLI Worker 使用 `codex exec --ephemeral --sandbox read-only --output-sch
 输出大小、UTF-8、JSON 完整性与 Evidence audit 后发布 outbox；Provider Draft 字段与专业语义继续
 由 PA Validator 判断，并且 Codex 每个角色最多一次定向修复。Codex 进程不直接写数据库。
 
+生产 Headless 不直接 fork Codex CLI，而是将只含 Job identity 的 dispatch 写入共享 spool；独立
+`pa-agent-codex` systemd worker 读取只读 Job 并运行 CLI。Codex 用户没有生产 state、数据库、
+Paper ledger 或 DeepSeek systemd credential 的文件权限。实际 model、reasoning、Runtime version
+和 Codex binary digest 同时进入冻结 task cohort、call audit 与运行时一致性检查。
+该 identity 也写入 Frozen Job 与 dispatch；隔离 worker 每次按自身 model/reasoning、当前 binary 和
+Runtime assets 重算，成功结果必须回传同一 identity，Headless 才允许进入 PA Validator。
+
 Adapter 接受 Worker 结果前再次核对 role、messages、output schema、Snapshot hash、cutoff 与 attempt。
 CLI/auth/rate-limit/timeout 等 availability 故障可请求从 Stage 1 开始的完整 Direct PA 冷回退；主链
 所有可见 callback 在成功前缓冲，失败后全部丢弃，Direct fallback 来源在 record 持久化前写入。
 Schema、事实、权限、Job identity 与专业判断失败不可触发 fallback。
+
+当生产 VPA 模式为 Shadow 时，Codex 仍只拥有 PA Stage 1/2；VPA evidence 使用隔离的 Direct role，
+作为二级证据写入 sidecar，不进入 `pa_only` official decision。该安排不是 Codex → Direct 的隐式
+fallback，两条路径的 backend、调用记录和失败语义分别审计。
 
 ## 4. PA Stage 1 Draft、物化与 Gate
 

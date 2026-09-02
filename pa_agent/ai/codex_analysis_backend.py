@@ -80,17 +80,23 @@ class CodexAnalysisRoleBackend:
         publish_job: Callable[[AnalysisRoleRequest, int], Path],
         request_full_chain_fallback: bool = False,
         circuit_breaker: CodexCircuitBreaker | None = None,
+        runtime_identity: dict[str, Any] | None = None,
     ) -> None:
         self._worker = worker
         self._publish_job = publish_job
         self._request_full_chain_fallback = bool(request_full_chain_fallback)
         self._circuit = circuit_breaker or CodexCircuitBreaker()
+        self._runtime_identity = dict(runtime_identity or {})
         self._role_attempts: dict[str, int] = {}
         self._attempt_lock = threading.Lock()
 
     @property
     def backend_id(self) -> str:
         return "codex_agent"
+
+    @property
+    def runtime_identity(self) -> dict[str, Any]:
+        return dict(self._runtime_identity)
 
     def run(
         self,
@@ -139,7 +145,24 @@ class CodexAnalysisRoleBackend:
             published = self._publish_job(request, attempt)
             job = FrozenAgentJobStore(published.parent).open(published.name)
             _verify_job_request(job, request, attempt=attempt)
-        except (OSError, TypeError, ValueError, KeyError, JobIntegrityError) as exc:
+        except OSError as exc:
+            if on_attempt_error is not None:
+                on_attempt_error(exc)
+            self._circuit.record_availability_failure()
+            self._raise_failure(
+                ProviderFailure(
+                    kind="unavailable",
+                    message="Codex frozen job spool is unavailable",
+                    retryable=True,
+                ),
+                attempts=({
+                    "stage": request.role,
+                    "analysis_backend": self.backend_id,
+                    "attempt": attempt,
+                },),
+                original=exc,
+            )
+        except (TypeError, ValueError, KeyError, JobIntegrityError) as exc:
             if on_attempt_error is not None:
                 on_attempt_error(exc)
             self._raise_failure(
@@ -154,6 +177,22 @@ class CodexAnalysisRoleBackend:
                     "attempt": attempt,
                 },),
                 original=exc,
+            )
+        frozen_runtime_identity = dict(
+            job.runtime.get("backend_runtime_identity") or {}
+        )
+        if frozen_runtime_identity != self._runtime_identity:
+            self._raise_failure(
+                ProviderFailure(
+                    kind="invalid_request",
+                    message="Codex frozen job runtime identity mismatch",
+                    retryable=False,
+                ),
+                attempts=({
+                    "stage": request.role,
+                    "analysis_backend": self.backend_id,
+                    "attempt": attempt,
+                },),
             )
         attempt_meta = {
             "stage": request.role,
@@ -178,6 +217,14 @@ class CodexAnalysisRoleBackend:
             max(0, int(event.get("response_bytes") or 0))
             for event in result.evidence_events
         )
+        initial_context_bytes = len(
+            json.dumps(
+                job.request.get("messages", []),
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
         runtime = {
             "analysis_backend": self.backend_id,
             "role": request.role,
@@ -186,11 +233,16 @@ class CodexAnalysisRoleBackend:
             "requested_thinking": request.thinking,
             "requested_reasoning_effort": request.reasoning_effort,
             "effective_thinking": True,
-            "effective_reasoning_effort": request.reasoning_effort,
+            "effective_reasoning_effort": self._runtime_identity.get(
+                "reasoning_effort", request.reasoning_effort
+            ),
+            "model": self._runtime_identity.get("model"),
+            "runtime_version": self._runtime_identity.get("runtime_version"),
             "provider_fallback_used": False,
             "transport_attempts": [attempt_meta],
             "job_digest": job.manifest.job_digest,
             "thread_id": result.thread_id,
+            "initial_context_bytes": initial_context_bytes,
             "evidence_call_count": len(result.evidence_events),
             "evidence_response_bytes": evidence_bytes,
         }

@@ -236,6 +236,8 @@ def _call_attempt_entry(
         "error_type": error_type,
         "analysis_backend": model_call_meta.get("analysis_backend", "direct"),
         "provider_id": model_call_meta.get("provider_id"),
+        "model": model_call_meta.get("model"),
+        "runtime_version": model_call_meta.get("runtime_version"),
         "structured_output_mode": model_call_meta.get("structured_output_mode"),
         "thinking": model_call_meta.get("thinking"),
         "reasoning_effort": model_call_meta.get("reasoning_effort"),
@@ -255,6 +257,9 @@ def _call_attempt_entry(
         ),
         "job_digest": model_call_meta.get("job_digest"),
         "codex_thread_id": model_call_meta.get("thread_id"),
+        "initial_context_bytes": max(
+            0, int(model_call_meta.get("initial_context_bytes") or 0)
+        ),
         "evidence_call_count": max(
             0, int(model_call_meta.get("evidence_call_count") or 0)
         ),
@@ -755,18 +760,6 @@ class TwoStageOrchestrator:
             allow_provider_fallback=allow_provider_fallback,
             logger=logger,
         )
-        from pa_agent.config.vpa import resolve_vpa_mode
-
-        configured_vpa_mode = resolve_vpa_mode(
-            getattr(settings, "prompt", None)
-        )
-        if (
-            self._analysis_backend.backend_id == "codex_agent"
-            and configured_vpa_mode in {"shadow", "soft"}
-        ):
-            raise ValueError(
-                "Codex backend does not yet support the VPA shadow/soft role path"
-            )
         self._call_arm = call_arm
         self._allow_provider_fallback = allow_provider_fallback
         self._defer_execution_policy = defer_execution_policy
@@ -914,6 +907,20 @@ class TwoStageOrchestrator:
             htf_context=htf_context,
             prompt_dir=self._runtime_prompt_dir(),
         )
+        backend_runtime_identity = getattr(
+            self._analysis_backend, "runtime_identity", {}
+        )
+        record = record.model_copy(
+            update={
+                "role_runtime": {
+                    **copy.deepcopy(record.role_runtime),
+                    "analysis_backend": self._analysis_backend.backend_id,
+                    "analysis_backend_identity": copy.deepcopy(
+                        dict(backend_runtime_identity or {})
+                    ),
+                }
+            }
+        )
         if backend_fallback_context:
             record = record.model_copy(
                 update={
@@ -1030,6 +1037,25 @@ class TwoStageOrchestrator:
                 analysis_mode=analysis_mode,
                 htf_context=htf_context,
             )
+        from pa_agent.ai.higher_timeframe import serialize_higher_timeframe_context
+        from pa_agent.ai.prompt_assembler import stage1_prompt_txt_files
+
+        previous_context = None
+        if previous_record is not None:
+            previous_context = {
+                "stage1_diagnosis": copy.deepcopy(previous_record.stage1_diagnosis),
+                "stage2_decision": copy.deepcopy(previous_record.stage2_decision),
+            }
+        stage1_agent_context = {
+            "task_id": record.meta.run_id,
+            "symbol": frame.symbol,
+            "timeframe": frame.timeframe,
+            "analysis_mode": analysis_mode,
+            "higher_timeframe": serialize_higher_timeframe_context(htf_context),
+            "previous_analysis": previous_context,
+            "incremental_new_bar_count": incremental_new_bar_count,
+            "allowed_knowledge_ids": stage1_prompt_txt_files(),
+        }
 
         # ── Step 5: Call AI for Stage 1 ───────────────────────────────────────
         logger.debug("\n" + "="*80)
@@ -1081,6 +1107,7 @@ class TwoStageOrchestrator:
                 ),
                 snapshot_hash=frozen_snapshot_hash,
                 cutoff_ts_open=frozen_cutoff_ts_open,
+                agent_context=stage1_agent_context,
             )
         except FullChainFallbackRequired:
             raise
@@ -1187,6 +1214,7 @@ class TwoStageOrchestrator:
                 ),
                 snapshot_hash=frozen_snapshot_hash,
                 cutoff_ts_open=frozen_cutoff_ts_open,
+                agent_context=stage1_agent_context,
             )
             if not s1_streamed_reasoning and r.reasoning_content:
                 _emit_buffered_stream(r.reasoning_content, on_stage1_reasoning)
@@ -1437,6 +1465,28 @@ class TwoStageOrchestrator:
             htf_context=htf_context,
         )
         self._initial_stage2_messages = copy.deepcopy(messages_s2)
+        from pa_agent.ai.prompt_assembler import stage2_prompt_txt_files
+
+        stage2_agent_context = {
+            "task_id": record.meta.run_id,
+            "symbol": frame.symbol,
+            "timeframe": frame.timeframe,
+            "stage1_diagnosis": copy.deepcopy(stage1_for_stage2),
+            "router_manifest": list(strategy_files),
+            "decision_stance": record.meta.decision_stance,
+            "higher_timeframe": serialize_higher_timeframe_context(htf_context),
+            "experience_entries": [
+                entry.model_dump() if hasattr(entry, "model_dump") else dict(entry)
+                for entry in experience_entries
+            ],
+            "allowed_knowledge_ids": stage2_prompt_txt_files(
+                strategy_files,
+                direction=direction,
+                load_full_strategy_library=bool(
+                    getattr(prompt_cfg, "stage2_load_full_strategy_library", False)
+                ),
+            ),
+        }
 
         # ── Step 15: Call AI for Stage 2 ──────────────────────────────────────
         logger.debug("\n" + "="*80)
@@ -1488,6 +1538,7 @@ class TwoStageOrchestrator:
                 ),
                 snapshot_hash=frozen_snapshot_hash,
                 cutoff_ts_open=frozen_cutoff_ts_open,
+                agent_context=stage2_agent_context,
             )
         except FullChainFallbackRequired:
             raise
@@ -1628,6 +1679,7 @@ class TwoStageOrchestrator:
                 ),
                 snapshot_hash=frozen_snapshot_hash,
                 cutoff_ts_open=frozen_cutoff_ts_open,
+                agent_context=stage2_agent_context,
             )
             if not s2_streamed_reasoning and r.reasoning_content:
                 _emit_buffered_stream(r.reasoning_content, on_stage2_reasoning)
@@ -1992,9 +2044,21 @@ class TwoStageOrchestrator:
         role_settings.prompt.vpa_mode = mode
         role_settings.prompt.vpa_enabled = True
 
-        baseline_client, baseline_isolated = self._clone_role_client(
-            baseline_settings.provider
-        )
+        codex_pa_baseline = self._analysis_backend.backend_id == "codex_agent"
+        if codex_pa_baseline:
+            baseline_client = None
+            baseline_isolated = True
+            baseline_backend = self._analysis_backend
+        else:
+            baseline_client, baseline_isolated = self._clone_role_client(
+                baseline_settings.provider
+            )
+            baseline_backend = DirectAnalysisRoleBackend(
+                client=baseline_client,
+                settings=baseline_settings,
+                allow_provider_fallback=False,
+                logger=logger,
+            )
         vpa_client, vpa_isolated = self._clone_role_client(
             role_settings.provider
         )
@@ -2011,12 +2075,7 @@ class TwoStageOrchestrator:
 
         baseline_runner = TwoStageOrchestrator(
             client=baseline_client,
-            analysis_backend=DirectAnalysisRoleBackend(
-                client=baseline_client,
-                settings=baseline_settings,
-                allow_provider_fallback=False,
-                logger=logger,
-            ),
+            analysis_backend=baseline_backend,
             assembler=self._assembler.clone_with_prompt_settings(
                 baseline_settings.prompt
             ),
@@ -2665,6 +2724,7 @@ class TwoStageOrchestrator:
         on_attempt_error: Callable[[Exception], None] | None = None,
         snapshot_hash: str | None = None,
         cutoff_ts_open: int | None = None,
+        agent_context: dict[str, Any] | None = None,
     ) -> Any:
         """Run one typed role through the selected analysis backend."""
         schema_for = getattr(self._validator, "schema_for", None)
@@ -2679,6 +2739,7 @@ class TwoStageOrchestrator:
                 reasoning_effort=reasoning_effort,
                 snapshot_hash=snapshot_hash,
                 cutoff_ts_open=cutoff_ts_open,
+                agent_context=agent_context,
             ),
             on_reasoning_token=on_reasoning_token,
             on_content_token=on_content_token,

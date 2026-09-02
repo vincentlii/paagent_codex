@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from pa_agent.ai.analysis_role_backend import AnalysisRoleResult
 from pa_agent.ai.prompt_assembler import PromptAssembler, VpaPromptBuildError
 from pa_agent.ai.router import route_strategy_files
 from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
@@ -190,6 +191,65 @@ def test_shadow_and_soft_have_distinct_official_paths(
     ] == expected_calls
     writer.save_full.assert_called_once()
     assert events[-1] == OrchestratorEvent.RecordSaved
+
+
+def test_codex_owns_pa_roles_while_shadow_vpa_stays_independent_direct() -> None:
+    settings = Settings(
+        prompt=PromptSettings(vpa_mode="shadow"),
+        validation=ValidationSettings(retry_enabled=False),
+    )
+    codex_backend = MagicMock()
+    codex_backend.backend_id = "codex_agent"
+    codex_backend.validation_retry_limit = 1
+    codex_backend.run.side_effect = [
+        AnalysisRoleResult(
+            reply=make_reply(copy.deepcopy(VALID_STAGE1)),
+            backend_id="codex_agent",
+            runtime={"job_digest": "stage1-job"},
+        ),
+        AnalysisRoleResult(
+            reply=make_reply(copy.deepcopy(VALID_STAGE2)),
+            backend_id="codex_agent",
+            runtime={"job_digest": "stage2-job"},
+        ),
+    ]
+    vpa_client = MagicMock()
+    vpa_client.stream_chat.return_value = make_reply(_vpa_report())
+    client = MagicMock()
+    client.clone_with_provider.return_value = vpa_client
+    writer = MagicMock()
+    writer.save_full.return_value.ok = True
+    writer.save_full.return_value.audit_ok = True
+    exp_reader = MagicMock()
+    exp_reader.read_for_stage2.return_value = []
+    orchestrator = TwoStageOrchestrator(
+        client=client,
+        analysis_backend=codex_backend,
+        assembler=PromptAssembler(PROMPT_DIR, prompt_settings=settings.prompt),
+        router=route_strategy_files,
+        validator=MagicMock(),
+        pending_writer=writer,
+        exp_reader=exp_reader,
+        settings=settings,
+    )
+
+    record = orchestrator.submit(make_frame(), CancelToken(), lambda _event: None)
+
+    assert record.exception is None
+    assert record.run_outcome["official_path"] == "pa_only"
+    assert record.run_outcome["effective_vpa_mode"] == "shadow"
+    assert record.vpa_evidence is not None
+    assert record.joint_decision is None
+    assert [call.args[0].role for call in codex_backend.run.call_args_list] == [
+        "stage1",
+        "stage2",
+    ]
+    assert all(call.args[0].agent_context for call in codex_backend.run.call_args_list)
+    assert vpa_client.stream_chat.call_count == 1
+    assert client.clone_with_provider.call_count == 1
+    assert [item["arm"] for item in record.call_attempts[:2]] == ["pa", "pa"]
+    assert record.call_attempts[2]["arm"] == "vpa_evidence"
+    writer.save_full.assert_called_once()
 
 
 def test_each_role_uses_and_records_its_own_reasoning_profile() -> None:

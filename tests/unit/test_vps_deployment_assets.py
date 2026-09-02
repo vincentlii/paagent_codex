@@ -33,6 +33,9 @@ def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     dashboard_service = (
         root / "deploy" / "systemd" / "pa-agent-dashboard.service"
     ).read_text("utf-8")
+    codex_service = (
+        root / "deploy" / "systemd" / "pa-agent-codex-worker.service"
+    ).read_text("utf-8")
     installer = (root / "deploy" / "install_vps.sh").read_text("utf-8")
     ci = (root / ".github" / "workflows" / "ci.yml").read_text("utf-8")
     attributes = (root / ".gitattributes").read_text("utf-8")
@@ -54,6 +57,10 @@ def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     assert "ReadOnlyPaths=/var/lib/pa-agent-control/status" in dashboard_service
     assert "ReadWritePaths=/var/lib/pa-agent\n" not in dashboard_service
     assert "NoNewPrivileges=true" in dashboard_service
+    assert "ReadOnlyPaths=/opt/pa-agent" in service
+    assert "ProtectKernelTunables=true" in service
+    assert "PrivateDevices=true" in service
+    assert "CapabilityBoundingSet=" in service
     assert "systemctl enable" not in installer
     assert '"$ENV_UV" export' in installer
     assert "--frozen" in installer
@@ -64,6 +71,15 @@ def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     assert "CONTROL_GROUP=pa-agent-control" in installer
     assert "/var/lib/pa-agent-control/status" in installer
     assert "/var/lib/pa-agent-control/control" in installer
+    assert "CODEX_USER=pa-agent-codex" in installer
+    assert "/var/lib/pa-agent-codex/home" in installer
+    assert "User=pa-agent-codex" in codex_service
+    assert "LoadCredential=" not in codex_service
+    assert "ReadOnlyPaths=/opt/pa-agent" in codex_service
+    assert "ReadOnlyPaths=/opt/pa-agent /opt/miniconda3/envs/pa-agent /var/lib/pa-agent-codex/jobs" in codex_service
+    assert "/var/lib/pa-agent\n" not in codex_service
+    assert "pa-agent-codex-worker.service" in installer
+    assert 'chmod -R go-w "$APP_DIR"' in installer
     assert '-m 2750 /var/lib/pa-agent-control' in installer
     assert 'cd "$APP_DIR"' in installer
     assert "${APP_DIR:-" not in installer
@@ -73,3 +89,15 @@ def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     assert "uv pip check" in ci
     assert "python -m pip check" not in ci
     assert "*.sh text eol=lf" in attributes
+
+
+def test_vps_environment_keeps_codex_disabled_until_explicit_authentication() -> None:
+    root = Path(__file__).resolve().parents[2]
+    environment = (
+        root / "deploy" / "systemd" / "pa-agent-codex.env.example"
+    ).read_text("utf-8")
+
+    assert "PA_AGENT_CODEX_ENABLED=0" in environment
+    assert "PA_AGENT_CODEX_MODEL=" in environment
+    assert "PA_AGENT_CODEX_BINARY=/usr/local/bin/codex" in environment
+    assert "PA_AGENT_CODEX_STATE_DIR=/var/lib/pa-agent-codex" in environment

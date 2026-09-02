@@ -15,6 +15,7 @@ Environment=PA_AGENT_OPERATION_DIR=/var/lib/pa-agent-control
 Environment=PA_AGENT_PROMPT_DIR=/opt/pa-agent/prompt_engineering
 SupplementaryGroups=pa-agent-control
 EnvironmentFile=-/etc/pa-agent/pa-agent.env
+EnvironmentFile=-/etc/pa-agent/pa-agent-codex.env
 LoadCredential=pa_agent_api_key:/etc/pa-agent/api_key
 ExecStartPre=/opt/miniconda3/envs/pa-agent/bin/pa-agent-headless --check
 ExecStart=/opt/miniconda3/envs/pa-agent/bin/pa-agent-headless
@@ -28,10 +29,21 @@ StateDirectory=pa-agent
 StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
 ReadWritePaths=/var/lib/pa-agent /var/lib/pa-agent-control/status
+ReadWritePaths=/var/lib/pa-agent-codex/jobs /var/lib/pa-agent-codex/inbox /var/lib/pa-agent-codex/results
 ReadOnlyPaths=/var/lib/pa-agent-control/control
+ReadOnlyPaths=/opt/pa-agent /opt/miniconda3/envs/pa-agent
 
 [Install]
 WantedBy=multi-user.target

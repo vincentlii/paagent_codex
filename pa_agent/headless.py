@@ -271,6 +271,15 @@ def validate_headless_configuration(
             probe.unlink()
         except OSError as exc:
             errors.append(f"runtime directory is not writable: {directory}: {exc}")
+    from pa_agent.agent_runtime.production import (
+        CodexProductionConfig,
+        validate_codex_production_config,
+    )
+
+    codex_config = CodexProductionConfig.from_environment(state_dir=paths.state_root)
+    errors.extend(
+        validate_codex_production_config(codex_config, prompt_dir=paths.prompt_dir)
+    )
     return errors
 
 
@@ -285,11 +294,20 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
     from pa_agent.monitoring.service import MultiAssetAnalysisService
     from pa_agent.monitoring.task_factory import analysis_runtime_fingerprint
     from pa_agent.records.pending_writer import PendingWriter
+    from pa_agent.agent_runtime.production import (
+        CodexProductionConfig,
+        build_codex_backend_factory,
+    )
 
     pending_writer = PendingWriter(
         pending_dir=paths.records_pending_dir,
         api_key=settings.provider.api_key,
         counterfactual_horizon_bars=settings.general.counterfactual_horizon_bars,
+    )
+    codex_config = CodexProductionConfig.from_environment(state_dir=paths.state_root)
+    codex_backend_factory = build_codex_backend_factory(
+        state_dir=paths.state_root,
+        prompt_dir=paths.prompt_dir,
     )
     orchestrator_factory = ProductionOrchestratorFactory(
         settings=settings,
@@ -297,6 +315,7 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
         prompt_dir=paths.prompt_dir,
         experience_dir=paths.experience_dir,
         logger=logging.getLogger("pa_agent"),
+        codex_backend_factory=codex_backend_factory,
     )
     handler = IndependentAnalysisHandler(orchestrator_factory)
     scheduler_audit = SchedulerAuditStore(paths.monitoring_audit_db_path)
@@ -332,6 +351,11 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
         ),
         paper_execution=paper_execution,
         backend_switcher=orchestrator_factory.activate_backend_mode,
+        backend_runtime_identity=(
+            codex_config.public_runtime_identity()
+            if codex_config.enabled
+            else None
+        ),
     )
 
 
