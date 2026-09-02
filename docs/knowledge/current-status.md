@@ -25,6 +25,8 @@ opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证�
 
 本轮 Codex 实现与边界见 [Codex Backend 最终本地审计](../quality/codex_backend_final_audit_20260902.md)。
 
+本阶段起点：本地 Codex Analysis Backend 已存在；Analysis Profile UI 尚待实现，真实 Codex 分析的 live evidence 尚待取得。既有 Dashboard 控制面不等于 Profile UI 已完成，也不构成真实 Codex 分析验证。
+
 ## 版本锚点
 
 | 锚点 | 类型 | 说明 |

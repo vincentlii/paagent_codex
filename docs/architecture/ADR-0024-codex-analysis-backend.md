@@ -89,8 +89,13 @@ Linux 使用独立 `pa-agent-codex` Unix 用户、独立 `CODEX_HOME` 与 worker
 ### 7. Dashboard control
 
 ADR-0023 的控制面增加唯一窄例外：Dashboard 可以请求 `desired_backend = deepseek_only | auto |
-codex_only`。它仍不能修改模型、reasoning、Prompt、AGENTS、Skills、Knowledge、Risk、资产、VPA
-或 Joint 权限。
+codex_only`，以及无凭据、allowlisted、版本化的 `AnalysisProfile`。Profile 只能选择服务端发布目录中的
+Backend 模型与该模型允许的 thinking/reasoning 组合；只能在 Headless idle boundary 应用，且 requested/effective
+Profile identity 必须冻结进 Job 与审计。
+
+初版资产、VPA Shadow 与 HTF 保持固定。除上述 Backend/Profile 例外外，其余禁止项不变：Dashboard 仍不能
+修改 API key、Base URL、Prompt、AGENTS、Skills、Knowledge、Validator、Router、Risk、Paper、任何文件路径或
+VPA/Joint 权限。
 
 切换采用 desired/applied generation：Headless 停止接收新 Snapshot，等待 in-flight Job 完成或
 超时后应用 Backend，再按切换前运行状态恢复。已有 Job 的 Backend 身份不可重标或中途混合。

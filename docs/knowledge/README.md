@@ -13,6 +13,7 @@
 | 修改 VPA/Joint | [原则与边界](principles-and-boundaries.md) → [研究与评价](research-and-evaluation.md) | [VPA 集成规范](../wyckoff_vpa_integration.md) 与 [Prompt 知识源](../../prompt_engineering/wyckoff_vpa/) |
 | 排查分析失败或降级 | [当前状态](current-status.md) → [运行与排障](operations-and-debugging.md) → [问题历史](problem-history.md) | 对应 record、audit、日志与测试 |
 | VPS 运维 | [当前状态](current-status.md) → [运行与排障](operations-and-debugging.md) → [架构图谱](architecture-map.md) | [Linux 部署文档](../linux_headless_deployment.md) 与 [ADR-0023](../architecture/ADR-0023-vps-observability-and-control-plane.md) |
+| Codex Backend、Dashboard、Runtime rules、Skills 或部署 | [Codex Analysis North Star](codex-analysis-north-star.md) → [当前状态](current-status.md) | [领域上下文](../../CONTEXT.md)、[ADR-0024](../architecture/ADR-0024-codex-analysis-backend.md) 与当前实现 |
 | 发布或研究验收 | [当前状态](current-status.md) → [研究与评价](research-and-evaluation.md) | [质量契约](../quality/acceptance.md) 与最近审计报告 |
 | 维护知识库 | [维护手册](maintenance.md) | [AGENTS.md](../../AGENTS.md) |
 
@@ -28,6 +29,7 @@
 - [运行与排障](operations-and-debugging.md)：GUI、Headless、Dashboard、Provider、数据和持久化排查。
 - [研究与评价](research-and-evaluation.md)：Shadow、Joint、A/A/B/B、Paper 和晋级标准。
 - [当前状态](current-status.md)：当前能力、证据范围、风险和下一步。
+- [Codex Analysis North Star](codex-analysis-north-star.md)：Codex/Direct Backend、Frozen Evidence、角色 authority、Analysis Profile 与评价口径的长期约束。
 - [术语索引](glossary.md)：项目术语的别名、缩写和权威定义入口。
 - [维护手册](maintenance.md)：更新触发、冲突登记、归档和完成检查。
 

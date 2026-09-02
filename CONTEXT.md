@@ -57,6 +57,9 @@ Brooks Setup、Wyckoff 量价关系、替代假设和入场时机。
 Direct LLM 与 Codex Agent 只是同一分析权限的两种 Backend。Codex 可以在 FrozenAgentJob 内按需读取
 授权 Evidence，但不能扩大数据时间边界、选择其他交易体系或改变 PA/VPA/Joint 的权限。
 
+Codex Backend、Dashboard 与 Runtime 资产的长期设计依据见
+[Codex Analysis North Star](docs/knowledge/codex-analysis-north-star.md)；它不替代本文件的领域 authority 或 ADR 的具体决策。
+
 明确写成 `K# + open/high/low/close + 数值` 的声明属于程序事实，必须与冻结快照一致；
 程序允许显示精度舍入，但不得把价格绑定到错误 K 线。未明确绑定 OHLC 字段的 swing、
 结构位、通道和 Setup 解释仍由 LLM 负责。
