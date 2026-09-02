@@ -41,6 +41,8 @@ class FrozenAnalysisPayload:
     instrument_spec: Any | None = field(default=None, compare=True, repr=False)
     analysis_backend_mode: str = "deepseek_only"
     analysis_backend_identity: Mapping[str, Any] = field(default_factory=dict)
+    analysis_profile_fingerprint: str = ""
+    analysis_profile_identity: Mapping[str, Any] = field(default_factory=dict)
 
 
 class IndependentAnalysisHandler:

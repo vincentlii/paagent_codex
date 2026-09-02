@@ -227,6 +227,64 @@ def test_production_factory_does_not_share_mutable_model_state(
     assert validator_paths == [tmp_path, tmp_path]
 
 
+def test_production_factory_applies_profile_only_to_future_direct_clients(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from pa_agent.monitoring import production
+    from pa_agent.operations.analysis_profile import AnalysisProfile
+
+    settings = Settings()
+    settings.provider.api_key = "secret-token"
+    settings.provider.base_url = "https://provider.example/v1"
+    providers: list[object] = []
+    built: list[SimpleNamespace] = []
+
+    def create_client(provider, **_kwargs):
+        providers.append(provider)
+        return SimpleNamespace(provider=provider)
+
+    monkeypatch.setattr(production, "create_ai_client", create_client)
+    monkeypatch.setattr(production, "ExperienceReader", lambda **_kwargs: object())
+    monkeypatch.setattr(production, "PromptAssembler", lambda **_kwargs: object())
+    monkeypatch.setattr(production, "JsonValidator", lambda *_args, **_kwargs: object())
+
+    class _Orchestrator:
+        def __init__(self, **kwargs):
+            built.append(SimpleNamespace(**kwargs))
+
+    monkeypatch.setattr(production, "TwoStageOrchestrator", _Orchestrator)
+    factory = production.ProductionOrchestratorFactory(
+        settings=settings,
+        pending_writer=object(),
+        prompt_dir=tmp_path,
+        experience_dir=tmp_path,
+    )
+
+    factory(_task("XAUUSD"))
+    profile = AnalysisProfile(
+        deepseek_model="deepseek-v4-pro",
+        deepseek_thinking=False,
+        deepseek_reasoning_effort="low",
+    )
+    assert factory.apply_analysis_profile(profile) is True
+    factory(_task("EURUSD", 1))
+
+    assert providers[0].model == "deepseek-v4-flash"
+    assert providers[1].model == "deepseek-v4-pro"
+    assert providers[1].thinking is False
+    assert providers[1].reasoning_effort == "low"
+    assert built[0].settings.provider.model == "deepseek-v4-flash"
+    assert built[1].settings.provider.model == "deepseek-v4-pro"
+    assert built[1].settings.prompt.vpa_mode == "shadow"
+    assert built[1].settings.general.higher_timeframe_enabled is True
+    assert built[1].settings.general.higher_timeframe_override == "4h"
+    assert built[1].settings.general.higher_timeframe_bar_count == 60
+    assert settings.provider.api_key == "secret-token"
+    assert settings.provider.base_url == "https://provider.example/v1"
+    assert settings.provider.model == "deepseek-v4-flash"
+
+
 def test_production_factory_honors_backend_frozen_on_task(
     tmp_path,
     monkeypatch,
@@ -276,7 +334,10 @@ def test_production_factory_honors_backend_frozen_on_task(
 
     assert codex_only.analysis_backend is codex_backends[0]
     assert isinstance(automatic, FullChainFallbackOrchestrator)
-    assert len(direct_clients) == 1
+    # Codex VPA evidence, auto primary evidence, and the cold Direct fallback
+    # each receive isolated mutable client state.
+    assert len(direct_clients) == 3
+    assert len({id(client) for client in direct_clients}) == 3
     assert factory.activate_backend_mode("auto") is True
 
 

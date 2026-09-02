@@ -11,8 +11,10 @@ import pytest
 from pa_agent.agent_runtime.codex_worker import (
     CodexCliConfig,
     CodexCliWorker,
+    CodexWorkerOutputError,
     CodexWorkerUnavailable,
 )
+from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from tests.unit.test_frozen_agent_job import _job
 
@@ -157,3 +159,77 @@ def test_worker_leaves_schema_judgment_to_pa_validator(tmp_path: Path) -> None:
     result = worker.run(published)
 
     assert result.content == '{"wrong":true}'
+
+
+def test_worker_uses_frozen_job_model_and_effort_and_rejects_invalid_pair(
+    tmp_path: Path,
+) -> None:
+    profile = AnalysisProfile(
+        codex_model="gpt-5.6-terra",
+        codex_reasoning_effort="xhigh",
+    )
+    identity = {
+        "model": profile.codex_model,
+        "reasoning_effort": profile.codex_reasoning_effort,
+        "profile_fingerprint": profile_fingerprint(profile),
+        "runtime_version": "runtime-v1",
+    }
+    valid_published = FrozenAgentJobStore(tmp_path / "jobs").publish(
+        _job(runtime_identity=identity)
+    )
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(command, **_kwargs):
+        captured["command"] = list(command)
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text('{"cycle":"trading_range"}', encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    worker = CodexCliWorker(
+        CodexCliConfig(
+            codex_home=tmp_path / "home",
+            runtime_root=tmp_path / "runtime",
+            outbox_root=tmp_path / "outbox",
+            model="gpt-5.6-sol",
+            reasoning_effort="low",
+        ),
+        process_runner=fake_run,
+    )
+    worker.run(valid_published)
+    command = captured["command"]
+    assert command[command.index("--model") + 1] == "gpt-5.6-terra"
+    assert 'model_reasoning_effort="xhigh"' in command
+
+    invalid_profile = AnalysisProfile(
+        codex_model="gpt-5.4-mini",
+        codex_reasoning_effort="high",
+    )
+    invalid_identity = {
+        **identity,
+        "model": invalid_profile.codex_model,
+        "reasoning_effort": "max",
+        "profile_fingerprint": profile_fingerprint(invalid_profile),
+    }
+    invalid_published = FrozenAgentJobStore(tmp_path / "jobs").publish(
+        _job(runtime_identity=invalid_identity)
+    )
+    launched = False
+
+    def should_not_run(*_args, **_kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("invalid profile must fail before launch")
+
+    invalid_worker = CodexCliWorker(
+        CodexCliConfig(
+            codex_home=tmp_path / "home-2",
+            runtime_root=tmp_path / "runtime-2",
+            outbox_root=tmp_path / "outbox-2",
+            model="gpt-5.6-sol",
+            reasoning_effort="low",
+        ),
+        process_runner=should_not_run,
+    )
+    with pytest.raises(CodexWorkerOutputError, match="model/effort"):
+        invalid_worker.run(invalid_published)
+    assert launched is False

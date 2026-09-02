@@ -80,6 +80,9 @@ class FrozenAgentJobManifest:
     runtime_version: str
     resource_digests: Mapping[str, str]
     job_digest: str
+    model: str = ""
+    reasoning_effort: str = ""
+    profile_fingerprint: str = ""
 
     def as_dict(self, *, include_job_digest: bool = True) -> dict[str, Any]:
         payload = {
@@ -93,6 +96,17 @@ class FrozenAgentJobManifest:
             "runtime_version": self.runtime_version,
             "resource_digests": dict(self.resource_digests),
         }
+        # Schema-1 jobs created before profile-bound execution did not contain
+        # these keys.  Omitting an entirely empty identity preserves their
+        # canonical digest while new jobs freeze all three controls.
+        if self.model or self.reasoning_effort or self.profile_fingerprint:
+            payload.update(
+                {
+                    "model": self.model,
+                    "reasoning_effort": self.reasoning_effort,
+                    "profile_fingerprint": self.profile_fingerprint,
+                }
+            )
         if include_job_digest:
             payload["job_digest"] = self.job_digest
         return payload
@@ -187,11 +201,26 @@ class FrozenAgentJobBuilder:
             "attempt": int(attempt),
             "messages": messages,
         }
+        runtime_identity = dict(backend_runtime_identity or {})
+        model = str(runtime_identity.get("model") or "").strip()
+        reasoning_effort = str(
+            runtime_identity.get("reasoning_effort") or ""
+        ).strip()
+        profile_fingerprint = str(
+            runtime_identity.get("profile_fingerprint")
+            or runtime_identity.get("analysis_profile_fingerprint")
+            or ""
+        ).strip().lower()
+        if profile_fingerprint:
+            _require_digest(profile_fingerprint, "profile_fingerprint")
         runtime = {
             "runtime_version": self._runtime_version,
             "agents_text": self._agents_text,
             "skills": self._role_skills(role),
-            "backend_runtime_identity": dict(backend_runtime_identity or {}),
+            "backend_runtime_identity": runtime_identity,
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+            "profile_fingerprint": profile_fingerprint,
         }
         resources = {
             "request.json": request,
@@ -217,6 +246,14 @@ class FrozenAgentJobBuilder:
             "runtime_version": self._runtime_version,
             "resource_digests": resource_digests,
         }
+        if model or reasoning_effort or profile_fingerprint:
+            unsigned.update(
+                {
+                    "model": model,
+                    "reasoning_effort": reasoning_effort,
+                    "profile_fingerprint": profile_fingerprint,
+                }
+            )
         job_digest = _sha256_bytes(_canonical_bytes(unsigned))
         manifest = FrozenAgentJobManifest(
             **unsigned,
@@ -374,6 +411,13 @@ class FrozenAgentJobStore:
             runtime_version=str(raw["runtime_version"]),
             resource_digests=MappingProxyType(resource_digests),
             job_digest=_require_digest(raw["job_digest"], "job_digest"),
+            model=str(raw.get("model") or "").strip(),
+            reasoning_effort=str(raw.get("reasoning_effort") or "").strip(),
+            profile_fingerprint=str(
+                raw.get("profile_fingerprint")
+                or raw.get("analysis_profile_fingerprint")
+                or ""
+            ).strip().lower(),
         )
 
     @staticmethod

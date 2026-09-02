@@ -11,6 +11,7 @@ from pa_agent.agent_runtime.frozen_job import (
     FrozenAgentJobStore,
     JobIntegrityError,
 )
+from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 
 
 def _builder() -> FrozenAgentJobBuilder:
@@ -166,3 +167,39 @@ def test_manifest_is_canonical_json_without_absolute_paths(tmp_path: Path) -> No
     assert raw["schema_version"] == 1
     assert raw["resource_digests"]["facts.json"]
     assert str(tmp_path) not in json.dumps(raw)
+
+
+def test_job_manifest_and_runtime_freeze_profile_model_and_effort() -> None:
+    profile = AnalysisProfile(
+        codex_model="gpt-5.6-terra",
+        codex_reasoning_effort="xhigh",
+    )
+    identity = {
+        "model": profile.codex_model,
+        "reasoning_effort": profile.codex_reasoning_effort,
+        "profile_fingerprint": profile_fingerprint(profile),
+        "runtime_version": "runtime-v1",
+    }
+    job = _builder().build(
+        task_id="task-1",
+        request_id="request-1",
+        role="stage1",
+        attempt=1,
+        snapshot_hash="a" * 64,
+        cutoff_ts_open=1_725_000_000_000,
+        messages=[{"role": "user", "content": "diagnose"}],
+        output_schema={"type": "object"},
+        fact_projection={"snapshot_hash": "a" * 64, "facts": [], "relations": []},
+        bars=[{"seq": 1, "ts_open": 1_725_000_000_000}],
+        knowledge_documents={},
+        allowed_knowledge_ids=(),
+        budget=AgentJobBudget(),
+        backend_runtime_identity=identity,
+    )
+
+    assert job.manifest.model == "gpt-5.6-terra"
+    assert job.manifest.reasoning_effort == "xhigh"
+    assert job.manifest.profile_fingerprint == profile_fingerprint(profile)
+    assert job.runtime["model"] == "gpt-5.6-terra"
+    assert job.runtime["reasoning_effort"] == "xhigh"
+    assert job.runtime["profile_fingerprint"] == profile_fingerprint(profile)

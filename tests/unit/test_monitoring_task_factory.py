@@ -12,6 +12,7 @@ from pa_agent.monitoring.task_factory import (
     create_frozen_analysis_task,
 )
 from pa_agent.quality.runtime_fingerprint import loaded_validation_fingerprint
+from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 
 
 def test_loaded_validation_fingerprint_is_stable_and_content_addressed() -> None:
@@ -300,3 +301,32 @@ def test_backend_mode_is_frozen_into_payload_and_cohort() -> None:
         analysis_backend_identity={"model": "gpt-test-2", "runtime_version": "v1"},
     )
     assert changed_runtime.cohort_id != codex.cohort_id
+
+
+def test_profile_identity_is_frozen_into_codex_task() -> None:
+    profile = AnalysisProfile(
+        codex_model="gpt-5.6-terra",
+        codex_reasoning_effort="xhigh",
+    )
+    identity = {
+        "model": profile.codex_model,
+        "reasoning_effort": profile.codex_reasoning_effort,
+        "profile_fingerprint": profile_fingerprint(profile),
+        "runtime_version": "runtime-v1",
+    }
+    task = create_frozen_analysis_task(
+        _frame(),
+        None,
+        Settings(),
+        source="tradingview",
+        venue="OANDA",
+        analysis_fingerprint="a" * 64,
+        analysis_backend_mode="codex_only",
+        analysis_backend_identity=identity,
+        analysis_profile=profile,
+    )
+
+    assert task.payload.analysis_profile_fingerprint == profile_fingerprint(profile)
+    assert task.payload.analysis_profile_identity["codex_model"] == "gpt-5.6-terra"
+    assert task.payload.analysis_backend_identity["model"] == "gpt-5.6-terra"
+    assert task.payload.analysis_backend_identity["profile_fingerprint"] == profile_fingerprint(profile)

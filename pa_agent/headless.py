@@ -351,6 +351,7 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
         ),
         paper_execution=paper_execution,
         backend_switcher=orchestrator_factory.activate_backend_mode,
+        profile_applier=orchestrator_factory.apply_analysis_profile,
         backend_runtime_identity=(
             codex_config.public_runtime_identity()
             if codex_config.enabled

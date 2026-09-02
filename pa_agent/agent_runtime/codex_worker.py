@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJob, FrozenAgentJobStore
 from pa_agent.ai.deepseek_client import AIUsage
+from pa_agent.operations.analysis_profile import analysis_capabilities
 
 _ROLE_SKILL_NAMES = {
     "stage1": "pa-stage1-analysis",
@@ -22,7 +23,7 @@ _ROLE_SKILL_NAMES = {
     "vpa_evidence": "pa-vpa-evidence",
     "joint_arbiter": "pa-joint-arbiter",
 }
-_EFFORTS = frozenset({"minimal", "low", "medium", "high", "xhigh"})
+_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
 class CodexWorkerError(RuntimeError):
@@ -58,15 +59,13 @@ class CodexCliConfig:
     codex_home: Path
     runtime_root: Path
     outbox_root: Path
-    model: str
-    reasoning_effort: str
+    model: str = ""
+    reasoning_effort: str = ""
     codex_binary: str = "codex"
     python_executable: str = sys.executable
 
     def __post_init__(self) -> None:
-        if not str(self.model or "").strip():
-            raise ValueError("Codex model is required")
-        if self.reasoning_effort not in _EFFORTS:
+        if self.reasoning_effort and self.reasoning_effort not in _EFFORTS:
             raise ValueError("unsupported Codex reasoning effort")
 
 
@@ -78,6 +77,9 @@ class CodexWorkerResult:
     latency_ms: float
     evidence_events: tuple[dict[str, Any], ...]
     outbox_path: Path
+    model: str = ""
+    reasoning_effort: str = ""
+    profile_fingerprint: str = ""
 
 
 class CodexCliWorker:
@@ -95,6 +97,7 @@ class CodexCliWorker:
     def run(self, published_job: str | Path) -> CodexWorkerResult:
         published = Path(published_job).resolve()
         job = FrozenAgentJobStore(published.parent).open(published.name)
+        model, reasoning_effort, profile_fingerprint = self._execution_identity(job)
         self._prepare_roots()
         run_id = uuid4().hex
         workspace = self._config.runtime_root / f"{job.manifest.job_digest}-{run_id}"
@@ -111,6 +114,8 @@ class CodexCliWorker:
                 schema_path=schema_path,
                 output_path=output_tmp,
                 audit_path=audit_tmp,
+                model=model,
+                reasoning_effort=reasoning_effort,
             )
             environment = self._environment()
             try:
@@ -173,6 +178,9 @@ class CodexCliWorker:
                 latency_ms=latency_ms,
                 evidence_events=evidence_events,
                 outbox_path=final_path,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                profile_fingerprint=profile_fingerprint,
             )
         finally:
             output_tmp.unlink(missing_ok=True)
@@ -183,6 +191,61 @@ class CodexCliWorker:
         self._config.codex_home.mkdir(parents=True, exist_ok=True)
         self._config.runtime_root.mkdir(parents=True, exist_ok=True)
         self._config.outbox_root.mkdir(parents=True, exist_ok=True)
+
+    def _execution_identity(
+        self,
+        job: FrozenAgentJob,
+    ) -> tuple[str, str, str]:
+        """Resolve and validate model controls from the immutable job bundle."""
+        runtime = dict(job.runtime.get("backend_runtime_identity") or {})
+        manifest_model = str(job.manifest.model or "").strip()
+        manifest_effort = str(job.manifest.reasoning_effort or "").strip()
+        runtime_model = str(runtime.get("model") or "").strip()
+        runtime_effort = str(runtime.get("reasoning_effort") or "").strip()
+        profile_fp = str(
+            job.manifest.profile_fingerprint
+            or runtime.get("profile_fingerprint")
+            or runtime.get("analysis_profile_fingerprint")
+            or ""
+        ).strip().lower()
+        if profile_fp:
+            if len(profile_fp) != 64 or any(
+                character not in "0123456789abcdef" for character in profile_fp
+            ):
+                raise CodexWorkerOutputError(
+                    "frozen job profile fingerprint is invalid"
+                )
+            model = manifest_model or runtime_model
+            effort = manifest_effort or runtime_effort
+            if not model or not effort:
+                raise CodexWorkerOutputError(
+                    "frozen job model/effort identity is incomplete"
+                )
+            if manifest_model and runtime_model and manifest_model != runtime_model:
+                raise CodexWorkerOutputError("frozen job model identity mismatch")
+            if manifest_effort and runtime_effort and manifest_effort != runtime_effort:
+                raise CodexWorkerOutputError(
+                    "frozen job reasoning effort identity mismatch"
+                )
+            models = {
+                str(item["id"]): tuple(str(value) for value in item["efforts"])
+                for item in analysis_capabilities()["codex_models"]
+            }
+            if model not in models or effort not in models[model]:
+                raise CodexWorkerOutputError(
+                    "invalid frozen job model/effort pair"
+                )
+            return model, effort, profile_fp
+
+        # Legacy jobs predate profile-bound execution. Keep them runnable for
+        # migration, but never let an unvalidated profile job take this path.
+        model = str(self._config.model or "").strip()
+        effort = str(self._config.reasoning_effort or "").strip()
+        if not model or not effort:
+            raise CodexWorkerOutputError(
+                "Codex model/effort is missing from frozen job and worker defaults"
+            )
+        return model, effort, ""
 
     @staticmethod
     def _materialize_workspace(workspace: Path, job: FrozenAgentJob) -> Path:
@@ -230,6 +293,8 @@ class CodexCliWorker:
         schema_path: Path,
         output_path: Path,
         audit_path: Path,
+        model: str,
+        reasoning_effort: str,
     ) -> list[str]:
         mcp_args = [
             "-B",
@@ -245,7 +310,7 @@ class CodexCliWorker:
         prompt = self._initial_prompt(job)
         config_values = [
             'forced_login_method="chatgpt"',
-            f'model_reasoning_effort="{self._config.reasoning_effort}"',
+            f'model_reasoning_effort="{reasoning_effort}"',
             'web_search="disabled"',
             "features.shell_tool=false",
             "features.skill_mcp_dependency_install=false",
@@ -274,7 +339,7 @@ class CodexCliWorker:
             "--skip-git-repo-check",
             "--json",
             "--model",
-            self._config.model,
+            model,
             "--cd",
             str(workspace),
             "--output-schema",

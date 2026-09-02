@@ -13,6 +13,7 @@ from pa_agent.data.instrument import InstrumentSpec
 from pa_agent.monitoring.analysis_runner import AnalysisRunResult
 from pa_agent.monitoring.headless import HeadlessMonitor
 from pa_agent.monitoring.scheduler import JobCompletion, SubmissionResult
+from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 
 
 class _Source:
@@ -220,10 +221,12 @@ def _monitor(
     tmp_path,
     *,
     run_on_startup: bool = True,
+    settings=None,
     source=None,
     source_factory=None,
     audit=None,
     paper_execution=None,
+    profile_applier=None,
 ):
     source = source or _Source()
     audit = audit or _Audit()
@@ -236,7 +239,7 @@ def _monitor(
         return service
 
     monitor = HeadlessMonitor(
-        settings=_settings(run_on_startup=run_on_startup),
+        settings=settings or _settings(run_on_startup=run_on_startup),
         paths=resolve_runtime_paths(
             project_root=tmp_path,
             environ={"PA_AGENT_HOME": str(tmp_path / "state")},
@@ -248,6 +251,7 @@ def _monitor(
         monotonic=clock.monotonic,
         wall_time_ms=clock.now_ms,
         paper_execution=paper_execution,
+        profile_applier=profile_applier,
     )
     return monitor, source, audit, holder["service"], clock
 
@@ -709,6 +713,239 @@ def test_backend_control_applies_only_after_scheduler_is_idle(tmp_path) -> None:
     assert applied == ["auto"]
     assert monitor._applied_control_generation == 4
     assert monitor.runtime_snapshot(paused=False)["mode"]["analysis_backend"] == "auto"
+
+
+def test_pending_profile_blocks_while_scheduler_is_active(tmp_path) -> None:
+    applied: list[AnalysisProfile] = []
+    monitor, _source, _audit, service, _clock = _monitor(
+        tmp_path,
+        profile_applier=lambda profile: applied.append(profile) or True,
+    )
+    service.wait_idle = lambda _timeout=None: False
+    profile = AnalysisProfile(deepseek_model="deepseek-v4-pro")
+    control = SimpleNamespace(
+        desired_state="running",
+        desired_backend="deepseek_only",
+        analysis_profile=profile,
+        profile_fingerprint=profile_fingerprint(profile),
+        profile_generation=1,
+        run_once_generation=0,
+        generation=1,
+        error=None,
+    )
+
+    paused, error = monitor._apply_control(control)
+
+    assert paused is True
+    assert error == "analysis_profile_pending"
+    assert applied == []
+    assert monitor.runtime_snapshot(paused=True)["applied_profile_generation"] == 0
+    monitor.shutdown()
+
+
+def test_stale_profile_generation_is_not_applied(tmp_path) -> None:
+    applied: list[AnalysisProfile] = []
+    monitor, _source, _audit, _service, _clock = _monitor(
+        tmp_path,
+        profile_applier=lambda profile: applied.append(profile) or True,
+    )
+    profile = AnalysisProfile(deepseek_model="deepseek-v4-pro")
+
+    class _ControlStore:
+        @staticmethod
+        def read():
+            return SimpleNamespace(
+                desired_state="paused",
+                desired_backend="deepseek_only",
+                analysis_profile=profile,
+                profile_fingerprint=profile_fingerprint(profile),
+                profile_generation=2,
+                run_once_generation=0,
+                generation=2,
+                error=None,
+            )
+
+    monitor._control_store = _ControlStore()
+    control = SimpleNamespace(
+        desired_state="paused",
+        desired_backend="deepseek_only",
+        analysis_profile=profile,
+        profile_fingerprint=profile_fingerprint(profile),
+        profile_generation=1,
+        run_once_generation=0,
+        generation=1,
+        error=None,
+    )
+
+    paused, error = monitor._apply_control(control, verify_latest=True)
+
+    assert paused is True
+    assert error == "analysis_profile_pending"
+    assert applied == []
+    monitor.shutdown()
+
+
+def test_run_once_submits_once_while_paused_and_projects_consumed_generation(
+    tmp_path,
+) -> None:
+    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+    profile = AnalysisProfile()
+    control = SimpleNamespace(
+        desired_state="paused",
+        desired_backend="deepseek_only",
+        analysis_profile=profile,
+        profile_fingerprint=profile_fingerprint(profile),
+        profile_generation=0,
+        run_once_generation=1,
+        generation=1,
+        error=None,
+    )
+
+    paused, error = monitor._apply_control(control)
+    assert paused is True
+    assert error is None
+    assert len(service.submitted) == 1
+    assert monitor.runtime_snapshot(paused=True)["run_once_consumed_generation"] == 1
+
+    paused, error = monitor._apply_control(control)
+    assert paused is True
+    assert error is None
+    assert len(service.submitted) == 1
+    monitor.shutdown()
+
+
+def test_run_once_rejects_duplicate_and_inflight_requests(tmp_path) -> None:
+    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+    profile = AnalysisProfile()
+    base = {
+        "desired_state": "paused",
+        "desired_backend": "deepseek_only",
+        "analysis_profile": profile,
+        "profile_fingerprint": profile_fingerprint(profile),
+        "profile_generation": 0,
+        "error": None,
+    }
+    first = SimpleNamespace(**base, run_once_generation=1, generation=1)
+    monitor._apply_control(first)
+    before = len(service.submitted)
+
+    service.wait_idle = lambda _timeout=None: False
+    pending = SimpleNamespace(**base, run_once_generation=2, generation=2)
+    paused, error = monitor._apply_control(pending)
+
+    assert paused is True
+    assert error == "run_once_in_flight"
+    assert len(service.submitted) == before
+    monitor.shutdown()
+
+
+def test_run_once_allows_at_most_one_submission_across_assets(tmp_path) -> None:
+    settings = _settings()
+    second = settings.monitoring.assets[0].model_copy(update={"symbol": "XAGUSD"})
+    settings.monitoring.assets.append(second)
+    monitor, _source, _audit, service, _clock = _monitor(
+        tmp_path,
+        settings=settings,
+    )
+    profile = AnalysisProfile()
+    control = SimpleNamespace(
+        desired_state="paused",
+        desired_backend="deepseek_only",
+        analysis_profile=profile,
+        profile_fingerprint=profile_fingerprint(profile),
+        profile_generation=0,
+        run_once_generation=1,
+        generation=1,
+        error=None,
+    )
+
+    paused, error = monitor._apply_control(control)
+
+    assert paused is True
+    assert error is None
+    assert len(service.submitted) == 1
+    monitor.shutdown()
+
+
+def test_run_once_is_not_consumed_when_scheduler_rejects_submission(tmp_path) -> None:
+    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+    service.submit = lambda task: SubmissionResult(
+        "queue_full",
+        task.task_id,
+        task.asset_key,
+    )
+    profile = AnalysisProfile()
+    control = SimpleNamespace(
+        desired_state="paused",
+        desired_backend="deepseek_only",
+        analysis_profile=profile,
+        profile_fingerprint=profile_fingerprint(profile),
+        profile_generation=0,
+        run_once_generation=1,
+        generation=1,
+        error=None,
+    )
+
+    paused, error = monitor._apply_control(control)
+
+    assert paused is True
+    assert error == "run_once_not_submitted"
+    assert monitor.runtime_snapshot(paused=True)["run_once_consumed_generation"] == 0
+    monitor.shutdown()
+
+
+def test_run_once_is_not_consumed_when_poll_raises(tmp_path) -> None:
+    monitor, _source, _audit, _service, _clock = _monitor(tmp_path)
+    monitor.poll_once = lambda **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("poll failed")
+    )
+    profile = AnalysisProfile()
+    control = SimpleNamespace(
+        desired_state="paused",
+        desired_backend="deepseek_only",
+        analysis_profile=profile,
+        profile_fingerprint=profile_fingerprint(profile),
+        profile_generation=0,
+        run_once_generation=1,
+        generation=1,
+        error=None,
+    )
+
+    paused, error = monitor._apply_control(control)
+
+    assert paused is True
+    assert error == "run_once_failed"
+    assert monitor.runtime_snapshot(paused=True)["run_once_consumed_generation"] == 0
+    monitor.shutdown()
+
+
+def test_run_once_consumed_generation_survives_service_restart(tmp_path) -> None:
+    profile = AnalysisProfile()
+    control = SimpleNamespace(
+        desired_state="paused",
+        desired_backend="deepseek_only",
+        analysis_profile=profile,
+        profile_fingerprint=profile_fingerprint(profile),
+        profile_generation=0,
+        run_once_generation=1,
+        generation=1,
+        error=None,
+    )
+    first, _source, _audit, first_service, _clock = _monitor(tmp_path)
+    first._apply_control(control)
+    assert len(first_service.submitted) == 1
+    first.shutdown()
+
+    restarted, _source, _audit, restarted_service, _clock = _monitor(tmp_path)
+    paused, error = restarted._apply_control(control)
+
+    assert paused is True
+    assert error is None
+    assert restarted.runtime_snapshot(paused=True)[
+        "run_once_consumed_generation"
+    ] == 1
+    assert restarted_service.submitted == []
+    restarted.shutdown()
 
 
 def test_unavailable_backend_control_fails_closed(tmp_path) -> None:

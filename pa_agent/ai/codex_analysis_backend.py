@@ -230,13 +230,19 @@ class CodexAnalysisRoleBackend:
             "role": request.role,
             "provider_id": "openai_codex",
             "structured_output_mode": "json_schema",
+            "requested_model": job.manifest.model
+            or self._runtime_identity.get("model"),
+            "effective_model": job.manifest.model
+            or self._runtime_identity.get("model"),
+            "profile_fingerprint": job.manifest.profile_fingerprint
+            or self._runtime_identity.get("profile_fingerprint")
+            or self._runtime_identity.get("analysis_profile_fingerprint"),
             "requested_thinking": request.thinking,
             "requested_reasoning_effort": request.reasoning_effort,
             "effective_thinking": True,
-            "effective_reasoning_effort": self._runtime_identity.get(
-                "reasoning_effort", request.reasoning_effort
-            ),
-            "model": self._runtime_identity.get("model"),
+            "effective_reasoning_effort": job.manifest.reasoning_effort
+            or self._runtime_identity.get("reasoning_effort", request.reasoning_effort),
+            "model": job.manifest.model or self._runtime_identity.get("model"),
             "runtime_version": self._runtime_identity.get("runtime_version"),
             "provider_fallback_used": False,
             "transport_attempts": [attempt_meta],

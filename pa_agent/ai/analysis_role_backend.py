@@ -62,11 +62,13 @@ class DirectAnalysisRoleBackend:
         client: Any,
         settings: Any,
         allow_provider_fallback: bool = True,
+        profile_identity: Mapping[str, Any] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._client = client
         self._settings = settings
         self._allow_provider_fallback = bool(allow_provider_fallback)
+        self._profile_identity = dict(profile_identity or {})
         self._logger = logger or logging.getLogger(__name__)
 
     @property
@@ -77,6 +79,11 @@ class DirectAnalysisRoleBackend:
     def client(self) -> Any:
         """Expose the owned client identity for assembly and isolation checks."""
         return self._client
+
+    @property
+    def runtime_identity(self) -> dict[str, Any]:
+        """Expose the profile identity frozen into the owning task."""
+        return dict(self._profile_identity)
 
     def run(
         self,
@@ -215,6 +222,11 @@ class DirectAnalysisRoleBackend:
             "analysis_backend": self.backend_id,
             "role": request.role,
             "provider_id": provider_id,
+            "model": getattr(provider, "model", None),
+            "requested_model": self._profile_identity.get(
+                "deepseek_model", getattr(provider, "model", None)
+            ),
+            "effective_model": getattr(provider, "model", None),
             "structured_output_mode": result.structured_output_mode,
             "requested_thinking": last_attempt.get("requested_thinking"),
             "requested_reasoning_effort": last_attempt.get(
@@ -226,6 +238,9 @@ class DirectAnalysisRoleBackend:
             ),
             "thinking": last_attempt.get("thinking"),
             "reasoning_effort": last_attempt.get("reasoning_effort"),
+            "profile_fingerprint": self._profile_identity.get(
+                "profile_fingerprint"
+            ),
             "provider_fallback_used": provider_fallback_used,
             "transport_attempts": transport_attempts,
         }

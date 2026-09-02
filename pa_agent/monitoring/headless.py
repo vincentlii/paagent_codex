@@ -12,7 +12,7 @@ from typing import Any
 
 from pa_agent.config.paths import RuntimePaths
 from pa_agent.config.settings import MonitoringAssetSettings, Settings
-from pa_agent.config.vpa import resolve_production_vpa_mode, vpa_is_enabled
+from pa_agent.config.vpa import vpa_is_enabled
 from pa_agent.data.factory import (
     resolved_identity_for_source,
     volume_metadata_for_source,
@@ -27,6 +27,11 @@ from pa_agent.data.volume_context import merge_bar_history, snapshot_fetch_count
 from pa_agent.monitoring.scheduler import AnalysisTask, JobCompletion
 from pa_agent.monitoring.task_factory import create_frozen_analysis_task, frame_snapshot_hash
 from pa_agent.operations.projection import build_review_projection
+from pa_agent.operations.analysis_profile import (
+    AnalysisProfile,
+    profile_fingerprint,
+    validate_analysis_profile,
+)
 from pa_agent.operations.runtime_state import RuntimeControlStore, RuntimeStatusStore
 from pa_agent.records.analysis_history import (
     compute_incremental_bar_delta,
@@ -85,6 +90,7 @@ class HeadlessMonitor:
         status_store: RuntimeStatusStore | None = None,
         backend_switcher: Callable[[str], bool] | None = None,
         backend_runtime_identity: Mapping[str, Any] | None = None,
+        profile_applier: Callable[[AnalysisProfile], bool] | None = None,
     ) -> None:
         self._settings = settings
         self._paths = paths
@@ -101,10 +107,27 @@ class HeadlessMonitor:
         self._review_projection_at_ms = 0
         self._applied_control_generation = 0
         self._applied_backend = "deepseek_only"
+        self._applied_profile = AnalysisProfile()
+        self._applied_profile_fingerprint = profile_fingerprint(self._applied_profile)
+        self._applied_profile_generation = 0
+        persisted_status = self._status_store.read() or {}
+        persisted_consumed = persisted_status.get(
+            "run_once_consumed_generation",
+            persisted_status.get("consumed_run_once_generation", 0),
+        )
+        self._consumed_run_once_generation = (
+            int(persisted_consumed)
+            if isinstance(persisted_consumed, int)
+            and not isinstance(persisted_consumed, bool)
+            and persisted_consumed >= 0
+            else 0
+        )
+        self._run_once_in_flight_generation: int | None = None
         self._backend_switcher = backend_switcher or (
             lambda mode: mode == "deepseek_only"
         )
         self._backend_runtime_identity = dict(backend_runtime_identity or {})
+        self._profile_applier = profile_applier or (lambda _profile: True)
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._closed = False
@@ -136,6 +159,7 @@ class HeadlessMonitor:
         self,
         *,
         submission_allowed: Callable[[], bool] | None = None,
+        max_submissions: int | None = None,
     ) -> PollCycleResult:
         """Fetch every eligible asset once and enqueue accepted snapshots."""
         with self._lock:
@@ -166,6 +190,9 @@ class HeadlessMonitor:
                     self._record_fetch_failure(state, exc)
                     continue
                 prepared += 1
+                if max_submissions is not None and accepted >= max_submissions:
+                    skipped += 1
+                    continue
                 if submission_allowed is not None and not submission_allowed():
                     skipped += 1
                     continue
@@ -220,7 +247,7 @@ class HeadlessMonitor:
         *,
         verify_latest: bool = False,
     ) -> tuple[bool, str | None]:
-        """Apply one desired state only at an idle backend boundary."""
+        """Apply backend/profile controls and one-shots at an idle boundary."""
         desired_state = str(getattr(control, "desired_state", "paused"))
         desired_backend = str(
             getattr(control, "desired_backend", "deepseek_only")
@@ -229,46 +256,208 @@ class HeadlessMonitor:
         error = getattr(control, "error", None)
         if error:
             return True, str(error)
-        if desired_backend != self._applied_backend:
-            if not self._service.wait_idle(0):
-                return True, "backend_switch_draining"
-            if verify_latest:
-                latest = self._control_store.read()
-                if (
-                    int(getattr(latest, "generation", 0))
-                    != int(getattr(control, "generation", 0))
-                    or str(
-                        getattr(latest, "desired_backend", "deepseek_only")
-                        or "deepseek_only"
-                    )
-                    != desired_backend
-                ):
-                    return True, "backend_switch_pending"
-            try:
-                switched = bool(self._backend_switcher(desired_backend))
-            except Exception:
-                logger.exception("Analysis backend switch failed")
-                switched = False
-            if not switched:
-                return True, "backend_unavailable"
-            self._applied_backend = desired_backend
-            with self._lock:
-                for state in self._states:
-                    state.prepared_task = None
-                    state.prepared_closed_bar_ts = None
-                    state.prepared_frame_hash = None
+        desired_profile = self._desired_profile(control)
+        profile_pending = desired_profile is not None and (
+            int(getattr(control, "profile_generation", 0))
+            != self._applied_profile_generation
+            or str(
+                getattr(control, "profile_fingerprint", "")
+                or profile_fingerprint(desired_profile)
+            ).strip().lower()
+            != self._applied_profile_fingerprint
+        )
+        backend_pending = desired_backend != self._applied_backend
+        identity_pending = profile_pending or backend_pending
+        profile_applied = False
+        backend_applied = False
+
+        if identity_pending:
+            if not self._scheduler_is_idle():
+                return True, (
+                    "analysis_profile_pending"
+                    if profile_pending
+                    else "backend_switch_draining"
+                )
+            if verify_latest and not self._control_is_latest(
+                control,
+                desired_backend=desired_backend,
+                desired_profile=desired_profile,
+            ):
+                return True, (
+                    "analysis_profile_pending"
+                    if profile_pending
+                    else "backend_switch_pending"
+                )
+            if profile_pending:
+                assert desired_profile is not None
+                try:
+                    applied = bool(self._profile_applier(desired_profile))
+                except Exception:
+                    logger.exception("Analysis profile application failed")
+                    applied = False
+                if not applied:
+                    return True, "analysis_profile_unavailable"
+                self._applied_profile = desired_profile
+                self._applied_profile_fingerprint = profile_fingerprint(
+                    desired_profile
+                )
+                self._applied_profile_generation = int(
+                    getattr(control, "profile_generation", 0)
+                )
+                profile_applied = True
+                self._clear_prepared_tasks()
+            if backend_pending:
+                try:
+                    switched = bool(self._backend_switcher(desired_backend))
+                except Exception:
+                    logger.exception("Analysis backend switch failed")
+                    switched = False
+                if not switched:
+                    return True, "backend_unavailable"
+                self._applied_backend = desired_backend
+                backend_applied = True
+                self._clear_prepared_tasks()
         self._applied_control_generation = int(getattr(control, "generation", 0))
+        run_once_generation = int(getattr(control, "run_once_generation", 0) or 0)
+        if run_once_generation > self._consumed_run_once_generation:
+            if profile_applied or backend_applied:
+                return True, (
+                    "analysis_profile_pending"
+                    if profile_applied
+                    else "backend_switch_pending"
+                )
+            if desired_state != "paused":
+                return True, "run_once_requires_paused"
+            if not self._scheduler_is_healthy_and_idle():
+                return True, "run_once_in_flight"
+            if verify_latest and not self._control_is_latest(
+                control,
+                desired_backend=desired_backend,
+                desired_profile=desired_profile,
+            ):
+                return True, "run_once_pending"
+            self._run_once_in_flight_generation = run_once_generation
+            try:
+                result = self.poll_once(
+                    submission_allowed=lambda: True,
+                    max_submissions=1,
+                )
+            except Exception:
+                logger.exception("Run-once analysis opportunity failed")
+                self._run_once_in_flight_generation = None
+                return True, "run_once_failed"
+            if result.accepted != 1:
+                self._run_once_in_flight_generation = None
+                return True, "run_once_not_submitted"
+            self._consumed_run_once_generation = run_once_generation
+            self._run_once_in_flight_generation = None
+            # Persist the acknowledgement immediately, before the next
+            # heartbeat, so a service restart cannot replay the generation.
+            self._publish_runtime_status(paused=True)
         return desired_state == "paused", None
+
+    @staticmethod
+    def _desired_profile(control: Any) -> AnalysisProfile | None:
+        raw = getattr(control, "analysis_profile", None)
+        if raw is None:
+            return None
+        try:
+            return validate_analysis_profile(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _scheduler_is_idle(self) -> bool:
+        try:
+            if not bool(self._service.wait_idle(0)):
+                return False
+        except Exception:
+            return False
+        with self._lock:
+            return not self._data_futures
+
+    def _scheduler_is_healthy_and_idle(self) -> bool:
+        if not self._scheduler_is_idle():
+            return False
+        with self._lock:
+            if any(state.in_flight_task_id is not None for state in self._states):
+                return False
+        try:
+            snapshot = self._service.snapshot()
+        except Exception:
+            return False
+        if not isinstance(snapshot, Mapping):
+            return True
+        return not bool(snapshot.get("closed")) and not bool(
+            snapshot.get("error")
+        )
+
+    def _control_is_latest(
+        self,
+        control: Any,
+        *,
+        desired_backend: str,
+        desired_profile: AnalysisProfile | None,
+    ) -> bool:
+        latest = self._control_store.read()
+        if int(getattr(latest, "generation", 0)) != int(
+            getattr(control, "generation", 0)
+        ):
+            return False
+        if str(
+            getattr(latest, "desired_backend", "deepseek_only")
+            or "deepseek_only"
+        ) != desired_backend:
+            return False
+        if desired_profile is not None:
+            latest_profile = self._desired_profile(latest)
+            if latest_profile is None or latest_profile != desired_profile:
+                return False
+            if int(getattr(latest, "profile_generation", 0)) != int(
+                getattr(control, "profile_generation", 0)
+            ):
+                return False
+            latest_fp = str(
+                getattr(latest, "profile_fingerprint", "")
+                or profile_fingerprint(latest_profile)
+            ).strip().lower()
+            expected_fp = str(
+                getattr(control, "profile_fingerprint", "")
+                or profile_fingerprint(desired_profile)
+            ).strip().lower()
+            if latest_fp != expected_fp:
+                return False
+        return True
+
+    def _clear_prepared_tasks(self) -> None:
+        with self._lock:
+            for state in self._states:
+                state.prepared_task = None
+                state.prepared_closed_bar_ts = None
+                state.prepared_frame_hash = None
 
     def _submission_matches_applied_control(self) -> bool:
         control = self._control_store.read()
-        return (
+        backend_matches = (
             getattr(control, "desired_state", "paused") == "running"
             and str(
                 getattr(control, "desired_backend", "deepseek_only")
                 or "deepseek_only"
             )
             == self._applied_backend
+        )
+        if not backend_matches:
+            return False
+        desired_profile = self._desired_profile(control)
+        if desired_profile is None:
+            return not hasattr(control, "analysis_profile")
+        return (
+            int(getattr(control, "profile_generation", 0))
+            == self._applied_profile_generation
+            and str(
+                getattr(control, "profile_fingerprint", "")
+                or profile_fingerprint(desired_profile)
+            ).strip().lower()
+            == self._applied_profile_fingerprint
         )
 
     def runtime_snapshot(
@@ -302,8 +491,13 @@ class HeadlessMonitor:
                 int(float(self._settings.monitoring.poll_interval_seconds) * 2 + 15),
             ),
             "applied_control_generation": self._applied_control_generation,
+            "applied_profile": self._applied_profile.model_dump(mode="json"),
+            "applied_profile_fingerprint": self._applied_profile_fingerprint,
+            "applied_profile_generation": self._applied_profile_generation,
+            "run_once_consumed_generation": self._consumed_run_once_generation,
+            "consumed_run_once_generation": self._consumed_run_once_generation,
             "mode": {
-                "vpa": resolve_production_vpa_mode(self._settings.prompt),
+                "vpa": self._applied_profile.vpa_mode,
                 "paper_trading": bool(self._settings.paper_trading.enabled),
                 "decision_stance": self._settings.general.decision_stance,
                 "analysis_backend": self._applied_backend,
@@ -596,10 +790,17 @@ class HeadlessMonitor:
             instrument_spec=spec,
             analysis_backend_mode=self._applied_backend,
             analysis_backend_identity=(
-                self._backend_runtime_identity
+                {
+                    **self._backend_runtime_identity,
+                    "model": self._applied_profile.codex_model,
+                    "reasoning_effort": self._applied_profile.codex_reasoning_effort,
+                    "profile_fingerprint": self._applied_profile_fingerprint,
+                }
                 if self._applied_backend != "deepseek_only"
                 else None
             ),
+            analysis_profile=self._applied_profile,
+            analysis_profile_fingerprint=self._applied_profile_fingerprint,
         )
         with self._lock:
             state.fetch_failures = 0

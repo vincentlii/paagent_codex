@@ -734,6 +734,7 @@ class TwoStageOrchestrator:
         allow_provider_fallback: bool = True,
         defer_execution_policy: bool = False,
         allow_research_joint: bool = False,
+        profile_identity: dict[str, Any] | None = None,
     ) -> None:
         assembler_tree = getattr(assembler, "decision_tree_path", None)
         validator_tree = getattr(validator, "decision_tree_path", None)
@@ -757,9 +758,11 @@ class TwoStageOrchestrator:
         self._analysis_backend = analysis_backend or DirectAnalysisRoleBackend(
             client=client,
             settings=settings,
+            profile_identity=profile_identity,
             allow_provider_fallback=allow_provider_fallback,
             logger=logger,
         )
+        self._profile_identity = dict(profile_identity or {})
         self._call_arm = call_arm
         self._allow_provider_fallback = allow_provider_fallback
         self._defer_execution_policy = defer_execution_policy
@@ -917,6 +920,15 @@ class TwoStageOrchestrator:
                     "analysis_backend": self._analysis_backend.backend_id,
                     "analysis_backend_identity": copy.deepcopy(
                         dict(backend_runtime_identity or {})
+                    ),
+                    "analysis_profile_fingerprint": self._profile_identity.get(
+                        "profile_fingerprint"
+                    ),
+                    "requested_model": self._profile_identity.get(
+                        "deepseek_model"
+                    ),
+                    "effective_model": self._profile_identity.get(
+                        "deepseek_model"
                     ),
                 }
             }
@@ -2056,6 +2068,7 @@ class TwoStageOrchestrator:
             baseline_backend = DirectAnalysisRoleBackend(
                 client=baseline_client,
                 settings=baseline_settings,
+                profile_identity=self._profile_identity,
                 allow_provider_fallback=False,
                 logger=logger,
             )
@@ -2196,6 +2209,7 @@ class TwoStageOrchestrator:
             role_backend = DirectAnalysisRoleBackend(
                 client=client,
                 settings=role_settings,
+                profile_identity=self._profile_identity,
                 allow_provider_fallback=False,
                 logger=logger,
             )

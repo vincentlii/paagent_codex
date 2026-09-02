@@ -26,6 +26,30 @@ from tests.unit.test_codex_analysis_backend import _request
 from tests.unit.test_frozen_agent_job import _job
 
 
+def test_environment_worker_identity_provider_passes_legacy_defaults(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured = {}
+
+    def identity(**kwargs):
+        captured.update(kwargs)
+        return {"runtime_version": "test"}
+
+    monkeypatch.setenv("PA_AGENT_CODEX_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PA_AGENT_CODEX_MODEL", "gpt-5.6-sol")
+    monkeypatch.setenv("PA_AGENT_CODEX_REASONING", "high")
+    monkeypatch.setattr(spool_module, "codex_runtime_identity", identity)
+
+    service = spool_module._service_from_environment()
+    assert service._runtime_identity_provider() == {"runtime_version": "test"}
+    assert captured == {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "high",
+        "codex_binary": "codex",
+    }
+
+
 def test_spool_bridge_exchanges_only_job_identity_and_bounded_result(
     tmp_path: Path,
 ) -> None:

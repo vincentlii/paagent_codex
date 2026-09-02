@@ -185,7 +185,10 @@ class CodexSpoolService:
                 raise CodexWorkerOutputError(
                     "dispatch runtime identity does not match frozen job"
                 )
-            if actual_runtime != expected_runtime:
+            if not _runtime_identity_matches(
+                actual_runtime,
+                expected_runtime,
+            ):
                 raise CodexWorkerOutputError(
                     "isolated worker runtime identity does not match frozen job"
                 )
@@ -202,6 +205,9 @@ class CodexSpoolService:
                 "latency_ms": result.latency_ms,
                 "evidence_events": list(result.evidence_events),
                 "outbox_path": str(result.outbox_path),
+                "model": result.model,
+                "reasoning_effort": result.reasoning_effort,
+                "profile_fingerprint": result.profile_fingerprint,
             }
         except CodexWorkerError as exc:
             envelope = {
@@ -270,8 +276,29 @@ def _decode_result(
         }
         error = error_types.get(str(raw.get("error_type")), CodexWorkerOutputError)
         raise error(str(raw.get("message") or "isolated Codex worker failed"))
-    if dict(raw.get("runtime_identity") or {}) != runtime_identity:
+    result_runtime = dict(raw.get("runtime_identity") or {})
+    if not _runtime_identity_matches(result_runtime, runtime_identity):
         raise CodexWorkerOutputError("isolated result runtime identity does not match job")
+    expected_model = str(runtime_identity.get("model") or "")
+    expected_effort = str(runtime_identity.get("reasoning_effort") or "")
+    if runtime_identity.get("profile_fingerprint") or runtime_identity.get(
+        "analysis_profile_fingerprint"
+    ):
+        if expected_model and str(raw.get("model") or "") != expected_model:
+            raise CodexWorkerOutputError("isolated result model does not match job")
+        if expected_effort and str(raw.get("reasoning_effort") or "") != expected_effort:
+            raise CodexWorkerOutputError(
+                "isolated result reasoning effort does not match job"
+            )
+        expected_profile = str(
+            runtime_identity.get("profile_fingerprint")
+            or runtime_identity.get("analysis_profile_fingerprint")
+            or ""
+        )
+        if str(raw.get("profile_fingerprint") or "") != expected_profile:
+            raise CodexWorkerOutputError(
+                "isolated result profile fingerprint does not match job"
+            )
     usage = dict(raw.get("usage") or {})
     return CodexWorkerResult(
         content=str(raw.get("content") or ""),
@@ -280,7 +307,34 @@ def _decode_result(
         latency_ms=float(raw.get("latency_ms") or 0.0),
         evidence_events=tuple(dict(item) for item in raw.get("evidence_events") or ()),
         outbox_path=Path(str(raw.get("outbox_path") or "isolated-outbox.json")),
+        model=str(raw.get("model") or ""),
+        reasoning_effort=str(raw.get("reasoning_effort") or ""),
+        profile_fingerprint=str(raw.get("profile_fingerprint") or ""),
     )
+
+
+def _runtime_identity_matches(
+    actual: dict[str, Any],
+    expected: dict[str, Any],
+) -> bool:
+    """Compare immutable runtime assets while letting jobs select the model."""
+    if not expected.get("profile_fingerprint") and not expected.get(
+        "analysis_profile_fingerprint"
+    ):
+        return actual == expected
+    selection_keys = {
+        "model",
+        "reasoning_effort",
+        "profile_fingerprint",
+        "analysis_profile_fingerprint",
+    }
+    actual_immutable = {
+        key: value for key, value in actual.items() if key not in selection_keys
+    }
+    expected_immutable = {
+        key: value for key, value in expected.items() if key not in selection_keys
+    }
+    return actual_immutable == expected_immutable
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:

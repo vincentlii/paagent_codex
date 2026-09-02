@@ -15,6 +15,11 @@ from pa_agent.data.base import KlineFrame
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.monitoring.analysis_runner import FrozenAnalysisPayload
 from pa_agent.monitoring.scheduler import AnalysisTask
+from pa_agent.operations.analysis_profile import (
+    AnalysisProfile,
+    profile_fingerprint,
+    validate_analysis_profile,
+)
 from pa_agent.quality.runtime_fingerprint import (
     analysis_runtime_fingerprint as _analysis_runtime_fingerprint,
 )
@@ -176,6 +181,7 @@ def analysis_cohort_id(
     *,
     analysis_backend_mode: str = "deepseek_only",
     analysis_backend_identity: Mapping[str, Any] | None = None,
+    analysis_profile_identity: Mapping[str, Any] | None = None,
 ) -> str:
     """Identify the model, settings, code, and prompt version for one run."""
     runtime = _validated_digest(analysis_fingerprint, "analysis_fingerprint")
@@ -192,6 +198,8 @@ def analysis_cohort_id(
         if not identity:
             raise ValueError("non-Direct backend requires frozen runtime identity")
         payload["analysis_backend_identity"] = identity
+    if analysis_profile_identity:
+        payload["analysis_profile_identity"] = dict(analysis_profile_identity)
     return _stable_hash(payload)
 
 
@@ -209,12 +217,43 @@ def create_frozen_analysis_task(
     created_at_ms: int | None = None,
     analysis_backend_mode: str = "deepseek_only",
     analysis_backend_identity: Mapping[str, Any] | None = None,
+    analysis_profile: AnalysisProfile | Mapping[str, object] | None = None,
+    analysis_profile_fingerprint: str | None = None,
 ) -> AnalysisTask:
     """Deep-freeze one validated snapshot before it enters the scheduler."""
     if not isinstance(frame, KlineFrame):
         raise TypeError("frame must be a KlineFrame")
     if analysis_backend_mode not in {"deepseek_only", "auto", "codex_only"}:
         raise ValueError("unsupported analysis backend mode")
+    profile_identity: dict[str, Any] = {}
+    profile_fp = str(analysis_profile_fingerprint or "").strip().lower()
+    if analysis_profile is not None:
+        validated_profile = validate_analysis_profile(analysis_profile)
+        computed_fp = profile_fingerprint(validated_profile)
+        if profile_fp and profile_fp != computed_fp:
+            raise ValueError("analysis profile fingerprint mismatch")
+        profile_fp = computed_fp
+        profile_identity = {
+            **validated_profile.model_dump(mode="json"),
+            "profile_fingerprint": computed_fp,
+        }
+    elif profile_fp:
+        if len(profile_fp) != 64 or any(
+            character not in "0123456789abcdef" for character in profile_fp
+        ):
+            raise ValueError("analysis_profile_fingerprint must be a SHA-256 hex digest")
+    if profile_fp:
+        provided_identity = dict(analysis_backend_identity or {})
+        identity_fp = str(
+            provided_identity.get("profile_fingerprint")
+            or provided_identity.get("analysis_profile_fingerprint")
+            or ""
+        ).strip().lower()
+        if identity_fp and identity_fp != profile_fp:
+            raise ValueError("analysis backend profile fingerprint mismatch")
+        if provided_identity:
+            provided_identity.setdefault("profile_fingerprint", profile_fp)
+            analysis_backend_identity = provided_identity
     frozen_frame = copy.deepcopy(frame)
     frozen_htf = copy.deepcopy(htf_context)
     incremental_count = (
@@ -243,6 +282,8 @@ def create_frozen_analysis_task(
             if analysis_backend_mode != "deepseek_only"
             else {}
         ),
+        analysis_profile_fingerprint=profile_fp,
+        analysis_profile_identity=copy.deepcopy(profile_identity),
     )
     return AnalysisTask.create(
         source=source,
@@ -259,6 +300,7 @@ def create_frozen_analysis_task(
             analysis_fingerprint,
             analysis_backend_mode=analysis_backend_mode,
             analysis_backend_identity=analysis_backend_identity,
+            analysis_profile_identity=profile_identity,
         ),
         payload=payload,
         created_at_ms=created_at_ms,

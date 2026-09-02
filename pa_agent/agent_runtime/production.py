@@ -76,7 +76,7 @@ def validate_codex_production_config(
     errors: list[str] = []
     if not config.model:
         errors.append("PA_AGENT_CODEX_MODEL is required when Codex is enabled")
-    if config.reasoning_effort not in {"minimal", "low", "medium", "high", "xhigh"}:
+    if config.reasoning_effort not in {"low", "medium", "high", "xhigh", "max"}:
         errors.append("PA_AGENT_CODEX_REASONING is unsupported")
     if not config.codex_binary:
         errors.append("PA_AGENT_CODEX_BINARY is required")
@@ -122,13 +122,41 @@ def build_codex_backend_factory(
         frame = getattr(payload, "frame", None)
         if frame is None:
             raise TypeError("Codex backend task requires a frozen frame")
-        if dict(getattr(payload, "analysis_backend_identity", {}) or {}) != runtime_identity:
+        task_identity = dict(
+            getattr(payload, "analysis_backend_identity", {}) or {}
+        )
+        expected_runtime = dict(runtime_identity)
+        for key in (
+            "model",
+            "reasoning_effort",
+            "profile_fingerprint",
+            "analysis_profile_fingerprint",
+        ):
+            if key in task_identity:
+                expected_runtime[key] = task_identity[key]
+        selection_keys = {
+            "model",
+            "reasoning_effort",
+            "profile_fingerprint",
+            "analysis_profile_fingerprint",
+        }
+        frozen_immutable = {
+            key: value
+            for key, value in task_identity.items()
+            if key not in selection_keys
+        }
+        worker_immutable = {
+            key: value
+            for key, value in runtime_identity.items()
+            if key not in selection_keys
+        }
+        if frozen_immutable != worker_immutable:
             raise ValueError("Codex runtime identity does not match frozen task cohort")
         publisher = CodexJobPublisher(
             frame=frame,
             prompt_dir=prompt_dir,
             job_root=config.job_root,
-            runtime_identity=runtime_identity,
+            runtime_identity=expected_runtime,
         )
         worker = CodexSpoolClient(
             CodexSpoolConfig(
@@ -142,7 +170,7 @@ def build_codex_backend_factory(
             worker=worker,
             publish_job=publisher,
             request_full_chain_fallback=mode == "auto",
-            runtime_identity=runtime_identity,
+            runtime_identity=expected_runtime,
         )
 
     return factory
