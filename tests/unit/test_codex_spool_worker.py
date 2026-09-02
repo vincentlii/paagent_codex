@@ -18,6 +18,11 @@ from pa_agent.agent_runtime.spool_worker import (
     CodexSpoolService,
 )
 from pa_agent.ai.deepseek_client import AIUsage
+from pa_agent.ai.codex_analysis_backend import (
+    CodexAnalysisRoleBackend,
+    FullChainFallbackRequired,
+)
+from tests.unit.test_codex_analysis_backend import _request
 from tests.unit.test_frozen_agent_job import _job
 
 
@@ -155,3 +160,65 @@ def test_spool_io_oserror_is_classified_as_availability(
 
     with pytest.raises(CodexWorkerUnavailable):
         client.run(published)
+
+
+def test_worker_runtime_unavailable_reaches_auto_full_chain_fallback(
+    tmp_path: Path,
+) -> None:
+    expected = {"model": "gpt-frozen", "codex_binary_digest": "a" * 64}
+    jobs = tmp_path / "jobs"
+    inbox = tmp_path / "inbox"
+    results = tmp_path / "results"
+    inbox.mkdir()
+    results.mkdir()
+    published = FrozenAgentJobStore(jobs).publish(
+        _job(runtime_identity=expected)
+    )
+    spool = CodexSpoolConfig(
+        job_root=jobs,
+        inbox_root=inbox,
+        result_root=results,
+        poll_seconds=0.01,
+        response_grace_seconds=1.0,
+    )
+    backend = CodexAnalysisRoleBackend(
+        worker=CodexSpoolClient(spool),
+        publish_job=lambda _request, _attempt: published,
+        request_full_chain_fallback=True,
+        runtime_identity=expected,
+    )
+    caught: list[Exception] = []
+
+    def run_backend() -> None:
+        try:
+            backend.run(
+                _request(),
+                on_reasoning_token=None,
+                on_content_token=None,
+                cancel_token=None,
+            )
+        except Exception as exc:
+            caught.append(exc)
+
+    thread = threading.Thread(target=run_backend)
+    thread.start()
+    deadline = time.monotonic() + 2
+    dispatches: list[Path] = []
+    while time.monotonic() < deadline and not dispatches:
+        dispatches = list(inbox.glob("*.json"))
+        time.sleep(0.01)
+    assert len(dispatches) == 1
+    claimed = dispatches[0].with_suffix(".running")
+    dispatches[0].replace(claimed)
+    service = CodexSpoolService(
+        spool=spool,
+        worker=MagicMock(),
+        runtime_identity_provider=MagicMock(side_effect=OSError("binary unavailable")),
+    )
+    service._execute(claimed)
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert len(caught) == 1
+    assert isinstance(caught[0], FullChainFallbackRequired)
+    assert caught[0].failure.kind == "unavailable"

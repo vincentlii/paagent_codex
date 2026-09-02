@@ -21,6 +21,8 @@
 14. Codex 的跨 Snapshot、超 cutoff、未授权 Knowledge/Evidence 读取被接受的次数为 0。
 15. Codex 绕过 Draft materializer、Brooks Router、Validator、Risk、Trader Equation 或直接写生产数据库/交易状态的次数为 0。
 16. Codex 与 DeepSeek 在同一正式 PA Stage 链中混用，或因 Schema、事实、权限和专业判断失败触发 availability fallback 的次数为 0。
+17. Codex worker 读取生产数据库、Paper ledger、DeepSeek credential，或以 Headless Unix 用户执行的次数为 0。
+18. Frozen Job、dispatch、worker 实际 runtime identity 与成功 result 任一不一致却被接受的次数为 0。
 
 ## 结构与鲁棒性
 
@@ -41,6 +43,8 @@
   或交易 API。wheel smoke 必须从安装位置读取 Prompt，并证明 Headless import 不加载 Qt。
 - Codex 初始静态 Context p95 不高于匹配 Direct Prompt 的 40%，包含 Evidence retrieval 的总输入
   p95 不高于 Direct 的 75%；完整运行仍受现有 300 秒 p95、250k token p95 和 1.35 倍研究成本上限约束。
+- `initial_context_bytes` 只作为 core-context 下界；总输入 token 必须使用 Provider usage，Evidence
+  retrieval 另报调用数与响应字节，三者不得互相替代。
 
 ## 交易与研究
 

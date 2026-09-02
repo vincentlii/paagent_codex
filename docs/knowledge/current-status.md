@@ -3,12 +3,13 @@ lifecycle: active
 capability: no-go
 verification_scope: local
 最后核验: 2026-09-02
-核验提交: d04764b
+核验提交: 2bc71ae
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
   - docs/architecture/ADR-0023-vps-observability-and-control-plane.md
   - docs/architecture/ADR-0024-codex-analysis-backend.md
+  - docs/quality/codex_backend_final_audit_20260902.md
 ---
 
 # 当前状态
@@ -22,6 +23,8 @@ opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证�
 
 项目已具备进入真实 VPS 安装、预检和无人值守 Paper 验证的工程基础，但尚不能写成“VPS 已验证”或“PA+VPA 已提高盈利”。2026-08-13 的 `1169 passed, 7 deselected` 是绑定当时审计基线的历史证据；Dashboard 是审计后新增能力，需要在目标 Linux/VPS 环境补充实机验证。
 
+本轮 Codex 实现与边界见 [Codex Backend 最终本地审计](../quality/codex_backend_final_audit_20260902.md)。
+
 ## 版本锚点
 
 | 锚点 | 类型 | 说明 |
@@ -30,6 +33,7 @@ opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证�
 | `5daeccd` / `pre-vps-ready-20260813` | 发布审计锚点 | P0-P4 软件实现和当时全量非 live 审计完成 |
 | `f8fffc0` | 当前功能基线 | 新增隔离 VPS 控制 Dashboard，晚于 2026-08-13 全量审计 |
 | `965f2df` | Codex 升级基线 | `convergence-vnext` 上创建隔离 worktree 的固定起点 |
+| `2bc71ae` | Codex VPS 接线 | 独立 Unix worker、生产 publisher/factory、runtime identity 与 VPA Shadow 接通 |
 | `311b12a` | 文档设计 | 项目知识库设计规范 |
 | `2e2d8b5` | 文档计划 | 知识库实施计划 |
 
@@ -61,7 +65,7 @@ opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证�
 | Analysis Backend seam | implemented | local focused | Direct 与 Codex Adapter 均返回现有 Provider Draft；Codex 只接 PA Stage 1/2。VPA Shadow 仍由隔离 Direct role 提供二级证据且不改变 PA official path；生产 `soft` 仍收敛为 Shadow |
 | Frozen Agent Job / Evidence | implemented | local focused | 确定性 manifest、原子目录发布、resource digest、角色事实/知识 allowlist、cutoff 与调用/字节预算已实现 |
 | Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、JSON/outbox 已用模拟 subprocess 验证；Provider Draft Schema 仍由 PA Validator 判定；尚未做真实账号调用 |
-| Codex Analysis Backend | research-only | local focused | 已有有界 core context publisher、Job 身份绑定、一次定向修复上限、脱敏错误分类、熔断、完整 Direct PA 冷回退与环境 Factory；未启用或配置错误时 fail-closed，部署默认仍为 `deepseek_only` |
+| Codex Analysis Backend | research-only | local focused | 已有有界 core context、独立 Unix spool worker、端到端 runtime identity、一次定向修复、熔断、完整 Direct PA 冷回退与环境 Factory；部署默认仍为 `deepseek_only` |
 | Codex audit projection | implemented | local focused | `analysis_calls` 投影 backend、provider、job/thread identity 与 Evidence 调用/字节量；完整 JSON record 仍是唯一原始记录 |
 | Analysis Backend A/A/B/B | research-only | local focused | `analysis_backend_aabb_v1` 预登记四臂、ABBA/BAAB、独立 runtime、禁 fallback、失败臂 coverage、cohort 去重与成本/重复性摘要已实现；尚无真实 Codex 样本，不能晋级 |
 
@@ -110,6 +114,8 @@ opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证�
 5. 达到预注册门禁后再讨论 Joint 是否晋级；未通过时记录负面结果而不是调整到迎合样本。
 
 ## 最近知识变更
+
+- `2bc71ae` / Phase 7：完成 Codex 生产接线与独立 VPS worker；当阶段本地相关回归 160 项通过。Phase 8 最终 focused suite 为 168 项；目标 Linux/systemd、真实账号与交易增益仍未验证。
 
 - `311b12a`：记录仓库内、单一事实源的项目知识库设计；实施完成后设计状态已同步为 `Accepted`。
 - `2e2d8b5`：给出六阶段实施和验收计划。

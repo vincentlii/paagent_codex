@@ -2,8 +2,8 @@
 lifecycle: active
 capability: research-only
 verification_scope: not-verified
-最后核验: 2026-09-01
-核验提交: 965f2df
+最后核验: 2026-09-02
+核验提交: 2bc71ae
 权威来源:
   - docs/architecture/ADR-0005-offline-pa-vpa-aabb.md
   - docs/architecture/ADR-0021-continuous-paired-joint-research.md
@@ -49,6 +49,24 @@ market_snapshot_hash)` 去重，现有 PA/VPA frequency/counterfactual 查询则
 两类实验不得混算。executor 必须回传实际构造 Backend 的脱敏 runtime fingerprint 并与冻结 cohort
 核对；同一 cohort/Snapshot 的重复 assignment 视为冲突并阻止验收，不能用后续成功覆盖先前失败。
 20 Snapshot 仅代表工程 repeatability 可审查，不代表交易晋级。
+
+### Analysis Backend 晋级门禁
+
+Codex Backend 不因“Prompt 更短”或 20 个工程样本而替换 Direct。至少依次满足：
+
+1. 独立 Unix 用户、Frozen Job、runtime identity、故障注入、重启恢复与 20 个独立 Snapshot
+   repeatability 全部通过；缺失 arm 和重复 assignment 计入失败覆盖。
+2. Brooks/VPA 专家在不知道 Backend 的前提下，按事实准确性、Context、Setup、证据充分性、
+   Stage 1/2 连贯性和 confidence calibration 盲评；解释文风不计质量增益。
+3. 至少 300 个独立 Snapshot、100 个明确匹配 outcome；最终样本量按预注册效应量和功效调整。
+4. 同时报告 hallucination/事实错误、Trade/No Trade 分歧、first-pass/schema、总 token、core-context
+   bytes、Evidence retrieval、p50/p95 latency、coverage、ITT 与 per-protocol。
+5. 扣除成本和滑点后的样本外结果、MAE/MFE、回撤或 calibration 有稳定增量，且触发频率变化可解释。
+6. 先进入有限资产/周期的 Paper canary；任何 authority、identity、事实或延迟门禁越界立即回到
+   `deepseek_only`。真实订单仍需独立 ADR，不由本门禁授权。
+
+由于 Codex 与 Direct 的模型家族和执行方式同时变化，该门禁只能支持“完整 Backend system
+是否更好”，不能声称已识别纯 Agentic reasoning 的因果效应。
 
 ## A/A/B/B 协议
 
