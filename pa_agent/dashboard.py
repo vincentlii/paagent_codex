@@ -10,7 +10,7 @@ import os
 import sys
 import time
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -18,7 +18,11 @@ from urllib.parse import urlsplit
 
 from pa_agent.config.paths import RuntimePaths, resolve_runtime_paths
 from pa_agent.dashboard_page import DASHBOARD_HTML
-from pa_agent.operations.runtime_state import RuntimeControlStore, RuntimeStatusStore
+from pa_agent.operations.runtime_state import (
+    RuntimeControlStore,
+    RuntimeStatusStore,
+    control_state_to_dict,
+)
 
 _MAX_BODY_BYTES = 4096
 
@@ -74,7 +78,7 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
     runtime_view = dict(runtime or {})
     recent = runtime_view.pop("recent_runs", [])
     paper = runtime_view.pop("paper", {})
-    control_view = asdict(control)
+    control_view = control_state_to_dict(control)
     applied_generation = runtime_view.get("applied_control_generation")
     expected_service_state = "paused" if control.desired_state == "paused" else "running"
     control_view["applied"] = (
@@ -203,7 +207,10 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                     "paused" if action == "pause" else "running",
                     actor="dashboard",
                 )
-            self._json(202, {"ok": True, "applied": False, "control": asdict(state)})
+            self._json(
+                202,
+                {"ok": True, "applied": False, "control": control_state_to_dict(state)},
+            )
 
         def log_message(self, _format: str, *_args: Any) -> None:
             return
