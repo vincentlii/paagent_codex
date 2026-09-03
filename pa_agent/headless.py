@@ -192,6 +192,15 @@ def validate_headless_configuration(
     """Return every deterministic deployment error without opening the network."""
     errors: list[str] = []
     platform = (platform_name or sys.platform).lower()
+    from pa_agent.agent_runtime.runtime_audit import audit_runtime_assets
+
+    runtime_audit = audit_runtime_assets()
+    for issue in runtime_audit.issues:
+        errors.append(
+            "Codex runtime audit failed: "
+            f"{issue.code}: {issue.resource}"
+            + (f": {issue.detail}" if issue.detail else "")
+        )
     if not provider_api_key_configured(settings):
         errors.append("AI provider API key is not configured")
     if not settings.provider.model.strip():

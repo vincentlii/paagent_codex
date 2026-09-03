@@ -79,6 +79,11 @@ def validate_analysis_profile(value: AnalysisProfile | Mapping[str, object]) -> 
     return AnalysisProfile.model_validate(value)
 
 
+def codex_model_effort_supported(model: str, effort: str) -> bool:
+    """Return whether a credential-free Codex selection is in the release catalog."""
+    return effort in _CODEX_EFFORTS.get(model, ())
+
+
 def profile_fingerprint(profile: AnalysisProfile | Mapping[str, object]) -> str:
     validated = validate_analysis_profile(profile)
     encoded = json.dumps(

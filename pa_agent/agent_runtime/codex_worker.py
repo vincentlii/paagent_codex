@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJob, FrozenAgentJobStore
 from pa_agent.ai.deepseek_client import AIUsage
-from pa_agent.operations.analysis_profile import analysis_capabilities
+from pa_agent.operations.analysis_profile import codex_model_effort_supported
 
 _ROLE_SKILL_NAMES = {
     "stage1": "pa-stage1-analysis",
@@ -227,11 +227,7 @@ class CodexCliWorker:
                 raise CodexWorkerOutputError(
                     "frozen job reasoning effort identity mismatch"
                 )
-            models = {
-                str(item["id"]): tuple(str(value) for value in item["efforts"])
-                for item in analysis_capabilities()["codex_models"]
-            }
-            if model not in models or effort not in models[model]:
+            if not codex_model_effort_supported(model, effort):
                 raise CodexWorkerOutputError(
                     "invalid frozen job model/effort pair"
                 )
@@ -245,6 +241,8 @@ class CodexCliWorker:
             raise CodexWorkerOutputError(
                 "Codex model/effort is missing from frozen job and worker defaults"
             )
+        if not codex_model_effort_supported(model, effort):
+            raise CodexWorkerOutputError("invalid legacy worker model/effort pair")
         return model, effort, ""
 
     @staticmethod
@@ -324,6 +322,9 @@ class CodexCliWorker:
             "mcp_servers.pa_evidence.startup_timeout_sec=10",
             "mcp_servers.pa_evidence.tool_timeout_sec=15",
         ]
+        # Keep user config isolated, but do not pass --ignore-rules: its behavior
+        # may drift across CLI releases and must never hide workspace AGENTS.md.
+        # Deployment additionally requires the runtime_audit live canary.
         command = [
             self._config.codex_binary,
             "--ask-for-approval",
@@ -332,7 +333,6 @@ class CodexCliWorker:
             prompt,
             "--ephemeral",
             "--ignore-user-config",
-            "--ignore-rules",
             "--strict-config",
             "--sandbox",
             "read-only",

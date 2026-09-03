@@ -34,12 +34,14 @@ def codex_runtime_identity(
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
+    assets = load_codex_runtime_assets()
     return {
         "backend": "codex_agent",
         "provider": "openai_codex_chatgpt",
         "model": str(model),
         "reasoning_effort": str(reasoning_effort),
-        "runtime_version": load_codex_runtime_assets().runtime_version,
+        "runtime_version": assets.runtime_version,
+        "runtime_asset_digest": assets.asset_digest,
         "codex_binary": path.name,
         "codex_binary_digest": digest.hexdigest(),
     }

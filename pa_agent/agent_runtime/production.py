@@ -15,6 +15,7 @@ from pa_agent.agent_runtime.runtime_identity import (
     resolve_executable,
 )
 from pa_agent.ai.codex_analysis_backend import CodexAnalysisRoleBackend
+from pa_agent.operations.analysis_profile import codex_model_effort_supported
 
 
 @dataclass(frozen=True)
@@ -76,8 +77,8 @@ def validate_codex_production_config(
     errors: list[str] = []
     if not config.model:
         errors.append("PA_AGENT_CODEX_MODEL is required when Codex is enabled")
-    if config.reasoning_effort not in {"low", "medium", "high", "xhigh", "max"}:
-        errors.append("PA_AGENT_CODEX_REASONING is unsupported")
+    elif not codex_model_effort_supported(config.model, config.reasoning_effort):
+        errors.append("PA_AGENT_CODEX_MODEL/PA_AGENT_CODEX_REASONING pair is unsupported")
     if not config.codex_binary:
         errors.append("PA_AGENT_CODEX_BINARY is required")
     elif resolve_executable(config.codex_binary) is None:

@@ -12,6 +12,7 @@ from pa_agent.headless import (
     main,
     validate_headless_configuration,
 )
+from pa_agent.agent_runtime.runtime_audit import RuntimeAuditIssue, RuntimeAuditReport
 
 
 def test_once_timeout_scales_by_bounded_concurrency_waves() -> None:
@@ -137,6 +138,32 @@ def test_headless_check_reports_missing_assets_secret_and_prompts(tmp_path) -> N
     assert any("API key" in error for error in errors)
     assert any("monitoring asset" in error for error in errors)
     assert any("prompt" in error.lower() for error in errors)
+
+
+def test_headless_check_fails_closed_when_packaged_codex_runtime_audit_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    settings = Settings()
+    paths = resolve_runtime_paths(project_root=tmp_path, environ={})
+    report = RuntimeAuditReport(
+        asset_digest="0" * 64,
+        resource_names=(),
+        issues=(RuntimeAuditIssue(code="missing_required_rule", resource="AGENTS.md"),),
+    )
+    monkeypatch.setattr(
+        "pa_agent.agent_runtime.runtime_audit.audit_runtime_assets",
+        lambda: report,
+    )
+
+    errors = validate_headless_configuration(
+        settings,
+        paths,
+        platform_name="linux",
+        source_factory=lambda _asset: object(),
+    )
+
+    assert any("Codex runtime audit failed" in error for error in errors)
 
 
 def test_headless_check_rejects_mt5_on_linux(tmp_path) -> None:

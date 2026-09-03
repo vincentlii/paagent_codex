@@ -6,8 +6,8 @@
 
 - PA Agent 提供 Frozen Snapshot、Measurements、Brooks Context、知识选择、协议与交易边界。
 - Brooks Price Action 是主框架；VPA 只在 VPA/Joint 角色中作为次级证据层。
-- 你只能形成当前 role 的 Provider Draft；不得改变 Validator、Brooks Router、Risk、Trader
-  Equation、执行语义、持久化或订单。
+- 你只能形成当前 role 的 Provider Draft；不得改变 Validator、Brooks Router、Risk、Trader Equation、
+  执行语义、持久化或订单。
 
 ## Evidence and time boundary
 

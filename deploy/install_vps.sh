@@ -74,11 +74,17 @@ trap 'rm -f "$LOCK_REQUIREMENTS"' EXIT
 "$ENV_UV" pip install \
   --python "$ENV_PYTHON" \
   --no-deps \
-  --editable "$APP_DIR"
+  "$APP_DIR"
 "$ENV_UV" pip check --python "$ENV_PYTHON"
+cd /
+"$ENV_PYTHON" -m pa_agent.agent_runtime.runtime_audit \
+  --source-assets "$APP_DIR/pa_agent/agent_runtime/assets"
 chown -R root:root "$APP_DIR"
 chmod -R go-w "$APP_DIR"
+chmod 0755 "$APP_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$STATE_DIR"
+install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 \
+  "$STATE_DIR/records" "$STATE_DIR/trade_records"
 install -d -o root -g "$CODEX_GROUP" -m 0750 /var/lib/pa-agent-codex
 install -d -o "$SERVICE_USER" -g "$CODEX_GROUP" -m 2750 \
   /var/lib/pa-agent-codex/jobs
@@ -94,6 +100,14 @@ install -d -o "$SERVICE_USER" -g "$CONTROL_GROUP" -m 2750 \
   /var/lib/pa-agent-control/status
 install -d -o "$DASHBOARD_USER" -g "$CONTROL_GROUP" -m 2750 \
   /var/lib/pa-agent-control/control
+CONTROL_PATH=/var/lib/pa-agent-control/control/control.json
+CONTROL_LOCK=/var/lib/pa-agent-control/control/.control.json.lock
+if [ ! -f "$CONTROL_PATH" ]; then
+  "$ENV_PYTHON" -c 'import sys; from pathlib import Path; from pa_agent.operations.runtime_state import RuntimeControlStore; RuntimeControlStore(Path(sys.argv[1])).set_desired_state("paused", actor="installer")' "$CONTROL_PATH"
+  chown "$DASHBOARD_USER:$CONTROL_GROUP" "$CONTROL_PATH" "$CONTROL_LOCK"
+  chmod 0640 "$CONTROL_PATH"
+  chmod 0660 "$CONTROL_LOCK"
+fi
 install -d -o root -g "$SERVICE_USER" -m 0750 "$CONFIG_DIR"
 
 if [ ! -f "$STATE_DIR/config/settings.json" ]; then
@@ -123,3 +137,5 @@ systemctl daemon-reload
 
 printf '%s\n' "Installed without starting the service."
 printf '%s\n' "Create $CONFIG_DIR/api_key and $CONFIG_DIR/dashboard_token, authenticate Codex as $CODEX_USER if enabled, then run preflight checks."
+printf '%s\n' "Before enabling services, run runtime_audit --check-permissions and the explicit --live-canary command documented in docs/linux_headless_deployment.md."
+printf '%s\n' "Keep Headless paused until the DeepSeek and Codex smoke results are reviewed."

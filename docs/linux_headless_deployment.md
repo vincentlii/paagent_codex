@@ -1,6 +1,6 @@
 # Linux VPS Headless 部署
 
-本部署用于持续拉取 Binance、OKX、Bitget 的 XAU 永续行情，自动运行 PA/VPA
+本部署用于持续拉取 Binance USD-M 的 XAU 永续行情，自动运行 PA/VPA
 分析并进行本地 paper trading。当前代码没有私有交易所 API，也不会提交真实订单。
 
 ## 1. 目录与前提
@@ -13,7 +13,7 @@
 - 运行状态：`/var/lib/pa-agent`
 - Dashboard 共享投影与控制：`/var/lib/pa-agent-control`
 - 非代码配置：`/etc/pa-agent`
-- Codex ChatGPT auth 与临时 Job：`/var/lib/pa-agent/codex`（仅 `pa-agent` 用户可读写）
+- Codex ChatGPT auth 与临时 Job：`/var/lib/pa-agent-codex`（独立 `pa-agent-codex` 用户）
 
 先安装 Miniconda，再把已验收的代码版本放到 `/opt/pa-agent`。Miniconda 安装包和
 校验值应从官方文档获取：<https://docs.anaconda.com/miniconda/>。
@@ -28,7 +28,7 @@ sudo bash deploy/install_vps.sh
 随后创建专用用户、目录和 systemd unit。它不会启动服务，也不会覆盖已有
 `settings.json`、环境文件或密钥。
 
-## 2. 配置三交易所 XAU
+## 2. 配置固定单资产 XAU
 
 首次安装会从 `config/settings.vps.example.json` 创建：
 
@@ -41,10 +41,9 @@ sudo bash deploy/install_vps.sh
 | Source | Symbol | 周期 | 高周期 |
 |---|---|---:|---:|
 | `binance_usdm` | `XAUUSDT` | `1h` | `4h` |
-| `okx_swap` | `XAU-USDT-SWAP` | `1h` | `4h` |
-| `bitget_usdt_futures` | `XAUUSDT` | `1h` | `4h` |
-
-默认 `vpa_mode=shadow`，正式 paper 账户仍只执行 PA authority；Joint 只允许离线
+默认且唯一启用的资产是 `binance_usdm / BINANCE / XAUUSDT / 1h`；HTF 固定为
+`4h`、60 根已收盘 K 线，全局分析并发为 1。不得追加第二个 enabled asset，也不得关闭 HTF 或
+VPA。默认 `vpa_mode=shadow`，正式 paper 账户仍只执行 PA authority；Joint 只允许离线
 A/A/B/B 研究。默认单笔风险为权益的 `0.5%`、组合风险上限 `2%`、最大杠杆 `3x`。
 这些是 paper 研究参数，不代表收益承诺。
 
@@ -69,7 +68,7 @@ unset DASH_KEY
 编辑 `/etc/pa-agent/pa-agent.env`：
 
 ```dotenv
-PA_AGENT_MODEL=deepseek-chat
+PA_AGENT_MODEL=deepseek-v4-flash
 PA_AGENT_BASE_URL=https://api.deepseek.com
 ```
 
@@ -106,7 +105,7 @@ PA_AGENT_CODEX_MODEL=<CLI实际可用的model-id>
 PA_AGENT_CODEX_REASONING=high
 PA_AGENT_CODEX_BINARY=/usr/local/bin/codex
 PA_AGENT_CODEX_STATE_DIR=/var/lib/pa-agent-codex
-PA_AGENT_CODEX_MAX_WORKERS=2
+PA_AGENT_CODEX_MAX_WORKERS=1
 ```
 
 不要猜测 model id；使用部署时 CLI 实际返回且实验 cohort 已冻结的值。`--check` 会在启用时验证
@@ -121,7 +120,7 @@ BIN=/opt/miniconda3/envs/pa-agent/bin
 COMMON_ENV='PA_AGENT_HOME=/var/lib/pa-agent PA_AGENT_OPERATION_DIR=/var/lib/pa-agent-control PA_AGENT_PROMPT_DIR=/opt/pa-agent/prompt_engineering PA_AGENT_API_KEY_FILE=/etc/pa-agent/api_key'
 ```
 
-1. 离线检查配置、Prompt、依赖和目录权限：
+1. 离线检查配置、Prompt、依赖和 Runtime 资产：
 
 ```bash
 sudo -u pa-agent env $COMMON_ENV "$BIN/pa-agent-headless" --check
@@ -150,16 +149,53 @@ sudo -u pa-agent-codex env \
   "$BIN/pa-agent-codex-worker" --check
 ```
 
+安装器已执行静态 Runtime 审计，并比较源码与当前安装包中的 `AGENTS.md` 和四个 Role Skill。
+也可单独输出 machine-readable JSON；任何 `ok=false` 都阻止部署：
+
+```bash
+"$BIN/python" -m pa_agent.agent_runtime.runtime_audit \
+  --source-assets /opt/pa-agent/pa_agent/agent_runtime/assets
+```
+
+创建 credential 且 Headless 首次 `--check` 建好私有 DB 目录后，以 root 只检查 metadata；该命令
+不读取 credential 或数据库内容：
+
+```bash
+sudo "$BIN/python" -m pa_agent.agent_runtime.runtime_audit --check-permissions
+```
+
+权限契约是：源码只读；Job 对 Codex 只读；`home/runtime/outbox` 只允许 Codex 写；Provider
+credential、生产 records/database 与 Paper ledger 对 Codex 无读写权限。
+
+当前 CLI 使用 `--ignore-user-config` 隔离 `$CODEX_HOME/config.toml`，但 production 与 canary
+命令都不传 `--ignore-rules`，避免 CLI 版本语义变化时连 workspace rules 一并屏蔽。
+workspace `AGENTS.md` 和 Role Skill 是否可发现仍必须由真实账号 canary 验证。canary 的随机 sentinel 只存在于
+workspace Role Skill，prompt 与 schema 不含 sentinel；因此必须同时发现 workspace `AGENTS.md`
+和 Skill 才能通过：
+
+```bash
+sudo -u pa-agent-codex env \
+  HOME=/var/lib/pa-agent-codex \
+  CODEX_HOME=/var/lib/pa-agent-codex/home \
+  "$BIN/python" -m pa_agent.agent_runtime.runtime_audit \
+  --live-canary \
+  --codex-binary "$PA_AGENT_CODEX_BINARY" \
+  --model "$PA_AGENT_CODEX_MODEL" \
+  --reasoning-effort "$PA_AGENT_CODEX_REASONING"
+```
+
+canary 返回非零、sentinel 不匹配或 Skill 未观察到时必须保持 Headless paused，禁止启动部署。
+
 2. 只访问公开行情 API，不调用 LLM：
 
 ```bash
 sudo -u pa-agent env $COMMON_ENV "$BIN/pa-agent-headless" --probe-data
 ```
 
-三个结果都必须显示 `"success": true`，并核对 `resolved_symbol`、
+唯一结果必须显示 `"success": true`，并核对 `resolved_symbol`、
 `instrument_type`、`tick_size`、`quantity_step` 和 `contract_multiplier`。
 
-3. 真正执行一轮三资产分析并写入 paper 账本：
+3. 真正执行一轮单资产分析并写入 paper 账本：
 
 ```bash
 sudo -u pa-agent env $COMMON_ENV "$BIN/pa-agent-headless" --once
@@ -176,7 +212,8 @@ sudo -u pa-agent env PA_AGENT_HOME=/var/lib/pa-agent "$BIN/pa-agent-paper-report
 
 ## 5. 启动 systemd
 
-四步都通过后再启动：
+四步与 Codex live canary 都通过后再启动。安装器本身不会 enable 或启动任何服务；在用户审阅
+DeepSeek/Codex smoke 前，Headless 必须保持 paused：
 
 ```bash
 sudo systemctl enable --now pa-agent-codex-worker pa-agent pa-agent-dashboard
@@ -243,10 +280,8 @@ sudo bash deploy/install_vps.sh
 
 ## 8. 运行边界
 
-- Binance、OKX、Bitget 合约是否可用以启动时公开 metadata 为准。
-- OKX quantity 是合约张数，`contract_multiplier` 来自 `ctVal * ctMult`；模拟盈亏、
-  手续费、风险和名义价值均据此换算。
-- Bitget K 线没有闭合标记，程序用交易所服务器时间和周期长度确认已收盘。
+- Binance USD-M `XAUUSDT` 合约是否可用以启动时公开 metadata 为准；必须核对 tick size、
+  quantity step 与 contract multiplier，不能从 symbol 名称猜测。
 - VPA 不创建 Setup、不翻转 PA 方向、不修改主观胜率；其增量价值需由配对研究验证。
 - 当前只有 paper execution。接入真实交易前必须另做私有 API、幂等订单、持仓同步、
   kill switch、时钟偏差、精度和异常恢复审计。

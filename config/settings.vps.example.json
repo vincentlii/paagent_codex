@@ -1,6 +1,6 @@
 {
   "provider": {
-    "model": "deepseek-chat",
+    "model": "deepseek-v4-flash",
     "base_url": "https://api.deepseek.com",
     "api_key": "",
     "api_key_encrypted": "",
@@ -47,9 +47,9 @@
     "max_pending_jobs": 12,
     "max_pending_per_asset": 1,
     "dedupe_history": 10000,
-    "max_data_concurrency": 3,
+    "max_data_concurrency": 1,
     "poll_interval_seconds": 15,
-    "run_on_startup": true,
+    "run_on_startup": false,
     "max_analysis_retries": 2,
     "retry_backoff_seconds": 30,
     "analysis_timeout_seconds": 900,
@@ -59,20 +59,6 @@
         "enabled": true,
         "source": "binance_usdm",
         "exchange": "BINANCE",
-        "symbol": "XAUUSDT",
-        "timeframe": "1h"
-      },
-      {
-        "enabled": true,
-        "source": "okx_swap",
-        "exchange": "OKX",
-        "symbol": "XAU-USDT-SWAP",
-        "timeframe": "1h"
-      },
-      {
-        "enabled": true,
-        "source": "bitget_usdt_futures",
-        "exchange": "BITGET",
         "symbol": "XAUUSDT",
         "timeframe": "1h"
       }

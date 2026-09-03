@@ -20,6 +20,7 @@ _SKILL_PATHS = {
 @dataclass(frozen=True)
 class CodexRuntimeAssets:
     runtime_version: str
+    asset_digest: str
     agents_text: str
     skill_documents: Mapping[str, str]
 
@@ -44,6 +45,7 @@ def load_codex_runtime_assets() -> CodexRuntimeAssets:
     digest = hashlib.sha256(encoded).hexdigest()
     return CodexRuntimeAssets(
         runtime_version=f"codex-runtime-v1-{digest[:16]}",
+        asset_digest=digest,
         agents_text=agents_text,
         skill_documents=MappingProxyType(skills),
     )

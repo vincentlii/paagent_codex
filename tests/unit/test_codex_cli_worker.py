@@ -14,6 +14,7 @@ from pa_agent.agent_runtime.codex_worker import (
     CodexWorkerOutputError,
     CodexWorkerUnavailable,
 )
+from pa_agent.agent_runtime.runtime_audit import prepare_live_canary
 from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from tests.unit.test_frozen_agent_job import _job
@@ -74,6 +75,8 @@ def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) 
     command = captured["command"]
     assert command[:4] == ["codex", "--ask-for-approval", "never", "exec"]
     assert "--ephemeral" in command
+    assert "--ignore-user-config" in command
+    assert "--ignore-rules" not in command
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert "--output-schema" in command
     assert "--json" in command
@@ -88,6 +91,38 @@ def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) 
     assert result.usage.prompt_tokens == 120
     assert result.usage.cached_prompt_tokens == 20
     assert result.usage.completion_tokens == 30
+
+
+def test_live_canary_keeps_workspace_agents_and_role_skill_discoverable(
+    tmp_path: Path,
+) -> None:
+    canary = prepare_live_canary(
+        workspace=tmp_path / "canary",
+        output_path=tmp_path / "result.json",
+        codex_binary="codex",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+
+    command = list(canary.command)
+    assert command[:4] == ["codex", "--ask-for-approval", "never", "exec"]
+    assert command[command.index("--cd") + 1] == str(canary.workspace)
+    assert "--ignore-user-config" in command
+    assert "--ignore-rules" not in command
+    assert "--output-schema" in command
+    assert "--output-last-message" in command
+    assert canary.sentinel not in command[4]
+    assert "$pa-runtime-audit-canary" in (canary.workspace / "AGENTS.md").read_text("utf-8")
+    assert canary.sentinel in (
+        canary.workspace
+        / ".agents"
+        / "skills"
+        / "pa-runtime-audit-canary"
+        / "SKILL.md"
+    ).read_text("utf-8")
+    schema = json.loads((canary.workspace / "output_schema.json").read_text("utf-8"))
+    assert "const" not in json.dumps(schema)
+    assert "enum" not in json.dumps(schema)
 
 
 def test_worker_maps_timeout_without_returning_partial_output(tmp_path: Path) -> None:
@@ -233,3 +268,20 @@ def test_worker_uses_frozen_job_model_and_effort_and_rejects_invalid_pair(
     with pytest.raises(CodexWorkerOutputError, match="model/effort"):
         invalid_worker.run(invalid_published)
     assert launched is False
+
+
+def test_worker_rejects_unknown_legacy_default_model(tmp_path: Path) -> None:
+    worker = CodexCliWorker(
+        CodexCliConfig(
+            codex_home=tmp_path / "home",
+            runtime_root=tmp_path / "runtime",
+            outbox_root=tmp_path / "outbox",
+            model="gpt-unknown",
+            reasoning_effort="high",
+        ),
+        process_runner=lambda *_args, **_kwargs: None,
+    )
+    published = FrozenAgentJobStore(tmp_path / "jobs").publish(_job())
+
+    with pytest.raises(CodexWorkerOutputError, match="legacy worker model/effort"):
+        worker.run(published)
