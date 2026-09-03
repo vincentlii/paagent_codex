@@ -189,6 +189,15 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _audit_text(value: Any) -> str | None:
+    """Keep arbitrary provider objects out of the persistent call ledger."""
+    return value if isinstance(value, str) else None
+
+
+def _audit_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 def _call_attempt_entry(
     *,
     arm: str,
@@ -234,26 +243,34 @@ def _call_attempt_entry(
         "status": status,
         "validation_category": validation_category,
         "error_type": error_type,
-        "analysis_backend": model_call_meta.get("analysis_backend", "direct"),
-        "provider_id": model_call_meta.get("provider_id"),
-        "model": model_call_meta.get("model"),
-        "requested_model": model_call_meta.get(
-            "requested_model", model_call_meta.get("model")
+        "analysis_backend": _audit_text(
+            model_call_meta.get("analysis_backend", "direct")
+        ) or "direct",
+        "provider_id": _audit_text(model_call_meta.get("provider_id")),
+        "model": _audit_text(model_call_meta.get("model")),
+        "requested_model": _audit_text(
+            model_call_meta.get("requested_model", model_call_meta.get("model"))
         ),
-        "effective_model": model_call_meta.get(
-            "effective_model", model_call_meta.get("model")
+        "effective_model": _audit_text(
+            model_call_meta.get("effective_model", model_call_meta.get("model"))
         ),
-        "runtime_version": model_call_meta.get("runtime_version"),
-        "structured_output_mode": model_call_meta.get("structured_output_mode"),
-        "thinking": model_call_meta.get("thinking"),
-        "reasoning_effort": model_call_meta.get("reasoning_effort"),
-        "requested_thinking": model_call_meta.get("requested_thinking"),
-        "requested_reasoning_effort": model_call_meta.get(
-            "requested_reasoning_effort"
+        "runtime_version": _audit_text(model_call_meta.get("runtime_version")),
+        "structured_output_mode": _audit_text(
+            model_call_meta.get("structured_output_mode")
         ),
-        "effective_thinking": model_call_meta.get("effective_thinking"),
-        "effective_reasoning_effort": model_call_meta.get(
-            "effective_reasoning_effort"
+        "thinking": _audit_bool(model_call_meta.get("thinking")),
+        "reasoning_effort": _audit_text(model_call_meta.get("reasoning_effort")),
+        "requested_thinking": _audit_bool(
+            model_call_meta.get("requested_thinking")
+        ),
+        "requested_reasoning_effort": _audit_text(
+            model_call_meta.get("requested_reasoning_effort")
+        ),
+        "effective_thinking": _audit_bool(
+            model_call_meta.get("effective_thinking")
+        ),
+        "effective_reasoning_effort": _audit_text(
+            model_call_meta.get("effective_reasoning_effort")
         ),
         "provider_fallback_used": bool(
             model_call_meta.get("provider_fallback_used", False)
@@ -261,8 +278,8 @@ def _call_attempt_entry(
         "transport_attempts": copy.deepcopy(
             model_call_meta.get("transport_attempts") or []
         ),
-        "job_digest": model_call_meta.get("job_digest"),
-        "codex_thread_id": model_call_meta.get("thread_id"),
+        "job_digest": _audit_text(model_call_meta.get("job_digest")),
+        "codex_thread_id": _audit_text(model_call_meta.get("thread_id")),
         "initial_context_bytes": max(
             0, int(model_call_meta.get("initial_context_bytes") or 0)
         ),

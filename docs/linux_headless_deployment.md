@@ -243,11 +243,30 @@ ssh -L 8765:127.0.0.1:8765 <VPS_USER>@<VPS_HOST>
 - Bot 心跳、并发队列、资产连接和最近分析状态；
 - 最近 PA 决策、VPA evidence 摘要和 Paper 账户；
 - “暂停分析”：不再接收新快照，正在运行的分析安全完成；
-- “恢复运行”：恢复轮询，若已有新闭合 K 线则按原去重规则分析。
-- `deepseek_only / codex_only / auto` Backend 请求；仅在 scheduler idle 后 applied，已有 Job 不换标。
+- DeepSeek `Flash/Pro`、Thinking 与 reasoning effort；
+- Codex 发布目录中的 model 与该 model 支持的 reasoning effort；
+- `deepseek_only / codex_only / auto` Backend 请求；
+- 只在 paused、idle、Profile/Backend 已 applied 时可用的单次 `Run Once`。
 
-看板不能改 Prompt、风险参数、资产列表或 Joint 权限，也不能直接发起模型分析、
-真实下单或执行 shell。进程启停与重启仍使用 `systemctl`。这是有意的权限边界，
+首次受控 smoke 的精确顺序：
+
+1. 点击 `Pause`，等待 Service、健康状态均为 `paused`，Running/Queue 为 `0 / 0`。
+2. 选择 `DeepSeek Direct`，选择 `DeepSeek V4 Flash`、Thinking enabled、目标 effort，点击
+   `Apply Profile`。
+3. 等待 Desired/Applied generation 一致、Profile State 为 `APPLIED`，再点击 `Run Once`。
+4. 在 Recent Runs 核对 `Backend`、Requested/Effective Model、Effort、Latency、Repairs、Outcome
+   和 Status；同时核对本次 record 的 Snapshot hash、HTF 与 VPA Shadow。
+5. 保持 paused，选择 `Codex Only`，选择已通过 live canary 的 Codex model/effort，等待 Backend
+   与 Profile 均 applied 后再点击一次 `Run Once`。
+6. 任一 Codex auth/runtime/Schema/事实/权限失败时保持 paused，切回 `DeepSeek Direct` 并等待
+   applied；不要把 `auto` fallback 的成功误记为 Codex 成功。
+
+Profile/Backend 的 HTTP `202` 只表示 desired state 已持久化，不表示已生效。已冻结 Job 永远保持原
+model/effort/profile fingerprint，不因后续选择而换标。每个 `Run Once` generation 最多接受一个任务，
+任务结束后仍保持 paused。
+
+看板不能改 Prompt、风险参数、资产列表或 Joint 权限；`Run Once` 只能请求固定单资产的一次完整
+PA 主链分析，不能绕过 Snapshot、Validator、Router、Risk，也不能真实下单或执行 shell。进程启停与重启仍使用 `systemctl`。这是有意的权限边界，
 避免 Web 控制面改变交易语义。
 
 Dashboard 以独立的 `pa-agent-dashboard` 用户运行，只能访问
@@ -275,7 +294,8 @@ sudo git switch <VERIFIED_BRANCH_OR_TAG>
 sudo bash deploy/install_vps.sh
 ```
 
-重新执行 `--check`、`--probe-data`、`--once` 后再启动。回滚时切回之前记录的 commit，
+重新执行 `--check`、`--probe-data`、Runtime audit 与 live canary 后再启动。回滚时先在看板选择
+`DeepSeek Direct` 并保持 paused；若版本级回滚仍有必要，再切回之前记录的 commit，
 再次运行安装脚本和四步验收。不要删除 `/var/lib/pa-agent`，paper 与审计数据都在那里。
 
 ## 8. 运行边界

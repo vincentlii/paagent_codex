@@ -2,14 +2,15 @@
 lifecycle: active
 capability: no-go
 verification_scope: local
-最后核验: 2026-09-02
-核验提交: 2bc71ae
+最后核验: 2026-09-03
+核验提交: 03c618a
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
   - docs/architecture/ADR-0023-vps-observability-and-control-plane.md
   - docs/architecture/ADR-0024-codex-analysis-backend.md
   - docs/quality/codex_backend_final_audit_20260902.md
+  - docs/quality/vps_profile_dashboard_audit_20260903.md
 ---
 
 # 当前状态
@@ -21,11 +22,15 @@ Backend 已完成 ADR-0024 设计冻结、Frozen Runtime、受约束 CLI Worker�
 Job publisher、环境驱动的生产 Factory 以及 Backend A/A/B/B 冻结协议与隔离统计。Codex 接入保持
 opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证。
 
-项目已具备进入真实 VPS 安装、预检和无人值守 Paper 验证的工程基础，但尚不能写成“VPS 已验证”或“PA+VPA 已提高盈利”。2026-08-13 的 `1169 passed, 7 deselected` 是绑定当时审计基线的历史证据；Dashboard 是审计后新增能力，需要在目标 Linux/VPS 环境补充实机验证。
+项目已完成 versioned Analysis Profile、单次运行控制、模型选择看板、Codex Runtime 资产/权限审计与
+live AGENTS/Skill canary，具备进入真实 VPS 受控 smoke 的工程基础，但尚不能写成“VPS 已验证”或
+“Codex/PA+VPA 已提高盈利”。2026-08-13 的 `1169 passed, 7 deselected` 是绑定当时审计基线的历史证据；
+本轮 276 项聚焦回归覆盖新增链路，仍需目标 Linux/VPS 实机验收。
 
 本轮 Codex 实现与边界见 [Codex Backend 最终本地审计](../quality/codex_backend_final_audit_20260902.md)。
 
-本阶段起点：本地 Codex Analysis Backend 已存在；Analysis Profile UI 尚待实现，真实 Codex 分析的 live evidence 尚待取得。既有 Dashboard 控制面不等于 Profile UI 已完成，也不构成真实 Codex 分析验证。
+当前发布候选固定 `binance_usdm/BINANCE/XAUUSDT/1h`、HTF `4h/60`、VPA Shadow、并发 1；
+Profile UI 已完成，真实 Codex 分析、权限负向测试和 live canary evidence 尚待目标 VPS 取得。
 
 ## 版本锚点
 
@@ -36,6 +41,7 @@ opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证�
 | `f8fffc0` | 当前功能基线 | 新增隔离 VPS 控制 Dashboard，晚于 2026-08-13 全量审计 |
 | `965f2df` | Codex 升级基线 | `convergence-vnext` 上创建隔离 worktree 的固定起点 |
 | `2bc71ae` | Codex VPS 接线 | 独立 Unix worker、生产 publisher/factory、runtime identity 与 VPA Shadow 接通 |
+| `db43846`–`03c618a` | Profile 发布候选 | Profile/control、safe apply、Dashboard、Runtime audit 与固定单资产 VPS 配置 |
 | `311b12a` | 文档设计 | 项目知识库设计规范 |
 | `2e2d8b5` | 文档计划 | 知识库实施计划 |
 
@@ -62,11 +68,11 @@ opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证�
 | Paper OHLC v2 与结果隔离 | implemented | local；2026-08-13 历史回归 | 反事实不等于真实成交或真实 PnL |
 | 持续 A/A/B/B | research-only | local；2026-08-13 历史回归 | 缺少足够独立 Snapshot 和明确结果，不能晋级 |
 | Linux Headless 与发布依赖 | implemented | 历史 CI/wheel smoke；VPS not-verified | 需要真实 Linux kernel、systemd、目录权限和重启恢复验收 |
-| VPS Dashboard | implemented | local focused | 只能请求 pause/resume 和 `deepseek_only/auto/codex_only`；Backend 在 task/cohort 冻结且仅在 scheduler idle 后 applied。仍需实机权限、loopback、SSH tunnel 验证 |
+| VPS Dashboard | implemented | local focused | 可选择 allowlisted DeepSeek/Codex model/effort、pause/resume、三 Backend mode 与 fixed-scope Run Once；Profile/Backend 仅在 idle 后 applied，generation/fingerprint 防止旧表单覆盖。仍需实机 loopback/SSH tunnel 验证 |
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
 | Analysis Backend seam | implemented | local focused | Direct 与 Codex Adapter 均返回现有 Provider Draft；Codex 只接 PA Stage 1/2。VPA Shadow 仍由隔离 Direct role 提供二级证据且不改变 PA official path；生产 `soft` 仍收敛为 Shadow |
 | Frozen Agent Job / Evidence | implemented | local focused | 确定性 manifest、原子目录发布、resource digest、角色事实/知识 allowlist、cutoff 与调用/字节预算已实现 |
-| Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、JSON/outbox 已用模拟 subprocess 验证；Provider Draft Schema 仍由 PA Validator 判定；尚未做真实账号调用 |
+| Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、JSON/outbox 已用模拟 subprocess 验证；Runtime digest、installed/source parity、model/effort fail-closed 与 live canary 已实现；尚未做真实账号调用 |
 | Codex Analysis Backend | research-only | local focused | 已有有界 core context、独立 Unix spool worker、端到端 runtime identity、一次定向修复、熔断、完整 Direct PA 冷回退与环境 Factory；部署默认仍为 `deepseek_only` |
 | Codex audit projection | implemented | local focused | `analysis_calls` 投影 backend、provider、job/thread identity 与 Evidence 调用/字节量；完整 JSON record 仍是唯一原始记录 |
 | Analysis Backend A/A/B/B | research-only | local focused | `analysis_backend_aabb_v1` 预登记四臂、ABBA/BAAB、独立 runtime、禁 fallback、失败臂 coverage、cohort 去重与成本/重复性摘要已实现；尚无真实 Codex 样本，不能晋级 |
@@ -91,7 +97,7 @@ opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证�
 
 ### 文档与变更治理
 
-- Dashboard 之后的完整 Windows/Linux 非 live 套件尚未在当前知识状态中重新声明通过。
+- 本轮新增链路的 276 项聚焦回归已通过；完整全仓非 live 套件仍未重新声明通过。
 - 临时 [提示词优化日志](../提示词优化.md) 不得被误当成 Prompt 权威规范。
 - 任何新修复必须避免针对单条 record 增加硬编码或自由文本硬拒绝。
 
@@ -116,6 +122,10 @@ opt-in，尚未完成真实账号、VPS、长时间回放或交易增益验证�
 5. 达到预注册门禁后再讨论 Joint 是否晋级；未通过时记录负面结果而不是调整到迎合样本。
 
 ## 最近知识变更
+
+- `03c618a`：完成固定单资产 VPS 配置、Codex Runtime 规则/Skills digest、非 editable
+  installed/source parity、POSIX 权限契约与 live canary；服务默认 paused，仍待 VPS 实测。
+- `db43846`–`5b653ed`：完成 versioned Analysis Profile、idle safe apply、exact-once Run Once 与模型选择 Dashboard。
 
 - `2bc71ae` / Phase 7：完成 Codex 生产接线与独立 VPS worker；当阶段本地相关回归 160 项通过。Phase 8 最终 focused suite 为 168 项；目标 Linux/systemd、真实账号与交易增益仍未验证。
 

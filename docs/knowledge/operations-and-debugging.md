@@ -89,6 +89,10 @@ Headless 启动失败时检查：
 - 使用独立 Dashboard token，不复用 Provider API key。
 - Dashboard 用户不能读取 `PA_AGENT_HOME`、内部数据库、records、Paper ledger 或配置。
 - 写入 `paused` 后先看 control `generation`，再等待 runtime `applied_control_generation` 和 `service_state=paused`。
+- Profile 或 Backend 的 `202` 只是 desired state；必须等待 desired/applied generation、fingerprint
+  和 Backend 一致后才能 `Run Once`。单次任务完成后仍保持 paused。
+- Recent Runs 必须同时核对 requested/effective model、effort、repair、latency、terminal outcome；
+  `auto` 成功不能替代 `codex_only` smoke。
 - 暂停不终止进行中的任务；停止/重启进程使用 systemd，不在 Dashboard 中模拟。
 - 控制文件损坏时 Headless fail-closed 暂停新任务，并发布 `control_error`。
 
@@ -107,17 +111,21 @@ Headless 启动失败时检查：
 ## Codex Analysis Worker
 
 - 每个 role 必须出现新的 ephemeral task，不允许 `resume` 或共享自然语言会话。
-- CLI 必须为 read-only、approval `never`，并禁用 shell、Web、image、用户 config/rules；唯一工具为
+- CLI 必须为 read-only、approval `never`，并禁用 shell、Web、image、用户 config；唯一工具为
   `required=true` 的 `pa_evidence` stdio MCP。
+- production 保留 workspace `AGENTS.md` 与 Role Skill discovery，不传 `--ignore-rules`；上线前必须以
+  `runtime_audit --live-canary` 的随机 sentinel 验证两者确实生效。
 - VPS 只允许 ChatGPT account auth；使用 `codex login --device-auth`，`auth.json` 按密码管理，
   不设置 `OPENAI_API_KEY`/`CODEX_API_KEY` fallback。
-- `PA_AGENT_CODEX_ENABLED` 默认关闭；启用前必须设置非空 model，并确认 Codex binary、Prompt 目录、
+- `PA_AGENT_CODEX_ENABLED` 默认关闭；启用前 model/effort 必须来自发布 catalog，并确认 Codex binary、Prompt 目录、
   `$PA_AGENT_HOME/codex/{home,jobs,runtime,outbox}` 权限通过离线 `--check`。
 - systemd 以独立 `pa-agent-codex` 用户运行 spool worker。Headless 只写 Job/inbox、读取 result；
   Codex 只读 Job，只写独立 home/runtime/outbox/inbox/result，不能访问 `/var/lib/pa-agent` 或
   systemd credential。真实 VPS 上必须对源码、生产 DB、Paper ledger 和 credential 做负向读取/写入测试。
 - `job_digest`、resource digest、output schema、Evidence audit 或 role 不一致均按不可接受结果处理，
   不摄取 outbox、不写 canonical record。
+- `runtime_asset_digest`、Codex binary digest、model/effort 与 Profile fingerprint 必须进入 Frozen Job；
+  未知 model/effort、已安装资源与源码不一致或 runtime identity drift 都 fail closed。
 - 排障先区分 CLI/auth/rate-limit/timeout/MCP startup 等 availability failure，与 schema、事实、
   authority、专业判断等 analysis failure；只有前一类可进入后续定义的 cold fallback。
 

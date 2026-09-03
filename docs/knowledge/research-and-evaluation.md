@@ -130,12 +130,16 @@ Codex Backend 不因“Prompt 更短”或 20 个工程样本而替换 Direct。
 - VPA 可以提供与价格结构不同的成交量、努力/结果和 follow-through 证据维度。
 - 程序可以消除可复算事实矛盾、权限越界和订单数学错误。
 - 2026-08-13 审计记录了当时的全量非 live 工程证据。
+- 单资产 Dashboard 的 DeepSeek/Codex `Run Once` 可以证明部署、认证、数据、协议和持久化链是否可运行；
+  它是 operational smoke，不是模型对照实验。
 
 ## 当前不能得出的结论
 
 - 不能声称 VPA 或 Joint 已提高胜率、盈利、EV 或出入场精度。
 - 不能声称真实 VPS、systemd 权限、Provider/行情和长时间 Paper 已验证。
 - 不能由单次模型表现判断某个 Prompt、thinking 强度或事件标签更优。
+- 不能比较两个不同闭盘 Snapshot 的单次收益后声称 Codex 优于或劣于 DeepSeek；正式结论仍需同一
+  Frozen Snapshot 的预注册 `analysis_backend_aabb_v1`。
 - 不能把教材频率、盈亏平衡胜率或 LLM confidence 当成统计校准概率。
 - 不能保证减少幻觉会自动提高盈利；市场判断仍有不可消除的不确定性。
 
