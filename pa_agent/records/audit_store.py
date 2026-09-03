@@ -43,7 +43,7 @@ class AuditRebuildResult:
 class AnalysisAuditStore:
     """Index completed or partial analysis records without owning their source data."""
 
-    _SCHEMA_VERSION: ClassVar[int] = 14
+    _SCHEMA_VERSION: ClassVar[int] = 15
     _ENTRY_STATUSES: ClassVar[frozenset[str]] = frozenset(
         {"not_traded", "pending", "filled", "expired", "cancelled"}
     )
@@ -627,6 +627,10 @@ class AnalysisAuditStore:
                 analysis_backend TEXT NOT NULL DEFAULT 'direct',
                 provider_id TEXT,
                 model TEXT,
+                requested_model TEXT,
+                effective_model TEXT,
+                requested_reasoning_effort TEXT,
+                effective_reasoning_effort TEXT,
                 runtime_version TEXT,
                 job_digest TEXT,
                 codex_thread_id TEXT,
@@ -806,6 +810,10 @@ class AnalysisAuditStore:
             "analysis_backend": "TEXT NOT NULL DEFAULT 'direct'",
             "provider_id": "TEXT",
             "model": "TEXT",
+            "requested_model": "TEXT",
+            "effective_model": "TEXT",
+            "requested_reasoning_effort": "TEXT",
+            "effective_reasoning_effort": "TEXT",
             "runtime_version": "TEXT",
             "job_digest": "TEXT",
             "codex_thread_id": "TEXT",
@@ -836,10 +844,12 @@ class AnalysisAuditStore:
                     prompt_tokens, completion_tokens, cached_prompt_tokens,
                     total_tokens, latency_ms, status, validation_category,
                     error_type, analysis_backend, provider_id, model,
+                    requested_model, effective_model,
+                    requested_reasoning_effort, effective_reasoning_effort,
                     runtime_version, job_digest,
                     codex_thread_id, initial_context_bytes, evidence_call_count,
                     evidence_response_bytes, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.meta.run_id,
@@ -859,6 +869,14 @@ class AnalysisAuditStore:
                     str(raw.get("analysis_backend") or "direct"),
                     str(raw.get("provider_id") or "") or None,
                     str(raw.get("model") or "") or None,
+                    str(raw.get("requested_model") or raw.get("model") or "") or None,
+                    str(raw.get("effective_model") or raw.get("model") or "") or None,
+                    str(raw.get("requested_reasoning_effort") or "") or None,
+                    str(
+                        raw.get("effective_reasoning_effort")
+                        or raw.get("reasoning_effort")
+                        or ""
+                    ) or None,
                     str(raw.get("runtime_version") or "") or None,
                     str(raw.get("job_digest") or "") or None,
                     str(raw.get("codex_thread_id") or "") or None,

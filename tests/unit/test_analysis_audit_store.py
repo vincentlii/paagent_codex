@@ -198,6 +198,10 @@ def _record(
                 "evidence_response_bytes": 4096,
                 "initial_context_bytes": 2048,
                 "model": "gpt-5.6-terra",
+                "requested_model": "gpt-5.6-terra",
+                "effective_model": "gpt-5.6-terra",
+                "requested_reasoning_effort": "xhigh",
+                "effective_reasoning_effort": "xhigh",
                 "runtime_version": "runtime-v1",
             }
         ],
@@ -274,6 +278,10 @@ def test_audit_store_indexes_official_run_and_manual_outcome(tmp_path: Path) -> 
     assert call["evidence_response_bytes"] == 4096
     assert call["initial_context_bytes"] == 2048
     assert call["model"] == "gpt-5.6-terra"
+    assert call["requested_model"] == "gpt-5.6-terra"
+    assert call["effective_model"] == "gpt-5.6-terra"
+    assert call["requested_reasoning_effort"] == "xhigh"
+    assert call["effective_reasoning_effort"] == "xhigh"
     assert call["runtime_version"] == "runtime-v1"
     observations = store.get_vpa_observations("run-audit-test")
     assert observations[0]["bar_range"] == "K2-K1"

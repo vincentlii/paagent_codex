@@ -108,6 +108,7 @@ class DirectAnalysisRoleBackend:
             return self._complete(
                 request,
                 result,
+                provider=provider,
                 provider_fallback_used=False,
             )
         except ModelCallFailure as primary_failure:
@@ -155,6 +156,7 @@ class DirectAnalysisRoleBackend:
             return self._complete(
                 request,
                 result,
+                provider=fallback_provider,
                 provider_fallback_used=True,
                 prior_attempts=primary_failure.attempts,
             )
@@ -199,6 +201,7 @@ class DirectAnalysisRoleBackend:
         request: AnalysisRoleRequest,
         result: ModelCallResult,
         *,
+        provider: Any,
         provider_fallback_used: bool,
         prior_attempts: tuple[dict[str, Any], ...] = (),
     ) -> AnalysisRoleResult:

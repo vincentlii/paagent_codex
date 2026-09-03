@@ -237,6 +237,12 @@ def _call_attempt_entry(
         "analysis_backend": model_call_meta.get("analysis_backend", "direct"),
         "provider_id": model_call_meta.get("provider_id"),
         "model": model_call_meta.get("model"),
+        "requested_model": model_call_meta.get(
+            "requested_model", model_call_meta.get("model")
+        ),
+        "effective_model": model_call_meta.get(
+            "effective_model", model_call_meta.get("model")
+        ),
         "runtime_version": model_call_meta.get("runtime_version"),
         "structured_output_mode": model_call_meta.get("structured_output_mode"),
         "thinking": model_call_meta.get("thinking"),

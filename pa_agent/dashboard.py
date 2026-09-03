@@ -18,13 +18,89 @@ from urllib.parse import urlsplit
 
 from pa_agent.config.paths import RuntimePaths, resolve_runtime_paths
 from pa_agent.dashboard_page import DASHBOARD_HTML
+from pa_agent.operations.analysis_profile import (
+    analysis_capabilities,
+    validate_analysis_profile,
+)
 from pa_agent.operations.runtime_state import (
+    RuntimeControlConflict,
     RuntimeControlStore,
     RuntimeStatusStore,
     control_state_to_dict,
 )
 
 _MAX_BODY_BYTES = 4096
+_RUNTIME_FIELDS = (
+    "service_state",
+    "started_at_ms",
+    "updated_at_ms",
+    "heartbeat_stale_after_seconds",
+    "applied_control_generation",
+    "applied_profile_generation",
+    "applied_profile_fingerprint",
+    "run_once_consumed_generation",
+    "consumed_run_once_generation",
+    "control_error",
+)
+_ASSET_FIELDS = (
+    "source",
+    "venue",
+    "symbol",
+    "timeframe",
+    "connected",
+    "in_flight",
+    "last_analysis_status",
+    "fetch_failures",
+    "latest_closed_bar_ts",
+)
+_SCHEDULER_FIELDS = (
+    "running",
+    "queued",
+    "completed",
+    "failed",
+    "audit_failures",
+    "closed",
+    "error",
+    "max_concurrency",
+)
+_MODE_FIELDS = ("vpa", "paper_trading", "decision_stance", "analysis_backend")
+_RECENT_RUN_FIELDS = (
+    "run_id",
+    "timestamp_local_ms",
+    "symbol",
+    "timeframe",
+    "run_status",
+    "stage1_cycle_position",
+    "stage1_direction",
+    "stage1_gate_result",
+    "order_type",
+    "order_direction",
+    "trade_confidence",
+    "terminal_outcome",
+    "vpa_data_status",
+    "vpa_background_relation",
+    "vpa_timing_relation",
+    "vpa_effect",
+    "analysis_backend",
+    "backend",
+    "requested_model",
+    "effective_model",
+    "reasoning_effort",
+    "requested_reasoning_effort",
+    "effective_reasoning_effort",
+    "total_latency_ms",
+    "repair_count",
+    "outcome",
+)
+_PAPER_ACCOUNT_FIELDS = (
+    "account_id",
+    "equity",
+    "orders",
+    "open",
+    "closed",
+    "realized_pnl",
+)
+_PAPER_RESEARCH_FIELDS = ("complete_aabb_snapshots",)
 
 
 @dataclass(frozen=True)
@@ -71,14 +147,106 @@ def _health(runtime: dict[str, Any] | None, *, now_ms: int) -> dict[str, str]:
     return {"state": "running", "label": "运行中", "message": ""}
 
 
+def _select_fields(value: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {field: value[field] for field in fields if field in value}
+
+
+def _safe_runtime_projection(runtime: dict[str, Any] | None) -> dict[str, Any]:
+    if runtime is None:
+        return {}
+    projected = _select_fields(runtime, _RUNTIME_FIELDS)
+    projected["mode"] = _select_fields(runtime.get("mode"), _MODE_FIELDS)
+    projected["scheduler"] = _select_fields(
+        runtime.get("scheduler"), _SCHEDULER_FIELDS
+    )
+    projected["assets"] = [
+        _select_fields(item, _ASSET_FIELDS)
+        for item in runtime.get("assets", [])
+        if isinstance(item, dict)
+    ]
+    return projected
+
+
+def _validated_applied_profile(runtime: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(runtime, dict):
+        return None
+    raw = runtime.get("applied_profile")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return validate_analysis_profile(raw).model_dump(mode="json")
+    except (TypeError, ValueError):
+        return None
+
+
+def _profile_projection(control: Any, runtime: dict[str, Any] | None) -> dict[str, Any]:
+    desired = control.analysis_profile.model_dump(mode="json")
+    applied = _validated_applied_profile(runtime)
+    applied_generation = (
+        runtime.get("applied_profile_generation") if runtime is not None else None
+    )
+    applied_fingerprint = (
+        runtime.get("applied_profile_fingerprint") if runtime is not None else None
+    )
+    pending = not (
+        applied is not None
+        and applied == desired
+        and applied_generation == control.profile_generation
+        and applied_fingerprint == control.profile_fingerprint
+    )
+    diff = {
+        key: {"applied": applied.get(key) if applied is not None else None, "desired": value}
+        for key, value in desired.items()
+        if applied is None or applied.get(key) != value
+    }
+    return {
+        "current": desired,
+        "current_generation": control.profile_generation,
+        "current_fingerprint": control.profile_fingerprint,
+        "desired": desired,
+        "desired_generation": control.profile_generation,
+        "desired_fingerprint": control.profile_fingerprint,
+        "applied": applied,
+        "applied_generation": applied_generation,
+        "applied_fingerprint": applied_fingerprint,
+        "pending": pending,
+        "pending_profile": desired if pending else None,
+        "diff": diff,
+    }
+
+
+def _safe_paper_projection(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    accounts = value.get("accounts", [])
+    projected: dict[str, Any] = {
+        "accounts": [
+            _select_fields(item, _PAPER_ACCOUNT_FIELDS)
+            for item in accounts
+            if isinstance(item, dict)
+        ] if isinstance(accounts, list) else [],
+        "research": _select_fields(value.get("research"), _PAPER_RESEARCH_FIELDS),
+    }
+    if "available" in value:
+        projected["available"] = bool(value["available"])
+    return projected
+
+
 def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -> dict[str, Any]:
     current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
     runtime = RuntimeStatusStore(paths.runtime_status_path).read()
     control = RuntimeControlStore(paths.runtime_control_path).read()
-    runtime_view = dict(runtime or {})
-    recent = runtime_view.pop("recent_runs", [])
-    paper = runtime_view.pop("paper", {})
+    runtime_view = _safe_runtime_projection(runtime)
+    recent = [
+        _select_fields(item, _RECENT_RUN_FIELDS)
+        for item in (runtime or {}).get("recent_runs", [])
+        if isinstance(item, dict)
+    ]
+    paper = _safe_paper_projection((runtime or {}).get("paper"))
     control_view = control_state_to_dict(control)
+    profile_view = _profile_projection(control, runtime)
     applied_generation = runtime_view.get("applied_control_generation")
     expected_service_state = "paused" if control.desired_state == "paused" else "running"
     control_view["applied"] = (
@@ -92,6 +260,7 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
             or "deepseek_only"
         )
         == control.desired_backend
+        and not profile_view["pending"]
     )
     return {
         "schema_version": 1,
@@ -99,9 +268,76 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
         "health": _health(runtime, now_ms=current_ms),
         "runtime": runtime_view,
         "control": control_view,
+        "capabilities": analysis_capabilities(),
+        "profile": profile_view,
         "recent_runs": recent,
         "paper": paper,
     }
+
+
+def _run_once_ready(
+    control: Any,
+    runtime: dict[str, Any],
+    *,
+    now_ms: int,
+) -> bool:
+    health = _health(runtime, now_ms=now_ms)
+    scheduler = runtime.get("scheduler")
+    assets = runtime.get("assets")
+    if not isinstance(scheduler, dict) or not isinstance(assets, list):
+        return False
+    running = scheduler.get("running", 0)
+    queued = scheduler.get("queued", 0)
+    if (
+        isinstance(running, bool)
+        or not isinstance(running, int)
+        or isinstance(queued, bool)
+        or not isinstance(queued, int)
+    ):
+        return False
+    if len(assets) != 1 or not isinstance(assets[0], dict):
+        return False
+    asset = assets[0]
+    if (
+        str(asset.get("source") or "").lower() != "binance_usdm"
+        or str(asset.get("venue") or "").upper() != "BINANCE"
+        or str(asset.get("symbol") or "").upper() != "XAUUSDT"
+        or str(asset.get("timeframe") or "").lower() != "1h"
+    ):
+        return False
+    max_concurrency = scheduler.get("max_concurrency")
+    if (
+        isinstance(max_concurrency, bool)
+        or not isinstance(max_concurrency, int)
+        or max_concurrency != 1
+    ):
+        return False
+    consumed_values = [
+        runtime[key]
+        for key in ("consumed_run_once_generation", "run_once_consumed_generation")
+        if key in runtime
+    ]
+    prior_generation_consumed = bool(consumed_values) and all(
+        value == control.run_once_generation for value in consumed_values
+    )
+    return bool(
+        control.desired_state == "paused"
+        and runtime.get("service_state") == "paused"
+        and health["state"] == "paused"
+        and runtime.get("applied_control_generation") == control.generation
+        and runtime.get("applied_profile_generation") == control.profile_generation
+        and runtime.get("applied_profile_fingerprint") == control.profile_fingerprint
+        and _validated_applied_profile(runtime)
+        == control.analysis_profile.model_dump(mode="json")
+        and str((runtime.get("mode") or {}).get("analysis_backend") or "")
+        == control.desired_backend
+        and running == 0
+        and queued == 0
+        and not bool(scheduler.get("closed"))
+        and not bool(scheduler.get("error"))
+        and not bool(asset.get("in_flight"))
+        and prior_generation_consumed
+    )
 
 
 def _basic_password(header: str) -> str | None:
@@ -128,7 +364,11 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'unsafe-inline'; "
+                "style-src 'unsafe-inline'; frame-ancestors 'none'",
+            )
             self.end_headers()
 
         def _json(self, status: int, payload: dict[str, Any]) -> None:
@@ -149,7 +389,10 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
         def do_GET(self) -> None:
             path = urlsplit(self.path).path
             if path == "/healthz":
-                health = _health(RuntimeStatusStore(paths.runtime_status_path).read(), now_ms=int(time.time() * 1000))
+                health = _health(
+                    RuntimeStatusStore(paths.runtime_status_path).read(),
+                    now_ms=int(time.time() * 1000),
+                )
                 self._json(200 if health["state"] in {"running", "paused"} else 503, health)
                 return
             if not self._authorized():
@@ -167,7 +410,8 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
         def do_POST(self) -> None:
             if not self._authorized():
                 return
-            if urlsplit(self.path).path != "/api/control":
+            path = urlsplit(self.path).path
+            if path not in {"/api/control", "/api/profile", "/api/run-once"}:
                 self._json(404, {"error": "not_found"})
                 return
             if self.headers.get("X-PA-Agent-Control") != "1":
@@ -189,6 +433,15 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
             except (UnicodeError, json.JSONDecodeError):
                 self._json(400, {"error": "invalid_json"})
                 return
+            if not isinstance(body, dict):
+                self._json(400, {"error": "invalid_json"})
+                return
+            if path == "/api/profile":
+                self._profile(body)
+                return
+            if path == "/api/run-once":
+                self._run_once(body)
+                return
             action = body.get("action") if isinstance(body, dict) else None
             if action not in {"pause", "resume", "set_backend"}:
                 self._json(400, {"error": "unsupported_action"})
@@ -207,6 +460,91 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                     "paused" if action == "pause" else "running",
                     actor="dashboard",
                 )
+            self._json(
+                202,
+                {"ok": True, "applied": False, "control": control_state_to_dict(state)},
+            )
+
+        def _profile(self, body: dict[str, Any]) -> None:
+            if set(body) != {"expected_generation", "profile"}:
+                self._json(400, {"error": "invalid_profile_request"})
+                return
+            expected = body.get("expected_generation")
+            profile = body.get("profile")
+            if (
+                isinstance(expected, bool)
+                or not isinstance(expected, int)
+                or not isinstance(profile, dict)
+            ):
+                self._json(400, {"error": "invalid_profile_request"})
+                return
+            current = control_store.read()
+            if current.error:
+                self._json(503, {"error": "control_state_unavailable"})
+                return
+            try:
+                validated = validate_analysis_profile(profile)
+            except (TypeError, ValueError):
+                self._json(400, {"error": "invalid_profile_request"})
+                return
+            runtime = RuntimeStatusStore(paths.runtime_status_path).read()
+            if (
+                runtime is None
+                or _health(runtime, now_ms=int(time.time() * 1000))["state"]
+                not in {"running", "paused"}
+            ):
+                self._json(503, {"error": "runtime_state_unavailable"})
+                return
+            try:
+                state = control_store.set_analysis_profile(
+                    validated,
+                    expected_generation=expected,
+                    actor="dashboard",
+                )
+            except RuntimeControlConflict:
+                self._json(409, {"error": "generation_conflict"})
+                return
+            except OSError:
+                self._json(503, {"error": "control_state_unavailable"})
+                return
+            self._json(
+                202,
+                {"ok": True, "applied": False, "control": control_state_to_dict(state)},
+            )
+
+        def _run_once(self, body: dict[str, Any]) -> None:
+            if set(body) != {"expected_generation"}:
+                self._json(400, {"error": "invalid_run_once_request"})
+                return
+            expected = body.get("expected_generation")
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                self._json(400, {"error": "invalid_run_once_request"})
+                return
+            current = control_store.read()
+            if current.error:
+                self._json(503, {"error": "control_state_unavailable"})
+                return
+            if current.generation != expected:
+                self._json(409, {"error": "generation_conflict"})
+                return
+            runtime = RuntimeStatusStore(paths.runtime_status_path).read()
+            if runtime is None:
+                self._json(503, {"error": "runtime_state_unavailable"})
+                return
+            if not _run_once_ready(current, runtime, now_ms=int(time.time() * 1000)):
+                self._json(409, {"error": "run_once_not_ready"})
+                return
+            try:
+                state = control_store.request_run_once(
+                    expected_generation=expected,
+                    actor="dashboard",
+                )
+            except RuntimeControlConflict:
+                self._json(409, {"error": "generation_conflict"})
+                return
+            except OSError:
+                self._json(503, {"error": "control_state_unavailable"})
+                return
             self._json(
                 202,
                 {"ok": True, "applied": False, "control": control_state_to_dict(state)},
