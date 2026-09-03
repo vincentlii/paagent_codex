@@ -467,8 +467,6 @@ def prepare_live_canary(
         "features.shell_tool=false",
         "--config",
         "tools.web_search=false",
-        "--config",
-        "tools.view_image=false",
     )
     return LiveCanary(sentinel, workspace, output_path, command)
 
@@ -497,6 +495,7 @@ def run_live_canary(
             list(canary.command),
             cwd=canary.workspace,
             env=environment,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",

@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ from pa_agent.agent_runtime.codex_worker import (
     CodexWorkerOutputError,
     CodexWorkerUnavailable,
 )
-from pa_agent.agent_runtime.runtime_audit import prepare_live_canary
+from pa_agent.agent_runtime.runtime_audit import prepare_live_canary, run_live_canary
 from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from tests.unit.test_frozen_agent_job import _job
@@ -83,6 +84,8 @@ def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) 
     assert 'forced_login_method="chatgpt"' in command
     assert "features.shell_tool=false" in command
     assert 'web_search="disabled"' in command
+    assert "tools.view_image=false" not in command
+    assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
     assert any("mcp_servers.pa_evidence.required=true" == item for item in command)
     assert "OPENAI_API_KEY" not in captured["kwargs"]["env"]
     assert "CODEX_API_KEY" not in captured["kwargs"]["env"]
@@ -111,6 +114,7 @@ def test_live_canary_keeps_workspace_agents_and_role_skill_discoverable(
     assert "--ignore-rules" not in command
     assert "--output-schema" in command
     assert "--output-last-message" in command
+    assert "tools.view_image=false" not in command
     assert canary.sentinel not in command[4]
     assert "$pa-runtime-audit-canary" in (canary.workspace / "AGENTS.md").read_text("utf-8")
     assert canary.sentinel in (
@@ -123,6 +127,38 @@ def test_live_canary_keeps_workspace_agents_and_role_skill_discoverable(
     schema = json.loads((canary.workspace / "output_schema.json").read_text("utf-8"))
     assert "const" not in json.dumps(schema)
     assert "enum" not in json.dumps(schema)
+
+
+def test_live_canary_closes_stdin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    def fake_run(command, **kwargs):
+        captured["kwargs"] = kwargs
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        skill_path = (
+            Path(command[command.index("--cd") + 1])
+            / ".agents"
+            / "skills"
+            / "pa-runtime-audit-canary"
+            / "SKILL.md"
+        )
+        sentinel = skill_path.read_text("utf-8").split("exactly `", 1)[1].split("`", 1)[0]
+        output_path.write_text(
+            json.dumps({"agents_sentinel": sentinel, "skill_observed": True}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    ok, _message = run_live_canary(
+        codex_binary="codex",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+        process_runner=fake_run,
+    )
+
+    assert ok is True
+    assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
 
 
 def test_worker_maps_timeout_without_returning_partial_output(tmp_path: Path) -> None:

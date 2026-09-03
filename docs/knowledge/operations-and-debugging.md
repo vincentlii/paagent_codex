@@ -113,6 +113,9 @@ Headless 启动失败时检查：
 - 每个 role 必须出现新的 ephemeral task，不允许 `resume` 或共享自然语言会话。
 - CLI 必须为 read-only、approval `never`，并禁用 shell、Web、image、用户 config；唯一工具为
   `required=true` 的 `pa_evidence` stdio MCP。
+- Codex CLI 0.153.0 尚不接受文档中的 `tools.view_image` strict-config key。当前通过不传
+  `--image`、workspace 无图片、AGENTS 禁止 image、仅注册 Evidence MCP 保持等价边界；不要盲目加入
+  目标 CLI 不接受的 key。`codex exec` subprocess 必须使用 `stdin=DEVNULL`。
 - production 保留 workspace `AGENTS.md` 与 Role Skill discovery，不传 `--ignore-rules`；上线前必须以
   `runtime_audit --live-canary` 的随机 sentinel 验证两者确实生效。
 - VPS 只允许 ChatGPT account auth；使用 `codex login --device-auth`，`auth.json` 按密码管理，

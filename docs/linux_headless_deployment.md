@@ -169,6 +169,11 @@ credential、生产 records/database 与 Paper ledger 对 Codex 无读写权限�
 
 当前 CLI 使用 `--ignore-user-config` 隔离 `$CODEX_HOME/config.toml`，但 production 与 canary
 命令都不传 `--ignore-rules`，避免 CLI 版本语义变化时连 workspace rules 一并屏蔽。
+`tools.view_image` 已出现在 OpenAI config reference，但 Codex CLI 0.153.0 仍会在
+`--strict-config` 下把它判为未知字段。因此当前 runtime 不传该无效 override；同时不传
+`--image`、不物化图片、只开放 allowlisted Evidence MCP，并由 AGENTS 禁止 image 工具。CLI 升级后
+若要启用该 config key，必须先在目标 VPS 复跑 strict-config canary。所有 subprocess 的 stdin 固定为
+`DEVNULL`，避免 `codex exec` 在 systemd 或 SSH 环境等待额外输入。
 workspace `AGENTS.md` 和 Role Skill 是否可发现仍必须由真实账号 canary 验证。canary 的随机 sentinel 只存在于
 workspace Role Skill，prompt 与 schema 不含 sentinel；因此必须同时发现 workspace `AGENTS.md`
 和 Skill 才能通过：
