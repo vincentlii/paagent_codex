@@ -788,7 +788,10 @@ def test_stale_profile_generation_is_not_applied(tmp_path) -> None:
 def test_run_once_submits_once_while_paused_and_projects_consumed_generation(
     tmp_path,
 ) -> None:
-    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+    monitor, _source, _audit, service, _clock = _monitor(
+        tmp_path,
+        run_on_startup=False,
+    )
     profile = AnalysisProfile()
     control = SimpleNamespace(
         desired_state="paused",

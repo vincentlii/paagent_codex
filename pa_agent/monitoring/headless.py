@@ -160,6 +160,7 @@ class HeadlessMonitor:
         *,
         submission_allowed: Callable[[], bool] | None = None,
         max_submissions: int | None = None,
+        allow_startup_snapshot: bool = False,
     ) -> PollCycleResult:
         """Fetch every eligible asset once and enqueue accepted snapshots."""
         with self._lock:
@@ -196,7 +197,11 @@ class HeadlessMonitor:
                 if submission_allowed is not None and not submission_allowed():
                     skipped += 1
                     continue
-                outcome = self._submit_prepared(state, task)
+                outcome = self._submit_prepared(
+                    state,
+                    task,
+                    allow_startup_snapshot=allow_startup_snapshot,
+                )
                 if outcome == "accepted":
                     accepted += 1
                 else:
@@ -341,6 +346,7 @@ class HeadlessMonitor:
                 result = self.poll_once(
                     submission_allowed=lambda: True,
                     max_submissions=1,
+                    allow_startup_snapshot=True,
                 )
             except Exception:
                 logger.exception("Run-once analysis opportunity failed")
@@ -847,7 +853,13 @@ class HeadlessMonitor:
             return None, None
         return previous, delta.new_count
 
-    def _submit_prepared(self, state: _AssetState, task: AnalysisTask) -> str:
+    def _submit_prepared(
+        self,
+        state: _AssetState,
+        task: AnalysisTask,
+        *,
+        allow_startup_snapshot: bool = False,
+    ) -> str:
         now = self._monotonic()
         latest_closed_bar_ts = self._latest_closed_bar_ts(task)
         with self._lock:
@@ -862,10 +874,14 @@ class HeadlessMonitor:
             if not state.startup_observed:
                 state.startup_observed = True
                 state.startup_closed_bar_ts = latest_closed_bar_ts
-                if not self._settings.monitoring.run_on_startup:
+                if (
+                    not self._settings.monitoring.run_on_startup
+                    and not allow_startup_snapshot
+                ):
                     return "initial_observation"
             elif (
                 not self._settings.monitoring.run_on_startup
+                and not allow_startup_snapshot
                 and state.startup_closed_bar_ts is not None
                 and latest_closed_bar_ts <= state.startup_closed_bar_ts
             ):
