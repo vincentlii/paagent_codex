@@ -308,6 +308,7 @@ class CodexCliWorker:
         ]
         prompt = self._initial_prompt(job)
         config_values = [
+            'approval_policy="never"',
             'forced_login_method="chatgpt"',
             f'model_reasoning_effort="{reasoning_effort}"',
             'web_search="disabled"',
@@ -327,8 +328,6 @@ class CodexCliWorker:
         # Deployment additionally requires the runtime_audit live canary.
         command = [
             self._config.codex_binary,
-            "--ask-for-approval",
-            "never",
             "exec",
             prompt,
             "--ephemeral",

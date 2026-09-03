@@ -74,7 +74,8 @@ def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) 
             os.environ["CODEX_API_KEY"] = previous_codex
 
     command = captured["command"]
-    assert command[:4] == ["codex", "--ask-for-approval", "never", "exec"]
+    assert command[:2] == ["codex", "exec"]
+    assert 'approval_policy="never"' in command
     assert "--ephemeral" in command
     assert "--ignore-user-config" in command
     assert "--ignore-rules" not in command
@@ -108,15 +109,17 @@ def test_live_canary_keeps_workspace_agents_and_role_skill_discoverable(
     )
 
     command = list(canary.command)
-    assert command[:4] == ["codex", "--ask-for-approval", "never", "exec"]
+    assert command[:2] == ["codex", "exec"]
+    assert 'approval_policy="never"' in command
     assert command[command.index("--cd") + 1] == str(canary.workspace)
     assert "--ignore-user-config" in command
     assert "--ignore-rules" not in command
     assert "--output-schema" in command
     assert "--output-last-message" in command
     assert "tools.view_image=false" not in command
-    assert canary.sentinel not in command[4]
+    assert canary.sentinel not in " ".join(command)
     assert "$pa-runtime-audit-canary" in (canary.workspace / "AGENTS.md").read_text("utf-8")
+    assert "$pa-runtime-audit-canary" in command[2]
     assert canary.sentinel in (
         canary.workspace
         / ".agents"

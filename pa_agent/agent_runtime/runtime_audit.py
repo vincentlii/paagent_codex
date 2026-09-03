@@ -436,13 +436,12 @@ def prepare_live_canary(
         encoding="utf-8",
     )
     prompt = (
+        "Use $pa-runtime-audit-canary. "
         "Follow the workspace AGENTS instructions for the runtime audit. "
         "Return only the required JSON object."
     )
     command = (
         codex_binary,
-        "--ask-for-approval",
-        "never",
         "exec",
         prompt,
         "--ephemeral",
@@ -459,6 +458,8 @@ def prepare_live_canary(
         str(schema_path),
         "--output-last-message",
         str(output_path),
+        "--config",
+        'approval_policy="never"',
         "--config",
         f'model_reasoning_effort="{reasoning_effort}"',
         "--config",

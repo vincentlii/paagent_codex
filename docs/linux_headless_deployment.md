@@ -282,7 +282,7 @@ Codex CLI 由独立 `pa-agent-codex` worker 执行。Headless 只能向共享 sp
 与读取结果；Codex 用户只能只读 Job，不能遍历 `/var/lib/pa-agent`、生产数据库、Paper ledger 或
 systemd API credential。systemd 将 `/opt/pa-agent` 和 Python environment 设为只读，只允许
 `/var/lib/pa-agent-codex/{home,runtime,outbox,inbox,results}` 写入；CLI 每个 role 使用 `--ephemeral`、
-`--sandbox read-only`、`--ask-for-approval never`，关闭 shell/Web，并只启用 required Frozen
+`--sandbox read-only`、`approval_policy="never"`，关闭 shell/Web，并只启用 required Frozen
 Evidence MCP。Codex 输出先写 outbox，再由 PA Validator、Router、Risk 和 canonical writer 接管；
 Codex 本身不直接改代码、配置、Risk、Paper 或订单。
 
