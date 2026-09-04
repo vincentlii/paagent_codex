@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
-from pa_agent.agent_runtime.publisher import CodexJobPublisher
+from pa_agent.agent_runtime.publisher import (
+    CodexJobPublisher,
+    analysis_role_request_digest,
+)
 from pa_agent.ai.analysis_role_backend import AnalysisRoleRequest
 from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
 from tests.integration.conftest import make_frame
@@ -60,6 +63,7 @@ def test_publisher_replaces_long_direct_prompt_with_bounded_core_context(tmp_pat
     assert job.fact_projection["snapshot_hash"] == job.manifest.snapshot_hash
     assert max(int(bar["ts_open"]) for bar in job.bars) <= job.manifest.cutoff_ts_open
     assert job.runtime["backend_runtime_identity"] == runtime_identity
+    assert len(job.request["source_request_digest"]) == 64
 
 
 def test_publisher_rejects_knowledge_outside_prompt_allowlist(tmp_path: Path) -> None:
@@ -77,3 +81,31 @@ def test_publisher_rejects_knowledge_outside_prompt_allowlist(tmp_path: Path) ->
             _request("stage2", {"task_id": "task-1", "allowed_knowledge_ids": ["../secret"]}),
             1,
         )
+
+
+def test_source_request_digest_is_canonical_for_key_order_and_unicode() -> None:
+    first = AnalysisRoleRequest(
+        role="stage1",
+        messages=[{"role": "user", "content": "诊断市场"}],
+        schema={"type": "object", "properties": {"方向": {"type": "string"}}},
+        thinking=True,
+        reasoning_effort="high",
+        snapshot_hash="a" * 64,
+        cutoff_ts_open=1_725_000_000_000,
+        agent_context={"b": 2, "a": 1},
+    )
+    reordered = AnalysisRoleRequest(
+        role="stage1",
+        messages=[{"content": "诊断市场", "role": "user"}],
+        schema={"properties": {"方向": {"type": "string"}}, "type": "object"},
+        thinking=True,
+        reasoning_effort="high",
+        snapshot_hash="A" * 64,
+        cutoff_ts_open=1_725_000_000_000,
+        agent_context={"a": 1, "b": 2},
+    )
+
+    digest = analysis_role_request_digest(first, 1)
+
+    assert digest == analysis_role_request_digest(reordered, 1)
+    assert digest == "aab770c2a9770c0e305339b6e91d9ff7ab8915daf463ad8c5d5155b79f474e92"

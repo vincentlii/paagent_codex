@@ -11,6 +11,7 @@ from pa_agent.agent_runtime.codex_worker import (
     CodexWorkerResult,
     CodexWorkerTimeout,
 )
+from pa_agent.agent_runtime.publisher import CodexJobPublisher
 from pa_agent.ai.analysis_role_backend import AnalysisRoleRequest
 from pa_agent.ai.codex_analysis_backend import (
     CodexAnalysisRoleBackend,
@@ -18,9 +19,11 @@ from pa_agent.ai.codex_analysis_backend import (
     FullChainFallbackRequired,
 )
 from pa_agent.ai.deepseek_client import AIUsage
+from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
 from pa_agent.ai.provider_failures import ModelCallFailure
 from pa_agent.config.settings import PromptSettings, Settings
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator, _call_attempt_entry
+from tests.integration.conftest import make_frame
 from tests.unit.test_frozen_agent_job import _job
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 
@@ -110,6 +113,101 @@ def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: P
     assert ledger["initial_context_bytes"] == result.runtime["initial_context_bytes"]
     assert ledger["model"] == "gpt-5.6-terra"
     assert ledger["runtime_version"] == "runtime-v1"
+
+
+def test_backend_accepts_publisher_bounded_messages_for_original_role_request(
+    tmp_path: Path,
+) -> None:
+    frame = make_frame()
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    runtime_identity = {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "high",
+        "runtime_version": "runtime-v1",
+    }
+    publisher = CodexJobPublisher(
+        frame=frame,
+        prompt_dir=prompt_dir,
+        job_root=tmp_path / "jobs",
+        runtime_identity=runtime_identity,
+    )
+    request = AnalysisRoleRequest(
+        role="stage1",
+        messages=[{"role": "system", "content": "x" * 200_000}],
+        schema={"type": "object", "required": ["cycle"]},
+        thinking=True,
+        reasoning_effort="high",
+        snapshot_hash=build_analysis_fact_catalog(frame).snapshot_hash,
+        cutoff_ts_open=frame.bars[0].ts_open,
+        agent_context={"task_id": "task-1", "allowed_knowledge_ids": []},
+    )
+    worker = MagicMock()
+    worker.run.return_value = _result()
+    backend = CodexAnalysisRoleBackend(
+        worker=worker,
+        publish_job=publisher,
+        runtime_identity=runtime_identity,
+    )
+
+    result = backend.run(
+        request,
+        on_reasoning_token=None,
+        on_content_token=None,
+        cancel_token=None,
+    )
+
+    assert result.backend_id == "codex_agent"
+    worker.run.assert_called_once()
+
+
+def test_backend_rejects_bounded_job_bound_to_different_source_messages(
+    tmp_path: Path,
+) -> None:
+    frame = make_frame()
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    runtime_identity = {"model": "gpt-5.6-sol", "reasoning_effort": "high"}
+    publisher = CodexJobPublisher(
+        frame=frame,
+        prompt_dir=prompt_dir,
+        job_root=tmp_path / "jobs",
+        runtime_identity=runtime_identity,
+    )
+    common = {
+        "role": "stage1",
+        "schema": {"type": "object", "required": ["cycle"]},
+        "thinking": True,
+        "reasoning_effort": "high",
+        "snapshot_hash": build_analysis_fact_catalog(frame).snapshot_hash,
+        "cutoff_ts_open": frame.bars[0].ts_open,
+        "agent_context": {"task_id": "task-1", "allowed_knowledge_ids": []},
+    }
+    original = AnalysisRoleRequest(
+        messages=[{"role": "system", "content": "original"}],
+        **common,
+    )
+    mismatched = AnalysisRoleRequest(
+        messages=[{"role": "system", "content": "different"}],
+        **common,
+    )
+    published = publisher(original, 1)
+    worker = MagicMock()
+    backend = CodexAnalysisRoleBackend(
+        worker=worker,
+        publish_job=lambda _request, _attempt: published,
+        runtime_identity=runtime_identity,
+    )
+
+    with pytest.raises(ModelCallFailure, match="identity check failed"):
+        backend.run(
+            mismatched,
+            on_reasoning_token=None,
+            on_content_token=None,
+            cancel_token=None,
+        )
+
+    worker.run.assert_not_called()
 
 
 def test_auto_mode_requests_full_chain_fallback_only_for_availability(

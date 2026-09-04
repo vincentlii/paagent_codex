@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,7 @@ class CodexJobPublisher:
             allowed_knowledge_ids=allowed_ids,
             budget=self._budget,
             backend_runtime_identity=self._runtime_identity,
+            source_request_digest=analysis_role_request_digest(request, attempt),
         )
         return self._store.publish(job)
 
@@ -125,3 +127,27 @@ class CodexJobPublisher:
         if len(encoded) > 8_192:
             raise ValueError("repair instruction exceeds byte budget")
         return content
+
+
+def analysis_role_request_digest(request: AnalysisRoleRequest, attempt: int) -> str:
+    """Bind a bounded Codex job to its original PA role invocation without copying it."""
+    payload = {
+        "role": request.role,
+        "attempt": int(attempt),
+        "messages": request.messages,
+        "schema": dict(request.schema or {}),
+        "thinking": bool(request.thinking),
+        "reasoning_effort": request.reasoning_effort,
+        "structured_output": bool(request.structured_output),
+        "snapshot_hash": str(request.snapshot_hash or "").lower(),
+        "cutoff_ts_open": request.cutoff_ts_open,
+        "agent_context": dict(request.agent_context or {}),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

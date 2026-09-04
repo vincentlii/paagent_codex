@@ -170,6 +170,7 @@ class FrozenAgentJobBuilder:
         allowed_knowledge_ids: tuple[str, ...] | list[str],
         budget: AgentJobBudget,
         backend_runtime_identity: Mapping[str, Any] | None = None,
+        source_request_digest: str | None = None,
     ) -> FrozenAgentJob:
         if role not in _ROLE_FACT_DOMAINS:
             raise ValueError(f"unsupported agent role: {role}")
@@ -201,6 +202,11 @@ class FrozenAgentJobBuilder:
             "attempt": int(attempt),
             "messages": messages,
         }
+        if source_request_digest is not None:
+            request["source_request_digest"] = _require_digest(
+                source_request_digest,
+                "source_request_digest",
+            )
         runtime_identity = dict(backend_runtime_identity or {})
         model = str(runtime_identity.get("model") or "").strip()
         reasoning_effort = str(

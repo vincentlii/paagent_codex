@@ -18,6 +18,7 @@ from pa_agent.agent_runtime.codex_worker import (
     CodexWorkerTimeout,
 )
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore, JobIntegrityError
+from pa_agent.agent_runtime.publisher import analysis_role_request_digest
 from pa_agent.ai.analysis_role_backend import AnalysisRoleRequest, AnalysisRoleResult
 from pa_agent.ai.deepseek_client import AIReply, CancelledError
 from pa_agent.ai.provider_failures import ModelCallFailure, ProviderFailure
@@ -354,7 +355,11 @@ def _verify_job_request(
         raise ValueError("frozen job role mismatch")
     if job.manifest.attempt != attempt:
         raise ValueError("frozen job attempt mismatch")
-    if list(job.request.get("messages") or []) != request.messages:
+    source_request_digest = job.request.get("source_request_digest")
+    if source_request_digest is not None:
+        if source_request_digest != analysis_role_request_digest(request, attempt):
+            raise ValueError("frozen job source request mismatch")
+    elif list(job.request.get("messages") or []) != request.messages:
         raise ValueError("frozen job messages mismatch")
     if dict(job.output_schema) != dict(request.schema or {}):
         raise ValueError("frozen job output schema mismatch")
