@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -24,6 +25,17 @@ _ROLE_SKILL_NAMES = {
     "joint_arbiter": "pa-joint-arbiter",
 }
 _EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+_UNSUPPORTED_CODEX_SCHEMA_KEYWORDS = frozenset(
+    {
+        "allOf",
+        "not",
+        "dependentRequired",
+        "dependentSchemas",
+        "if",
+        "then",
+        "else",
+    }
+)
 
 
 class CodexWorkerError(RuntimeError):
@@ -52,6 +64,24 @@ class CodexWorkerTimeout(CodexWorkerAvailabilityError):
 
 class CodexWorkerOutputError(CodexWorkerError):
     """Codex produced output that cannot enter PA Agent validation."""
+
+
+def _codex_generation_schema(value: Any) -> Any:
+    """Project the authoritative PA schema onto Codex's supported subset.
+
+    PA Agent still validates the returned draft against the unmodified frozen
+    schema.  This projection only prevents unsupported conditional composition
+    keywords from being sent to Codex Structured Outputs.
+    """
+    if isinstance(value, Mapping):
+        return {
+            key: _codex_generation_schema(child)
+            for key, child in value.items()
+            if key not in _UNSUPPORTED_CODEX_SCHEMA_KEYWORDS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_codex_generation_schema(child) for child in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -273,7 +303,7 @@ class CodexCliWorker:
         schema_path = workspace / "output_schema.json"
         schema_path.write_text(
             json.dumps(
-                dict(job.output_schema),
+                _codex_generation_schema(job.output_schema),
                 ensure_ascii=True,
                 allow_nan=False,
                 separators=(",", ":"),

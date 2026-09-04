@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,64 @@ from pa_agent.agent_runtime.runtime_audit import prepare_live_canary, run_live_c
 from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from tests.unit.test_frozen_agent_job import _job
+
+
+def test_materialized_schema_removes_only_codex_unsupported_composition(
+    tmp_path: Path,
+) -> None:
+    source_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "state": {"type": "string", "enum": ["a", "b"]},
+            "nested": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "value": {"type": "string", "pattern": "^x$"},
+                },
+                "required": ["value"],
+                "allOf": [
+                    {
+                        "if": {"properties": {"value": {"const": "x"}}},
+                        "then": {"required": ["value"]},
+                    }
+                ],
+            },
+        },
+        "required": ["state", "nested"],
+        "allOf": [{"not": {"required": ["unknown"]}}],
+        "dependentSchemas": {"state": {"required": ["nested"]}},
+    }
+    job = replace(_job(), output_schema=source_schema)
+
+    schema_path = CodexCliWorker._materialize_workspace(tmp_path / "workspace", job)
+    generated = json.loads(schema_path.read_text("utf-8"))
+
+    unsupported = {
+        "allOf",
+        "not",
+        "dependentRequired",
+        "dependentSchemas",
+        "if",
+        "then",
+        "else",
+    }
+
+    def schema_keys(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                yield key
+                yield from schema_keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from schema_keys(child)
+
+    assert unsupported.isdisjoint(schema_keys(generated))
+    assert generated["required"] == ["state", "nested"]
+    assert generated["properties"]["state"]["enum"] == ["a", "b"]
+    assert generated["properties"]["nested"]["properties"]["value"]["pattern"] == "^x$"
+    assert job.output_schema == source_schema
 
 
 def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) -> None:
