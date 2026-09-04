@@ -1,9 +1,11 @@
 ---
 lifecycle: active
 capability: no-go
-verification_scope: local
-最后核验: 2026-09-03
-核验提交: 03c618a
+verification_scope:
+  - local
+  - VPS-partial
+最后核验: 2026-09-05
+核验提交: 2128ef3 + working-tree audit
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -11,6 +13,7 @@ verification_scope: local
   - docs/architecture/ADR-0024-codex-analysis-backend.md
   - docs/quality/codex_backend_final_audit_20260902.md
   - docs/quality/vps_profile_dashboard_audit_20260903.md
+  - docs/quality/codex_backend_full_acceptance_audit_20260905.md
 ---
 
 # 当前状态
@@ -27,7 +30,10 @@ live AGENTS/Skill canary，具备进入真实 VPS 受控 smoke 的工程基础�
 “Codex/PA+VPA 已提高盈利”。2026-08-13 的 `1169 passed, 7 deselected` 是绑定当时审计基线的历史证据；
 本轮 276 项聚焦回归覆盖新增链路，仍需目标 Linux/VPS 实机验收。
 
-本轮 Codex 实现与边界见 [Codex Backend 最终本地审计](../quality/codex_backend_final_audit_20260902.md)。
+当前完整验收结论见 [Codex Backend 完整验收](../quality/codex_backend_full_acceptance_audit_20260905.md)：
+工程骨架保持 research-only，禁止 `auto`。Codex CLI 的 stdout 结构化错误尚未进入 typed failure
+分类，可能把 Schema/request failure 误判为 availability；Codex 当前只接管 PA Stage 1/2，VPA
+仍为隔离 Direct role。Phase 9 replay/pilot/holdout 尚未开始。
 
 当前发布候选固定 `binance_usdm/BINANCE/XAUUSDT/1h`、HTF `4h/60`、VPA Shadow、并发 1；
 Profile UI 已完成，真实 Codex 分析、权限负向测试和 live canary evidence 尚待目标 VPS 取得。
@@ -67,12 +73,12 @@ Profile UI 已完成，真实 Codex 分析、权限负向测试和 live canary e
 | 多资产有界调度和恢复 | implemented | local；2026-08-13 历史 20 资产回归 | VPS 长时间稳定性尚无实机证据 |
 | Paper OHLC v2 与结果隔离 | implemented | local；2026-08-13 历史回归 | 反事实不等于真实成交或真实 PnL |
 | 持续 A/A/B/B | research-only | local；2026-08-13 历史回归 | 缺少足够独立 Snapshot 和明确结果，不能晋级 |
-| Linux Headless 与发布依赖 | implemented | 历史 CI/wheel smoke；VPS not-verified | 需要真实 Linux kernel、systemd、目录权限和重启恢复验收 |
-| VPS Dashboard | implemented | local focused | 可选择 allowlisted DeepSeek/Codex model/effort、pause/resume、三 Backend mode 与 fixed-scope Run Once；Profile/Backend 仅在 idle 后 applied，generation/fingerprint 防止旧表单覆盖。仍需实机 loopback/SSH tunnel 验证 |
+| Linux Headless 与发布依赖 | implemented | local + VPS partial | 三 systemd 服务、用户隔离、Runtime 权限审计和 ChatGPT auth/canary 已实机验证；重启恢复、retention、logrotate、backup/restore 仍未完成验收 |
+| VPS Dashboard | implemented | local + VPS partial | 可选择 allowlisted DeepSeek/Codex model/effort、pause/resume、三 Backend mode 与 fixed-scope Run Once；Profile/Backend 仅在 idle 后 applied，generation/fingerprint 防止旧表单覆盖。当前保持 loopback 与 paused，完整 Quality/Performance/AABB 页面未实现 |
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
 | Analysis Backend seam | implemented | local focused | Direct 与 Codex Adapter 均返回现有 Provider Draft；Codex 只接 PA Stage 1/2。VPA Shadow 仍由隔离 Direct role 提供二级证据且不改变 PA official path；生产 `soft` 仍收敛为 Shadow |
 | Frozen Agent Job / Evidence | implemented | local focused | 确定性 manifest、原子目录发布、resource digest、角色事实/知识 allowlist、cutoff 与调用/字节预算已实现 |
-| Codex CLI Worker | implemented | local simulated | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、JSON/outbox 已用模拟 subprocess 验证；Runtime digest、installed/source parity、model/effort fail-closed 与 live canary 已实现；尚未做真实账号调用 |
+| Codex CLI Worker | research-only | local + VPS partial | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills 和 Runtime identity 已验证；真实请求仍因 strict-output schema 方言失败，且 stdout failure taxonomy 存在 P0，Stage 1 尚未成功 |
 | Codex Analysis Backend | research-only | local focused | 已有有界 core context、独立 Unix spool worker、端到端 runtime identity、一次定向修复、熔断、完整 Direct PA 冷回退与环境 Factory；部署默认仍为 `deepseek_only` |
 | Codex audit projection | implemented | local focused | `analysis_calls` 投影 backend、provider、job/thread identity 与 Evidence 调用/字节量；完整 JSON record 仍是唯一原始记录 |
 | Analysis Backend A/A/B/B | research-only | local focused | `analysis_backend_aabb_v1` 预登记四臂、ABBA/BAAB、独立 runtime、禁 fallback、失败臂 coverage、cohort 去重与成本/重复性摘要已实现；尚无真实 Codex 样本，不能晋级 |
@@ -81,12 +87,12 @@ Profile UI 已完成，真实 Codex 分析、权限负向测试和 live canary e
 
 ## 当前已知风险
 
-### 外部环境未验证
+### 外部环境部分验证
 
-- 尚未在目标 VPS 验证 Linux 用户、systemd、`PA_AGENT_HOME`、共享 operation directory 和 SQLite read-only projection 权限。
+- 目标 VPS 已验证三 systemd 服务、用户/目录权限、Runtime asset parity、ChatGPT device auth 与 live AGENTS/Skill canary；尚未完成重启恢复、磁盘保留和 backup/restore。
 - 尚未在目标 VPS 验证真实 Provider、行情源、venue symbol/contract metadata、网络超时与速率限制。
 - Dashboard 尚需验证仅监听 loopback、SSH tunnel、desired/applied generation 和 Headless 不可写越权。
-- ChatGPT account auth、Codex CLI、独立 `pa-agent-codex` 用户、只读 sandbox、spool worker restart 和 rate limit 尚未在目标 VPS 验证。部署资产已把 Codex home/runtime/outbox 与生产 DB、Paper ledger、DeepSeek credential 分离，但 OS 权限仍需目标机负向验收。
+- Codex home/runtime/outbox 与生产 DB、Paper ledger、DeepSeek credential 的 OS 权限已通过负向审计；spool restart、rate limit 与 typed request failure 仍未完成实机验收。
 
 ### 交易与研究未验证
 
@@ -95,9 +101,10 @@ Profile UI 已完成，真实 Codex 分析、权限负向测试和 live canary e
 - `estimated_win_rate` 是 PA Setup 的未校准主观先验，不是历史统计胜率。
 - LLM 仍可能作出理论上合理但结果错误的判断；程序只能消除明确事实矛盾、权限越界和非法订单，不能消除市场不确定性。
 
-### 文档与变更治理
+### Codex 阻断项与变更治理
 
-- 本轮新增链路的 276 项聚焦回归已通过；完整全仓非 live 套件仍未重新声明通过。
+- 2026-09-05 使用 `uv.lock` desktop+dev 环境完成全仓非 live 回归：`1305 passed, 7 deselected`。
+- 在 stdout typed failure、Windows 20 条历史 replay、Codex VPA role、matched performance 数据完成前，禁止切换 `auto` 或宣称已解决幻觉/交易质量问题。
 - 临时 [提示词优化日志](../提示词优化.md) 不得被误当成 Prompt 权威规范。
 - 任何新修复必须避免针对单条 record 增加硬编码或自由文本硬拒绝。
 

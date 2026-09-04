@@ -12,6 +12,9 @@ verification_scope: local
 
 # Codex Analysis Backend 最终本地审计
 
+> 本文仅记录 `2bc71ae` 的历史本地审计。当前准入结论以
+> [2026-09-05 Codex Backend 完整验收](codex_backend_full_acceptance_audit_20260905.md)为准。
+
 ## 结论
 
 `new_paagent_vnext` 的 Codex Analysis Backend 已完成本地工程实现，可进入目标 VPS 安装、真实
