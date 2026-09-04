@@ -30,6 +30,8 @@ def test_materialized_schema_removes_only_codex_unsupported_composition(
         "additionalProperties": False,
         "properties": {
             "state": {"type": "string", "enum": ["a", "b"]},
+            "fixed_bar": {"const": "K1"},
+            "protocol": {"type": "string", "const": "pa_draft_v2"},
             "nested": {
                 "type": "object",
                 "additionalProperties": False,
@@ -76,6 +78,14 @@ def test_materialized_schema_removes_only_codex_unsupported_composition(
     assert unsupported.isdisjoint(schema_keys(generated))
     assert generated["required"] == ["state", "nested"]
     assert generated["properties"]["state"]["enum"] == ["a", "b"]
+    assert generated["properties"]["fixed_bar"] == {
+        "type": "string",
+        "enum": ["K1"],
+    }
+    assert generated["properties"]["protocol"] == {
+        "type": "string",
+        "enum": ["pa_draft_v2"],
+    }
     assert generated["properties"]["nested"]["properties"]["value"]["pattern"] == "^x$"
     assert job.output_schema == source_schema
 

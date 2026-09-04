@@ -74,14 +74,37 @@ def _codex_generation_schema(value: Any) -> Any:
     keywords from being sent to Codex Structured Outputs.
     """
     if isinstance(value, Mapping):
-        return {
+        projected = {
             key: _codex_generation_schema(child)
             for key, child in value.items()
-            if key not in _UNSUPPORTED_CODEX_SCHEMA_KEYWORDS
+            if key not in _UNSUPPORTED_CODEX_SCHEMA_KEYWORDS and key != "const"
         }
+        if "const" in value:
+            constant = value["const"]
+            projected["enum"] = [constant]
+            projected.setdefault("type", _json_schema_type(constant))
+        return projected
     if isinstance(value, (list, tuple)):
         return [_codex_generation_schema(child) for child in value]
     return value
+
+
+def _json_schema_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, (list, tuple)):
+        return "array"
+    raise CodexWorkerOutputError("frozen schema const has no JSON type")
 
 
 @dataclass(frozen=True)
