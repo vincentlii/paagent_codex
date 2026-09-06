@@ -229,6 +229,39 @@ STAGE1_DRAFT_SCHEMA = _stage1_draft_schema()
 STAGE2_DRAFT_SCHEMA = _stage2_draft_schema()
 
 
+def schema_for_joint_stage2_draft(
+    *, decision_tree_path: Path | None = None,
+) -> dict[str, Any]:
+    """Joint Stage 2 extends, rather than replaces, the PA decision contract.
+
+    This schema is prepared for the new pipeline only. Legacy stage2 and the
+    research joint_arbiter retain their schemas. The Host must validate VPA
+    references against the accepted report before using the shared materializer.
+    """
+    schema = _stage2_draft_schema(decision_tree_path)
+    schema["properties"]["protocol_version"] = {
+        "type": "string", "const": "pa_vpa_stage2_draft_v1",
+    }
+    rationale_fields = (
+        "support", "challenge", "selection_vs_wait", "entry_reachability",
+        "target_barriers", "invalidation",
+    )
+    schema["properties"]["joint_analysis"] = {
+        "type": "object",
+        "required": [*rationale_fields, "vpa_evidence_refs"],
+        "properties": {
+            **{key: {"type": "string", "minLength": 1} for key in rationale_fields},
+            "vpa_evidence_refs": {
+                "type": "array", "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+        "additionalProperties": False,
+    }
+    schema["required"].append("joint_analysis")
+    return schema
+
+
 def schema_for_provider_draft(
     stage: str,
     *,

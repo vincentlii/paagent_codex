@@ -401,6 +401,39 @@ class RunOutcome(BaseModel):
         return self
 
 
+class AnalysisRoleStop(BaseModel):
+    """Non-decision result for the new pipeline, not a fabricated No Trade Draft.
+
+    The Host validates references against the role's frozen allowlist. This
+    envelope cannot carry a candidate, change Stage 1, or authorize a rerun.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    protocol_version: Literal["analysis_role_stop_v1"] = "analysis_role_stop_v1"
+    status: Literal["incomplete", "review_required"]
+    role: Literal["stage1", "vpa_evidence", "stage2"]
+    reason: str = Field(min_length=1)
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class AnalysisMetric(BaseModel):
+    """A measured value does not share the meaning of an estimate or missing data."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    status: Literal["actual", "estimated", "unknown"]
+    value: float | None = Field(default=None, ge=0)
+    unit: Literal["tokens", "bytes", "milliseconds", "count", "usd"]
+    source: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _value_matches_status(self) -> "AnalysisMetric":
+        if (self.status == "unknown") != (self.value is None):
+            raise ValueError("unknown requires null; actual/estimated require a value")
+        return self
+
+
 VPA_EVIDENCE_SCHEMA: dict[str, Any] = VpaEvidenceEnvelopeDraft.model_json_schema()
 
 JOINT_DECISION_SCHEMA: dict[str, Any] = JointDecisionProposal.model_json_schema()

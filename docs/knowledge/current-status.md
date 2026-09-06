@@ -19,6 +19,13 @@ verification_scope:
 
 # 当前状态
 
+## 联合分析升级进行中
+
+上一轮未提交成果已保存为 `e445907`，新实施顺序与验收边界见
+[联合分析实施契约](../quality/joint_agent_implementation_plan.md) 和
+[ADR-0025](../architecture/ADR-0025-joint-stage2-pipeline.md)。阶段 1a 仅建立新契约并通过
+42 项聚焦测试，未启用联合运行链路、未部署、未证明交易增益。下面历史验收结论仍只对应各自基线。
+
 ## 结论
 
 当前 Codex 升级分支从 `965f2df` 创建；该提交是 vNext 的现有功能与知识基线。Codex Analysis
