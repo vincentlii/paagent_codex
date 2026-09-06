@@ -1,5 +1,7 @@
 # AGENTS
 
+- 本轮联合分析升级必须先读 `docs/quality/joint_agent_implementation_plan.md`；其中明确区分新模式目标与尚未改变的旧运行协议，未接入验收不得宣称已实现。
+
 - 上线前最终实施范围、三角色审计证据与未验证边界见 `docs/quality/pre_release_final_audit_20260813.md`。
 
 - 回应与生成文件优先使用中文；代码、API、错误信息、产品名保留英文。
