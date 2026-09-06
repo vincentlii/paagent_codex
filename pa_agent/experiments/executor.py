@@ -114,8 +114,9 @@ class BackendOrchestratorArmExecutor:
         cancel_token: object,
     ) -> BackendArmExecution:
         settings = self._settings.model_copy(deep=True)
-        settings.prompt.vpa_mode = "off"
-        settings.prompt.vpa_enabled = False
+        settings.prompt.vpa_mode = "shadow"
+        settings.prompt.vpa_enabled = True
+        settings.general.higher_timeframe_enabled = True
         experience_reader = ExperienceReader(
             experience_dir=self._experience_dir,
             logger=self._logger,
@@ -176,6 +177,7 @@ class BackendOrchestratorArmExecutor:
             previous_record=None,
             incremental_new_bar_count=None,
             htf_context=frozen.htf_context,
+            frozen_vpa_catalog=frozen.vpa_catalog,
         )
         return BackendArmExecution(
             record=record,

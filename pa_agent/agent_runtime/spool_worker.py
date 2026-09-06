@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -35,6 +36,13 @@ class CodexSpoolConfig:
     result_root: Path
     poll_seconds: float = 0.1
     response_grace_seconds: float = 15.0
+    lease_seconds: float = 660.0
+    acceptance_root: Path | None = None
+    health_interval_seconds: float = 30.0
+
+    @property
+    def accepted_results_root(self) -> Path:
+        return self.acceptance_root or (self.result_root / ".accepted")
 
 
 class CodexSpoolClient:
@@ -43,7 +51,12 @@ class CodexSpoolClient:
     def __init__(self, config: CodexSpoolConfig) -> None:
         self._config = config
 
-    def run(self, published_job: str | Path) -> CodexWorkerResult:
+    def run(
+        self,
+        published_job: str | Path,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> CodexWorkerResult:
         dispatch: Path | None = None
         result: Path | None = None
         deadline = time.monotonic() + (
@@ -63,17 +76,24 @@ class CodexSpoolClient:
             result = self._config.result_root / f"{request_id}.json"
             self._config.inbox_root.mkdir(parents=True, exist_ok=True)
             self._config.result_root.mkdir(parents=True, exist_ok=True)
+            effective_timeout = min(
+                float(job.budget.max_wall_seconds),
+                max(1.0, float(timeout_seconds)),
+            ) if timeout_seconds is not None else float(job.budget.max_wall_seconds)
             _atomic_json(
                 dispatch,
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "request_id": request_id,
                     "job_digest": job.manifest.job_digest,
                     "expected_runtime_identity": expected_runtime,
+                    "acceptance_key": job.manifest.acceptance_key,
+                    "lease_seconds": self._config.lease_seconds,
+                    "deadline_epoch": time.time() + effective_timeout,
                 },
             )
             deadline = time.monotonic() + (
-                float(job.budget.max_wall_seconds)
+                effective_timeout
                 + self._config.response_grace_seconds
             )
             while time.monotonic() < deadline:
@@ -84,12 +104,19 @@ class CodexSpoolClient:
                         raise CodexWorkerOutputError(
                             "isolated result is malformed"
                         ) from exc
-                    return _decode_result(
+                    decoded = _decode_result(
                         envelope,
                         request_id=request_id,
                         job_digest=job.manifest.job_digest,
                         runtime_identity=expected_runtime,
+                        acceptance_key=job.manifest.acceptance_key,
                     )
+                    self._accept_once(
+                        acceptance_key=job.manifest.acceptance_key,
+                        request_id=request_id,
+                        envelope=envelope,
+                    )
+                    return decoded
                 time.sleep(self._config.poll_seconds)
             raise CodexWorkerTimeout("isolated Codex worker response timed out")
         except CodexWorkerError:
@@ -104,10 +131,50 @@ class CodexSpoolClient:
                     dispatch.unlink(missing_ok=True)
                 if result is not None:
                     result.unlink(missing_ok=True)
-            except OSError as exc:
-                raise CodexWorkerUnavailable(
-                    "isolated Codex spool cleanup failed"
-                ) from exc
+            except OSError:
+                # Cleanup must not mask the authoritative execution result.
+                pass
+
+    def _accept_once(
+        self,
+        *,
+        acceptance_key: str,
+        request_id: str,
+        envelope: dict[str, Any],
+    ) -> None:
+        if not acceptance_key:
+            return
+        root = self._config.accepted_results_root
+        root.mkdir(parents=True, exist_ok=True)
+        marker = root / f"{acceptance_key}.json"
+        digest = hashlib.sha256(
+            json.dumps(
+                envelope,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        try:
+            with marker.open("x", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "schema_version": 1,
+                        "acceptance_key": acceptance_key,
+                        "request_id": request_id,
+                        "result_digest": digest,
+                    },
+                    handle,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError as exc:
+            raise CodexWorkerOutputError(
+                "duplicate Codex role result acceptance was rejected"
+            ) from exc
 
 
 class CodexSpoolService:
@@ -136,16 +203,30 @@ class CodexSpoolService:
                 self._runtime_identity_provider()
             except (OSError, RuntimeError, ValueError) as exc:
                 errors.append(f"Codex worker runtime identity is unavailable: {exc}")
+        login_health = getattr(self._worker, "login_health", None)
+        if callable(login_health):
+            state = str(login_health())
+            if state != "healthy":
+                errors.append(f"Codex ChatGPT authentication is {state}")
         return errors
 
     def serve_forever(self) -> None:
-        self._recover_claims()
+        self._recover_claims(recover_all=True)
+        next_health_at = 0.0
         with ThreadPoolExecutor(
             max_workers=self._max_workers,
             thread_name_prefix="pa-codex",
         ) as executor:
             active: set[Any] = set()
             while True:
+                now = time.monotonic()
+                if now >= next_health_at:
+                    self._publish_health()
+                    next_health_at = now + max(
+                        5.0,
+                        float(self._spool.health_interval_seconds),
+                    )
+                self._recover_claims(recover_all=False)
                 active = {future for future in active if not future.done()}
                 capacity = self._max_workers - len(active)
                 for dispatch in sorted(self._spool.inbox_root.glob("*.json"))[:capacity]:
@@ -157,11 +238,45 @@ class CodexSpoolService:
                     active.add(executor.submit(self._execute, claimed))
                 time.sleep(self._spool.poll_seconds)
 
-    def _recover_claims(self) -> None:
+    def _publish_health(self) -> None:
+        """Publish only credential-free worker health for the trusted host."""
+        try:
+            login_health = getattr(self._worker, "login_health", None)
+            auth_state = str(login_health()) if callable(login_health) else "unknown"
+            runtime = (
+                dict(self._runtime_identity_provider())
+                if self._runtime_identity_provider is not None
+                else {}
+            )
+            _atomic_json(
+                self._spool.result_root / ".worker-status.json",
+                {
+                    "schema_version": 1,
+                    "updated_at_epoch": time.time(),
+                    "service_state": "running",
+                    "auth_state": auth_state,
+                    "runtime_version": runtime.get("runtime_version"),
+                    "runtime_asset_digest": runtime.get("runtime_asset_digest"),
+                    "codex_binary_digest": runtime.get("codex_binary_digest"),
+                },
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            # Health publication must not kill an otherwise recoverable worker.
+            return
+
+    def _recover_claims(self, *, recover_all: bool) -> None:
+        now = time.time()
         for claimed in self._spool.inbox_root.glob("*.running"):
             try:
+                raw = json.loads(claimed.read_text(encoding="utf-8"))
+                lease_seconds = max(1.0, float(raw.get("lease_seconds") or 660.0))
+                deadline_epoch = float(raw.get("deadline_epoch") or float("inf"))
+                lease_active = now < claimed.stat().st_mtime + lease_seconds
+                deadline_active = now < deadline_epoch
+                if not recover_all and lease_active and deadline_active:
+                    continue
                 os.replace(claimed, claimed.with_suffix(".json"))
-            except OSError:
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 continue
 
     def _execute(self, claimed: Path) -> None:
@@ -169,12 +284,14 @@ class CodexSpoolService:
         result_path = self._spool.result_root / f"{request_id}.json"
         try:
             raw = json.loads(claimed.read_text(encoding="utf-8"))
-            if raw.get("schema_version") != 1 or raw.get("request_id") != request_id:
+            if raw.get("schema_version") not in {1, 2} or raw.get("request_id") != request_id:
                 raise CodexWorkerOutputError("invalid isolated dispatch identity")
             digest = str(raw.get("job_digest") or "")
             published = self._spool.job_root / digest
             job = FrozenAgentJobStore(self._spool.job_root).open(digest)
             expected_runtime = dict(raw.get("expected_runtime_identity") or {})
+            if str(raw.get("acceptance_key") or "") != job.manifest.acceptance_key:
+                raise CodexWorkerOutputError("dispatch acceptance identity mismatch")
             frozen_runtime = dict(job.runtime.get("backend_runtime_identity") or {})
             actual_runtime = (
                 self._runtime_identity_provider()
@@ -192,12 +309,20 @@ class CodexSpoolService:
                 raise CodexWorkerOutputError(
                     "isolated worker runtime identity does not match frozen job"
                 )
-            result = self._worker.run(published)
+            deadline_epoch = float(
+                raw.get("deadline_epoch")
+                or (time.time() + float(job.budget.max_wall_seconds))
+            )
+            remaining = deadline_epoch - time.time()
+            if remaining <= 0:
+                raise CodexWorkerTimeout("isolated Codex dispatch deadline expired")
+            result = self._worker.run(published, timeout_seconds=remaining)
             envelope = {
                 "schema_version": 1,
                 "request_id": request_id,
                 "job_digest": digest,
                 "runtime_identity": actual_runtime,
+                "acceptance_key": job.manifest.acceptance_key,
                 "status": "ok",
                 "content": result.content,
                 "thread_id": result.thread_id,
@@ -246,8 +371,8 @@ class CodexSpoolService:
                 "job_digest": str(locals().get("digest") or ""),
                 "runtime_identity": dict(locals().get("actual_runtime") or {}),
                 "status": "error",
-                "error_type": "CodexWorkerUnavailable",
-                "message": "isolated Codex worker failed internally",
+                "error_type": "CodexWorkerOutputError",
+                "message": "isolated Codex worker rejected an internal invariant",
             }
         try:
             _atomic_json(result_path, envelope)
@@ -261,11 +386,14 @@ def _decode_result(
     request_id: str,
     job_digest: str,
     runtime_identity: dict[str, Any],
+    acceptance_key: str,
 ) -> CodexWorkerResult:
     if raw.get("schema_version") != 1:
         raise CodexWorkerOutputError("isolated result schema is unsupported")
     if raw.get("request_id") != request_id or raw.get("job_digest") != job_digest:
         raise CodexWorkerOutputError("isolated result identity does not match dispatch")
+    if raw.get("status") == "ok" and raw.get("acceptance_key") != acceptance_key:
+        raise CodexWorkerOutputError("isolated result acceptance identity mismatch")
     if raw.get("status") != "ok":
         error_types = {
             "CodexWorkerAuthenticationError": CodexWorkerAuthenticationError,

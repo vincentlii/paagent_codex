@@ -283,11 +283,23 @@ def _call_attempt_entry(
         "initial_context_bytes": max(
             0, int(model_call_meta.get("initial_context_bytes") or 0)
         ),
+        "initial_context_tokens": max(
+            0, int(model_call_meta.get("initial_context_tokens") or 0)
+        ),
         "evidence_call_count": max(
             0, int(model_call_meta.get("evidence_call_count") or 0)
         ),
         "evidence_response_bytes": max(
             0, int(model_call_meta.get("evidence_response_bytes") or 0)
+        ),
+        "retrieval_context_tokens": max(
+            0, int(model_call_meta.get("retrieval_context_tokens") or 0)
+        ),
+        "evidence_denied_count": max(
+            0, int(model_call_meta.get("evidence_denied_count") or 0)
+        ),
+        "evidence_latency_ms": max(
+            0.0, float(model_call_meta.get("evidence_latency_ms") or 0.0)
         ),
         "created_at_ms": int(datetime.now().timestamp() * 1000),
     }
@@ -821,6 +833,8 @@ class TwoStageOrchestrator:
 
     def _clone_role_client(self, provider: Any) -> tuple[Any, bool]:
         """Clone provider state when the client supports it; mocks stay compatible."""
+        if self._analysis_backend.backend_id != "direct":
+            return None, True
         clone = getattr(self._client, "clone_with_provider", None)
         if callable(clone):
             return clone(provider), True
@@ -1072,7 +1086,7 @@ class TwoStageOrchestrator:
                 analysis_mode=analysis_mode,
                 htf_context=htf_context,
             )
-        from pa_agent.ai.higher_timeframe import serialize_higher_timeframe_context
+        from pa_agent.ai.higher_timeframe import serialize_agent_higher_timeframe_evidence
         from pa_agent.ai.prompt_assembler import stage1_prompt_txt_files
 
         previous_context = None
@@ -1086,9 +1100,14 @@ class TwoStageOrchestrator:
             "symbol": frame.symbol,
             "timeframe": frame.timeframe,
             "analysis_mode": analysis_mode,
-            "higher_timeframe": serialize_higher_timeframe_context(htf_context),
+            "higher_timeframe": serialize_agent_higher_timeframe_evidence(htf_context),
             "previous_analysis": previous_context,
             "incremental_new_bar_count": incremental_new_bar_count,
+            "role_protocol": run_assembler.build_stage1_agent_protocol(
+                frame,
+                analysis_mode=analysis_mode,
+                incremental_new_bar_count=incremental_new_bar_count,
+            ),
             "allowed_knowledge_ids": stage1_prompt_txt_files(),
         }
 
@@ -1509,11 +1528,18 @@ class TwoStageOrchestrator:
             "stage1_diagnosis": copy.deepcopy(stage1_for_stage2),
             "router_manifest": list(strategy_files),
             "decision_stance": record.meta.decision_stance,
-            "higher_timeframe": serialize_higher_timeframe_context(htf_context),
+            "higher_timeframe": serialize_agent_higher_timeframe_evidence(htf_context),
             "experience_entries": [
                 entry.model_dump() if hasattr(entry, "model_dump") else dict(entry)
                 for entry in experience_entries
             ],
+            "role_protocol": run_assembler.build_stage2_agent_protocol(
+                frame=frame,
+                stage1_json=stage1_for_stage2,
+                decision_stance=record.meta.decision_stance,
+                previous_record=previous_record,
+                enable_next_bar_prediction=_enable_next_bar,
+            ),
             "allowed_knowledge_ids": stage2_prompt_txt_files(
                 strategy_files,
                 direction=direction,
@@ -2079,22 +2105,13 @@ class TwoStageOrchestrator:
         role_settings.prompt.vpa_mode = mode
         role_settings.prompt.vpa_enabled = True
 
-        codex_pa_baseline = self._analysis_backend.backend_id == "codex_agent"
-        if codex_pa_baseline:
-            baseline_client = None
-            baseline_isolated = True
-            baseline_backend = self._analysis_backend
-        else:
-            baseline_client, baseline_isolated = self._clone_role_client(
-                baseline_settings.provider
-            )
-            baseline_backend = DirectAnalysisRoleBackend(
-                client=baseline_client,
-                settings=baseline_settings,
-                profile_identity=self._profile_identity,
-                allow_provider_fallback=False,
-                logger=logger,
-            )
+        baseline_client, baseline_isolated = self._clone_role_client(
+            baseline_settings.provider
+        )
+        baseline_backend = self._analysis_backend.bind_role(
+            client=baseline_client,
+            settings=baseline_settings,
+        )
         vpa_client, vpa_isolated = self._clone_role_client(
             role_settings.provider
         )
@@ -2228,13 +2245,11 @@ class TwoStageOrchestrator:
             schema: dict[str, Any],
             messages: list[dict[str, Any]],
             validate: Callable[[str], Any],
+            agent_context: dict[str, Any],
         ) -> tuple[StructuredRoleResult | None, dict[str, Any] | None]:
-            role_backend = DirectAnalysisRoleBackend(
+            role_backend = self._analysis_backend.bind_role(
                 client=client,
                 settings=role_settings,
-                profile_identity=self._profile_identity,
-                allow_provider_fallback=False,
-                logger=logger,
             )
 
             def call_api(current_messages: list[dict[str, Any]]) -> Any:
@@ -2252,6 +2267,9 @@ class TwoStageOrchestrator:
                             schema=schema,
                             thinking=profile.thinking,
                             reasoning_effort=profile.reasoning_effort,
+                            snapshot_hash=snapshot_hash,
+                            cutoff_ts_open=int(frame.bars[0].ts_open),
+                            agent_context=agent_context,
                         ),
                         on_reasoning_token=None,
                         on_content_token=None,
@@ -2565,6 +2583,77 @@ class TwoStageOrchestrator:
                 degradation_stage="vpa_evidence",
                 degradation_reason=f"{code}: {exc}",
             )
+        from pa_agent.ai.prompt_assembler import VPA_KNOWLEDGE_MODULES
+        from pa_agent.ai.vpa_context_profile import build_vpa_knowledge_context
+
+        vpa_modules = build_vpa_knowledge_context(stage1).module_names
+        vpa_knowledge_ids = [VPA_KNOWLEDGE_MODULES[name] for name in vpa_modules]
+        vpa_pa_context_keys = (
+            "spike_stage",
+            "climax_risk",
+            "market_phase",
+            "transition_risk",
+            "detected_patterns",
+            "htf_context",
+            "support_levels",
+            "resistance_levels",
+            "risk_warning",
+            "bar_analysis",
+            "pa_evidence",
+            "gate_result",
+        )
+        vpa_agent_context = {
+            "task_id": baseline.meta.run_id,
+            "symbol": frame.symbol,
+            "timeframe": frame.timeframe,
+            "pa_hypotheses": copy.deepcopy(hypotheses_dict),
+            "stage1_diagnosis": {
+                key: copy.deepcopy(stage1[key])
+                for key in vpa_pa_context_keys
+                if key in stage1
+            },
+            "higher_timeframe_identity": (
+                {
+                    key: htf_context.get(key)
+                    for key in ("timeframe", "status", "available", "reason")
+                    if key in htf_context
+                }
+                if isinstance(htf_context, dict)
+                else None
+            ),
+            "vpa_catalog_id": catalog.get("catalog_id"),
+            "vpa_data_status": copy.deepcopy(catalog.get("data_status")),
+            "role_protocol": {
+                "contract_version": "vpa_evidence_agent_protocol_v1",
+                "authority": "secondary_evidence_only",
+                "mandatory_sequence": [
+                    "read_frozen_pa_hypotheses",
+                    "read_all_mandatory_vpa_modules",
+                    "read_exact_vpa_evidence_ids",
+                    "compare_effort_result_and_sequence",
+                    "report_support_challenge_or_uncertainty",
+                ],
+                "prohibitions": [
+                    "do_not_rewrite_brooks_context",
+                    "do_not_create_setup_or_trade",
+                    "do_not_infer_unpublished_volume",
+                    "do_not_upgrade_candidate_event_without_confirmation",
+                ],
+                "interpretation_contract": [
+                    "Start with Evidence Catalog facts, then compare competing explanations; labels come last.",
+                    "Comparator above/below records direction only; magnitude requires signed deviation evidence.",
+                    "Sequence claims require explicit older and newer non-overlapping evidence IDs in chronological order.",
+                    "Do not restate OHLC, volume or RVOL numbers in interpretation prose.",
+                    "Every PA hypothesis receives exactly one supports, neutral, challenges or insufficient_data assessment.",
+                    "A candidate event remains candidate or unresolved until follow-through or rejection evidence confirms it.",
+                    "When no Entry Attempt exists, entry_timing_relation must be insufficient_data.",
+                    "next_confirmation is pending_closed_bar only for a concrete unresolved VPA competition; otherwise not_applicable.",
+                    "Available data must add genuine Effort/Result, sequence, acceptance/rejection or timing information, not paraphrase PA.",
+                ],
+            },
+            "allowed_knowledge_ids": vpa_knowledge_ids,
+            "role_evidence": copy.deepcopy(catalog),
+        }
         vpa_result, vpa_failure = execute_role(
             role="vpa_evidence",
             client=vpa_client,
@@ -2575,6 +2664,7 @@ class TwoStageOrchestrator:
                 catalog=catalog,
                 pa_hypotheses=hypotheses,
             ),
+            agent_context=vpa_agent_context,
         )
         if cancel_token.is_set() or (vpa_failure or {}).get(
             "failure_kind"
@@ -2664,7 +2754,48 @@ class TwoStageOrchestrator:
                 False,
             )
         )
-        assert joint_client is not None
+        joint_agent_context = {
+            "task_id": baseline.meta.run_id,
+            "symbol": frame.symbol,
+            "timeframe": frame.timeframe,
+            "stage1_diagnosis": copy.deepcopy(stage1),
+            "pa_baseline_stage2": copy.deepcopy(baseline_stage2),
+            "pa_hypotheses": copy.deepcopy(hypotheses_dict),
+            "vpa_evidence": copy.deepcopy(vpa_report_obj),
+            "router_manifest": copy.deepcopy(baseline.strategy_files_used),
+            "role_protocol": {
+                "contract_version": "joint_arbiter_agent_protocol_v1",
+                "authority": "research_only_non_production",
+                "baseline_rule": (
+                    "Neutral or insufficient VPA keeps the validated Brooks baseline."
+                ),
+                "allowed_effects": [
+                    "keep_brooks_baseline",
+                    "require_confirmation",
+                    "prefer_retest",
+                    "lower_confidence",
+                    "reject_current_attempt",
+                ],
+                "prohibitions": [
+                    "do_not_create_trade",
+                    "do_not_raise_confidence",
+                    "do_not_change_direction_setup_prices_win_rate_or_risk",
+                ],
+                "decision_effect_contract": {
+                    "keep_brooks_baseline": "decision_patch must be empty",
+                    "lower_confidence": "new confidence must be strictly below baseline and evidence-grounded",
+                    "confirmation_or_rejection": (
+                        "require_confirmation, prefer_retest or reject_current_attempt "
+                        "requires executable watch_points or invalidation_condition"
+                    ),
+                    "non_baseline_effect": (
+                        "must cite validated VPA report evidence with a real relative-volume comparison"
+                    ),
+                },
+            },
+            "allowed_knowledge_ids": [],
+            "role_evidence": copy.deepcopy(catalog),
+        }
         joint_result, joint_failure = execute_role(
             role="joint_arbiter",
             client=joint_client,
@@ -2685,6 +2816,7 @@ class TwoStageOrchestrator:
                     else None
                 ),
             ),
+            agent_context=joint_agent_context,
         )
         if cancel_token.is_set() or (joint_failure or {}).get(
             "failure_kind"

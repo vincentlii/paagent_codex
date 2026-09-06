@@ -17,20 +17,24 @@ from pa_agent.agent_runtime.runtime_assets import load_codex_runtime_assets
 
 _RESOURCE_PATHS = {
     "AGENTS.md": None,
+    "config.toml": None,
+    "rules/pa-agent.rules": None,
     "skills/stage1/SKILL.md": "stage1",
     "skills/stage2/SKILL.md": "stage2",
     "skills/vpa_evidence/SKILL.md": "vpa_evidence",
     "skills/joint_arbiter/SKILL.md": "joint_arbiter",
+    "skills/draft_pointer_repair/SKILL.md": "draft_pointer_repair",
 }
 _SKILL_NAMES = {
-    "stage1": "pa-stage1-analysis",
-    "stage2": "pa-stage2-analysis",
-    "vpa_evidence": "pa-vpa-evidence",
-    "joint_arbiter": "pa-joint-arbiter",
+    "stage1": "pa-stage1-diagnosis",
+    "stage2": "pa-stage2-decision",
+    "vpa_evidence": "vpa-evidence-analysis",
+    "joint_arbiter": "joint-arbiter-research",
+    "draft_pointer_repair": "draft-pointer-repair",
 }
 _REQUIRED_RULES = {
     "AGENTS.md": (
-        "Brooks Price Action 是主框架",
+        "Brooks Price Action 是 Primary Market Framework",
         "Frozen Snapshot",
         "禁止 Web",
         "实时行情",
@@ -41,11 +45,25 @@ _REQUIRED_RULES = {
         "不下单",
         "不得改变 Validator",
         "Trader Equation",
+        "loading_policy=mandatory",
     ),
-    "skills/stage1/SKILL.md": ("不得把 VPA", "不生成 entry", "不做交易决策"),
-    "skills/stage2/SKILL.md": ("Brooks Router", "不自行修改 Risk", "不使用 VPA"),
-    "skills/vpa_evidence/SKILL.md": ("独立的量价证据", "不创建 PA Setup", "订单价格"),
+    "config.toml": (
+        'approval_policy = "never"',
+        'sandbox_mode = "read-only"',
+        'forced_login_method = "chatgpt"',
+        'web_search = "disabled"',
+        "shell_tool = false",
+    ),
+    "rules/pa-agent.rules": ("decision = \"forbidden\"", "curl", "git", "ssh"),
+    "skills/stage1/SKILL.md": ("禁止读取或引用 VPA", "不得生成 Setup 订单", "loading_policy=mandatory"),
+    "skills/stage2/SKILL.md": ("Brooks Router", "不计算或修改 position size", "loading_policy=mandatory"),
+    "skills/vpa_evidence/SKILL.md": ("独立的量价证据", "不创建或翻转 Brooks Setup", "loading_policy=mandatory"),
     "skills/joint_arbiter/SKILL.md": ("research-only", "不创建新 Setup", "不影响正式生产记录"),
+    "skills/draft_pointer_repair/SKILL.md": (
+        "JSON Pointers",
+        "Patch Envelope",
+        "不重新分析市场",
+    ),
 }
 
 
@@ -104,10 +122,17 @@ def _resource_documents(root: Path | None = None) -> dict[str, str]:
             for name in sorted(_RESOURCE_PATHS)
         }
     assets = load_codex_runtime_assets()
-    return {
-        name: assets.agents_text if role is None else assets.skill_documents[role]
-        for name, role in sorted(_RESOURCE_PATHS.items())
-    }
+    result: dict[str, str] = {}
+    for name, role in sorted(_RESOURCE_PATHS.items()):
+        if name == "AGENTS.md":
+            result[name] = assets.agents_text
+        elif name == "config.toml":
+            result[name] = assets.config_text
+        elif name == "rules/pa-agent.rules":
+            result[name] = assets.rules_text
+        else:
+            result[name] = assets.skill_documents[str(role)]
+    return result
 
 
 def _frontmatter_name(document: str) -> str | None:
@@ -224,6 +249,30 @@ def posix_permission_contract() -> tuple[PosixPermissionExpectation, ...]:
             "pa-agent-codex",
             0o600,
             "read_write",
+        ),
+        PosixPermissionExpectation(
+            "codex_config",
+            "/var/lib/pa-agent-codex/home/config.toml",
+            "root",
+            "pa-agent-codex",
+            0o440,
+            "read_only",
+        ),
+        PosixPermissionExpectation(
+            "codex_rules_dir",
+            "/var/lib/pa-agent-codex/home/rules",
+            "root",
+            "pa-agent-codex",
+            0o750,
+            "read_only",
+        ),
+        PosixPermissionExpectation(
+            "codex_rules",
+            "/var/lib/pa-agent-codex/home/rules/pa-agent.rules",
+            "root",
+            "pa-agent-codex",
+            0o440,
+            "read_only",
         ),
         PosixPermissionExpectation(
             "job_root",
@@ -445,7 +494,6 @@ def prepare_live_canary(
         "exec",
         prompt,
         "--ephemeral",
-        "--ignore-user-config",
         "--strict-config",
         "--sandbox",
         "read-only",

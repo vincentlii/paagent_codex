@@ -149,7 +149,8 @@ sudo -u pa-agent-codex env \
   "$BIN/pa-agent-codex-worker" --check
 ```
 
-安装器已执行静态 Runtime 审计，并比较源码与当前安装包中的 `AGENTS.md` 和四个 Role Skill。
+安装器已执行静态 Runtime 审计，并比较源码与当前安装包中的 `AGENTS.md`、`config.toml`、rules、
+四个 Role Skill 和 pointer repair Skill。
 也可单独输出 machine-readable JSON；任何 `ok=false` 都阻止部署：
 
 ```bash
@@ -167,8 +168,9 @@ sudo "$BIN/python" -m pa_agent.agent_runtime.runtime_audit --check-permissions
 权限契约是：源码只读；Job 对 Codex 只读；`home/runtime/outbox` 只允许 Codex 写；Provider
 credential、生产 records/database 与 Paper ledger 对 Codex 无读写权限。
 
-当前 CLI 使用 `--ignore-user-config` 隔离 `$CODEX_HOME/config.toml`，但 production 与 canary
-命令都不传 `--ignore-rules`，避免 CLI 版本语义变化时连 workspace rules 一并屏蔽。
+当前 CLI 使用服务专属、发布固定且 digest 校验的 `$CODEX_HOME/config.toml` 与 rules；production
+与 canary 都不传 `--ignore-user-config` 或 `--ignore-rules`，避免绕过自定义安全策略或隐藏 workspace
+`AGENTS.md`/Skill。
 `tools.view_image` 已出现在 OpenAI config reference，但 Codex CLI 0.153.0 仍会在
 `--strict-config` 下把它判为未知字段。因此当前 runtime 不传该无效 override；同时不传
 `--image`、不物化图片、只开放 allowlisted Evidence MCP，并由 AGENTS 禁止 image 工具。CLI 升级后
@@ -228,6 +230,23 @@ sudo systemctl status pa-agent-dashboard
 sudo journalctl -u pa-agent -f
 ```
 
+主服务验收后另行启用每日一致性备份；安装器不会自动启用 timer：
+
+```bash
+sudo systemctl start pa-agent-backup.service
+sudo systemctl enable --now pa-agent-backup.timer
+sudo systemctl list-timers pa-agent-backup.timer
+```
+
+备份位于 `/var/backups/pa-agent`，默认保留 14 份，只包含 SQLite online backup、经过敏感字段
+剥离的 `settings.json` 与控制状态；不包含 API key、Feishu/Tushare/PushPlus token、webhook、
+Dashboard token 或 Codex auth。恢复后必须单独重新配置 credential。恢复必须先停止三项运行服务，将目标
+备份复制到临时目录核对 `manifest.json` SHA-256，并对三个数据库运行 `PRAGMA quick_check`；确认后
+再原子替换对应文件并恢复原 ownership。禁止直接覆盖运行中的 SQLite。
+
+`systemd-tmpfiles` 清理超过 7 天的孤立 Job/inbox/results/outbox，接受幂等 marker 单独保留 30 天；
+应用文件日志每日轮转并保留 14 份，systemd journal 仍由宿主机 journald 策略管理。
+
 服务启动前只运行 `--check`。`--probe-data` 不放入自动重启链路，避免交易所短暂断线
 导致 systemd 重启风暴。运行时失败按有界退避重试，同一闭合快照不会重复分析。
 
@@ -252,6 +271,10 @@ ssh -L 8765:127.0.0.1:8765 <VPS_USER>@<VPS_HOST>
 - Codex 发布目录中的 model 与该 model 支持的 reasoning effort；
 - `deepseek_only / codex_only / auto` Backend 请求；
 - 只在 paused、idle、Profile/Backend 已 applied 时可用的单次 `Run Once`。
+
+受控 smoke 完成后，离线 Backend 对照使用已有、可重放且含 HTF 与 VPA catalog 的生产 Shadow
+record：`pa-agent-backend-aabb <record.json>`。该命令运行 `analysis_backend_aabb_v2` 的四个独立
+臂，不启用 provider/backend fallback，也不进入正式调度或真实执行。
 
 首次受控 smoke 的精确顺序：
 

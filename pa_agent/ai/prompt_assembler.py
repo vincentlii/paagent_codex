@@ -501,6 +501,44 @@ def stage2_prompt_txt_files(
     ]
 
 
+def select_agent_knowledge_text(*, role: str, module_id: str, text: str) -> str:
+    """Apply the same role boundaries used by the mature Direct prompt.
+
+    Codex knowledge retrieval must not broaden Stage 1 into the execution half
+    of the decision tree, nor omit the global principles needed by an isolated
+    Stage 2 task.  Custom prompt packs without the stable headings retain their
+    complete document, matching PromptAssembler's compatibility behavior.
+    """
+    if role == "stage1" and module_id == "二元决策.txt":
+        marker = f"\n{_DECISION_TREE_STAGE2_HEADING}"
+        index = text.find(marker)
+        selected = text if index < 0 else text[:index].rstrip()
+        return re.sub(
+            r"(?ms)^###\s+1\.1\b.*?(?=^###\s+1\.2\b)",
+            "§1.1 数据充足性已由程序预检；模型从 §1.2 开始判断。\n\n",
+            selected,
+        )
+    if role == "stage1" and module_id == "市场诊断框架.txt":
+        marker = f"\n{_DIAGNOSIS_SIGNAL_LAYER_HEADING}"
+        index = text.find(marker)
+        return text if index < 0 else text[:index].rstrip()
+    if role == "stage2" and module_id == "二元决策.txt":
+        execution_marker = f"\n{_DECISION_TREE_STAGE2_HEADING}"
+        execution_index = text.find(execution_marker)
+        if execution_index < 0:
+            return text
+        stage1_marker = f"\n{_DECISION_TREE_STAGE1_HEADING}"
+        stage1_index = text.find(stage1_marker)
+        global_principles = (
+            text[:stage1_index].rstrip()
+            if stage1_index >= 0
+            else text[:execution_index].rstrip()
+        )
+        execution = text[execution_index + 1 :].lstrip()
+        return f"{global_principles}\n\n{execution}"
+    return text
+
+
 # Provider Draft v2 deliberately omits deterministic protocol fields. Canonical
 # records remain unchanged after JsonValidator materializes the draft.
 _THINKING_CONTENT_OUTPUT_RULE = """
@@ -941,6 +979,81 @@ class PromptAssembler:
         return inject_market_features_section(prompt, block)
 
     # ── Stage 1 ───────────────────────────────────────────────────────────────
+
+    def build_stage1_agent_protocol(
+        self,
+        frame: KlineFrame,
+        *,
+        analysis_mode: str,
+        incremental_new_bar_count: int | None = None,
+    ) -> dict[str, Any]:
+        """Publish the code-generated Stage 1 semantics omitted from knowledge files.
+
+        The complete Brooks documents remain PA-selected mandatory knowledge.  This
+        contract carries the mature Windows prompt's executable rules so the Codex
+        backend cannot silently replace them with a shorter generic Skill.
+        """
+        n_bars = len(frame.bars)
+        incremental = incremental_new_bar_count is not None
+        return {
+            "contract_version": "pa_stage1_agent_protocol_v1",
+            "role": "stage1",
+            "semantic_parity_policy": (
+                "Apply this contract and every mandatory knowledge module before "
+                "using selective evidence investigation. Token reduction is not "
+                "permission to omit a rule."
+            ),
+            "task_boundary": (
+                "Only diagnose market context and Gate. Do not evaluate a concrete "
+                "order, entry, stop, target, position size, or final Trade/No Trade."
+            ),
+            "bar_numbering": {
+                "newest_closed_bar": "K1",
+                "oldest_available_bar": f"K{n_bars}",
+                "unclosed_bar_allowed": False,
+                "bar_range_rule": (
+                    "Every decision-node bar_range must cover every K reference in "
+                    "its reason and remain inside the frozen window."
+                ),
+            },
+            "analysis_windows": {
+                "background": f"K{n_bars}-K41 when available",
+                "recent_structure": f"K{min(40, n_bars)}-K1",
+                "immediate_momentum": f"K{min(8, n_bars)}-K1",
+                "immediate_signal": f"K{min(10, n_bars)}-K1",
+                "bar_by_bar_summary": "K5-K1; exactly five items when at least five bars exist",
+                "precedence": (
+                    "Recent structure determines direction; long background is risk "
+                    "context and must not veto recent direction by itself."
+                ),
+            },
+            "incremental": {
+                "enabled": incremental,
+                "new_closed_bar_count": (
+                    int(incremental_new_bar_count or 0) if incremental else 0
+                ),
+                "anti_anchoring": (
+                    "Re-diagnose the complete frozen chart independently. Previous "
+                    "analysis is a hypothesis to retest, not a constraint; replace it "
+                    "when breakout, reversal, acceleration, exhaustion, or invalidated "
+                    "support/resistance changes structure."
+                ),
+                "delta_required": incremental,
+            },
+            "embedded_rules": [
+                _LANGUAGE_ZH_RULE,
+                _PA_TERMINOLOGY_ZH,
+                _PA_FACTUAL_CLAIM_RULE,
+                _PA_EVIDENCE_OUTPUT_RULE,
+                render_pa_theory_rule_catalog(),
+                self._stage1_pattern_supplement(),
+                _stage1_output_reminder_for_mode(
+                    analysis_mode,
+                    decision_tree_path=self.decision_tree_path,
+                ),
+                _stage1_tail_reminder(),
+            ],
+        }
 
     def build_stage1(
         self,
@@ -1521,6 +1634,68 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
         )
 
     # ── Stage 2 ───────────────────────────────────────────────────────────────
+
+    def build_stage2_agent_protocol(
+        self,
+        *,
+        frame: KlineFrame,
+        stage1_json: dict[str, Any],
+        decision_stance: str,
+        previous_record: Any | None,
+        enable_next_bar_prediction: bool,
+    ) -> dict[str, Any]:
+        """Publish mature code-generated Stage 2 rules beside routed knowledge."""
+        from pa_agent.ai.decision_continuity import (
+            build_continuity_context,
+            render_continuity_prompt_block,
+        )
+
+        continuity = render_continuity_prompt_block(
+            build_continuity_context(
+                frame=frame,
+                stage1_json=stage1_json,
+                previous_record=previous_record,
+            )
+        )
+        from pa_agent.util.price_tick import format_breakout_price_hint
+
+        breakout_tick_hint = format_breakout_price_hint(frame)
+        previous_prediction = self._render_previous_prediction(previous_record)
+        return {
+            "contract_version": "pa_stage2_agent_protocol_v1",
+            "role": "stage2",
+            "semantic_parity_policy": (
+                "Apply this contract and every Brooks Router-selected mandatory "
+                "knowledge module before selective evidence investigation."
+            ),
+            "task_boundary": (
+                "Evaluate Setup, entry, structural invalidation and targets only "
+                "inside validated Stage 1 and the Router manifest. Risk, position "
+                "size, Trader Equation and execution remain host authority."
+            ),
+            "bar_numbering": {
+                "newest_closed_bar": "K1",
+                "oldest_available_bar": f"K{len(frame.bars)}",
+                "unclosed_bar_allowed": False,
+            },
+            "embedded_rules": [
+                _LANGUAGE_ZH_RULE,
+                _PA_TERMINOLOGY_ZH,
+                _STAGE2_API_TASK_RULE,
+                build_decision_stance_guidance(normalize_stance(decision_stance)),
+                continuity,
+                self._render_transition_guidance(stage1_json),
+                breakout_tick_hint or "",
+                previous_prediction,
+                _stage2_output_contract(decision_tree_path=self.decision_tree_path),
+                (
+                    _NEXT_BAR_PREDICTION_INSTRUCTION
+                    if enable_next_bar_prediction
+                    else _NEXT_BAR_DISABLED_NOTE
+                ),
+                _stage2_tail_reminder(),
+            ],
+        }
 
     def build_stage2(
         self,

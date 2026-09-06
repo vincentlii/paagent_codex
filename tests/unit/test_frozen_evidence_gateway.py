@@ -26,13 +26,28 @@ def test_stage1_can_read_price_facts_bars_and_allowed_brooks_knowledge(
 
     facts = gateway.get_facts(("PA.BAR.K1",))
     bars = gateway.get_bars(older_seq=2, newer_seq=1)
-    knowledge = gateway.read_knowledge("brooks/context")
+    knowledge = gateway.read_allowed_knowledge(
+        knowledge_id="brooks/context",
+        section_ids=("brooks/context#s001",),
+    )
 
     assert facts[0]["value"]["close"] == 101.0
     assert [bar["seq"] for bar in bars] == [1, 2]
-    assert "Brooks" in knowledge
+    assert "Brooks" in knowledge["sections"][0]["text"]
     assert len(gateway.audit_events) == 3
     assert all(event.snapshot_hash == "a" * 64 for event in gateway.audit_events)
+
+
+def test_mandatory_knowledge_can_be_read_as_one_complete_module(tmp_path: Path) -> None:
+    gateway = _gateway(tmp_path)
+
+    knowledge = gateway.read_knowledge_module(knowledge_id="brooks/context")
+
+    assert knowledge["knowledge_module_id"] == "brooks/context"
+    assert [item["section_id"] for item in knowledge["sections"]] == [
+        "brooks/context#s001"
+    ]
+    assert gateway.audit_events[-1].operation == "read_knowledge_module"
 
 
 def test_stage1_cannot_read_vpa_fact_or_unselected_knowledge(tmp_path: Path) -> None:
@@ -41,14 +56,20 @@ def test_stage1_cannot_read_vpa_fact_or_unselected_knowledge(tmp_path: Path) -> 
     with pytest.raises(EvidenceAccessDenied):
         gateway.get_facts(("VPA.BAR.K1",))
     with pytest.raises(EvidenceAccessDenied):
-        gateway.read_knowledge("vpa/effort-result")
+        gateway.read_allowed_knowledge(
+            knowledge_id="vpa/effort-result",
+            section_ids=("vpa/effort-result#s001",),
+        )
 
 
 def test_evidence_budget_is_fail_closed_and_audited(tmp_path: Path) -> None:
     gateway = _gateway(tmp_path)
     gateway.get_facts(("PA.BAR.K1",))
     gateway.get_bars(older_seq=1, newer_seq=1)
-    gateway.read_knowledge("brooks/context")
+    gateway.read_allowed_knowledge(
+        knowledge_id="brooks/context",
+        section_ids=("brooks/context#s001",),
+    )
 
     with pytest.raises(EvidenceBudgetExceeded):
         gateway.get_facts(("PA.BAR.K1",))
@@ -62,3 +83,22 @@ def test_bar_request_cannot_cross_snapshot_cutoff(tmp_path: Path) -> None:
 
     with pytest.raises(EvidenceAccessDenied, match="cutoff"):
         gateway.get_bars(older_seq=99, newer_seq=1)
+
+
+def test_full_core_context_is_retrieved_on_demand(tmp_path: Path) -> None:
+    gateway = _gateway(tmp_path)
+
+    core = gateway.get_market_core()
+    experiences = gateway.get_experience_entries()
+
+    assert "experience_entries" not in core
+    assert experiences == [{"summary": "bounded history"}]
+
+
+def test_pa_price_frame_is_complete_and_contains_no_volume(tmp_path: Path) -> None:
+    gateway = _gateway(tmp_path)
+
+    rows = gateway.get_price_frame(older_seq=2, newer_seq=1)
+
+    assert [item["seq"] for item in rows] == [1, 2]
+    assert all("volume" not in item for item in rows)

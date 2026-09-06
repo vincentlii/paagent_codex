@@ -92,6 +92,13 @@ def test_dashboard_payload_is_credential_free_and_reports_health(tmp_path) -> No
             "scheduler": {"running": 1, "queued": 0},
             "assets": [{"symbol": "XAUUSDT", "timeframe": "1h", "in_flight": True}],
             "recent_runs": [{"run_id": "run-1", "symbol": "XAUUSDT"}],
+            "backend_experiments": {
+                "available": True,
+                "protocol_version": "analysis_backend_aabb_v2",
+                "experiments": 2,
+                "arm_coverage": 0.75,
+                "raw_manifest_path": "/secret/experiment.json",
+            },
             "paper": {"available": False, "accounts": []},
         }
     )
@@ -101,6 +108,8 @@ def test_dashboard_payload_is_credential_free_and_reports_health(tmp_path) -> No
     assert payload["health"]["state"] == "running"
     assert payload["runtime"]["assets"][0]["symbol"] == "XAUUSDT"
     assert payload["recent_runs"][0]["run_id"] == "run-1"
+    assert payload["backend_experiments"]["experiments"] == 2
+    assert "raw_manifest_path" not in payload["backend_experiments"]
     assert payload["control"]["applied"] is True
     assert "api_key" not in json.dumps(payload).lower()
 

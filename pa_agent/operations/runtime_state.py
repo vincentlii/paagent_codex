@@ -350,13 +350,15 @@ class RuntimeStatusStore:
             "scheduler": dict,
             "mode": dict,
             "recent_runs": list,
+            "analysis_summary": list,
             "paper": dict,
+            "codex": dict,
         }
         for key, expected_type in expected_containers.items():
             value = raw.get(key, expected_type())
             if not isinstance(value, expected_type):
                 raise TypeError(f"{key} must be {expected_type.__name__}")
-        for key in ("assets", "recent_runs"):
+        for key in ("assets", "recent_runs", "analysis_summary"):
             if any(not isinstance(item, dict) for item in raw.get(key, [])):
                 raise TypeError(f"{key} entries must be objects")
         paper = raw.get("paper", {})

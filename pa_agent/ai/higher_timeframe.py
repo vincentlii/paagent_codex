@@ -55,6 +55,15 @@ def _number(value: object, digits: int = 4) -> str:
     return f"{numeric:.{digits}f}" if math.isfinite(numeric) else "N/A"
 
 
+def _json_number(value: object) -> float | None:
+    """Return a JSON-safe finite number for frozen evidence."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
 def _background_price_facts(frame: KlineFrame) -> str:
     bars = list(frame.bars)
     if not bars:
@@ -223,3 +232,31 @@ def serialize_higher_timeframe_context(context: dict[str, Any] | None) -> dict[s
             latest_closed_ts_open=frame.bars[0].ts_open if frame.bars else None,
         )
     return payload
+
+
+def serialize_agent_higher_timeframe_evidence(
+    context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Freeze the same bounded HTF evidence that the mature Direct prompt exposes."""
+    payload = serialize_higher_timeframe_context(context)
+    if payload is None or payload.get("status") != "available":
+        return payload
+    frame = context.get("frame") if isinstance(context, dict) else None
+    if not isinstance(frame, KlineFrame) or not frame.bars:
+        return {**payload, "status": "unavailable", "reason": "invalid_higher_timeframe_frame"}
+    rows: list[dict[str, Any]] = []
+    for index, bar in enumerate(frame.bars[:_MAX_DETAIL_BARS]):
+        rows.append(
+            {
+                "evidence_id": f"HTF.H{bar.seq}",
+                "seq": int(bar.seq),
+                "ts_open": int(bar.ts_open),
+                "open": _json_number(bar.open),
+                "high": _json_number(bar.high),
+                "low": _json_number(bar.low),
+                "close": _json_number(bar.close),
+                "ema20": _json_number(frame.indicators.ema20[index]),
+                "atr14": _json_number(frame.indicators.atr14[index]),
+            }
+        )
+    return {**payload, "evidence": rows}

@@ -116,16 +116,9 @@ class ProductionOrchestratorFactory:
 
         settings = self._profile_settings.model_copy(deep=True)
         assert self._codex_backend_factory is not None
-        from pa_agent.config.vpa import vpa_is_enabled
-
-        auxiliary_client = (
-            create_ai_client(settings.provider, logger_=self._logger)
-            if vpa_is_enabled(settings.prompt)
-            else None
-        )
         primary = self._build_orchestrator(
             settings=settings,
-            client=auxiliary_client,
+            client=None,
             analysis_backend=self._codex_backend_factory(task, settings),
             profile_identity=self._profile_identity,
         )
@@ -156,7 +149,7 @@ class ProductionOrchestratorFactory:
         self,
         *,
         settings: Any,
-        client: Any,
+        client: Any | None,
         analysis_backend: Any,
         profile_identity: Mapping[str, Any] | None = None,
     ) -> TwoStageOrchestrator:

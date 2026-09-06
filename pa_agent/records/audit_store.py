@@ -635,8 +635,12 @@ class AnalysisAuditStore:
                 job_digest TEXT,
                 codex_thread_id TEXT,
                 initial_context_bytes INTEGER NOT NULL DEFAULT 0,
+                initial_context_tokens INTEGER NOT NULL DEFAULT 0,
                 evidence_call_count INTEGER NOT NULL DEFAULT 0,
                 evidence_response_bytes INTEGER NOT NULL DEFAULT 0,
+                retrieval_context_tokens INTEGER NOT NULL DEFAULT 0,
+                evidence_denied_count INTEGER NOT NULL DEFAULT 0,
+                evidence_latency_ms REAL NOT NULL DEFAULT 0,
                 created_at_ms INTEGER NOT NULL,
                 PRIMARY KEY (run_id, arm, stage, attempt)
             )
@@ -818,8 +822,12 @@ class AnalysisAuditStore:
             "job_digest": "TEXT",
             "codex_thread_id": "TEXT",
             "initial_context_bytes": "INTEGER NOT NULL DEFAULT 0",
+            "initial_context_tokens": "INTEGER NOT NULL DEFAULT 0",
             "evidence_call_count": "INTEGER NOT NULL DEFAULT 0",
             "evidence_response_bytes": "INTEGER NOT NULL DEFAULT 0",
+            "retrieval_context_tokens": "INTEGER NOT NULL DEFAULT 0",
+            "evidence_denied_count": "INTEGER NOT NULL DEFAULT 0",
+            "evidence_latency_ms": "REAL NOT NULL DEFAULT 0",
         }
         for column, definition in required.items():
             if column not in existing:
@@ -847,9 +855,11 @@ class AnalysisAuditStore:
                     requested_model, effective_model,
                     requested_reasoning_effort, effective_reasoning_effort,
                     runtime_version, job_digest,
-                    codex_thread_id, initial_context_bytes, evidence_call_count,
-                    evidence_response_bytes, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    codex_thread_id, initial_context_bytes, initial_context_tokens,
+                    evidence_call_count, evidence_response_bytes,
+                    retrieval_context_tokens, evidence_denied_count,
+                    evidence_latency_ms, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.meta.run_id,
@@ -881,8 +891,12 @@ class AnalysisAuditStore:
                     str(raw.get("job_digest") or "") or None,
                     str(raw.get("codex_thread_id") or "") or None,
                     max(0, int(raw.get("initial_context_bytes") or 0)),
+                    max(0, int(raw.get("initial_context_tokens") or 0)),
                     max(0, int(raw.get("evidence_call_count") or 0)),
                     max(0, int(raw.get("evidence_response_bytes") or 0)),
+                    max(0, int(raw.get("retrieval_context_tokens") or 0)),
+                    max(0, int(raw.get("evidence_denied_count") or 0)),
+                    max(0.0, float(raw.get("evidence_latency_ms") or 0.0)),
                     int(raw.get("created_at_ms") or cls._now_ms()),
                 ),
             )

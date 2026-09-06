@@ -251,6 +251,35 @@ def build_analysis_fact_catalog(
                 value=value,
             )
         )
+        if feature is not None:
+            facts.append(
+                AnalysisFact(
+                    fact_id=f"PA.INDICATOR.K{bar.seq}",
+                    domain="indicator",
+                    bar_range=f"K{bar.seq}",
+                    fact_type="bar_indicator_measurements",
+                    value={
+                        "seq": int(bar.seq),
+                        "ema20": _round_optional(feature.ema20),
+                        "atr14": _round_optional(feature.atr14),
+                        "range_atr_ratio": _round_optional(feature.range_atr_ratio),
+                        "signed_body_atr": _round_optional(feature.signed_body_atr),
+                        "close_progress_atr": _round_optional(feature.close_progress_atr),
+                        "close_minus_ema": _round_optional(feature.close_minus_ema),
+                        "close_minus_ema_atr": _round_optional(
+                            feature.close_minus_ema_atr
+                        ),
+                        "overlap_previous_ratio": _round_optional(
+                            feature.overlap_prev_ratio
+                        ),
+                        "high_delta_previous": _round_optional(feature.high_delta_prev),
+                        "low_delta_previous": _round_optional(feature.low_delta_prev),
+                        "close_delta_previous": _round_optional(
+                            feature.close_delta_prev
+                        ),
+                    },
+                )
+            )
 
     for newer, older in pairwise(bars[: _ADJACENT_COMPARISON_COUNT + 1]):
         facts.append(

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "cohort_id": "windows-vnext-historical-failures-20",
+  "source_collection": "mature Windows new_paagent_vnext records/pending",
+  "case_count": 20,
+  "baseline_status_counts": {"completed_with_warnings":11,"invalid_model_output":9},
+  "baseline_audit_code_counts": {"bounded_contract_projection":2,"json_contract_violation":8,"professional_prose_warning":71,"provider_draft_contract":8,"provider_draft_materialization":2,"role_contract_violation":4,"stage1_quality":44,"unambiguous_contract_normalization":17},
+  "cases": [
+    {"record":"2026-07-28_22-28-58-762000_XAUUSD_15m_cacb6dd50141.json","sha256":"679cd1871ff0d0ac893dc7b2ae01d3eca5cab1991c2b6e8e68323e0670b38f73","source_status":"completed_with_warnings"},
+    {"record":"2026-07-29_22-03-33-090000_XAUUSD_15m_cbd6aab87904.json","sha256":"e4131daa575d77e3854717a18c058bff5b9ee6dc05580df3da848406c8d72452","source_status":"completed_with_warnings"},
+    {"record":"2026-07-30_00-31-17-482000_XAUUSD_15m_1faaaca93b22.json","sha256":"7892196d49fbc619d71fc0f5d69830856455e29ef000fa8bfc65c8d11ec276e7","source_status":"completed_with_warnings"},
+    {"record":"2026-07-31_02-13-34-855000_XAUUSD_15m_79136cd9a6d6.json","sha256":"8454ad897465fa9b2474e91b0f2b1f8dc86fb15f6a17e4b251aae1961b84cb15","source_status":"invalid_model_output"},
+    {"record":"2026-07-31_23-35-41-837000_XAUUSD_15m_21fb5439572d.json","sha256":"d32673dcacfa0343ad0226a909ff020f615be8eb1337c91d16a7cb01f483827d","source_status":"completed_with_warnings"},
+    {"record":"2026-08-04_22-03-05-827000_XAUUSD_1h_300bf3fa5dbf.json","sha256":"4d44ee2d395cbe2e8bab1166487e36d02bf809625f6c3f647be79ae660728cc5","source_status":"completed_with_warnings"},
+    {"record":"2026-08-05_00-34-14-390000_XAUUSD_1h_597ed13a9429.json","sha256":"ac9408feca872d01af5d4a32d02f8d891bfde13ddce3e5443d056e5cc5ca993d","source_status":"completed_with_warnings"},
+    {"record":"2026-08-07_00-26-40-334000_XAUUSD_1h_692d054e0600.json","sha256":"f7c8f4d3a2f96dc22d3307908f49dc46e88acc59d61746e9a9e22604070816a1","source_status":"invalid_model_output"},
+    {"record":"2026-08-11_21-53-35-320000_XAUUSD_1h_adacda916304.json","sha256":"94a6c9e4b1c6f9f0d83ea44b39fc2b3825c7bd199d43cd88e86bd8e1a2fade71","source_status":"invalid_model_output"},
+    {"record":"2026-08-12_00-12-49-103000_XAUUSD_1h_d859abd6711c.json","sha256":"d44e22cc9913cc484ed2f5885edb6699e17ea0454cb9d01e1e34bb96c8d02303","source_status":"invalid_model_output"},
+    {"record":"2026-08-12_00-28-55-610000_XAUUSD_1h_2021e8ccfed9.json","sha256":"fd7b77bae0693f5e93be391e289e2f4ff47919c27519e816f9ebc52645cae7f5","source_status":"invalid_model_output"},
+    {"record":"2026-08-12_00-46-40-101000_EURUSD_5m_e7fab716b53d.json","sha256":"aeaaa1b411a4f3e66c515c9403eeea37e7bb86f022dd5f77e3a8f6a55bc675e9","source_status":"completed_with_warnings"},
+    {"record":"2026-08-12_00-48-10-477000_XAUUSD_1h_530bdb709437.json","sha256":"84afcab97eaa5cb67374c40de0e89870b233cd027baad5a17cb0e1f8d0b7b728","source_status":"invalid_model_output"},
+    {"record":"2026-08-12_01-03-45-373000_XAUUSD_1h_b035dd70d876.json","sha256":"ee1ae317b1cd59bf6721183ed884a115f429536bf25b4c218ec4945ff9f81e15","source_status":"invalid_model_output"},
+    {"record":"2026-08-12_01-32-23-351000_XAUUSD_30m_d3035f440be8.json","sha256":"6d95b0732096ce250d2ffb7a204983f0bdf0dc20b9a32229d4bed733179c4642","source_status":"invalid_model_output"},
+    {"record":"2026-08-12_19-32-47-352000_XAUUSD_1h_e8d56d1b82ea.json","sha256":"3ba7cb67cd02660897ebcb2bc1875fb5363673b337c149c305f5f26ad50f978a","source_status":"invalid_model_output"},
+    {"record":"2026-08-12_19-57-58-411000_XAUUSD_1h_5a5ccb07840b.json","sha256":"5e305eb4f51696afdb13fe6518996218c06f5759e92c6085075d66d33cf624cf","source_status":"completed_with_warnings"},
+    {"record":"2026-08-13_00-05-32-051000_XAUUSD_1h_f7b12aa232a9.json","sha256":"c3eff2fbb2dc52b456e6ab47c8d038131f48e0c5b9f90036da4eaba67c56110b","source_status":"completed_with_warnings"},
+    {"record":"2026-08-13_00-33-07-804000_XAUUSD_30m_90eb060e1bec.json","sha256":"792cbf4510491ff2058726696ba7e4b5454c8de57dac22978279229d5da86203","source_status":"completed_with_warnings"},
+    {"record":"2026-08-28_00-19-43-821000_XAUUSD_1h_8d27a430e88d.json","sha256":"95b828ec8943d8649b9c9c69ffcbee81de25bfc6cd901a65f4e10ca1229a876b","source_status":"completed_with_warnings"}
+  ]
+}

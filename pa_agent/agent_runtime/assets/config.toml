@@ -1,0 +1,12 @@
+approval_policy = "never"
+sandbox_mode = "read-only"
+forced_login_method = "chatgpt"
+web_search = "disabled"
+hide_agent_reasoning = true
+
+[features]
+shell_tool = false
+skill_mcp_dependency_install = false
+
+[tools]
+web_search = false

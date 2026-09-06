@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
 from pa_agent.experiments.backend_aabb import (
     BACKEND_AABB_PROTOCOL_VERSION,
     BackendAabbRunner,
@@ -28,8 +30,9 @@ class _Writer:
 
 
 def _record(run_id: str, backend: str) -> AnalysisRecord:
+    catalog = build_vpa_evidence_catalog(make_frame())
     calls = []
-    for stage in ("stage1", "stage2"):
+    for stage in ("stage1", "stage2", "vpa_evidence"):
         calls.append(
             {
                 "arm": "pa",
@@ -67,19 +70,45 @@ def _record(run_id: str, backend: str) -> AnalysisRecord:
         strategy_files_used=[],
         experience_loaded=[],
         call_attempts=calls,
-        run_outcome={"status": "completed", "official_path": "pa_only"},
+        run_outcome={
+            "status": "completed",
+            "official_path": "pa_only",
+            "requested_vpa_mode": "shadow",
+            "effective_vpa_mode": "shadow",
+        },
+        vpa_catalog=catalog,
+        vpa_evidence={
+            "catalog_id": catalog["catalog_id"],
+            "data_status": "available",
+            "observations": [],
+            "hypothesis_assessments": [],
+            "background_relation": "neutral",
+            "entry_timing_relation": "neutral",
+        },
     )
 
 
 def _frozen(*, codex_model: str = "gpt-5"):
+    frame = make_frame()
+    htf_frame = replace(make_frame(), timeframe="4h")
     return freeze_backend_experiment_input(
-        make_frame(),
-        None,
+        frame,
+        {
+            "status": "available",
+            "timeframe": "4h",
+            "current_timeframe": frame.timeframe,
+            "frame": htf_frame,
+        },
         direct_backend={"provider": "deepseek", "model": "deepseek-reasoner"},
         codex_backend={"runtime": "codex", "model": codex_model, "reasoning": "high"},
-        shared_settings={"vpa_mode": "off", "decision_stance": "conservative"},
+        shared_settings={
+            "vpa_mode": "shadow",
+            "higher_timeframe_enabled": True,
+            "decision_stance": "conservative",
+        },
         contract_fingerprint="c" * 64,
         analysis_fingerprint="a" * 64,
+        vpa_catalog=build_vpa_evidence_catalog(frame),
     )
 
 
@@ -159,8 +188,8 @@ def test_complete_backend_protocol_reports_repeatability_and_cost(tmp_path: Path
     assert report["unique_snapshots"] == 1
     assert report["complete_four_arm_snapshots"] == 1
     assert report["engineering_repeatability_reviewable"] is True
-    assert report["groups"]["A"]["mean_total_tokens"] == 240.0
-    assert report["groups"]["B"]["mean_latency_ms"] == 50.0
+    assert report["groups"]["A"]["mean_total_tokens"] == 360.0
+    assert report["groups"]["B"]["mean_latency_ms"] == 75.0
 
 
 def test_protocol_rejects_backend_fallback_metadata(tmp_path: Path) -> None:

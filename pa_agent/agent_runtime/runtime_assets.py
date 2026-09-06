@@ -14,6 +14,7 @@ _SKILL_PATHS = {
     "stage2": "skills/stage2/SKILL.md",
     "vpa_evidence": "skills/vpa_evidence/SKILL.md",
     "joint_arbiter": "skills/joint_arbiter/SKILL.md",
+    "draft_pointer_repair": "skills/draft_pointer_repair/SKILL.md",
 }
 
 
@@ -23,17 +24,23 @@ class CodexRuntimeAssets:
     asset_digest: str
     agents_text: str
     skill_documents: Mapping[str, str]
+    config_text: str
+    rules_text: str
 
 
 def load_codex_runtime_assets() -> CodexRuntimeAssets:
     root = files("pa_agent.agent_runtime").joinpath("assets")
     agents_text = root.joinpath("AGENTS.md").read_text(encoding="utf-8")
+    config_text = root.joinpath("config.toml").read_text(encoding="utf-8")
+    rules_text = root.joinpath("rules/pa-agent.rules").read_text(encoding="utf-8")
     skills = {
         role: root.joinpath(path).read_text(encoding="utf-8")
         for role, path in _SKILL_PATHS.items()
     }
     payload = {
         "AGENTS.md": agents_text,
+        "config.toml": config_text,
+        "rules/pa-agent.rules": rules_text,
         **{path: skills[role] for role, path in _SKILL_PATHS.items()},
     }
     encoded = json.dumps(
@@ -48,4 +55,6 @@ def load_codex_runtime_assets() -> CodexRuntimeAssets:
         asset_digest=digest,
         agents_text=agents_text,
         skill_documents=MappingProxyType(skills),
+        config_text=config_text,
+        rules_text=rules_text,
     )

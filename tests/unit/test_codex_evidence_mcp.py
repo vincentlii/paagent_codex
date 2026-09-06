@@ -73,10 +73,23 @@ def test_stdio_mcp_serves_only_budgeted_frozen_evidence(tmp_path: Path) -> None:
 
     assert initialized["result"]["capabilities"]["tools"]["listChanged"] is False
     assert {item["name"] for item in listed["result"]["tools"]} == {
+        "get_job_manifest",
+        "get_market_core",
         "list_fact_ids",
         "get_facts",
         "get_bars",
-        "read_knowledge",
+        "get_measurements",
+        "get_price_frame",
+        "get_pa_evidence",
+        "get_htf_evidence",
+        "get_vpa_evidence",
+        "list_allowed_knowledge",
+        "search_allowed_knowledge",
+        "read_allowed_knowledge",
+        "read_knowledge_module",
+        "get_upstream_artifact",
+        "get_experience_entries",
+        "get_repair_findings",
     }
     assert called["result"]["isError"] is False
     assert called["result"]["structuredContent"]["facts"][0]["fact_id"] == "PA.BAR.K1"
@@ -113,8 +126,11 @@ def test_stdio_mcp_returns_tool_error_for_role_boundary(tmp_path: Path) -> None:
                 "id": 1,
                 "method": "tools/call",
                 "params": {
-                    "name": "read_knowledge",
-                    "arguments": {"knowledge_id": "vpa/effort-result"},
+                    "name": "read_allowed_knowledge",
+                    "arguments": {
+                        "knowledge_id": "vpa/effort-result",
+                        "section_ids": ["vpa/effort-result#s001"],
+                    },
                 },
             },
         )

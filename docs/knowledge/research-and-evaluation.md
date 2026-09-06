@@ -37,13 +37,15 @@ VPA-enabled 模型自称“没有改变 baseline”不是反事实证据。Promp
 
 ## Analysis Backend A/A/B/B
 
-`analysis_backend_aabb_v1` 与 PA/VPA A/A/B/B 是两个不同问题：A1/A2 使用当前 DeepSeek Direct，
-B1/B2 使用 Codex Agent，其他 Snapshot、Domain code、Router、Validator、Risk 和知识版本保持一致。
+`analysis_backend_aabb_v2` 与 PA/VPA treatment A/A/B/B 是两个不同问题：A1/A2 使用当前 DeepSeek
+Direct，B1/B2 使用 Codex Agent；四臂都强制使用同一个 Frozen Snapshot、可用 HTF frame、VPA
+catalog 与生产 `shadow` authority，其他 Domain code、Router、Validator、Risk 和知识版本保持一致。
 该协议只回答完整 Backend system value；由于模型家族和执行方式同时变化，不得把差异单独归因为
 Agentic investigation。实验 arm 关闭 runtime fallback，Codex availability failure 保留在 ITT。
 
 实现由独立 [`backend_aabb.py`](../../pa_agent/experiments/backend_aabb.py) 冻结 Backend pair、共享设置、
-contract 与 source/runtime digest。四臂在调用前写入现有实验 ledger；成功 record 仍写入唯一
+四角色 contract、HTF/VPA identity 与 source/runtime digest。`pa-agent-backend-aabb <record>` 是
+单记录离线入口。四臂在调用前写入现有实验 ledger；成功 record 仍写入唯一
 `AnalysisRecord v5`，失败 arm 保持 assigned/unpersisted。Backend 汇总按 `(cohort_id,
 market_snapshot_hash)` 去重，现有 PA/VPA frequency/counterfactual 查询则显式限定 PA/VPA protocol，
 两类实验不得混算。executor 必须回传实际构造 Backend 的脱敏 runtime fingerprint 并与冻结 cohort
@@ -59,14 +61,21 @@ Codex Backend 不因“Prompt 更短”或 20 个工程样本而替换 Direct。
 2. Brooks/VPA 专家在不知道 Backend 的前提下，按事实准确性、Context、Setup、证据充分性、
    Stage 1/2 连贯性和 confidence calibration 盲评；解释文风不计质量增益。
 3. 至少 300 个独立 Snapshot、100 个明确匹配 outcome；最终样本量按预注册效应量和功效调整。
-4. 同时报告 hallucination/事实错误、Trade/No Trade 分歧、first-pass/schema、总 token、core-context
-   bytes、Evidence retrieval、p50/p95 latency、coverage、ITT 与 per-protocol。
+4. 同时报告 hallucination/事实错误、Trade/No Trade 分歧、VPA relation/evidence-ID 一致性、
+   first-pass/schema、总 token、core-context bytes、Evidence retrieval、p50/p95 latency、coverage、
+   ITT 与 per-protocol。
 5. 扣除成本和滑点后的样本外结果、MAE/MFE、回撤或 calibration 有稳定增量，且触发频率变化可解释。
 6. 先进入有限资产/周期的 Paper canary；任何 authority、identity、事实或延迟门禁越界立即回到
    `deepseek_only`。真实订单仍需独立 ADR，不由本门禁授权。
 
 由于 Codex 与 Direct 的模型家族和执行方式同时变化，该门禁只能支持“完整 Backend system
 是否更好”，不能声称已识别纯 Agentic reasoning 的因果效应。
+
+当前 `backend_review` 工具生成不含 Backend/runtime identity 的 reviewer packet，并单独保存
+unblinding key；评分冻结后才能解盲。固定质量权重为市场 Context 35%、Brooks Setup 30%、Evidence
+可追溯性 20%、Stage 1/2 连贯性 15%，VPA 仍单独评价。Backend outcome report 只联结已有
+closed-OHLC counterfactual ledger，始终返回 `ready_for_promotion=false`；它不能替代前向 Paper，也不能
+把完整 Backend 差异归因于 Agentic investigation。
 
 ## A/A/B/B 协议
 

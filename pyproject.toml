@@ -56,6 +56,7 @@ mt5 = [
 ]
 vps = [
     "curl_cffi>=0.13",
+    "mcp==2.1.1",
 ]
 desktop = [
     "PyQt6>=6.6",
@@ -86,8 +87,10 @@ pa-agent = "pa_agent.main:main"
 pa-agent-headless = "pa_agent.headless:main"
 pa-agent-dashboard = "pa_agent.dashboard:main"
 pa-agent-codex-worker = "pa_agent.agent_runtime.spool_worker:main"
+pa-agent-backup = "pa_agent.operations.backup:main"
 pa-agent-paper-report = "pa_agent.execution.reporting:main"
 pa-agent-aabb = "pa_agent.experiments.cli:single_main"
+pa-agent-backend-aabb = "pa_agent.experiments.cli:backend_main"
 pa-agent-aabb-monitor = "pa_agent.experiments.cli:continuous_main"
 
 [tool.setuptools.packages.find]
@@ -95,7 +98,8 @@ include = ["pa_agent*", "prompt_engineering*"]
 
 [tool.setuptools.package-data]
 prompt_engineering = ["**/*.txt", "**/*.md"]
-"pa_agent.agent_runtime" = ["assets/**/*.md"]
+"pa_agent.agent_runtime" = ["assets/**/*.md", "assets/**/*.toml", "assets/**/*.rules"]
+"pa_agent.experiments" = ["fixtures/*.json"]
 
 [tool.black]
 line-length = 100

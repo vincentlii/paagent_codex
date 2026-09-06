@@ -15,6 +15,10 @@ ExecStart=/opt/miniconda3/envs/pa-agent/bin/pa-agent-codex-worker
 Restart=on-failure
 RestartSec=10s
 UMask=0007
+MemoryMax=1G
+CPUQuota=200%
+TasksMax=64
+LimitNOFILE=1024
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -29,8 +33,10 @@ LockPersonality=true
 CapabilityBoundingSet=
 AmbientCapabilities=
 ReadOnlyPaths=/opt/pa-agent /opt/miniconda3/envs/pa-agent /var/lib/pa-agent-codex/jobs
+ReadOnlyPaths=/var/lib/pa-agent-codex/home/config.toml /var/lib/pa-agent-codex/home/rules
 ReadWritePaths=/var/lib/pa-agent-codex/home /var/lib/pa-agent-codex/runtime /var/lib/pa-agent-codex/outbox
 ReadWritePaths=/var/lib/pa-agent-codex/inbox /var/lib/pa-agent-codex/results
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target

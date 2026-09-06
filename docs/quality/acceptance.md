@@ -23,6 +23,13 @@
 16. Codex 与 DeepSeek 在同一正式 PA Stage 链中混用，或因 Schema、事实、权限和专业判断失败触发 availability fallback 的次数为 0。
 17. Codex worker 读取生产数据库、Paper ledger、DeepSeek credential，或以 Headless Unix 用户执行的次数为 0。
 18. Frozen Job、dispatch、worker 实际 runtime identity 与成功 result 任一不一致却被接受的次数为 0。
+19. Codex Patch Envelope 修改 Validator allowlist 外 JSON Pointer，或 Host 未以原稿重新验证就接受的次数为 0。
+20. `codex_only` 因创建 Direct/VPA client 而要求 DeepSeek credential 的次数为 0。
+21. Codex Stage 1/2 未读取完整 price-only frame、全部已发布 HTF Evidence、阶段协议或任一
+    `loading_policy=mandatory` 模块却被接受的次数为 0。
+22. PA Stage 1/2 通过 Frozen Job 或 Evidence 工具读取到 `volume`、`amount` 或 `volume_state` 的次数为 0。
+23. `semantic_parity_v1` Job 未按 knowledge manifest 的 `load_order` 首次读取 mandatory 模块却被接受的次数为 0。
+24. Dashboard、worker status 或长期日志出现 Codex token、账号标识、原始登录输出或 reasoning stream 的次数为 0。
 
 ## 结构与鲁棒性
 
@@ -37,14 +44,17 @@
 - PA-only 无重试 Prompt 的 p95 token 不超过迁移前匹配基线的 60%。
 - 研究 B 臂总 token 不超过同 Snapshot PA-only 的 1.35 倍；生产 Shadow 不调用 Joint。
 - Prompt 压缩不得删除 Background、八态频谱、Always In、Setup、竞争假设、HTF、Gate 或核心 VPA 证据域。
+- 性能优化顺序固定为“先证明 semantic parity，再将模块降级为 on-demand”；未通过 matched replay/盲评
+  的模块不得仅为达到 Token 指标而删除、摘要化或截断。
 - 20 个资产并发排队时无丢失、重复、跨资产身份污染或重复数据库记录。
 - GUI 连续 1000 次取消、切换品种与关闭，不发生 `QThread` 生命周期崩溃。
 - Windows 与 Linux CI 必须使用 `uv.lock` 运行全部 `not live` 测试；CI 不得访问真实行情、Provider
   或交易 API。wheel smoke 必须从安装位置读取 Prompt，并证明 Headless import 不加载 Qt。
 - Codex 初始静态 Context p95 不高于匹配 Direct Prompt 的 40%，包含 Evidence retrieval 的总输入
   p95 不高于 Direct 的 75%；完整运行仍受现有 300 秒 p95、250k token p95 和 1.35 倍研究成本上限约束。
-- `initial_context_bytes` 只作为 core-context 下界；总输入 token 必须使用 Provider usage，Evidence
-  retrieval 另报调用数与响应字节，三者不得互相替代。
+- `initial_context_bytes/tokens` 只计算身份、角色和 Evidence 索引；完整 `core_context.json` 的实际
+  读取计入 retrieval context。总输入 token 必须使用 Provider usage，Evidence retrieval 另报调用数
+  与响应字节，三者不得互相替代。
 
 ## 交易与研究
 

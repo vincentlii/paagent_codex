@@ -6,6 +6,8 @@ import pytest
 
 from pa_agent.ai.model_call_runner import ModelCallRunner
 from pa_agent.ai.provider_capabilities import (
+    normalize_strict_output_instance,
+    project_strict_output_schema,
     resolve_provider_capabilities,
     response_format_for,
 )
@@ -60,6 +62,84 @@ def test_deepseek_uses_documented_json_object_mode() -> None:
     assert client.stream_chat.call_args.kwargs["response_format"] == {
         "type": "json_object"
     }
+
+
+def test_strict_output_projection_adapts_draft7_without_changing_property_names() -> None:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "fixed": {"const": "K1"},
+            "not": {"type": "string"},
+            "nested": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"value": {"type": "string", "pattern": "^x$"}},
+                "required": ["value"],
+                "allOf": [{"if": {}, "then": {}}],
+            },
+        },
+        "required": ["fixed", "not", "nested"],
+        "allOf": [{"not": {"required": ["unknown"]}}],
+    }
+
+    projected = project_strict_output_schema(schema)
+
+    assert projected["properties"]["fixed"] == {
+        "type": "string",
+        "enum": ["K1"],
+    }
+    assert projected["properties"]["not"] == {"type": "string"}
+    assert "allOf" not in projected
+    assert "allOf" not in projected["properties"]["nested"]
+    assert projected["properties"]["nested"]["properties"]["value"]["pattern"] == "^x$"
+    assert schema["properties"]["fixed"] == {"const": "K1"}
+    capabilities = resolve_provider_capabilities(
+        AIProviderSettings(base_url="https://api.openai.com/v1", model="gpt-5.6-sol")
+    )
+    response_format = response_format_for(
+        capabilities,
+        schema=schema,
+        schema_name="stage1",
+    )
+    assert response_format is not None
+    assert response_format["json_schema"]["schema"] == projected
+
+
+def test_strict_transport_nulls_are_removed_only_for_originally_optional_fields() -> None:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "required_value": {"type": ["string", "null"]},
+            "optional_value": {"type": "string"},
+            "nested": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "required_child": {"type": ["string", "null"]},
+                    "optional_child": {"type": "string"},
+                },
+                "required": ["required_child"],
+            },
+        },
+        "required": ["required_value", "nested"],
+    }
+
+    normalized, removed = normalize_strict_output_instance(
+        {
+            "required_value": None,
+            "optional_value": None,
+            "nested": {"required_child": None, "optional_child": None},
+        },
+        schema,
+    )
+
+    assert normalized == {
+        "required_value": None,
+        "nested": {"required_child": None},
+    }
+    assert removed == 2
 
 
 def test_rejected_structured_output_downgrades_once_to_text() -> None:

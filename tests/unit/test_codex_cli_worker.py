@@ -76,15 +76,19 @@ def test_materialized_schema_removes_only_codex_unsupported_composition(
                 yield from schema_keys(child)
 
     assert unsupported.isdisjoint(schema_keys(generated))
-    assert generated["required"] == ["state", "nested"]
+    assert generated["required"] == ["state", "fixed_bar", "protocol", "nested"]
     assert generated["properties"]["state"]["enum"] == ["a", "b"]
     assert generated["properties"]["fixed_bar"] == {
-        "type": "string",
-        "enum": ["K1"],
+        "anyOf": [
+            {"type": "string", "enum": ["K1"]},
+            {"type": "null"},
+        ]
     }
     assert generated["properties"]["protocol"] == {
-        "type": "string",
-        "enum": ["pa_draft_v2"],
+        "anyOf": [
+            {"type": "string", "enum": ["pa_draft_v2"]},
+            {"type": "null"},
+        ]
     }
     assert generated["properties"]["nested"]["properties"]["value"]["pattern"] == "^x$"
     assert job.output_schema == source_schema
@@ -146,7 +150,7 @@ def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) 
     assert command[:2] == ["codex", "exec"]
     assert 'approval_policy="never"' in command
     assert "--ephemeral" in command
-    assert "--ignore-user-config" in command
+    assert "--ignore-user-config" not in command
     assert "--ignore-rules" not in command
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert "--output-schema" in command
@@ -166,6 +170,46 @@ def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) 
     assert result.usage.completion_tokens == 30
 
 
+def test_worker_rejects_output_when_mandatory_semantic_context_was_skipped() -> None:
+    job = replace(
+        _job(),
+        core_context={"context_policy": "semantic_parity_v1"},
+        knowledge_manifest={
+            "modules": [
+                {
+                    "knowledge_module_id": "brooks/context",
+                    "loading_policy": "mandatory",
+                    "load_order": 1,
+                }
+            ]
+        },
+    )
+    base_events = (
+        {"operation": "get_job_manifest", "status": "ok", "request": {}},
+        {"operation": "get_market_core", "status": "ok", "request": {}},
+        {
+            "operation": "get_price_frame",
+            "status": "ok",
+            "request": {"older_seq": 2, "newer_seq": 1},
+        },
+    )
+
+    with pytest.raises(CodexWorkerOutputError, match="mandatory"):
+        CodexCliWorker._validate_required_evidence_reads(job, base_events)
+
+    CodexCliWorker._validate_required_evidence_reads(
+        job,
+        (
+            *base_events,
+            {
+                "operation": "read_knowledge_module",
+                "status": "ok",
+                "request": {"knowledge_id": "brooks/context"},
+            },
+        ),
+    )
+
+
 def test_live_canary_keeps_workspace_agents_and_role_skill_discoverable(
     tmp_path: Path,
 ) -> None:
@@ -181,7 +225,7 @@ def test_live_canary_keeps_workspace_agents_and_role_skill_discoverable(
     assert command[:2] == ["codex", "exec"]
     assert 'approval_policy="never"' in command
     assert command[command.index("--cd") + 1] == str(canary.workspace)
-    assert "--ignore-user-config" in command
+    assert "--ignore-user-config" not in command
     assert "--ignore-rules" not in command
     assert "--output-schema" in command
     assert "--output-last-message" in command

@@ -74,6 +74,10 @@ def test_catalog_exposes_exact_bounded_comparisons() -> None:
     assert catalog.fact("PA.COMPARE.K1.PRIOR5").value["high_relation"] == "below"
     assert catalog.fact("PA.BAR.K1").value["close_zone"] == "upper_quartile"
     assert catalog.compare_bar_to_range(2, 4, 3, field="high") == "below"
+    indicator = catalog.fact("PA.INDICATOR.K1")
+    assert indicator.domain == "indicator"
+    assert indicator.value["ema20"] == 4050.0
+    assert indicator.value["atr14"] == 12.5
 
 
 def test_catalog_exposes_recent_adjacent_bar_comparisons() -> None:

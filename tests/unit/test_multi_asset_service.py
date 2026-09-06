@@ -334,10 +334,9 @@ def test_production_factory_honors_backend_frozen_on_task(
 
     assert codex_only.analysis_backend is codex_backends[0]
     assert isinstance(automatic, FullChainFallbackOrchestrator)
-    # Codex VPA evidence, auto primary evidence, and the cold Direct fallback
-    # each receive isolated mutable client state.
-    assert len(direct_clients) == 3
-    assert len({id(client) for client in direct_clients}) == 3
+    # codex_only and the auto primary path require no Direct credential. Only
+    # the explicit whole-chain cold fallback owns one mutable Direct client.
+    assert len(direct_clients) == 1
     assert factory.activate_backend_mode("auto") is True
 
 

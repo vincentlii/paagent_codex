@@ -89,6 +89,12 @@ _RECENT_RUN_FIELDS = (
     "requested_reasoning_effort",
     "effective_reasoning_effort",
     "total_latency_ms",
+    "total_tokens",
+    "initial_context_tokens",
+    "retrieval_context_tokens",
+    "evidence_call_count",
+    "evidence_denied_count",
+    "evidence_latency_ms",
     "repair_count",
     "outcome",
 )
@@ -101,6 +107,47 @@ _PAPER_ACCOUNT_FIELDS = (
     "realized_pnl",
 )
 _PAPER_RESEARCH_FIELDS = ("complete_aabb_snapshots",)
+_CODEX_FIELDS = (
+    "failures",
+    "opened_until",
+    "cooldown_level",
+    "probe_in_flight",
+    "auth_locked",
+    "state_unreadable",
+    "worker_status_unreadable",
+    "updated_at_epoch",
+    "service_state",
+    "auth_state",
+    "runtime_version",
+    "runtime_asset_digest",
+    "codex_binary_digest",
+)
+_ANALYSIS_SUMMARY_FIELDS = (
+    "backend",
+    "run_count",
+    "operational_success_rate",
+    "first_pass_rate",
+    "latency_p50_ms",
+    "latency_p95_ms",
+    "mean_total_tokens",
+    "mean_initial_context_tokens",
+    "mean_retrieval_context_tokens",
+    "evidence_call_count",
+    "evidence_denied_count",
+)
+_BACKEND_EXPERIMENT_FIELDS = (
+    "available",
+    "protocol_version",
+    "experiments",
+    "completed_experiments",
+    "valid_experiments",
+    "unique_snapshots",
+    "cohort_count",
+    "assigned_arms",
+    "persisted_arms",
+    "failed_arms",
+    "arm_coverage",
+)
 
 
 @dataclass(frozen=True)
@@ -271,7 +318,17 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
         "capabilities": analysis_capabilities(),
         "profile": profile_view,
         "recent_runs": recent,
+        "analysis_summary": [
+            _select_fields(item, _ANALYSIS_SUMMARY_FIELDS)
+            for item in (runtime or {}).get("analysis_summary", [])
+            if isinstance(item, dict)
+        ],
+        "backend_experiments": _select_fields(
+            (runtime or {}).get("backend_experiments"),
+            _BACKEND_EXPERIMENT_FIELDS,
+        ),
         "paper": paper,
+        "codex": _select_fields((runtime or {}).get("codex"), _CODEX_FIELDS),
     }
 
 

@@ -140,7 +140,12 @@ def test_backend_accepts_publisher_bounded_messages_for_original_role_request(
         reasoning_effort="high",
         snapshot_hash=build_analysis_fact_catalog(frame).snapshot_hash,
         cutoff_ts_open=frame.bars[0].ts_open,
-        agent_context={"task_id": "task-1", "allowed_knowledge_ids": []},
+        agent_context={
+            "task_id": "task-1",
+            "higher_timeframe": {},
+            "role_protocol": {"contract_version": "pa_stage1_agent_protocol_v1"},
+            "allowed_knowledge_ids": [],
+        },
     )
     worker = MagicMock()
     worker.run.return_value = _result()
@@ -181,7 +186,12 @@ def test_backend_rejects_bounded_job_bound_to_different_source_messages(
         "reasoning_effort": "high",
         "snapshot_hash": build_analysis_fact_catalog(frame).snapshot_hash,
         "cutoff_ts_open": frame.bars[0].ts_open,
-        "agent_context": {"task_id": "task-1", "allowed_knowledge_ids": []},
+        "agent_context": {
+            "task_id": "task-1",
+            "higher_timeframe": {},
+            "role_protocol": {"contract_version": "pa_stage1_agent_protocol_v1"},
+            "allowed_knowledge_ids": [],
+        },
     }
     original = AnalysisRoleRequest(
         messages=[{"role": "system", "content": "original"}],
@@ -231,6 +241,30 @@ def test_auto_mode_requests_full_chain_fallback_only_for_availability(
         )
     assert caught.value.failure.kind == "timeout"
     assert caught.value.failure.retryable is True
+
+
+def test_backend_rejects_role_when_full_cycle_budget_is_already_exhausted() -> None:
+    worker = MagicMock()
+    publisher = MagicMock()
+    monotonic = MagicMock(side_effect=[100.0, 701.0])
+    backend = CodexAnalysisRoleBackend(
+        worker=worker,
+        publish_job=publisher,
+        cycle_wall_seconds=600,
+        monotonic=monotonic,
+    )
+
+    with pytest.raises(ModelCallFailure) as caught:
+        backend.run(
+            _request(),
+            on_reasoning_token=None,
+            on_content_token=None,
+            cancel_token=None,
+        )
+
+    assert caught.value.failure.kind == "timeout"
+    publisher.assert_not_called()
+    worker.run.assert_not_called()
 
 
 def test_auto_mode_treats_job_spool_oserror_as_full_chain_availability() -> None:
@@ -409,7 +443,7 @@ def test_codex_backend_clamps_validator_repairs_without_mutating_settings() -> N
     assert settings.validation.retry_max == original_retry_max
 
 
-def test_codex_backend_can_own_pa_roles_while_vpa_remains_independent() -> None:
+def test_codex_backend_can_own_all_analysis_roles_without_direct_client() -> None:
     settings = Settings(prompt=PromptSettings(vpa_mode="shadow"))
 
     orchestrator = TwoStageOrchestrator(
@@ -424,3 +458,4 @@ def test_codex_backend_can_own_pa_roles_while_vpa_remains_independent() -> None:
     )
 
     assert orchestrator._analysis_backend.backend_id == "codex_agent"
+    assert orchestrator._clone_role_client(settings.provider) == (None, True)

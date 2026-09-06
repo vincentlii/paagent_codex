@@ -91,6 +91,7 @@ class HeadlessMonitor:
         backend_switcher: Callable[[str], bool] | None = None,
         backend_runtime_identity: Mapping[str, Any] | None = None,
         profile_applier: Callable[[AnalysisProfile], bool] | None = None,
+        codex_worker_status_path: Any | None = None,
     ) -> None:
         self._settings = settings
         self._paths = paths
@@ -128,6 +129,7 @@ class HeadlessMonitor:
         )
         self._backend_runtime_identity = dict(backend_runtime_identity or {})
         self._profile_applier = profile_applier or (lambda _profile: True)
+        self._codex_worker_status_path = codex_worker_status_path
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._closed = False
@@ -529,6 +531,8 @@ class HeadlessMonitor:
                 self._review_projection = build_review_projection(
                     self._paths.analysis_audit_db_path,
                     self._paths.paper_trading_db_path,
+                    codex_circuit_path=self._paths.state_root / "codex-circuit.json",
+                    codex_worker_status_path=self._codex_worker_status_path,
                 )
                 self._review_projection_at_ms = now_ms
             self._status_store.write({

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -14,7 +16,7 @@ from pa_agent.agent_runtime.runtime_identity import (
     codex_runtime_identity,
     resolve_executable,
 )
-from pa_agent.ai.codex_analysis_backend import CodexAnalysisRoleBackend
+from pa_agent.ai.codex_analysis_backend import CodexAnalysisRoleBackend, CodexCircuitBreaker
 from pa_agent.operations.analysis_profile import codex_model_effort_supported
 
 
@@ -117,6 +119,9 @@ def build_codex_backend_factory(
         raise RuntimeError("; ".join(errors))
 
     runtime_identity = config.public_runtime_identity()
+    circuit_breaker = CodexCircuitBreaker(
+        state_path=Path(state_dir) / "codex-circuit.json"
+    )
 
     def factory(task: Any, _settings: Any) -> CodexAnalysisRoleBackend:
         payload = getattr(task, "payload", None)
@@ -171,7 +176,62 @@ def build_codex_backend_factory(
             worker=worker,
             publish_job=publisher,
             request_full_chain_fallback=mode == "auto",
+            circuit_breaker=circuit_breaker,
             runtime_identity=expected_runtime,
         )
 
     return factory
+
+
+def build_codex_experiment_backend_factory(
+    *,
+    state_dir: Path,
+    prompt_dir: Path,
+    environment: Mapping[str, str] | None = None,
+) -> tuple[Callable[..., Any], dict[str, Any]]:
+    """Adapt the production backend to an isolated, no-fallback experiment arm."""
+    config = CodexProductionConfig.from_environment(
+        state_dir=state_dir,
+        environment=environment,
+    )
+    if not config.enabled:
+        raise RuntimeError("Codex backend is disabled")
+    errors = validate_codex_production_config(config, prompt_dir=prompt_dir)
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    identity = config.public_runtime_identity()
+    identity["profile_fingerprint"] = hashlib.sha256(
+        json.dumps(
+            identity,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    def experiment_factory(_spec: Any, frozen: Any, settings: Any) -> tuple[Any, dict[str, Any]]:
+        del settings
+        publisher = CodexJobPublisher(
+            frame=frozen.frame,
+            prompt_dir=prompt_dir,
+            job_root=config.job_root,
+            runtime_identity=identity,
+        )
+        worker = CodexSpoolClient(
+            CodexSpoolConfig(
+                job_root=config.job_root,
+                inbox_root=config.inbox_root,
+                result_root=config.result_root,
+            )
+        )
+        backend = CodexAnalysisRoleBackend(
+            worker=worker,
+            publish_job=publisher,
+            request_full_chain_fallback=False,
+            circuit_breaker=CodexCircuitBreaker(),
+            runtime_identity=identity,
+        )
+        return backend, dict(identity)
+
+    return experiment_factory, dict(identity)

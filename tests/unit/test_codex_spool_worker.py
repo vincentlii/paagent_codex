@@ -50,6 +50,34 @@ def test_environment_worker_identity_provider_passes_legacy_defaults(
     }
 
 
+def test_worker_health_projection_contains_no_auth_material(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    results.mkdir()
+    worker = MagicMock()
+    worker.login_health.return_value = "healthy"
+    service = CodexSpoolService(
+        spool=CodexSpoolConfig(
+            job_root=tmp_path / "jobs",
+            inbox_root=tmp_path / "inbox",
+            result_root=results,
+        ),
+        worker=worker,
+        runtime_identity_provider=lambda: {
+            "runtime_version": "runtime-v1",
+            "runtime_asset_digest": "a" * 64,
+            "codex_binary_digest": "b" * 64,
+            "access_token": "must-not-leak",
+        },
+    )
+
+    service._publish_health()
+
+    status = json.loads((results / ".worker-status.json").read_text(encoding="utf-8"))
+    assert status["auth_state"] == "healthy"
+    assert status["runtime_version"] == "runtime-v1"
+    assert "access_token" not in status
+
+
 def test_spool_bridge_exchanges_only_job_identity_and_bounded_result(
     tmp_path: Path,
 ) -> None:
@@ -109,7 +137,11 @@ def test_spool_bridge_exchanges_only_job_identity_and_bounded_result(
 
     assert not thread.is_alive()
     assert captured[0].content == '{"cycle":"trading_range"}'
-    worker.run.assert_called_once_with(published)
+    worker.run.assert_called_once()
+    called_path = worker.run.call_args.args[0]
+    called_timeout = worker.run.call_args.kwargs["timeout_seconds"]
+    assert called_path == published
+    assert 0 < called_timeout <= _job().budget.max_wall_seconds
     assert not list(results.glob("*.json"))
 
 
@@ -184,6 +216,38 @@ def test_spool_io_oserror_is_classified_as_availability(
 
     with pytest.raises(CodexWorkerUnavailable):
         client.run(published)
+
+
+def test_recovery_requeues_expired_dispatch_even_while_lease_is_active(
+    tmp_path: Path,
+) -> None:
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    claimed = inbox / "request-1.running"
+    claimed.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "request_id": "request-1",
+                "lease_seconds": 3600,
+                "deadline_epoch": time.time() - 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = CodexSpoolService(
+        spool=CodexSpoolConfig(
+            job_root=tmp_path / "jobs",
+            inbox_root=inbox,
+            result_root=tmp_path / "results",
+        ),
+        worker=MagicMock(),
+    )
+
+    service._recover_claims(recover_all=False)
+
+    assert not claimed.exists()
+    assert (inbox / "request-1.json").is_file()
 
 
 def test_worker_runtime_unavailable_reaches_auto_full_chain_fallback(

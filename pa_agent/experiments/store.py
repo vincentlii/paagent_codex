@@ -46,6 +46,7 @@ _CENSORED_STATUSES = frozenset(
 _CENSORED_OUTCOMES = frozenset({"pending", "unresolved", "ambiguous"})
 _TRADE_OUTCOMES = frozenset({"win", "loss", "breakeven"})
 _PA_VPA_PROTOCOL_VERSIONS = ("pa_vpa_aabb_v1", "pa_vpa_aabb_v2")
+_BACKEND_PROTOCOL_VERSIONS = ("analysis_backend_aabb_v2",)
 
 
 def _is_executable_order(value: object) -> bool:
@@ -612,12 +613,14 @@ class AnalysisExperimentStore:
         cohort_id: str | None = None,
         min_decisive_snapshots: int = 30,
         cost_per_trade_r: float = 0.0,
+        _protocol_versions: tuple[str, ...] = _PA_VPA_PROTOCOL_VERSIONS,
+        _report_protocol_version: str = "pa_vpa_aabb_outcomes_v2",
     ) -> dict[str, Any]:
         rows = self._joined_outcome_rows(
             symbol=symbol,
             timeframe=timeframe,
             cohort_id=cohort_id,
-            protocol_versions=_PA_VPA_PROTOCOL_VERSIONS,
+            protocol_versions=_protocol_versions,
         )
         if isinstance(rows, dict):
             return {**rows, "ready_for_soft": False}
@@ -664,7 +667,7 @@ class AnalysisExperimentStore:
         missing_runs = int(itt_comparison["missing_runs"])
         return {
             "status": "counterfactual_only",
-            "protocol_version": "pa_vpa_aabb_outcomes_v2",
+            "protocol_version": _report_protocol_version,
             "statistically_reviewable": (
                 len(cohort_ids) == 1
                 and missing_runs == 0
@@ -700,6 +703,33 @@ class AnalysisExperimentStore:
                 "the frequency effect through 0R no-action outcomes.",
             ],
         }
+
+    def backend_counterfactual_report(
+        self,
+        *,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        cohort_id: str | None = None,
+        min_decisive_snapshots: int = 100,
+        cost_per_trade_r: float = 0.0,
+    ) -> dict[str, Any]:
+        """Join Direct/Codex AABB arms to the existing closed-OHLC ledger."""
+        report = self.counterfactual_report(
+            symbol=symbol,
+            timeframe=timeframe,
+            cohort_id=cohort_id,
+            min_decisive_snapshots=min_decisive_snapshots,
+            cost_per_trade_r=cost_per_trade_r,
+            _protocol_versions=_BACKEND_PROTOCOL_VERSIONS,
+            _report_protocol_version="analysis_backend_aabb_outcomes_v1",
+        )
+        report["ready_for_promotion"] = False
+        report.pop("ready_for_soft", None)
+        report.setdefault("limitations", []).append(
+            "This compares complete backend systems; it does not isolate model choice "
+            "from agentic evidence investigation."
+        )
+        return report
 
     def _joined_arm_rows(
         self,

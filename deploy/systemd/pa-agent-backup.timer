@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily PA Agent state backup
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=pa-agent-backup.service
+
+[Install]
+WantedBy=timers.target

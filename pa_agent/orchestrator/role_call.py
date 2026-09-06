@@ -8,6 +8,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pa_agent.agent_runtime.repair_contract import (
+    append_repair_context,
+    dotted_path_to_pointer,
+)
 from pa_agent.ai.json_validator import coalesce_model_json_text
 from pa_agent.ai.role_validator import RoleValidationResult
 from pa_agent.orchestrator.warning_events import group_warning_messages
@@ -175,6 +179,20 @@ def run_structured_role(
         repair_editable_paths = _error_paths(errors)
         repairs += 1
         feedback = _repair_feedback(role, errors)
+        if stable_source is not None and repair_editable_paths:
+            feedback = append_repair_context(
+                feedback,
+                original_draft=json.dumps(
+                    stable_source,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ),
+                findings=errors,
+                editable_pointers=(
+                    dotted_path_to_pointer(path) for path in repair_editable_paths
+                ),
+            )
         events[-1]["retry_feedback"] = feedback
         current = [
             *current,

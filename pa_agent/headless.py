@@ -366,6 +366,11 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
             if codex_config.enabled
             else None
         ),
+        codex_worker_status_path=(
+            codex_config.result_root / ".worker-status.json"
+            if codex_config.enabled
+            else None
+        ),
     )
 
 

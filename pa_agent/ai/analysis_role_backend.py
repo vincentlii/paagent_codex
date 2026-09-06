@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping, Protocol
 
 from pa_agent.ai.model_call_runner import ModelCallResult, ModelCallRunner
 from pa_agent.ai.provider_failures import ModelCallFailure
+from pa_agent.ai.token_counter import estimate_tokens
 
 AnalysisRole = Literal["stage1", "stage2", "vpa_evidence", "joint_arbiter"]
 
@@ -52,6 +54,10 @@ class AnalysisRoleBackend(Protocol):
         on_attempt_error: Callable[[Exception], None] | None = None,
     ) -> AnalysisRoleResult: ...
 
+    def bind_role(self, *, client: Any, settings: Any) -> "AnalysisRoleBackend":
+        """Bind role-local Direct state or retain an isolated agent runtime."""
+        ...
+
 
 class DirectAnalysisRoleBackend:
     """Current Provider path behind the backend-neutral role interface."""
@@ -79,6 +85,15 @@ class DirectAnalysisRoleBackend:
     def client(self) -> Any:
         """Expose the owned client identity for assembly and isolation checks."""
         return self._client
+
+    def bind_role(self, *, client: Any, settings: Any) -> "DirectAnalysisRoleBackend":
+        return DirectAnalysisRoleBackend(
+            client=client,
+            settings=settings,
+            allow_provider_fallback=False,
+            profile_identity=self._profile_identity,
+            logger=self._logger,
+        )
 
     @property
     def runtime_identity(self) -> dict[str, Any]:
@@ -246,6 +261,20 @@ class DirectAnalysisRoleBackend:
             ),
             "provider_fallback_used": provider_fallback_used,
             "transport_attempts": transport_attempts,
+            "initial_context_bytes": len(
+                json.dumps(
+                    request.messages,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ),
+            "initial_context_tokens": estimate_tokens(request.messages),
+            "evidence_call_count": 0,
+            "evidence_response_bytes": 0,
+            "retrieval_context_tokens": 0,
+            "evidence_denied_count": 0,
+            "evidence_latency_ms": 0.0,
         }
         try:
             result.reply._pa_model_call_meta = dict(runtime)

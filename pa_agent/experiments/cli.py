@@ -13,6 +13,7 @@ from pathlib import Path
 
 from pa_agent.config.paths import RuntimePaths, resolve_runtime_paths
 from pa_agent.config.settings import load_settings
+from pa_agent.experiments.backend_service import BackendAabbExperimentService
 from pa_agent.experiments.continuous import ContinuousAabbMonitor, ContinuousAabbPolicy
 from pa_agent.experiments.service import AabbExperimentService, AabbServiceResult
 from pa_agent.experiments.store import AnalysisExperimentStore
@@ -87,6 +88,54 @@ def single_main(argv: Sequence[str] | None = None) -> int:
             and result.error is None
         )
     )
+
+
+def backend_main(argv: Sequence[str] | None = None) -> int:
+    """Run the full Direct-versus-Codex A/A/B/B protocol over one saved record."""
+    parser = argparse.ArgumentParser(
+        description="Compare complete DeepSeek Direct and Codex PA+VPA backends",
+    )
+    parser.add_argument("source_record", type=Path)
+    _path_options(parser)
+    args = parser.parse_args(argv)
+    paths = _runtime_paths(args)
+    settings = load_settings((args.settings or paths.settings_json_path).resolve())
+    settings.prompt.vpa_mode = "shadow"
+    settings.prompt.vpa_enabled = True
+    settings.general.higher_timeframe_enabled = True
+    from pa_agent.agent_runtime.production import build_codex_experiment_backend_factory
+
+    codex_factory, codex_runtime = build_codex_experiment_backend_factory(
+        state_dir=paths.state_root,
+        prompt_dir=paths.prompt_dir,
+    )
+    db_path = (args.db or paths.analysis_audit_db_path).resolve()
+    service = BackendAabbExperimentService(
+        settings=settings,
+        prompt_dir=paths.prompt_dir,
+        experience_dir=paths.experience_dir,
+        pending_dir=(args.pending_dir or paths.records_pending_dir).resolve(),
+        db_path=db_path,
+        codex_backend_factory=codex_factory,
+        codex_runtime_config=codex_runtime,
+        logger=logging.getLogger("pa_agent.experiments.backend"),
+    )
+    result = service.run(service.prepare_source(args.source_record), CancelToken())
+    print(
+        json.dumps(
+            {
+                "experiment_id": result.experiment_id,
+                "status": result.status,
+                "records": len(result.records),
+                "protocol": result.protocol_report,
+                "external_comparison": result.external_comparison,
+                "db_path": str(db_path),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return int(result.status != "completed" or not result.protocol_report.get("valid"))
 
 
 def continuous_main(argv: Sequence[str] | None = None) -> int:

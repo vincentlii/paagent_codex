@@ -6,6 +6,18 @@ from typing import Any, Literal, Mapping
 from urllib.parse import urlparse
 
 StructuredOutputMode = Literal["json_schema", "json_object", "text"]
+_UNSUPPORTED_STRICT_OUTPUT_KEYWORDS = frozenset(
+    {
+        "allOf",
+        "not",
+        "dependentRequired",
+        "dependentSchemas",
+        "if",
+        "then",
+        "else",
+    }
+)
+_NAMED_SCHEMA_MAPS = frozenset({"properties", "patternProperties", "$defs", "definitions"})
 
 
 @dataclass(frozen=True)
@@ -82,10 +94,61 @@ def response_format_for(
             "json_schema": {
                 "name": _safe_schema_name(schema_name),
                 "strict": True,
-                "schema": dict(schema),
+                "schema": project_strict_output_schema(schema),
             },
         }
     return {"type": "json_object"}
+
+
+def project_strict_output_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """Adapt Draft-07 constraints to the OpenAI/Codex strict-output subset.
+
+    This schema is generation guidance only. Callers must keep the original
+    schema as the authoritative post-generation validation contract.
+    """
+    projected: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in _UNSUPPORTED_STRICT_OUTPUT_KEYWORDS or key == "const":
+            continue
+        if key in _NAMED_SCHEMA_MAPS and isinstance(value, Mapping):
+            projected[key] = {
+                name: project_strict_output_schema(child)
+                for name, child in value.items()
+                if isinstance(child, Mapping)
+            }
+        elif isinstance(value, Mapping):
+            projected[key] = project_strict_output_schema(value)
+        elif isinstance(value, (list, tuple)):
+            projected[key] = [
+                project_strict_output_schema(item)
+                if isinstance(item, Mapping)
+                else item
+                for item in value
+            ]
+        else:
+            projected[key] = value
+    if "const" in schema:
+        constant = schema["const"]
+        projected["enum"] = [constant]
+        projected.setdefault("type", _json_schema_type(constant))
+    if projected.get("type") == "object" or "properties" in projected:
+        properties = projected.get("properties")
+        if isinstance(properties, dict):
+            originally_required = set(schema.get("required") or ())
+            for name, child in tuple(properties.items()):
+                if name not in originally_required:
+                    properties[name] = _nullable_schema(child)
+            projected["required"] = list(properties)
+            projected["additionalProperties"] = False
+    return projected
+
+
+def normalize_strict_output_instance(
+    value: Any,
+    schema: Mapping[str, Any],
+) -> tuple[Any, int]:
+    """Remove only null placeholders introduced for originally optional fields."""
+    return _normalize_strict_value(value, schema, root=schema)
 
 
 def strict_schema_compatible(schema: Mapping[str, Any]) -> bool:
@@ -119,7 +182,135 @@ def strict_schema_compatible(schema: Mapping[str, Any]) -> bool:
             for branch in branches
         ):
             return False
+    for definitions_key in ("$defs", "definitions"):
+        definitions = schema.get(definitions_key)
+        if isinstance(definitions, Mapping) and not all(
+            not isinstance(child, Mapping) or strict_schema_compatible(child)
+            for child in definitions.values()
+        ):
+            return False
     return True
+
+
+def _nullable_schema(schema: Any) -> Any:
+    if not isinstance(schema, Mapping) or _schema_allows_null(schema):
+        return schema
+    return {"anyOf": [dict(schema), {"type": "null"}]}
+
+
+def _schema_allows_null(schema: Mapping[str, Any]) -> bool:
+    schema_type = schema.get("type")
+    if schema_type == "null" or (
+        isinstance(schema_type, list) and "null" in schema_type
+    ):
+        return True
+    return any(
+        isinstance(branch, Mapping) and branch.get("type") == "null"
+        for key in ("anyOf", "oneOf")
+        for branch in (schema.get(key) or [])
+    )
+
+
+def _normalize_strict_value(
+    value: Any,
+    schema: Mapping[str, Any],
+    *,
+    root: Mapping[str, Any],
+) -> tuple[Any, int]:
+    resolved = _resolve_local_ref(schema, root)
+    branches = resolved.get("anyOf") or resolved.get("oneOf")
+    if isinstance(branches, list) and value is not None:
+        for branch in branches:
+            if isinstance(branch, Mapping) and _value_matches_schema_type(value, branch, root):
+                return _normalize_strict_value(value, branch, root=root)
+    properties = resolved.get("properties")
+    if isinstance(value, dict) and isinstance(properties, Mapping):
+        required = set(resolved.get("required") or ())
+        normalized: dict[str, Any] = {}
+        removed = 0
+        for key, child in value.items():
+            child_schema = properties.get(key)
+            if isinstance(child_schema, Mapping) and key not in required and child is None:
+                removed += 1
+                continue
+            if isinstance(child_schema, Mapping):
+                nested, nested_removed = _normalize_strict_value(
+                    child,
+                    child_schema,
+                    root=root,
+                )
+                normalized[key] = nested
+                removed += nested_removed
+            else:
+                normalized[key] = child
+        return normalized, removed
+    items = resolved.get("items")
+    if isinstance(value, list) and isinstance(items, Mapping):
+        normalized_items: list[Any] = []
+        removed = 0
+        for child in value:
+            normalized, nested_removed = _normalize_strict_value(child, items, root=root)
+            normalized_items.append(normalized)
+            removed += nested_removed
+        return normalized_items, removed
+    return value, 0
+
+
+def _resolve_local_ref(
+    schema: Mapping[str, Any],
+    root: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    reference = schema.get("$ref")
+    if not isinstance(reference, str) or not reference.startswith("#/"):
+        return schema
+    current: Any = root
+    for raw_part in reference[2:].split("/"):
+        part = raw_part.replace("~1", "/").replace("~0", "~")
+        if not isinstance(current, Mapping) or part not in current:
+            return schema
+        current = current[part]
+    return current if isinstance(current, Mapping) else schema
+
+
+def _value_matches_schema_type(
+    value: Any,
+    schema: Mapping[str, Any],
+    root: Mapping[str, Any],
+) -> bool:
+    resolved = _resolve_local_ref(schema, root)
+    schema_type = resolved.get("type")
+    if isinstance(schema_type, list):
+        return any(
+            _value_matches_schema_type(value, {"type": item}, root)
+            for item in schema_type
+        )
+    return {
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "boolean": isinstance(value, bool),
+        "integer": isinstance(value, int) and not isinstance(value, bool),
+        "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "null": value is None,
+    }.get(str(schema_type), True)
+
+
+def _json_schema_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, (list, tuple)):
+        return "array"
+    raise ValueError("schema const has no JSON type")
 
 
 def _provider_id(base_url: str, model: str, client: object | None) -> str:

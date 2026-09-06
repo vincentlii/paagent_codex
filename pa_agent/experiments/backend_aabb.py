@@ -12,13 +12,16 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from pa_agent.ai.higher_timeframe import serialize_higher_timeframe_context
+from pa_agent.ai.pa_provider_contracts import schema_for_provider_draft
+from pa_agent.ai.role_contracts import JOINT_DECISION_SCHEMA, VPA_EVIDENCE_SCHEMA
+from pa_agent.ai.vpa_measurements import validate_frozen_vpa_catalog
 from pa_agent.data.instrument import InstrumentSpec
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
 from pa_agent.data.snapshot_identity import SNAPSHOT_HASH_ALGORITHM, canonical_market_snapshot_hash
 from pa_agent.experiments.pa_vpa_aabb import classify_first_pass, decision_signature
 from pa_agent.records.schema import AnalysisRecord
 
-BACKEND_AABB_PROTOCOL_VERSION = "analysis_backend_aabb_v1"
+BACKEND_AABB_PROTOCOL_VERSION = "analysis_backend_aabb_v2"
 BackendGroup = Literal["A", "B"]
 BackendMode = Literal["deepseek_direct", "codex_agent"]
 _EXPECTED_ARMS = frozenset({"A1", "A2", "B1", "B2"})
@@ -45,6 +48,19 @@ def _stable_hash(value: Any) -> str:
 def backend_configuration_fingerprint(value: Mapping[str, Any]) -> str:
     """Hash the effective, secret-free identity used to construct one backend."""
     return _stable_hash(_public_config(value))
+
+
+def backend_contract_fingerprint() -> str:
+    """Fingerprint all structured role boundaries compared by protocol V2."""
+    return _stable_hash(
+        {
+            "stage1": schema_for_provider_draft("stage1"),
+            "stage2": schema_for_provider_draft("stage2"),
+            "vpa_evidence": VPA_EVIDENCE_SCHEMA,
+            "joint_arbiter": JOINT_DECISION_SCHEMA,
+            "vpa_authority": "shadow_only_pa_official",
+        }
+    )
 
 
 def _public_config(value: Any) -> Any:
@@ -96,6 +112,7 @@ class FrozenBackendExperimentInput:
     protocol_version: str
     frame: Any
     htf_context: dict[str, Any] | None
+    vpa_catalog: dict[str, Any]
     frozen_input_hash: str
     market_snapshot_hash: str
     market_snapshot_hash_algorithm: str
@@ -109,6 +126,7 @@ class FrozenBackendExperimentInput:
     shared_settings_fingerprint: str
     contract_fingerprint: str
     analysis_fingerprint: str
+    catalog_id: str
     snapshot_context: dict[str, Any]
     htf_snapshot_context: dict[str, Any] | None
     htf_kline_data: tuple[dict[str, Any], ...]
@@ -137,6 +155,9 @@ class FrozenBackendExperimentInput:
             "shared_settings_fingerprint": self.shared_settings_fingerprint,
             "contract_fingerprint": self.contract_fingerprint,
             "analysis_fingerprint": self.analysis_fingerprint,
+            "catalog_id": self.catalog_id,
+            "vpa_mode": "shadow",
+            "higher_timeframe_required": True,
             "order_scheme": _SEQUENCES[sequence],
             "arm_sequence": list(sequence),
             "arm_id": spec.arm_id,
@@ -161,6 +182,7 @@ def freeze_backend_experiment_input(
     shared_settings: Mapping[str, Any],
     contract_fingerprint: str,
     analysis_fingerprint: str,
+    vpa_catalog: Mapping[str, Any],
 ) -> FrozenBackendExperimentInput:
     """Freeze shared facts and both backend identities before assigning any arm."""
     contract_digest = _require_digest("contract_fingerprint", contract_fingerprint)
@@ -169,12 +191,19 @@ def freeze_backend_experiment_input(
     codex_digest = backend_configuration_fingerprint(codex_backend)
     pair_digest = _stable_hash({"direct": direct_digest, "codex": codex_digest})
     settings_digest = _stable_hash(_public_config(shared_settings))
+    if str(shared_settings.get("vpa_mode") or "") != "shadow":
+        raise ValueError("backend A/A/B/B requires standard VPA shadow mode")
+    if shared_settings.get("higher_timeframe_enabled") is not True:
+        raise ValueError("backend A/A/B/B requires higher-timeframe analysis")
+    frozen_catalog = validate_frozen_vpa_catalog(frame, dict(vpa_catalog))
     htf_snapshot = serialize_higher_timeframe_context(htf_context)
     higher_frame = None
     if isinstance(htf_context, dict) and htf_context.get("status") == "available":
         higher_frame = htf_context.get("frame")
         if higher_frame is None or not getattr(higher_frame, "bars", None):
             raise ValueError("available HTF context requires a non-empty frame")
+    else:
+        raise ValueError("backend A/A/B/B requires an available frozen HTF frame")
     htf_bars = serialize_frame_bars(higher_frame)
     htf_hash = _stable_hash({"context": htf_snapshot, "kline_data": htf_bars})
     snapshot_context = compact_snapshot_context(frame)
@@ -204,12 +233,14 @@ def freeze_backend_experiment_input(
             "htf_hash": htf_hash,
             "instrument_spec_hash": instrument_hash,
             "cohort_id": cohort_id,
+            "catalog_id": frozen_catalog["catalog_id"],
         }
     )
     return FrozenBackendExperimentInput(
         protocol_version=BACKEND_AABB_PROTOCOL_VERSION,
         frame=copy.deepcopy(frame),
         htf_context=copy.deepcopy(htf_context),
+        vpa_catalog=copy.deepcopy(frozen_catalog),
         frozen_input_hash=frozen_hash,
         market_snapshot_hash=market_hash,
         market_snapshot_hash_algorithm=SNAPSHOT_HASH_ALGORITHM,
@@ -223,6 +254,7 @@ def freeze_backend_experiment_input(
         shared_settings_fingerprint=settings_digest,
         contract_fingerprint=contract_digest,
         analysis_fingerprint=analysis_digest,
+        catalog_id=str(frozen_catalog["catalog_id"]),
         snapshot_context=copy.deepcopy(snapshot_context),
         htf_snapshot_context=copy.deepcopy(htf_snapshot),
         htf_kline_data=tuple(copy.deepcopy(htf_bars)),
@@ -264,6 +296,10 @@ def _arm_metrics(record: AnalysisRecord) -> dict[str, Any]:
         "call_count": len(calls),
         "retry_count": sum(max(0, int(item.get("attempt") or 1) - 1) for item in calls),
         "evidence_calls": sum(int(item.get("evidence_call_count") or 0) for item in calls),
+        "evidence_denials": sum(int(item.get("evidence_denied_count") or 0) for item in calls),
+        "evidence_latency_ms": round(
+            sum(float(item.get("evidence_latency_ms") or 0.0) for item in calls), 3
+        ),
         "initial_context_tokens": optional_sum("initial_context_tokens"),
         "retrieval_context_tokens": optional_sum("retrieval_context_tokens"),
     }
@@ -276,12 +312,16 @@ def backend_external_comparison(records: list[AnalysisRecord]) -> dict[str, Any]
     }
     signatures = {arm: decision_signature(record) for arm, record in by_arm.items()}
     metrics = {arm: _arm_metrics(record) for arm, record in by_arm.items()}
+    vpa_signatures = {arm: _vpa_signature(record) for arm, record in by_arm.items()}
     return {
         "signatures": signatures,
+        "vpa_signatures": vpa_signatures,
         "arm_metrics": metrics,
         "missing_arms": sorted(_EXPECTED_ARMS - set(by_arm)),
         "a_disagreement": signatures.get("A1") != signatures.get("A2"),
         "b_disagreement": signatures.get("B1") != signatures.get("B2"),
+        "a_vpa_disagreement": vpa_signatures.get("A1") != vpa_signatures.get("A2"),
+        "b_vpa_disagreement": vpa_signatures.get("B1") != vpa_signatures.get("B2"),
         "cross_group_differences": {
             f"{left}:{right}": [
                 key
@@ -291,6 +331,23 @@ def backend_external_comparison(records: list[AnalysisRecord]) -> dict[str, Any]
             for left in ("A1", "A2")
             for right in ("B1", "B2")
         },
+    }
+
+
+def _vpa_signature(record: AnalysisRecord) -> dict[str, Any]:
+    report = record.vpa_evidence if isinstance(record.vpa_evidence, dict) else {}
+    evidence_ids: set[str] = set()
+    for collection_name in ("observations", "hypothesis_assessments"):
+        for item in report.get(collection_name) or []:
+            if isinstance(item, dict):
+                evidence_ids.update(str(value) for value in item.get("evidence_ids") or [])
+    return {
+        "available": bool(report),
+        "catalog_id": report.get("catalog_id"),
+        "data_status": report.get("data_status"),
+        "background_relation": report.get("background_relation"),
+        "entry_timing_relation": report.get("entry_timing_relation"),
+        "evidence_ids": sorted(evidence_ids),
     }
 
 
@@ -311,6 +368,7 @@ def validate_backend_records(records: list[AnalysisRecord]) -> dict[str, Any]:
         "instrument_spec_hash", "direct_backend_fingerprint", "codex_backend_fingerprint",
         "backend_pair_fingerprint", "shared_settings_fingerprint", "contract_fingerprint",
         "analysis_fingerprint", "order_scheme", "causal_estimand",
+        "catalog_id", "vpa_mode", "higher_timeframe_required",
     )
     for key in invariant_keys:
         if len({str(context.get(key)) for context in typed_contexts}) != 1:
@@ -358,6 +416,17 @@ def validate_backend_records(records: list[AnalysisRecord]) -> dict[str, Any]:
             errors.add("runtime_backend_fingerprint_mismatch")
         if context.get("provider_fallback_allowed") is not False or context.get("backend_fallback_allowed") is not False:
             errors.add("fallback_allowed")
+        if context.get("vpa_mode") != "shadow":
+            errors.add("vpa_mode_drift")
+        if context.get("higher_timeframe_required") is not True:
+            errors.add("higher_timeframe_contract_drift")
+        outcome = record.run_outcome if isinstance(record.run_outcome, dict) else {}
+        if outcome.get("requested_vpa_mode") != "shadow":
+            errors.add("vpa_not_requested")
+        if outcome.get("official_path") != "pa_only":
+            errors.add("vpa_changed_official_authority")
+        if outcome.get("status") == "completed" and not isinstance(record.vpa_evidence, dict):
+            errors.add("completed_run_missing_vpa_evidence")
         calls = [item for item in record.call_attempts if isinstance(item, dict)]
         if not calls or any(str(item.get("analysis_backend") or "") != observed_backend for item in calls):
             errors.add("received_backend_mismatch")
@@ -383,12 +452,14 @@ def validate_backend_records(records: list[AnalysisRecord]) -> dict[str, Any]:
                 "htf_hash": context.get("htf_hash"),
                 "instrument_spec_hash": context.get("instrument_spec_hash"),
                 "cohort_id": context.get("cohort_id"),
+                "catalog_id": context.get("catalog_id"),
             }
         )
         if reconstructed_frozen_hash != context.get("frozen_input_hash"):
             errors.add("persisted_frozen_input_hash_mismatch")
-        if any(value is not None for value in (record.vpa_catalog, record.vpa_evidence, record.joint_decision)):
-            errors.add("vpa_or_joint_leakage")
+        catalog = record.vpa_catalog if isinstance(record.vpa_catalog, dict) else {}
+        if catalog.get("catalog_id") != context.get("catalog_id"):
+            errors.add("persisted_vpa_catalog_mismatch")
     return {"valid": not errors, "errors": sorted(errors)}
 
 
@@ -406,7 +477,14 @@ class BackendAabbRunner:
         self._pending_writer = pending_writer
         self._experiment_store = experiment_store
 
-    def run(self, frozen: FrozenBackendExperimentInput, cancel_token: Any) -> BackendAabbRunResult:
+    def run(
+        self,
+        frozen: FrozenBackendExperimentInput,
+        cancel_token: Any,
+        *,
+        source_run_id: str | None = None,
+        source_record_path: str | None = None,
+    ) -> BackendAabbRunResult:
         sequence = balanced_backend_sequence(frozen.frozen_input_hash)
         experiment_id = f"backend-aabb-{frozen.frozen_input_hash[:12]}-{uuid4().hex[:8]}"
         manifest = {
@@ -420,14 +498,14 @@ class BackendAabbRunner:
             "cohort_id": frozen.cohort_id,
             "snapshot_hash": frozen.snapshot_hash,
             "htf_hash": frozen.htf_hash,
-            "catalog_id": frozen.contract_fingerprint,
+            "catalog_id": frozen.catalog_id,
             "provider_fingerprint": frozen.backend_pair_fingerprint,
             "settings_fingerprint": frozen.shared_settings_fingerprint,
             "analysis_fingerprint": frozen.analysis_fingerprint,
             "order_scheme": _SEQUENCES[sequence],
             "arm_sequence": list(sequence),
-            "source_run_id": None,
-            "source_record_path": None,
+            "source_run_id": source_run_id,
+            "source_record_path": source_record_path,
         }
         started = self._experiment_store.start_experiment(manifest)
         if not bool(getattr(started, "ok", False)):
@@ -633,15 +711,23 @@ def summarize_backend_experiments(
     group_metrics: dict[str, list[dict[str, Any]]] = {"A": [], "B": []}
     a_disagreements = 0
     b_disagreements = 0
+    a_vpa_disagreements = 0
+    b_vpa_disagreements = 0
     for manifest in complete:
         comparison = manifest.get("external_comparison") or {}
         a_disagreements += int(bool(comparison.get("a_disagreement")))
         b_disagreements += int(bool(comparison.get("b_disagreement")))
+        a_vpa_disagreements += int(bool(comparison.get("a_vpa_disagreement")))
+        b_vpa_disagreements += int(bool(comparison.get("b_vpa_disagreement")))
         for arm_id, metrics in (comparison.get("arm_metrics") or {}).items():
             group_metrics["A" if str(arm_id).startswith("A") else "B"].append(metrics)
 
     def group_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         count = len(items)
+        def optional_mean(key: str) -> float | None:
+            values = [float(item[key]) for item in items if item.get(key) is not None]
+            return round(sum(values) / len(values), 3) if values else None
+
         return {
             "completed_arms": count,
             "first_pass_clean_rate": (
@@ -656,6 +742,11 @@ def summarize_backend_experiments(
                 round(sum(float(item.get("latency_ms") or 0) for item in items) / count, 3)
                 if count else None
             ),
+            "mean_initial_context_tokens": optional_mean("initial_context_tokens"),
+            "mean_retrieval_context_tokens": optional_mean("retrieval_context_tokens"),
+            "mean_evidence_calls": optional_mean("evidence_calls"),
+            "mean_evidence_denials": optional_mean("evidence_denials"),
+            "mean_evidence_latency_ms": optional_mean("evidence_latency_ms"),
         }
 
     unique_snapshots = len({market_hash for _cohort, market_hash in grouped})
@@ -680,6 +771,12 @@ def summarize_backend_experiments(
         "engineering_repeatability_reviewable": reviewable,
         "a_disagreement_rate": round(a_disagreements / len(complete), 4) if complete else None,
         "b_disagreement_rate": round(b_disagreements / len(complete), 4) if complete else None,
+        "a_vpa_disagreement_rate": (
+            round(a_vpa_disagreements / len(complete), 4) if complete else None
+        ),
+        "b_vpa_disagreement_rate": (
+            round(b_vpa_disagreements / len(complete), 4) if complete else None
+        ),
         "groups": {group: group_summary(items) for group, items in group_metrics.items()},
         "promotion_ready": False,
         "limitations": [

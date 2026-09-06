@@ -1,0 +1,9 @@
+# Defense in depth. The runtime also disables the shell tool and uses read-only sandboxing.
+prefix_rule(pattern = ["bash"], decision = "forbidden", justification = "PA analysis uses only pa_evidence MCP.")
+prefix_rule(pattern = ["sh"], decision = "forbidden", justification = "PA analysis uses only pa_evidence MCP.")
+prefix_rule(pattern = ["python"], decision = "forbidden", justification = "PA analysis must not execute code.")
+prefix_rule(pattern = ["python3"], decision = "forbidden", justification = "PA analysis must not execute code.")
+prefix_rule(pattern = ["curl"], decision = "forbidden", justification = "Live or external data access is prohibited.")
+prefix_rule(pattern = ["wget"], decision = "forbidden", justification = "Live or external data access is prohibited.")
+prefix_rule(pattern = ["git"], decision = "forbidden", justification = "PA analysis must not inspect or modify source control.")
+prefix_rule(pattern = ["ssh"], decision = "forbidden", justification = "External host access is prohibited.")

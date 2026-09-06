@@ -22,6 +22,10 @@ from pa_agent.ai.retry_policy import (
     project_allowed_draft_changes,
     should_retry,
 )
+from pa_agent.agent_runtime.repair_contract import (
+    append_repair_context,
+    field_path_to_pointer,
+)
 from pa_agent.orchestrator.warning_events import group_warning_messages
 
 logger = logging.getLogger(__name__)
@@ -344,6 +348,19 @@ def validate_with_retry(
                 None,
             ),
         )
+        if previous_obj is not None:
+            editable_pointers = previous_contract_editable or {
+                pointer
+                for field in previous_feedback_targets
+                if (pointer := field_path_to_pointer(field)) is not None
+            }
+            if editable_pointers:
+                feedback = append_repair_context(
+                    feedback,
+                    original_draft=previous_raw,
+                    findings=[*err.missing_fields, *err.invalid_fields],
+                    editable_pointers=editable_pointers,
+                )
         event["retry_feedback"] = feedback
         audit_messages = append_assistant_turn(
             audit_messages,

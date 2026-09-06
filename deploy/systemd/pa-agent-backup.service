@@ -1,0 +1,20 @@
+[Unit]
+Description=PA Agent consistent state backup
+
+[Service]
+Type=oneshot
+User=pa-agent
+Group=pa-agent
+Environment=PA_AGENT_HOME=/var/lib/pa-agent
+Environment=PA_AGENT_OPERATION_DIR=/var/lib/pa-agent-control
+ExecStart=/opt/miniconda3/envs/pa-agent/bin/python -m pa_agent.operations.backup --output-root /var/backups/pa-agent --keep 14
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/pa-agent /var/lib/pa-agent-control/control
+ReadWritePaths=/var/backups/pa-agent
+CapabilityBoundingSet=
+AmbientCapabilities=

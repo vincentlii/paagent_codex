@@ -43,8 +43,14 @@ cutoff、Provider Contract、output schema、Prompt/knowledge、AGENTS、Skills�
 reasoning profile 与预算 digest。Job 通过原子文件发布；任何 digest、角色或过期状态不匹配的
 结果均 fail closed。
 
-Codex 初始只接收有界核心 Context。完整 K 线区间、Measurements、Evidence 和已授权知识通过
-当前 Job 内的只读 Evidence interface 按需读取。所有读取必须受 Snapshot cutoff、role allowlist、
+Codex 初始只接收身份、角色、Snapshot 与 Evidence 索引。完整角色 Context 作为独立
+`core_context.json` 进入 Frozen Job v4。首个 research release 采用显式的
+`context_policy=semantic_parity_v1`：Codex 必须先读取
+PromptAssembler 生成的阶段协议、当前角色的完整 price-only frame、全部 HTF Evidence，以及 PA/Router
+选择并按 Windows 成熟 Prompt 边界切片的 mandatory Brooks/VPA 模块；知识 manifest 以 `load_order`
+固定成熟 Prompt 的模块顺序。Worker 从 Evidence audit 机械校验读取覆盖与顺序，缺失或乱序即拒绝 Draft。
+旧 Frozen Job 没有该策略标记时按其原始契约回放，不用新规则重解释历史结果。完成这条效果基线后，争议所需 Evidence 和非 mandatory 章节才
+按需读取。所有读取必须受 Snapshot cutoff、role allowlist、
 knowledge manifest、call count 和 byte budget 约束并进入审计。禁止 Web、实时行情、外部 App、
 Plugin、数据库查询和写工具。
 
@@ -52,7 +58,8 @@ Plugin、数据库查询和写工具。
 
 市场分析使用独立 Runtime `AGENTS.md`，不加载源码仓库的开发 Agent 指令。AGENTS 只定义长期
 authority、no-lookahead、Evidence grounding、阶段协议、禁止改代码/下单和停止条件。Role Skills
-只定义 Stage 1、Stage 2、VPA、研究 Joint 与 pointer repair 的分析程序；Brooks/VPA 知识仍由
+只定义 Stage 1、Stage 2、VPA、研究 Joint 与 pointer repair 的分析程序；它们不得以摘要替代
+PromptAssembler 的阶段协议或 mandatory 模块。Brooks/VPA 知识仍由
 PA Agent 管理并按 Context/Router 选择，Skill 不成为第二份知识库。
 
 Runtime 资产只读、发布固定并参与 cohort fingerprint。VPS Codex 无权自我修改 AGENTS、Skills、
@@ -62,7 +69,8 @@ model rules 或知识。
 
 Codex 的 `--output-schema` 是 Provider 边界约束，不替代 PA Agent 的 Draft validation、
 materialization、事实校验和执行安全。每个角色最多一次定向修复；程序只投影 Validator 明确授权的
-JSON Pointer，未授权新增、删除、置空、数组重排或语义变化不进入接受结果。权限、Snapshot、
+JSON Pointer。Codex 只返回 Patch Envelope，可信 Host 在原稿副本上应用精确 allowlist 后重新进入
+原 Validator；未授权新增、删除、置空、数组重排或语义变化不进入接受结果。权限、Snapshot、
 no-lookahead 和不可解析错误不得通过自由重写恢复。
 
 ### 5. Failure and fallback
@@ -83,8 +91,10 @@ Linux 使用独立 `pa-agent-codex` Unix 用户、独立 `CODEX_HOME` 与 worker
 和只读 Runtime 资产，只写临时目录与 outbox；不能读取 PA 数据库、DeepSeek credential、Paper
 账本或源码写路径。Codex 不直接写数据库，可信 PA Agent 摄取、复验并持久化 outbox。
 
-只使用 ChatGPT account device auth，不配置隐式 OpenAI API key fallback。认证状态只投影为
-`healthy|expired|rate_limited|unavailable`，凭据和 reasoning text 不进入 Dashboard 或长期日志。
+只使用 ChatGPT account device auth，不配置隐式 OpenAI API key fallback。`codex_only` 不创建或
+依赖 DeepSeek client；只有 `deepseek_only` 和 `auto` 的完整冷回退需要 DeepSeek credential。
+Worker 周期性执行无敏感信息的登录健康检查，并只投影
+`healthy|expired|unauthenticated|unavailable`、heartbeat 与 Runtime identity；凭据、账号标识、原始认证输出和 reasoning text 不进入 Dashboard 或长期日志。
 
 ### 7. Dashboard control
 
@@ -93,7 +103,9 @@ codex_only`，以及无凭据、allowlisted、版本化的 `AnalysisProfile`。P
 Backend 模型与该模型允许的 thinking/reasoning 组合；只能在 Headless idle boundary 应用，且 requested/effective
 Profile identity 必须冻结进 Job 与审计。
 
-初版资产、VPA Shadow 与 HTF 保持固定。除上述 Backend/Profile 例外外，其余禁止项不变：Dashboard 仍不能
+初版资产、VPA Shadow 与 HTF 保持固定。看板分开展示 Direct/Codex 的运行成功率、首轮通过率、
+延迟 p50/p95、初始/检索 Context 和 Evidence 拒绝；这些是工程指标，不代表交易优势。除上述
+Backend/Profile 例外外，其余禁止项不变：Dashboard 仍不能
 修改 API key、Base URL、Prompt、AGENTS、Skills、Knowledge、Validator、Router、Risk、Paper、任何文件路径或
 VPA/Joint 权限。
 
@@ -105,8 +117,10 @@ VPA/Joint 权限。
 AnalysisRecord v5 保持唯一原始记录；Codex runtime 元数据进入现有 `role_runtime`、`call_attempts`
 和 `experiment_context`。SQLite 只增加可重建的 agent run/tool-call 投影。
 
-新增独立 `analysis_backend_aabb_v1`：A1/A2 为 DeepSeek Direct，B1/B2 为 Codex Agent，使用同一
-Frozen Snapshot、独立运行和 ABBA/BAAB 顺序。它评估完整 Backend system value，不能把差异
+新增独立 `analysis_backend_aabb_v2`：A1/A2 为 DeepSeek Direct，B1/B2 为 Codex Agent，使用同一
+Frozen Snapshot、HTF、VPA catalog、Shadow authority、独立运行和 ABBA/BAAB 顺序。它通过
+`pa-agent-backend-aabb` 运行并同时比较 PA decision 与 VPA evidence signature。它评估完整 Backend
+system value，不能把差异
 单独归因于 Agentic runtime，因为模型家族与执行方式同时变化。
 
 Codex 晋级必须通过历史 replay、故障注入、至少 20 个独立 Snapshot 的工程 repeatability、盲评
@@ -115,7 +129,8 @@ Codex 晋级必须通过历史 replay、故障注入、至少 20 个独立 Snaps
 
 ## 明确不变
 
-- Frozen Snapshot、AnalysisFactCatalog 和 `pa_draft_v2` 不变。
+- Frozen Snapshot 和 `pa_draft_v2` 不变；AnalysisFactCatalog 只新增确定性 ATR/EMA/几何测量事实，
+  不新增市场标签或交易判断。
 - `pa_provider_contracts.py` 继续是唯一 PA materializer。
 - Brooks Router 继续只读已验证 Stage 1 enums/pattern keys。
 - PA Stage 1/Stage 2 继续 price-only。
@@ -138,7 +153,9 @@ Codex 晋级必须通过历史 replay、故障注入、至少 20 个独立 Snaps
 - Direct Adapter 与当前 Prompt、Draft、Router、VPA off/shadow、records 和 Paper 行为回归一致。
 - 每个 Codex role 使用新 ephemeral task；Stage 2 无 Stage 1 chat history。
 - Snapshot/contract/knowledge/runtime digest 漂移和越界 Evidence 请求均 fail closed。
+- `semantic_parity_v1` 的 mandatory Evidence 覆盖与 `load_order` 由 Worker 机械验收；历史 Job 不被新策略重解释。
 - Codex 用户无法修改源码、读取生产 DB/credential 或产生订单。
+- Worker 认证/心跳投影不包含 token、账号标识或原始认证输出。
 - 结构或语义错误不触发 fallback；availability fallback 从完整 Stage 1 重启。
 - Backend control 只在安全边界 applied，Dashboard 继续不读生产 DB/config。
 - Backend A/A/B/B 保留 missing/failed arm、ITT、A/A、B/B、cohort 和独立 Snapshot 口径。

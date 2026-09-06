@@ -69,6 +69,14 @@ def _job(
         allowed_knowledge_ids=("brooks/context",),
         budget=AgentJobBudget(max_evidence_calls=3, max_evidence_bytes=512),
         backend_runtime_identity=runtime_identity,
+        core_context={
+            "task_id": "task-1",
+            "frozen_snapshot": {
+                "snapshot_hash": "a" * 64,
+                "cutoff_ts_open": 1_725_000_000_000,
+            },
+            "experience_entries": [{"summary": "bounded history"}],
+        },
     )
 
 
@@ -81,8 +89,11 @@ def test_builder_is_deterministic_and_binds_all_runtime_inputs() -> None:
     assert first.manifest.role == "stage1"
     assert first.manifest.snapshot_hash == "a" * 64
     assert first.manifest.cutoff_ts_open == 1_725_000_000_000
+    assert "volume" not in first.bars[0]
     assert "vpa/effort-result" not in first.knowledge_documents
     assert set(first.runtime["skills"]) == {"stage1"}
+    assert first.manifest.schema_version == 4
+    assert first.core_context["experience_entries"][0]["summary"] == "bounded history"
 
 
 def test_digest_changes_when_schema_knowledge_or_runtime_changes() -> None:
@@ -164,8 +175,9 @@ def test_manifest_is_canonical_json_without_absolute_paths(tmp_path: Path) -> No
     published = FrozenAgentJobStore(tmp_path).publish(_job())
     raw = json.loads((published / "manifest.json").read_text(encoding="utf-8"))
 
-    assert raw["schema_version"] == 1
+    assert raw["schema_version"] == 4
     assert raw["resource_digests"]["facts.json"]
+    assert raw["resource_digests"]["core_context.json"]
     assert str(tmp_path) not in json.dumps(raw)
 
 
@@ -203,3 +215,28 @@ def test_job_manifest_and_runtime_freeze_profile_model_and_effort() -> None:
     assert job.runtime["model"] == "gpt-5.6-terra"
     assert job.runtime["reasoning_effort"] == "xhigh"
     assert job.runtime["profile_fingerprint"] == profile_fingerprint(profile)
+
+
+def test_builder_rejects_future_higher_timeframe_evidence() -> None:
+    with pytest.raises(ValueError, match="higher-timeframe evidence exceeds"):
+        _builder().build(
+            task_id="task-1",
+            request_id="request-1",
+            role="stage1",
+            attempt=1,
+            snapshot_hash="a" * 64,
+            cutoff_ts_open=1_725_000_000_000,
+            messages=[{"role": "user", "content": "diagnose"}],
+            output_schema={"type": "object"},
+            fact_projection={"snapshot_hash": "a" * 64, "facts": [], "relations": []},
+            bars=[{"seq": 1, "ts_open": 1_725_000_000_000}],
+            knowledge_documents={},
+            allowed_knowledge_ids=(),
+            budget=AgentJobBudget(),
+            core_context={
+                "task_id": "task-1",
+                "higher_timeframe": {
+                    "evidence": [{"evidence_id": "HTF.H1", "ts_open": 1_725_000_000_001}]
+                },
+            },
+        )

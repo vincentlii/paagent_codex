@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import asdict, dataclass
+import time
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
@@ -18,7 +19,7 @@ _ROLE_FACT_DOMAINS: dict[AgentRole, frozenset[str] | None] = {
     "vpa_evidence": None,
     "joint_arbiter": None,
 }
-_RESOURCE_NAMES = (
+_RESOURCE_NAMES_V1 = (
     "request.json",
     "output_schema.json",
     "facts.json",
@@ -27,6 +28,9 @@ _RESOURCE_NAMES = (
     "runtime.json",
     "budget.json",
 )
+_RESOURCE_NAMES_V2 = (*_RESOURCE_NAMES_V1, "knowledge_manifest.json")
+_RESOURCE_NAMES_V3 = (*_RESOURCE_NAMES_V2, "repair_findings.json")
+_RESOURCE_NAMES = (*_RESOURCE_NAMES_V3, "core_context.json")
 
 
 class JobIntegrityError(RuntimeError):
@@ -57,7 +61,8 @@ def _require_digest(value: str, name: str) -> str:
 @dataclass(frozen=True)
 class AgentJobBudget:
     max_evidence_calls: int = 8
-    max_evidence_bytes: int = 65_536
+    max_evidence_response_bytes: int = 65_536
+    max_evidence_bytes: int = 262_144
     max_initial_context_bytes: int = 32_768
     max_wall_seconds: int = 180
     max_output_bytes: int = 65_536
@@ -83,6 +88,9 @@ class FrozenAgentJobManifest:
     model: str = ""
     reasoning_effort: str = ""
     profile_fingerprint: str = ""
+    created_at_epoch: int = 0
+    expires_at_epoch: int = 0
+    acceptance_key: str = ""
 
     def as_dict(self, *, include_job_digest: bool = True) -> dict[str, Any]:
         payload = {
@@ -107,6 +115,14 @@ class FrozenAgentJobManifest:
                     "profile_fingerprint": self.profile_fingerprint,
                 }
             )
+        if self.schema_version >= 2:
+            payload.update(
+                {
+                    "created_at_epoch": self.created_at_epoch,
+                    "expires_at_epoch": self.expires_at_epoch,
+                    "acceptance_key": self.acceptance_key,
+                }
+            )
         if include_job_digest:
             payload["job_digest"] = self.job_digest
         return payload
@@ -119,12 +135,15 @@ class FrozenAgentJob:
     output_schema: Mapping[str, Any]
     fact_projection: Mapping[str, Any]
     bars: tuple[Mapping[str, Any], ...]
-    knowledge_documents: Mapping[str, str]
+    knowledge_documents: Mapping[str, Any]
     runtime: Mapping[str, Any]
     budget: AgentJobBudget
+    knowledge_manifest: Mapping[str, Any] = field(default_factory=dict)
+    repair_findings: Mapping[str, Any] = field(default_factory=dict)
+    core_context: Mapping[str, Any] = field(default_factory=dict)
 
     def resources(self) -> dict[str, Any]:
-        return {
+        resources = {
             "request.json": dict(self.request),
             "output_schema.json": dict(self.output_schema),
             "facts.json": dict(self.fact_projection),
@@ -133,6 +152,13 @@ class FrozenAgentJob:
             "runtime.json": dict(self.runtime),
             "budget.json": asdict(self.budget),
         }
+        if self.manifest.schema_version >= 2:
+            resources["knowledge_manifest.json"] = dict(self.knowledge_manifest)
+        if self.manifest.schema_version >= 3:
+            resources["repair_findings.json"] = dict(self.repair_findings)
+        if self.manifest.schema_version >= 4:
+            resources["core_context.json"] = dict(self.core_context)
+        return resources
 
 
 class FrozenAgentJobBuilder:
@@ -144,14 +170,20 @@ class FrozenAgentJobBuilder:
         runtime_version: str,
         agents_text: str,
         skill_documents: Mapping[str, str],
+        clock: Any = time.time,
+        job_ttl_seconds: int = 900,
     ) -> None:
         self._runtime_version = str(runtime_version or "").strip()
         self._agents_text = str(agents_text)
         self._skill_documents = {
             str(key): str(value) for key, value in skill_documents.items()
         }
+        self._clock = clock
+        self._job_ttl_seconds = int(job_ttl_seconds)
         if not self._runtime_version:
             raise ValueError("runtime_version is required")
+        if self._job_ttl_seconds <= 0:
+            raise ValueError("job_ttl_seconds must be positive")
 
     def build(
         self,
@@ -166,11 +198,14 @@ class FrozenAgentJobBuilder:
         output_schema: Mapping[str, Any],
         fact_projection: Mapping[str, Any],
         bars: list[dict[str, Any]] | tuple[dict[str, Any], ...],
-        knowledge_documents: Mapping[str, str],
+        knowledge_documents: Mapping[str, Any],
         allowed_knowledge_ids: tuple[str, ...] | list[str],
         budget: AgentJobBudget,
         backend_runtime_identity: Mapping[str, Any] | None = None,
         source_request_digest: str | None = None,
+        knowledge_manifest: Mapping[str, Any] | None = None,
+        repair_findings: Mapping[str, Any] | None = None,
+        core_context: Mapping[str, Any] | None = None,
     ) -> FrozenAgentJob:
         if role not in _ROLE_FACT_DOMAINS:
             raise ValueError(f"unsupported agent role: {role}")
@@ -180,20 +215,28 @@ class FrozenAgentJobBuilder:
         cutoff = int(cutoff_ts_open)
         if cutoff < 0:
             raise ValueError("cutoff_ts_open must be non-negative")
-        frozen_bars = [dict(item) for item in bars]
-        if any(int(item.get("ts_open", 0)) > cutoff for item in frozen_bars):
+        source_bars = [dict(item) for item in bars]
+        if any(int(item.get("ts_open", 0)) > cutoff for item in source_bars):
             raise ValueError("bar timestamp exceeds frozen snapshot cutoff")
-        bar_seqs = [int(item.get("seq", 0)) for item in frozen_bars]
+        bar_seqs = [int(item.get("seq", 0)) for item in source_bars]
         if any(seq <= 0 for seq in bar_seqs) or len(bar_seqs) != len(set(bar_seqs)):
             raise ValueError("bars require unique positive sequence numbers")
+        frozen_bars = self._role_safe_bars(role, source_bars)
+        frozen_core = dict(core_context or {})
+        self._validate_core_context(
+            frozen_core,
+            task_id=str(task_id),
+            snapshot_hash=snapshot,
+            cutoff_ts_open=cutoff,
+        )
 
         facts = self._role_safe_facts(role, fact_projection, snapshot)
         allowed_ids = tuple(dict.fromkeys(str(item) for item in allowed_knowledge_ids))
-        selected_knowledge: dict[str, str] = {}
+        selected_knowledge: dict[str, Any] = {}
         for knowledge_id in allowed_ids:
             if knowledge_id not in knowledge_documents:
                 raise ValueError(f"unknown knowledge document: {knowledge_id}")
-            selected_knowledge[knowledge_id] = str(knowledge_documents[knowledge_id])
+            selected_knowledge[knowledge_id] = knowledge_documents[knowledge_id]
 
         request = {
             "task_id": str(task_id),
@@ -222,7 +265,7 @@ class FrozenAgentJobBuilder:
         runtime = {
             "runtime_version": self._runtime_version,
             "agents_text": self._agents_text,
-            "skills": self._role_skills(role),
+            "skills": self._role_skills(role, repair=bool(repair_findings)),
             "backend_runtime_identity": runtime_identity,
             "model": model,
             "reasoning_effort": reasoning_effort,
@@ -236,13 +279,26 @@ class FrozenAgentJobBuilder:
             "knowledge.json": selected_knowledge,
             "runtime.json": runtime,
             "budget.json": asdict(budget),
+            "knowledge_manifest.json": dict(knowledge_manifest or {}),
+            "repair_findings.json": dict(repair_findings or {}),
+            "core_context.json": frozen_core,
         }
         resource_digests = {
             name: _sha256_bytes(_canonical_bytes(resources[name]))
             for name in _RESOURCE_NAMES
         }
+        created_at = int(self._clock())
+        acceptance_key = _sha256_bytes(
+            _canonical_bytes(
+                {
+                    "task_id": str(task_id),
+                    "role": role,
+                    "attempt": int(attempt),
+                }
+            )
+        )
         unsigned = {
-            "schema_version": 1,
+            "schema_version": 4,
             "task_id": str(task_id),
             "request_id": str(request_id),
             "role": role,
@@ -251,6 +307,9 @@ class FrozenAgentJobBuilder:
             "cutoff_ts_open": cutoff,
             "runtime_version": self._runtime_version,
             "resource_digests": resource_digests,
+            "created_at_epoch": created_at,
+            "expires_at_epoch": created_at + self._job_ttl_seconds,
+            "acceptance_key": acceptance_key,
         }
         if model or reasoning_effort or profile_fingerprint:
             unsigned.update(
@@ -274,11 +333,49 @@ class FrozenAgentJobBuilder:
             knowledge_documents=MappingProxyType(selected_knowledge),
             runtime=MappingProxyType(runtime),
             budget=budget,
+            knowledge_manifest=MappingProxyType(dict(knowledge_manifest or {})),
+            repair_findings=MappingProxyType(dict(repair_findings or {})),
+            core_context=MappingProxyType(frozen_core),
         )
 
-    def _role_skills(self, role: AgentRole) -> dict[str, str]:
+    @staticmethod
+    def _validate_core_context(
+        context: Mapping[str, Any],
+        *,
+        task_id: str,
+        snapshot_hash: str,
+        cutoff_ts_open: int,
+    ) -> None:
+        if context and str(context.get("task_id") or "") != task_id:
+            raise ValueError("core context task identity mismatch")
+        identity = context.get("frozen_snapshot") or {}
+        if not isinstance(identity, Mapping):
+            raise ValueError("core context frozen snapshot is malformed")
+        if identity:
+            if str(identity.get("snapshot_hash") or "").lower() != snapshot_hash:
+                raise ValueError("core context snapshot identity mismatch")
+            if int(identity.get("cutoff_ts_open", -1)) != cutoff_ts_open:
+                raise ValueError("core context cutoff identity mismatch")
+        higher_timeframe = context.get("higher_timeframe") or {}
+        if isinstance(higher_timeframe, Mapping):
+            evidence = higher_timeframe.get("evidence") or []
+            if not isinstance(evidence, list):
+                raise ValueError("higher-timeframe evidence must be an array")
+            if any(
+                not isinstance(item, Mapping)
+                or int(item.get("ts_open", -1)) > cutoff_ts_open
+                for item in evidence
+            ):
+                raise ValueError("higher-timeframe evidence exceeds frozen cutoff")
+
+    def _role_skills(self, role: AgentRole, *, repair: bool) -> dict[str, str]:
         try:
-            return {role: self._skill_documents[role]}
+            selected = {role: self._skill_documents[role]}
+            if repair:
+                selected["draft_pointer_repair"] = self._skill_documents[
+                    "draft_pointer_repair"
+                ]
+            return selected
         except KeyError as exc:
             raise ValueError(f"missing runtime skill for role: {role}") from exc
 
@@ -310,7 +407,25 @@ class FrozenAgentJobBuilder:
             "snapshot_hash": snapshot_hash,
             "facts": facts,
             "relations": relations,
+            "role_evidence": (
+                projection.get("role_evidence")
+                if role in {"vpa_evidence", "joint_arbiter"}
+                else None
+            ),
         }
+
+    @staticmethod
+    def _role_safe_bars(
+        role: AgentRole,
+        bars: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if role not in {"stage1", "stage2"}:
+            return [dict(item) for item in bars]
+        price_fields = ("seq", "ts_open", "open", "high", "low", "close", "closed")
+        return [
+            {key: item[key] for key in price_fields if key in item}
+            for item in bars
+        ]
 
 
 class FrozenAgentJobStore:
@@ -344,7 +459,7 @@ class FrozenAgentJobStore:
             raise
         return target
 
-    def open(self, job_digest: str) -> FrozenAgentJob:
+    def open(self, job_digest: str, *, allow_expired: bool = False) -> FrozenAgentJob:
         digest = _require_digest(job_digest, "job_digest")
         directory = self._root / digest
         manifest_path = directory / "manifest.json"
@@ -355,8 +470,23 @@ class FrozenAgentJobStore:
             manifest = self._parse_manifest(raw_manifest)
             if manifest.job_digest != digest:
                 raise JobIntegrityError("job directory does not match manifest digest")
+            if (
+                manifest.expires_at_epoch
+                and not allow_expired
+                and int(time.time()) >= manifest.expires_at_epoch
+            ):
+                raise JobIntegrityError("frozen job has expired")
             resources: dict[str, Any] = {}
-            for name in _RESOURCE_NAMES:
+            resource_names = (
+                _RESOURCE_NAMES
+                if manifest.schema_version >= 4
+                else _RESOURCE_NAMES_V3
+                if manifest.schema_version >= 3
+                else _RESOURCE_NAMES_V2
+                if manifest.schema_version >= 2
+                else _RESOURCE_NAMES_V1
+            )
+            for name in resource_names:
                 path = directory / name
                 encoded = path.read_bytes()
                 expected = manifest.resource_digests.get(name)
@@ -380,6 +510,15 @@ class FrozenAgentJobStore:
                 knowledge_documents=MappingProxyType(resources["knowledge.json"]),
                 runtime=MappingProxyType(resources["runtime.json"]),
                 budget=budget,
+                knowledge_manifest=MappingProxyType(
+                    resources.get("knowledge_manifest.json") or {}
+                ),
+                repair_findings=MappingProxyType(
+                    resources.get("repair_findings.json") or {}
+                ),
+                core_context=MappingProxyType(
+                    resources.get("core_context.json") or {}
+                ),
             )
         except JobIntegrityError:
             raise
@@ -395,8 +534,9 @@ class FrozenAgentJobStore:
 
     @staticmethod
     def _parse_manifest(raw: Any) -> FrozenAgentJobManifest:
-        if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+        if not isinstance(raw, dict) or raw.get("schema_version") not in {1, 2, 3, 4}:
             raise JobIntegrityError("unsupported or missing job manifest")
+        schema_version = int(raw["schema_version"])
         role = str(raw["role"])
         if role not in _ROLE_FACT_DOMAINS:
             raise JobIntegrityError("unsupported role in job manifest")
@@ -404,10 +544,19 @@ class FrozenAgentJobStore:
             str(name): _require_digest(value, f"resource digest {name}")
             for name, value in dict(raw["resource_digests"]).items()
         }
-        if set(resource_digests) != set(_RESOURCE_NAMES):
+        expected_resources = (
+            _RESOURCE_NAMES
+            if schema_version >= 4
+            else _RESOURCE_NAMES_V3
+            if schema_version >= 3
+            else _RESOURCE_NAMES_V2
+            if schema_version >= 2
+            else _RESOURCE_NAMES_V1
+        )
+        if set(resource_digests) != set(expected_resources):
             raise JobIntegrityError("job resource set is incomplete")
         return FrozenAgentJobManifest(
-            schema_version=1,
+            schema_version=schema_version,
             task_id=str(raw["task_id"]),
             request_id=str(raw["request_id"]),
             role=role,  # type: ignore[arg-type]
@@ -424,6 +573,9 @@ class FrozenAgentJobStore:
                 or raw.get("analysis_profile_fingerprint")
                 or ""
             ).strip().lower(),
+            created_at_epoch=int(raw.get("created_at_epoch") or 0),
+            expires_at_epoch=int(raw.get("expires_at_epoch") or 0),
+            acceptance_key=str(raw.get("acceptance_key") or ""),
         )
 
     @staticmethod

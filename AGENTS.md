@@ -6,6 +6,7 @@
 - 修改、调试、优化、审查或部署本项目前，必须读取并遵循 `.agents/skills/paagent-change-guardrails/SKILL.md`。
 - 非琐碎任务开始时先读取 `docs/knowledge/README.md`，再按任务读取相关主题笔记及其权威来源；若任务改变架构、能力状态、验证范围、可复用根因、排障路径或弃用状态，完成前必须同步知识库。知识摘要不能替代本次涉及的源码、测试、`CONTEXT.md`、ADR 或质量契约。
 - 进行任何 Codex Backend、Dashboard、Runtime rules、Skills 或部署工作前，必须阅读 [Codex Analysis North Star](docs/knowledge/codex-analysis-north-star.md)，并以其中的长期 authority、Frozen Snapshot 与证据边界为准。
+- Codex Frozen Job v4 的首次 Prompt 只能携带身份、角色与 Evidence 索引；完整角色 Context、HTF、上游 Artifact、经验、Measurements、K 线和知识必须作为 digest-bound 资源经只读 MCP 读取，不得重新拼回单次大 Prompt。首版必须先满足 semantic parity：Stage 1/2 完整读取 price-only frame、全部 HTF、PromptAssembler 阶段协议及 PA/Router 选择的 mandatory 知识切片后，才可按需调查争议 Evidence；未经过 matched replay/盲评证明非劣的模块不得为压缩 Token 而省略、摘要或截断。
 - 修改 PA / Wyckoff VPA 融合链路或运行时前，先阅读 `CONTEXT.md`、`docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0024`。
 - PA provider 使用 Draft v2：模型输出市场假设、证据引用、交易候选与意图；`pa_provider_contracts.py` 唯一负责物化静态 trace 元数据、Gate、Stage 1 冻结字段、Trader Equation 与 terminal。不得另建平行 materializer，重试保护必须比较 Draft 与 Draft。
 - 每个实现 Phase 必须按 `docs/quality/acceptance.md` 完成测试、临时文件清理和独立提交；机器阈值以 `config/quality_contract.toml` 为准。

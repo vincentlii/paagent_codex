@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 DeepSeekModel = Literal["deepseek-v4-flash", "deepseek-v4-pro"]
 DeepSeekEffort = Literal["low", "medium", "high", "max"]
 CodexModel = Literal[
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -19,11 +20,12 @@ CodexModel = Literal[
     "gpt-5.4",
     "gpt-5.4-mini",
 ]
-CodexEffort = Literal["low", "medium", "high", "xhigh", "max"]
+CodexEffort = Literal["low", "medium", "high", "xhigh", "max", "ultra"]
 
 _CODEX_EFFORTS: Mapping[str, tuple[str, ...]] = {
-    "gpt-5.6-sol": ("low", "medium", "high", "xhigh", "max"),
-    "gpt-5.6-terra": ("low", "medium", "high", "xhigh", "max"),
+    "gpt-6-astra": ("low", "medium", "high", "xhigh", "max", "ultra"),
+    "gpt-5.6-sol": ("low", "medium", "high", "xhigh", "max", "ultra"),
+    "gpt-5.6-terra": ("low", "medium", "high", "xhigh", "max", "ultra"),
     "gpt-5.6-luna": ("low", "medium", "high", "xhigh", "max"),
     "gpt-5.5": ("low", "medium", "high", "xhigh"),
     "gpt-5.4": ("low", "medium", "high", "xhigh"),
@@ -110,6 +112,7 @@ def analysis_capabilities() -> dict[str, list[dict[str, object]]]:
         ),
     )
     labels = {
+        "gpt-6-astra": "GPT-6 Astra",
         "gpt-5.6-sol": "GPT-5.6 Sol",
         "gpt-5.6-terra": "GPT-5.6 Terra",
         "gpt-5.6-luna": "GPT-5.6 Luna",

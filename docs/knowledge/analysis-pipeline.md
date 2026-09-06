@@ -63,23 +63,33 @@ Stage 1、Stage 2、VPA 和研究 Joint 的模型调用现已通过 `AnalysisRol
 Router、Risk 与持久化链。Codex 只在同一 Frozen Snapshot 内按需读取授权 Evidence；每个角色使用
 独立 ephemeral 任务，Stage 2 不继承 Stage 1 chat history。Codex 能力仍为 `research-only`。
 
-Codex 调用前必须生成 Frozen Agent Job。Job 以 canonical JSON digest 绑定 Snapshot cutoff、请求、
+Codex 调用前必须生成 Frozen Agent Job v4。Job 以 canonical JSON digest 绑定 Snapshot cutoff、请求、
 output schema、角色可见 facts/knowledge、Runtime AGENTS/skill 与预算，并以完整目录原子发布。
 `FrozenEvidenceGateway` 不获取行情、不重新计算交易信号，只返回 Job 内的事实、K 线和知识；每次
 访问进入内存审计，cutoff 越界、digest 篡改、角色越权或调用/字节超预算均拒绝。
 `initial_context_bytes` 只表示 Job request 中 core-context JSON 的 UTF-8 字节数，是初始输入下界；
 它不包含 CLI wrapper、AGENTS、Skill、schema 或模型端 tokenization，不能当作总 Prompt/token 数。
 
-生产 publisher 不复制 Direct 路径的完整超长 Prompt。初始输入只包含角色、Snapshot identity、
-已验证的上阶段 handoff、Router manifest、HTF 摘要和有界历史；完整 price-only facts、K 线与
-PA Agent 选择的知识 allowlist 放入 Frozen Job，由 Codex 按需读取。知识选择权仍属于 PA Agent，
-Codex 不能遍历仓库或自行引入另一套交易体系。Stage 2 只接收结构化 Stage 1 handoff，不继承会话。
+生产 publisher 不复制 Direct 路径的完整超长 Prompt。初始输入只包含角色、Snapshot identity 与
+Evidence 索引；完整角色 Context 进入 digest-bound `core_context.json`。但“初始短”不等于允许语义
+变薄：当前显式 `context_policy=semantic_parity_v1` 基线要求 Stage 1/2 先完整读取角色安全的 price frame、全部 HTF Evidence、
+PromptAssembler 代码生成的阶段规则，以及 PA/Router 当前选中的 mandatory 知识切片。Stage 1 的
+`二元决策` 只含 §0–§8，Stage 2 只含全局原则与 §9–§15，避免跨阶段污染；Router 策略文件保持全文。
+知识 manifest 的 `load_order` 保留 Windows 成熟 Prompt 的模块顺序。Worker 根据 Evidence audit 拒绝
+任何跳过或乱序读取 mandatory Context 的 Draft；旧 Job 没有该策略标记时继续按原契约回放。完成基线后，额外事实和章节才按
+争议点读取。知识选择权仍属于 PA Agent，Codex 不能遍历仓库或自行引入另一套交易体系。Stage 2 只接收
+结构化 Stage 1 handoff，不继承会话。
 
-Codex CLI Worker 使用 `codex exec --ephemeral --sandbox read-only --output-schema`。运行时忽略
-用户 config/rules，强制 ChatGPT login，禁用 shell、Web、image 与 skill dependency install，
+PA Stage 1/2 的 `bars.json` 在 Job 构建时删除 `volume/amount/volume_state`；完整价格帧只组合 OHLC 与
+确定性 indicator/geometry measurements。VPA 原始量价证据保留在独立角色目录中，防止 Brooks 主分析
+因工具读取绕过 VPA Shadow 边界。
+
+Codex CLI Worker 使用 `codex exec --ephemeral --sandbox read-only --output-schema`。运行时使用
+独立且 digest 校验的 `CODEX_HOME/config.toml` 与 `rules/pa-agent.rules`，强制 ChatGPT login，禁用
+shell、Web、image 与 skill dependency install，
 并要求 frozen-evidence stdio MCP 成功启动。AGENTS 与单一 role skill 从 Job 内已绑定的 Runtime
 资产生成；CLI JSONL 只提取 thread ID 与 token usage，不长期保存 reasoning stream。Worker 校验
-输出大小、UTF-8、JSON 完整性与 Evidence audit 后发布 outbox；Provider Draft 字段与专业语义继续
+输出大小、UTF-8、JSON 完整性、mandatory Context 覆盖与 Evidence audit 后发布 outbox；Provider Draft 字段与专业语义继续
 由 PA Validator 判断，并且 Codex 每个角色最多一次定向修复。Codex 进程不直接写数据库。
 
 生产 Headless 不直接 fork Codex CLI，而是将只含 Job identity 的 dispatch 写入共享 spool；独立
@@ -88,15 +98,17 @@ Paper ledger 或 DeepSeek systemd credential 的文件权限。实际 model、re
 和 Codex binary digest 同时进入冻结 task cohort、call audit 与运行时一致性检查。
 该 identity 也写入 Frozen Job 与 dispatch；隔离 worker 每次按自身 model/reasoning、当前 binary 和
 Runtime assets 重算，成功结果必须回传同一 identity，Headless 才允许进入 PA Validator。
+Worker 另以 `.worker-status.json` 发布 heartbeat、认证枚举和 Runtime identity；该投影只允许
+`healthy|expired|unauthenticated|unavailable`，不得包含账号、token、原始登录输出或 reasoning。
 
 Adapter 接受 Worker 结果前再次核对 role、messages、output schema、Snapshot hash、cutoff 与 attempt。
 CLI/auth/rate-limit/timeout 等 availability 故障可请求从 Stage 1 开始的完整 Direct PA 冷回退；主链
 所有可见 callback 在成功前缓冲，失败后全部丢弃，Direct fallback 来源在 record 持久化前写入。
 Schema、事实、权限、Job identity 与专业判断失败不可触发 fallback。
 
-当生产 VPA 模式为 Shadow 时，Codex 仍只拥有 PA Stage 1/2；VPA evidence 使用隔离的 Direct role，
-作为二级证据写入 sidecar，不进入 `pa_only` official decision。该安排不是 Codex → Direct 的隐式
-fallback，两条路径的 backend、调用记录和失败语义分别审计。
+当生产 VPA 模式为 Shadow 时，所选 Backend 同时承担 PA Stage 1/2 与独立 VPA Evidence role；
+VPA 仍只作为二级证据写入 sidecar，不进入 `pa_only` official decision。`codex_only` 不隐式创建
+DeepSeek client；`auto` 只在 Codex availability 故障时从 Stage 1 冷启动完整 Direct 链。
 
 ## 4. PA Stage 1 Draft、物化与 Gate
 
@@ -172,8 +184,9 @@ VPA 不是审批 Gate。它不能创建 Setup、翻转方向、修改 `cycle_pos
 
 Joint 只能在已有 PA candidate 内给出有界 timing/confidence patch，不复制完整 Stage 2，不创建订单价格、Setup 或胜率。生产请求 `soft` 收敛为 `shadow`。
 
-Analysis Backend 另有独立 `analysis_backend_aabb_v1`：A1/A2 为 DeepSeek Direct，B1/B2 为
-Codex Agent。它复用 Frozen Snapshot、Router、Validator 和 PA-only authority，但不复用 PA/VPA
+Analysis Backend 另有独立 `analysis_backend_aabb_v2`：A1/A2 为 DeepSeek Direct，B1/B2 为
+Codex Agent。四臂都运行 HTF + VPA Shadow，复用 Frozen Snapshot、同一 VPA catalog、Router、
+Validator 和 PA-only authority，但不复用 PA/VPA
 实验的 treatment 语义或统计集合。四臂禁用 provider/backend fallback；不可用臂保留在 coverage，
 只评价完整 Backend system value，不能把差异单独归因于 Agentic runtime。
 

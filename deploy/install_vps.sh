@@ -95,6 +95,14 @@ install -d -o "$CODEX_USER" -g "$CODEX_USER" -m 0700 \
   /var/lib/pa-agent-codex/home \
   /var/lib/pa-agent-codex/runtime \
   /var/lib/pa-agent-codex/outbox
+install -d -o root -g "$CODEX_USER" -m 0750 \
+  /var/lib/pa-agent-codex/home/rules
+install -o root -g "$CODEX_USER" -m 0440 \
+  "$APP_DIR/pa_agent/agent_runtime/assets/config.toml" \
+  /var/lib/pa-agent-codex/home/config.toml
+install -o root -g "$CODEX_USER" -m 0440 \
+  "$APP_DIR/pa_agent/agent_runtime/assets/rules/pa-agent.rules" \
+  /var/lib/pa-agent-codex/home/rules/pa-agent.rules
 install -d -o root -g "$CONTROL_GROUP" -m 2750 /var/lib/pa-agent-control
 install -d -o "$SERVICE_USER" -g "$CONTROL_GROUP" -m 2750 \
   /var/lib/pa-agent-control/status
@@ -109,6 +117,7 @@ if [ ! -f "$CONTROL_PATH" ]; then
   chmod 0660 "$CONTROL_LOCK"
 fi
 install -d -o root -g "$SERVICE_USER" -m 0750 "$CONFIG_DIR"
+install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 /var/backups/pa-agent
 
 if [ ! -f "$STATE_DIR/config/settings.json" ]; then
   install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$STATE_DIR/config"
@@ -133,9 +142,23 @@ install -o root -g root -m 0644 \
 install -o root -g root -m 0644 \
   "$APP_DIR/deploy/systemd/pa-agent-codex-worker.service" \
   /etc/systemd/system/pa-agent-codex-worker.service
+install -o root -g root -m 0644 \
+  "$APP_DIR/deploy/systemd/pa-agent-backup.service" \
+  /etc/systemd/system/pa-agent-backup.service
+install -o root -g root -m 0644 \
+  "$APP_DIR/deploy/systemd/pa-agent-backup.timer" \
+  /etc/systemd/system/pa-agent-backup.timer
+install -o root -g root -m 0644 \
+  "$APP_DIR/deploy/pa-agent-tmpfiles.conf" \
+  /etc/tmpfiles.d/pa-agent.conf
+install -o root -g root -m 0644 \
+  "$APP_DIR/deploy/pa-agent-logrotate" \
+  /etc/logrotate.d/pa-agent
+systemd-tmpfiles --create /etc/tmpfiles.d/pa-agent.conf
 systemctl daemon-reload
 
 printf '%s\n' "Installed without starting the service."
+printf '%s\n' "Backup timer is installed but remains disabled until release acceptance."
 printf '%s\n' "Create $CONFIG_DIR/api_key and $CONFIG_DIR/dashboard_token, authenticate Codex as $CODEX_USER if enabled, then run preflight checks."
 printf '%s\n' "Before enabling services, run runtime_audit --check-permissions and the explicit --live-canary command documented in docs/linux_headless_deployment.md."
 printf '%s\n' "Keep Headless paused until the DeepSeek and Codex smoke results are reviewed."

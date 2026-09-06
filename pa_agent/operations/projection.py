@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import math
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from pa_agent.execution.reporting import build_paper_report
+from pa_agent.experiments.backend_aabb import BACKEND_AABB_PROTOCOL_VERSION
 
 RECENT_RUN_FIELDS = (
     "run_id",
@@ -31,6 +34,12 @@ RECENT_RUN_FIELDS = (
     "requested_reasoning_effort",
     "effective_reasoning_effort",
     "total_latency_ms",
+    "total_tokens",
+    "initial_context_tokens",
+    "retrieval_context_tokens",
+    "evidence_call_count",
+    "evidence_denied_count",
+    "evidence_latency_ms",
     "repair_count",
     "outcome",
 )
@@ -101,6 +110,12 @@ def _enrich_call_summaries(
         "requested_reasoning_effort",
         "effective_reasoning_effort",
         "latency_ms",
+        "total_tokens",
+        "initial_context_tokens",
+        "retrieval_context_tokens",
+        "evidence_call_count",
+        "evidence_denied_count",
+        "evidence_latency_ms",
         "attempt",
         "created_at_ms",
     )
@@ -155,6 +170,19 @@ def _enrich_call_summaries(
             for item in calls
             if "latency_ms" in selected and item["latency_ms"] is not None
         )
+        for key in (
+            "total_tokens",
+            "initial_context_tokens",
+            "retrieval_context_tokens",
+            "evidence_call_count",
+            "evidence_denied_count",
+            "evidence_latency_ms",
+        ):
+            run[key] = sum(
+                float(item[key]) if key == "evidence_latency_ms" else int(item[key])
+                for item in calls
+                if key in selected and item[key] is not None
+            )
         run["repair_count"] = sum(
             1
             for item in calls
@@ -199,14 +227,212 @@ def _enrich_realized_outcomes(
         )
 
 
+def _nearest_rank(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, math.ceil(percentile * len(ordered)) - 1))
+    return ordered[index]
+
+
+def summarize_recent_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Summarize operational quality and cost without claiming trading edge."""
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for run in runs:
+        backend = str(run.get("analysis_backend") or "unknown")
+        grouped.setdefault(backend, []).append(run)
+    summaries: list[dict[str, Any]] = []
+    for backend, items in sorted(grouped.items()):
+        latencies = [
+            float(item["total_latency_ms"])
+            for item in items
+            if item.get("total_latency_ms") is not None
+        ]
+        total_tokens = [
+            float(item["total_tokens"])
+            for item in items
+            if item.get("total_tokens") is not None
+        ]
+        initial_tokens = [
+            float(item["initial_context_tokens"])
+            for item in items
+            if item.get("initial_context_tokens") is not None
+        ]
+        retrieval_tokens = [
+            float(item["retrieval_context_tokens"])
+            for item in items
+            if item.get("retrieval_context_tokens") is not None
+        ]
+        evidence_calls = sum(int(item.get("evidence_call_count") or 0) for item in items)
+        evidence_denied = sum(int(item.get("evidence_denied_count") or 0) for item in items)
+        completed = sum(item.get("run_status") == "completed" for item in items)
+        repaired = sum(int(item.get("repair_count") or 0) > 0 for item in items)
+
+        def mean(values: list[float]) -> float | None:
+            return sum(values) / len(values) if values else None
+
+        summaries.append(
+            {
+                "backend": backend,
+                "run_count": len(items),
+                "operational_success_rate": completed / len(items),
+                "first_pass_rate": (len(items) - repaired) / len(items),
+                "latency_p50_ms": _nearest_rank(latencies, 0.50),
+                "latency_p95_ms": _nearest_rank(latencies, 0.95),
+                "mean_total_tokens": mean(total_tokens),
+                "mean_initial_context_tokens": mean(initial_tokens),
+                "mean_retrieval_context_tokens": mean(retrieval_tokens),
+                "evidence_call_count": evidence_calls,
+                "evidence_denied_count": evidence_denied,
+            }
+        )
+    return summaries
+
+
+def read_backend_experiment_summary(db_path: Path) -> dict[str, Any]:
+    """Read a bounded Backend A/A/B/B status summary without migrating the DB."""
+    empty = {
+        "available": False,
+        "protocol_version": BACKEND_AABB_PROTOCOL_VERSION,
+        "experiments": 0,
+        "completed_experiments": 0,
+        "valid_experiments": 0,
+        "unique_snapshots": 0,
+        "cohort_count": 0,
+        "assigned_arms": 0,
+        "persisted_arms": 0,
+        "failed_arms": 0,
+        "arm_coverage": None,
+    }
+    path = Path(db_path).expanduser().resolve()
+    if not path.is_file():
+        return empty
+    uri = f"file:{path.as_posix()}?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True, timeout=2.0)
+        experiment_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'analysis_experiments'"
+        ).fetchone()
+        arm_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'experiment_arms'"
+        ).fetchone()
+        if experiment_table is None or arm_table is None:
+            return empty
+        experiment_columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(analysis_experiments)"
+            ).fetchall()
+        }
+        arm_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(experiment_arms)").fetchall()
+        }
+        required_experiment = {
+            "experiment_id",
+            "protocol_version",
+            "status",
+            "market_snapshot_hash",
+            "cohort_id",
+            "protocol_valid",
+        }
+        required_arm = {"experiment_id", "persisted", "run_status"}
+        if not required_experiment.issubset(experiment_columns) or not required_arm.issubset(
+            arm_columns
+        ):
+            return empty
+        experiment_row = connection.execute(
+            "SELECT COUNT(*), "
+            "SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN protocol_valid = 1 THEN 1 ELSE 0 END), "
+            "COUNT(DISTINCT market_snapshot_hash), COUNT(DISTINCT cohort_id) "
+            "FROM analysis_experiments WHERE protocol_version = ?",
+            (BACKEND_AABB_PROTOCOL_VERSION,),
+        ).fetchone()
+        arm_row = connection.execute(
+            "SELECT COUNT(*), "
+            "SUM(CASE WHEN a.persisted = 1 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN a.run_status = 'failed' THEN 1 ELSE 0 END) "
+            "FROM experiment_arms a JOIN analysis_experiments e "
+            "ON e.experiment_id = a.experiment_id WHERE e.protocol_version = ?",
+            (BACKEND_AABB_PROTOCOL_VERSION,),
+        ).fetchone()
+        experiments = int(experiment_row[0] or 0)
+        assigned = int(arm_row[0] or 0)
+        persisted = int(arm_row[1] or 0)
+        return {
+            "available": True,
+            "protocol_version": BACKEND_AABB_PROTOCOL_VERSION,
+            "experiments": experiments,
+            "completed_experiments": int(experiment_row[1] or 0),
+            "valid_experiments": int(experiment_row[2] or 0),
+            "unique_snapshots": int(experiment_row[3] or 0),
+            "cohort_count": int(experiment_row[4] or 0),
+            "assigned_arms": assigned,
+            "persisted_arms": persisted,
+            "failed_arms": int(arm_row[2] or 0),
+            "arm_coverage": round(persisted / assigned, 4) if assigned else None,
+        }
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        return empty
+    finally:
+        if "connection" in locals():
+            connection.close()
+
+
 def build_review_projection(
     analysis_db_path: Path,
     paper_db_path: Path,
+    *,
+    codex_circuit_path: Path | None = None,
+    codex_worker_status_path: Path | None = None,
 ) -> dict[str, Any]:
     """Build the persisted dashboard review block without mutating either ledger."""
     paper = build_paper_report(paper_db_path)
     paper.pop("database", None)
+    codex: dict[str, Any] = {}
+    if codex_circuit_path is not None and Path(codex_circuit_path).is_file():
+        try:
+            raw = json.loads(Path(codex_circuit_path).read_text(encoding="utf-8"))
+            codex = {
+                key: raw[key]
+                for key in (
+                    "failures",
+                    "opened_until",
+                    "cooldown_level",
+                    "probe_in_flight",
+                    "auth_locked",
+                )
+                if key in raw
+            }
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            codex = {"state_unreadable": True}
+    if codex_worker_status_path is not None and Path(codex_worker_status_path).is_file():
+        try:
+            worker = json.loads(Path(codex_worker_status_path).read_text(encoding="utf-8"))
+            codex.update(
+                {
+                    key: worker[key]
+                    for key in (
+                        "updated_at_epoch",
+                        "service_state",
+                        "auth_state",
+                        "runtime_version",
+                        "runtime_asset_digest",
+                        "codex_binary_digest",
+                    )
+                    if key in worker
+                }
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            codex["worker_status_unreadable"] = True
+    recent_runs = read_recent_runs(analysis_db_path, limit=200)
     return {
-        "recent_runs": read_recent_runs(analysis_db_path),
+        "recent_runs": recent_runs[:30],
+        "analysis_summary": summarize_recent_runs(recent_runs),
+        "backend_experiments": read_backend_experiment_summary(analysis_db_path),
         "paper": paper,
+        "codex": codex,
     }

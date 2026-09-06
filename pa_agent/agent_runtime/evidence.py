@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJob
+from pa_agent.ai.token_counter import estimate_tokens
 
 
 class EvidenceAccessDenied(RuntimeError):
@@ -24,7 +26,10 @@ class EvidenceAuditEvent:
     request: dict[str, Any]
     status: str
     response_bytes: int
+    response_tokens: int
     snapshot_hash: str
+    latency_ms: float = 0.0
+    evidence_ids: tuple[str, ...] = ()
     reason: str | None = None
 
 
@@ -44,10 +49,18 @@ class FrozenEvidenceGateway:
         self._calls_used = 0
         self._bytes_used = 0
         self._audit: list[EvidenceAuditEvent] = []
+        self._core_context = self._extract_core_context()
 
     @property
     def audit_events(self) -> tuple[EvidenceAuditEvent, ...]:
         return tuple(self._audit)
+
+    @property
+    def snapshot_identity(self) -> dict[str, Any]:
+        return {
+            "snapshot_hash": self._job.manifest.snapshot_hash,
+            "cutoff_ts_open": self._job.manifest.cutoff_ts_open,
+        }
 
     def list_fact_ids(self, *, prefix: str = "", limit: int = 100) -> list[str]:
         requested_limit = max(1, min(int(limit), 500))
@@ -60,6 +73,149 @@ class FrozenEvidenceGateway:
                 if fact_id.startswith(str(prefix))
             ][:requested_limit],
         )
+
+    def get_job_manifest(self) -> dict[str, Any]:
+        return self._query(
+            "get_job_manifest",
+            {},
+            lambda: self._job.manifest.as_dict(),
+        )
+
+    def get_market_core(self) -> dict[str, Any]:
+        excluded = {
+            "higher_timeframe",
+            "stage1_diagnosis",
+            "router_manifest",
+            "pa_baseline_stage2",
+            "pa_hypotheses",
+            "vpa_evidence",
+            "previous_analysis",
+            "experience_entries",
+        }
+        return self._query(
+            "get_market_core",
+            {},
+            lambda: {
+                key: value
+                for key, value in self._core_context.items()
+                if key not in excluded
+            },
+        )
+
+    def get_measurements(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        requested_limit = max(1, min(int(limit), 500))
+        return self._query(
+            "get_measurements",
+            {"limit": requested_limit},
+            lambda: [
+                dict(item)
+                for item in self._facts.values()
+                if str(item.get("domain")) == "indicator"
+            ][:requested_limit],
+        )
+
+    def get_price_frame(
+        self,
+        *,
+        older_seq: int,
+        newer_seq: int,
+    ) -> list[dict[str, Any]]:
+        """Read a bounded PA-only OHLC and indicator frame in K sequence order."""
+        older = max(int(older_seq), int(newer_seq))
+        newer = min(int(older_seq), int(newer_seq))
+        if older - newer + 1 > 100:
+            raise ValueError("price frame range cannot exceed 100 bars")
+
+        def resolve() -> list[dict[str, Any]]:
+            if self._job.manifest.role not in {"stage1", "stage2"}:
+                raise EvidenceAccessDenied("price frame is available only to PA roles")
+            requested = range(newer, older + 1)
+            if any(seq not in self._bars for seq in requested):
+                raise EvidenceAccessDenied("price frame crosses frozen snapshot cutoff")
+            indicators = {
+                int(item.get("value", {}).get("seq")): dict(item.get("value") or {})
+                for item in self._facts.values()
+                if item.get("fact_type") == "bar_indicator_measurements"
+                and isinstance(item.get("value"), dict)
+            }
+            rows: list[dict[str, Any]] = []
+            for seq in requested:
+                bar = dict(self._bars[seq])
+                if any(key in bar for key in ("volume", "amount", "volume_state")):
+                    raise EvidenceAccessDenied(
+                        "PA price frame contains a forbidden volume field"
+                    )
+                rows.append(
+                    {
+                        **bar,
+                        "measurements": indicators.get(seq, {}),
+                    }
+                )
+            return rows
+
+        return self._query(
+            "get_price_frame",
+            {"older_seq": older, "newer_seq": newer},
+            resolve,
+        )
+
+    def get_pa_evidence(self, fact_ids: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
+        ids = tuple(str(item) for item in fact_ids)
+        def resolve() -> list[dict[str, Any]]:
+            if any(not item.startswith("PA.") for item in ids):
+                raise EvidenceAccessDenied("PA evidence requires PA.* fact IDs")
+            hidden = next((item for item in ids if item not in self._facts), None)
+            if hidden is not None:
+                raise EvidenceAccessDenied(f"fact is outside role snapshot: {hidden}")
+            return [dict(self._facts[item]) for item in ids]
+
+        return self._query("get_pa_evidence", {"fact_ids": list(ids)}, resolve)
+
+    def get_htf_evidence(self, fact_ids: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
+        ids = tuple(str(item) for item in fact_ids)
+        def resolve() -> list[dict[str, Any]]:
+            if any(not item.startswith("HTF.H") for item in ids):
+                raise EvidenceAccessDenied("HTF evidence requires HTF.H* evidence IDs")
+            context = self._core_context.get("higher_timeframe") or {}
+            available = {
+                str(item.get("evidence_id")): dict(item)
+                for item in context.get("evidence", [])
+                if isinstance(item, dict) and item.get("evidence_id")
+            } if isinstance(context, dict) else {}
+            hidden = next((item for item in ids if item not in available), None)
+            if hidden is not None:
+                raise EvidenceAccessDenied(f"HTF evidence is outside role snapshot: {hidden}")
+            return [available[item] for item in ids]
+
+        return self._query("get_htf_evidence", {"fact_ids": list(ids)}, resolve)
+
+    def get_repair_findings(self) -> dict[str, Any]:
+        def resolve() -> dict[str, Any]:
+            if not self._job.repair_findings:
+                raise EvidenceAccessDenied("this job is not an authorized repair attempt")
+            return dict(self._job.repair_findings)
+
+        return self._query("get_repair_findings", {}, resolve)
+
+    def get_vpa_evidence(self, evidence_ids: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
+        ids = tuple(dict.fromkeys(str(item) for item in evidence_ids))
+
+        def resolve() -> list[dict[str, Any]]:
+            role_evidence = self._job.fact_projection.get("role_evidence") or {}
+            catalog = role_evidence if isinstance(role_evidence, dict) else {}
+            available = {
+                str(item.get("evidence_id")): dict(item)
+                for item in catalog.get("evidence", [])
+                if isinstance(item, dict) and item.get("evidence_id")
+            }
+            hidden = next((item for item in ids if item not in available), None)
+            if hidden is not None:
+                raise EvidenceAccessDenied(
+                    f"VPA evidence is outside role snapshot: {hidden}"
+                )
+            return [available[item] for item in ids]
+
+        return self._query("get_vpa_evidence", {"evidence_ids": list(ids)}, resolve)
 
     def get_facts(self, fact_ids: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
         ids = tuple(dict.fromkeys(str(item) for item in fact_ids))
@@ -91,22 +247,136 @@ class FrozenEvidenceGateway:
             resolve,
         )
 
-    def read_knowledge(self, knowledge_id: str) -> str:
-        document_id = str(knowledge_id)
+    def list_allowed_knowledge(self) -> list[dict[str, Any]]:
+        def resolve() -> list[dict[str, Any]]:
+            manifest = self._job.knowledge_manifest
+            modules = manifest.get("modules", []) if isinstance(manifest, dict) else []
+            if modules:
+                return [dict(item) for item in modules if isinstance(item, dict)]
+            return [
+                {"knowledge_module_id": key, "section_ids": [f"{key}#s001"]}
+                for key in sorted(self._job.knowledge_documents)
+            ]
 
-        def resolve() -> str:
-            try:
-                return str(self._job.knowledge_documents[document_id])
-            except KeyError as exc:
-                raise EvidenceAccessDenied(
-                    f"knowledge is outside role allowlist: {document_id}"
-                ) from exc
+        return self._query("list_allowed_knowledge", {}, resolve)
+
+    def search_allowed_knowledge(
+        self,
+        *,
+        query: str,
+        knowledge_id: str | None = None,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        terms = [item for item in str(query).casefold().split() if item]
+        if not terms:
+            raise ValueError("knowledge query must not be empty")
+        requested_limit = max(1, min(int(limit), 20))
+
+        def resolve() -> list[dict[str, Any]]:
+            matches: list[dict[str, Any]] = []
+            for module_id, document in self._job.knowledge_documents.items():
+                if knowledge_id is not None and module_id != knowledge_id:
+                    continue
+                for section in self._knowledge_sections(module_id, document):
+                    haystack = f"{section['title']}\n{section['text']}".casefold()
+                    if all(term in haystack for term in terms):
+                        matches.append(
+                            {
+                                "knowledge_module_id": module_id,
+                                "section_id": section["section_id"],
+                                "title": section["title"],
+                                "snippet": section["text"][:500],
+                            }
+                        )
+            return matches[:requested_limit]
 
         return self._query(
-            "read_knowledge",
-            {"knowledge_id": document_id},
+            "search_allowed_knowledge",
+            {"query": query, "knowledge_id": knowledge_id, "limit": requested_limit},
             resolve,
         )
+
+    def read_allowed_knowledge(
+        self,
+        *,
+        knowledge_id: str,
+        section_ids: tuple[str, ...] | list[str],
+    ) -> dict[str, Any]:
+        requested = tuple(dict.fromkeys(str(item) for item in section_ids))
+
+        def resolve() -> dict[str, Any]:
+            try:
+                document = self._job.knowledge_documents[knowledge_id]
+            except KeyError as exc:
+                raise EvidenceAccessDenied(
+                    f"knowledge is outside role allowlist: {knowledge_id}"
+                ) from exc
+            available = {
+                item["section_id"]: item
+                for item in self._knowledge_sections(knowledge_id, document)
+            }
+            hidden = next((item for item in requested if item not in available), None)
+            if hidden is not None:
+                raise EvidenceAccessDenied(
+                    f"knowledge section is outside role allowlist: {hidden}"
+                )
+            return {
+                "knowledge_module_id": knowledge_id,
+                "sections": [available[item] for item in requested],
+            }
+
+        return self._query(
+            "read_allowed_knowledge",
+            {"knowledge_id": knowledge_id, "section_ids": list(requested)},
+            resolve,
+        )
+
+    def read_knowledge_module(self, *, knowledge_id: str) -> dict[str, Any]:
+        """Read one complete PA-selected module without arbitrary truncation."""
+
+        def resolve() -> dict[str, Any]:
+            try:
+                document = self._job.knowledge_documents[knowledge_id]
+            except KeyError as exc:
+                raise EvidenceAccessDenied(
+                    f"knowledge is outside role allowlist: {knowledge_id}"
+                ) from exc
+            return {
+                "knowledge_module_id": knowledge_id,
+                "sections": self._knowledge_sections(knowledge_id, document),
+            }
+
+        return self._query(
+            "read_knowledge_module",
+            {"knowledge_id": knowledge_id},
+            resolve,
+        )
+
+    def get_upstream_artifact(self) -> dict[str, Any]:
+        allowed = {
+            "stage1_diagnosis",
+            "router_manifest",
+            "pa_baseline_stage2",
+            "pa_hypotheses",
+            "vpa_evidence",
+            "previous_analysis",
+        }
+        return self._query(
+            "get_upstream_artifact",
+            {},
+            lambda: {
+                key: value for key, value in self._core_context.items() if key in allowed
+            },
+        )
+
+    def get_experience_entries(self) -> list[dict[str, Any]]:
+        def resolve() -> list[dict[str, Any]]:
+            entries = self._core_context.get("experience_entries") or []
+            if not isinstance(entries, list):
+                raise EvidenceAccessDenied("frozen experience entries are malformed")
+            return [dict(item) for item in entries if isinstance(item, dict)]
+
+        return self._query("get_experience_entries", {}, resolve)
 
     def _query(
         self,
@@ -115,6 +385,7 @@ class FrozenEvidenceGateway:
         resolver: Callable[[], Any],
     ) -> Any:
         call_index = self._calls_used + 1
+        started = time.perf_counter()
         if call_index > self._job.budget.max_evidence_calls:
             self._deny(call_index, operation, request, "call_budget_exceeded")
             raise EvidenceBudgetExceeded("evidence call budget exceeded")
@@ -124,15 +395,17 @@ class FrozenEvidenceGateway:
         except EvidenceAccessDenied:
             self._deny(call_index, operation, request, "access_denied")
             raise
-        response_bytes = len(
-            json.dumps(
-                response,
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
+        response_text = json.dumps(
+            response,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
         )
+        response_bytes = len(response_text.encode("utf-8"))
+        if response_bytes > self._job.budget.max_evidence_response_bytes:
+            self._deny(call_index, operation, request, "response_budget_exceeded")
+            raise EvidenceBudgetExceeded("single evidence response exceeds byte budget")
         if self._bytes_used + response_bytes > self._job.budget.max_evidence_bytes:
             self._deny(call_index, operation, request, "byte_budget_exceeded")
             raise EvidenceBudgetExceeded("evidence byte budget exceeded")
@@ -144,7 +417,10 @@ class FrozenEvidenceGateway:
                 request=dict(request),
                 status="ok",
                 response_bytes=response_bytes,
+                response_tokens=estimate_tokens([{"role": "tool", "content": response_text}]),
                 snapshot_hash=self._job.manifest.snapshot_hash,
+                latency_ms=max(0.0, (time.perf_counter() - started) * 1000),
+                evidence_ids=self._evidence_ids(response),
             )
         )
         return response
@@ -163,7 +439,52 @@ class FrozenEvidenceGateway:
                 request=dict(request),
                 status="denied",
                 response_bytes=0,
+                response_tokens=0,
                 snapshot_hash=self._job.manifest.snapshot_hash,
                 reason=reason,
             )
         )
+
+    def _extract_core_context(self) -> dict[str, Any]:
+        if self._job.core_context:
+            return dict(self._job.core_context)
+        for message in reversed(list(self._job.request.get("messages") or [])):
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            try:
+                payload = json.loads(str(message.get("content") or ""))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and isinstance(payload.get("core_context"), dict):
+                return dict(payload["core_context"])
+        return {}
+
+    @staticmethod
+    def _knowledge_sections(module_id: str, document: Any) -> list[dict[str, Any]]:
+        if isinstance(document, dict) and isinstance(document.get("sections"), list):
+            return [dict(item) for item in document["sections"] if isinstance(item, dict)]
+        return [
+            {
+                "section_id": f"{module_id}#s001",
+                "title": "Overview",
+                "text": str(document),
+            }
+        ]
+
+    @staticmethod
+    def _evidence_ids(response: Any) -> tuple[str, ...]:
+        found: set[str] = set()
+
+        def visit(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key in {"fact_id", "evidence_id", "section_id"}:
+                        found.add(str(child))
+                    else:
+                        visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+
+        visit(response)
+        return tuple(sorted(found))
