@@ -72,6 +72,59 @@ def test_canonical_v5_round_trip_has_no_derived_duplicates() -> None:
     assert loaded.record.usage_total["total_tokens"] == 15
 
 
+def test_missing_pipeline_and_delivery_are_not_backfilled() -> None:
+    persisted = dump_record(_record())
+    assert "analysis_pipeline" not in persisted
+    assert "analysis_timing" not in persisted
+    restored = decode_record(persisted).record
+    assert restored.analysis_pipeline is None
+    assert restored.analysis_timing is None
+
+
+def test_versioned_delivery_roundtrip_preserves_late_result() -> None:
+    raw = dump_record(_record())
+    raw["analysis_pipeline"] = {"pipeline": "pa_vpa_joint"}
+    raw["analysis_timing"] = {
+        "analysis_as_of_ms": 1000,
+        "model_completed_at_ms": 2100,
+        "validated_at_ms": 2200,
+        "result_available_at_ms": 2300,
+        "decision_expires_at_ms": 2000,
+    }
+    record = decode_record(raw).record
+    restored = decode_record(dump_record(record)).record
+    assert restored == record
+    assert restored.analysis_timing.decision_expires_at_ms == 2000
+
+
+@pytest.mark.parametrize("overrides", [
+    {"model_completed_at_ms": 999},
+    {"validated_at_ms": 1200},
+    {"result_available_at_ms": 1300},
+    {"decision_expires_at_ms": 1000},
+    {"analysis_as_of_ms": True},
+])
+def test_delivery_rejects_invented_or_reversed_times(overrides) -> None:
+    from pydantic import ValidationError
+    from pa_agent.records.schema import AnalysisTiming
+
+    with pytest.raises(ValidationError):
+        AnalysisTiming.model_validate({"analysis_as_of_ms": 1000, **overrides})
+
+
+def test_nondecision_stop_roundtrip_and_rejects_false_success() -> None:
+    from pydantic import ValidationError
+
+    raw = dump_record(_record())
+    raw["role_stop"] = {"status": "review_required", "role": "stage2", "reason": "upstream contradiction"}
+    raw["run_outcome"] = {"status": "review_required", "official_path": "none"}
+    assert decode_record(raw).record.role_stop.status == "review_required"
+    with pytest.raises(ValidationError, match="final decision"):
+        decode_record({**raw, "stage2_decision": {"decision": {"order_type": "不下单"}}})
+    with pytest.raises(ValidationError, match="stop status"):
+        decode_record({**raw, "run_outcome": {"status": "completed", "official_path": "none"}})
+
+
 def test_v4_sidecar_migrates_to_canonical_v5() -> None:
     canonical = dump_record(_record())
     raw = copy.deepcopy(canonical)

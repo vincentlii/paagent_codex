@@ -9,6 +9,39 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from pa_agent.ai.role_contracts import AnalysisRoleStop
+from pa_agent.config.analysis_pipeline import AnalysisPipelineIdentity
+
+
+class AnalysisTiming(BaseModel):
+    """UTC epoch milliseconds; missing legacy observations are never inferred.
+
+    Expiry may precede availability: that is a stale decision to retain in audit,
+    not permission to move its expiry or simulate an earlier submission.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    protocol_version: Literal["analysis_timing_v1"] = "analysis_timing_v1"
+    analysis_as_of_ms: int = Field(ge=0, strict=True)
+    model_completed_at_ms: int | None = Field(default=None, ge=0, strict=True)
+    validated_at_ms: int | None = Field(default=None, ge=0, strict=True)
+    result_available_at_ms: int | None = Field(default=None, ge=0, strict=True)
+    decision_expires_at_ms: int | None = Field(default=None, ge=0, strict=True)
+
+    @model_validator(mode="after")
+    def _ordered_observations(self) -> "AnalysisTiming":
+        values = (
+            self.analysis_as_of_ms, self.model_completed_at_ms,
+            self.validated_at_ms, self.result_available_at_ms,
+        )
+        for earlier, later in zip(values, values[1:]):
+            if later is not None and (earlier is None or later < earlier):
+                raise ValueError("delivery observations must be present and chronological")
+        if self.decision_expires_at_ms is not None and self.decision_expires_at_ms <= self.analysis_as_of_ms:
+            raise ValueError("decision expiry must be after analysis as-of")
+        return self
+
 
 class RecordMeta(BaseModel):
     """Metadata captured at the moment of analysis submission."""
@@ -64,6 +97,25 @@ class AnalysisRecord(BaseModel):
     data_quality: dict = Field(default_factory=dict)
     snapshot_context: dict = Field(default_factory=dict)
     experiment_context: Optional[dict] = None
+    # Optional, versioned extension. Old records remain unknown, not auto-migrated
+    # to joint authority or to invented delivery timestamps.
+    analysis_pipeline: AnalysisPipelineIdentity | None = None
+    analysis_timing: AnalysisTiming | None = None
+    role_stop: AnalysisRoleStop | None = None
+
+    @model_validator(mode="after")
+    def stopped_run_has_no_final_order(self) -> "AnalysisRecord":
+        if self.role_stop is not None:
+            if any(item is not None for item in (
+                self.stage2_decision, self.pa_baseline_stage2,
+                self.joint_stage2, self.joint_decision,
+            )):
+                raise ValueError("stopped run cannot contain a final decision")
+            if self.run_outcome.get("official_path", "none") != "none":
+                raise ValueError("stopped run has no official decision path")
+            if self.run_outcome.get("status") != self.role_stop.status:
+                raise ValueError("run outcome must preserve the role stop status")
+        return self
 
     @model_validator(mode="after")
     def derive_runtime_usage(self) -> "AnalysisRecord":

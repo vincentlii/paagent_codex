@@ -352,6 +352,45 @@ def _draft_issue(
     }
 
 
+def joint_stage2_reference_issues(
+    draft: dict[str, Any], *, validated_report: Any, frozen_catalog: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate new Draft citations after Host validation of the upstream report.
+
+    Report/catalog corruption is an upstream failure, never an editable Draft
+    pointer. This checks identities only, not the quality of a VPA explanation.
+    Frame binding remains owned by validate_frozen_vpa_catalog at the caller.
+    """
+    from pa_agent.ai.role_contracts import VpaEvidenceReport
+    from pa_agent.ai.vpa_measurements import vpa_catalog_id
+
+    if not isinstance(validated_report, VpaEvidenceReport):
+        raise ValueError("joint Stage 2 requires a validated VPA report")
+    identity = frozen_catalog.get("catalog_id")
+    if identity != vpa_catalog_id(frozen_catalog) or validated_report.catalog_id != identity:
+        raise ValueError("joint Stage 2 upstream VPA catalog identity mismatch")
+    catalog_ids = {item["evidence_id"] for item in frozen_catalog.get("evidence", [])}
+    report_ids = validated_report.evidence_ids
+    if not report_ids.issubset(catalog_ids):
+        raise ValueError("validated VPA report references evidence outside its catalog")
+    # Structural shape belongs to the schema validator; do not guess a repair
+    # when joint_analysis or its references have the wrong type.
+    analysis = draft.get("joint_analysis")
+    refs = analysis.get("vpa_evidence_refs") if isinstance(analysis, dict) else None
+    if not isinstance(refs, list):
+        return []
+    return [
+        _draft_issue(
+            f"joint_analysis.vpa_evidence_refs.{index}",
+            kind="semantic_validation",
+            message="VPA citation must be present in the validated upstream report",
+            allowed=sorted(report_ids), blocks_materialization=True,
+        )
+        for index, ref in enumerate(refs)
+        if isinstance(ref, str) and ref not in report_ids
+    ]
+
+
 def provider_draft_semantic_issues(
     stage: str,
     draft: dict[str, Any],

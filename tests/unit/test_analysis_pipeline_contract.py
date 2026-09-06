@@ -64,3 +64,30 @@ def test_joint_schema_reuses_order_and_pa_trace_without_mutating_legacy():
     assert joint["properties"]["decision_trace"]["items"]["properties"]["evidence_refs"]["items"]["pattern"] == r"^PA\."
     joint["properties"]["decision"].clear()
     assert schema_for_provider_draft("stage2") == before
+
+
+def test_joint_citations_require_both_frozen_catalog_and_validated_report():
+    from pa_agent.ai.pa_provider_contracts import joint_stage2_reference_issues
+    from pa_agent.ai.role_contracts import VpaEvidenceReport
+    from pa_agent.ai.vpa_measurements import vpa_catalog_id
+
+    catalog = {"evidence": [{"evidence_id": "vpa-e001"}, {"evidence_id": "vpa-e002"}]}
+    catalog["catalog_id"] = vpa_catalog_id(catalog)
+    report = VpaEvidenceReport(
+        catalog_id=catalog["catalog_id"], data_status="available", summary="context",
+        observations=[dict(evidence_ids=["vpa-e001"], finding_kind="background",
+                           interpretation="unresolved context", bar_range="K1")],
+        hypothesis_assessments=[], background_relation="neutral",
+        entry_timing_relation="insufficient_data",
+        next_confirmation=dict(state="not_applicable", trigger=None, requires_closed_bar=False),
+    )
+    draft = {"joint_analysis": {"vpa_evidence_refs": ["vpa-e001"]}}
+    assert joint_stage2_reference_issues(draft, validated_report=report, frozen_catalog=catalog) == []
+    # A real catalog ID never reviewed upstream is still outside this handoff.
+    draft["joint_analysis"]["vpa_evidence_refs"] = ["vpa-e002", "invented"]
+    issues = joint_stage2_reference_issues(draft, validated_report=report, frozen_catalog=catalog)
+    assert [item["pointer"] for item in issues] == [
+        "/joint_analysis/vpa_evidence_refs/0", "/joint_analysis/vpa_evidence_refs/1",
+    ]
+    with pytest.raises(ValueError, match="identity mismatch"):
+        joint_stage2_reference_issues(draft, validated_report=report, frozen_catalog={**catalog, "changed": True})
