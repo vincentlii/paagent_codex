@@ -61,6 +61,8 @@ def _validated_digest(value: str, name: str) -> str:
 
 
 def _frame_identity_payload(frame: KlineFrame) -> dict[str, Any]:
+    from pa_agent.records.experience_reader import experience_pool_binding
+
     context = compact_snapshot_context(frame)
     context.pop("snapshot_ts_local_ms", None)
     return {
@@ -70,6 +72,7 @@ def _frame_identity_payload(frame: KlineFrame) -> dict[str, Any]:
         "ema20": list(frame.indicators.ema20),
         "atr14": list(frame.indicators.atr14),
         "context": context,
+        **experience_pool_binding(frame.data_metadata),
     }
 
 

@@ -79,7 +79,7 @@ def test_bitget_source_uses_server_clock_for_closed_bars() -> None:
     assert bars[1].closed is True
     assert bars[1].volume == pytest.approx(12.5)
     assert bars[1].amount == pytest.approx(25062.5)
-    assert http.calls[-2][1] == {
+    assert http.calls[-1][1] == {
         "category": "USDT-FUTURES",
         "symbol": "XAUUSDT",
         "interval": "1H",
@@ -118,3 +118,23 @@ def test_bitget_source_uses_history_endpoint_after_current_page() -> None:
     history = next(call for call in http.calls if "history-candles" in call[0])
     assert history[1]["endTime"] == "1999900"
     assert history[1]["limit"] == "1"
+
+
+def test_bitget_crossing_close_keeps_partial_candle_unconfirmed():
+    class CrossingHttp(_Http):
+        delivered = False
+
+        def get(self, url, *, params=None, timeout):
+            if url.endswith("/time"):
+                return _Response({"code": "00000", "data": {
+                    "serverTime": 1_700_007_200_001 if self.delivered else 1_700_007_199_999,
+                }})
+            result = super().get(url, params=params, timeout=timeout)
+            if url.endswith("/candles"):
+                self.delivered = True
+            return result
+
+    source = BitgetUsdtFuturesSource(http=CrossingHttp())
+    source.connect()
+    source.subscribe("XAUUSDT", "1h")
+    assert source.latest_snapshot(2)[0].closed is False

@@ -21,6 +21,10 @@ verification_scope:
 
 ## 联合分析升级进行中
 
+阶段 2 已实现因果闭盘/as-of、VPA provenance 读取、冻结经验池及回放绑定，90 项聚焦测试通过。
+扩大回归有两项已在修改前源码复现的失败，详见实施契约；不宣称全套验收通过或可发布。
+长期规则见 [ADR-0026](../architecture/ADR-0026-causal-snapshot-and-experience.md)。
+
 上一轮未提交成果已保存为 `e445907`，新实施顺序与验收边界见
 [联合分析实施契约](../quality/joint_agent_implementation_plan.md) 和
 [ADR-0025](../architecture/ADR-0025-joint-stage2-pipeline.md)。阶段 1a 仅建立新契约并通过

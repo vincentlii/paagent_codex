@@ -33,6 +33,9 @@ def _current_metadata(record: AnalysisRecord) -> dict[str, Any]:
     }
     if isinstance(context.get("source_identity"), dict):
         metadata["source_identity"] = copy.deepcopy(context["source_identity"])
+    for key in ("analysis_as_of_ms", "experience_pool"):
+        if key in record.role_runtime:
+            metadata[key] = copy.deepcopy(record.role_runtime[key])
     return metadata
 
 

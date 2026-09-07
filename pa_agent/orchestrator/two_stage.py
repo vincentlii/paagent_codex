@@ -636,6 +636,16 @@ def _build_empty_record(
         },
     }
 
+    for key in ("analysis_as_of_ms", "experience_pool"):
+        if key in frame.data_metadata:
+            runtime_identity[key] = copy.deepcopy(frame.data_metadata[key])
+    experience_requested = bool(settings and settings.prompt.experience_max_entries > 0)
+    runtime_identity["experience_context_status"] = (
+        "disabled" if not experience_requested else
+        "frozen" if frame.data_metadata.get("experience_pool") is not None else
+        "unavailable_no_frozen_pool"
+    )
+
     return AnalysisRecord(
         meta=meta,
         kline_data=kline_data,
@@ -913,6 +923,18 @@ class TwoStageOrchestrator:
             Fully or partially populated record.
         """
         from pa_agent.config.vpa import resolve_production_vpa_mode, resolve_vpa_mode
+
+        # GUI/direct submissions also freeze history before the first model call.
+        # Headless tasks and experimental replays already carry their pinned pool.
+        if (self._settings and self._settings.prompt.experience_max_entries > 0
+                and "experience_pool" not in frame.data_metadata
+                and type(frame.data_metadata.get("analysis_as_of_ms")) is int):
+            from dataclasses import replace
+            from pa_agent.records.experience_reader import ExperienceReader
+
+            if isinstance(self._exp_reader, ExperienceReader):
+                frame = replace(frame, data_metadata={**frame.data_metadata,
+                                "experience_pool": self._exp_reader.freeze_pool()})
 
         configured_mode = resolve_vpa_mode(getattr(self._settings, "prompt", None))
         mode = (
@@ -1424,9 +1446,13 @@ class TwoStageOrchestrator:
                 patterns=patterns,
                 max_entries=max_exp,
                 max_chars_per_entry=max_chars,
+                as_of_ms=frame.data_metadata.get("analysis_as_of_ms"),
+                source_identity=frame.data_metadata.get("source_identity"),
+                timeframe=frame.timeframe,
+                frozen_pool=frame.data_metadata.get("experience_pool"),
             )
         else:
-            experience_entries = self._exp_reader.read_top5(cycle_position)[:max_exp]
+            experience_entries = []  # Legacy readers cannot verify a causal boundary.
 
         # ── Step 12: Pre-Stage-2 cancel check ────────────────────────────────
         if cancel_token.is_set():

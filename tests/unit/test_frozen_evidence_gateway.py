@@ -102,3 +102,23 @@ def test_pa_price_frame_is_complete_and_contains_no_volume(tmp_path: Path) -> No
 
     assert [item["seq"] for item in rows] == [1, 2]
     assert all("volume" not in item for item in rows)
+
+
+def test_vpa_core_exposes_frozen_catalog_semantics_without_copying_rows():
+    from dataclasses import replace
+    from pa_agent.agent_runtime.frozen_job import AgentJobBudget
+
+    catalog = {
+        "catalog_id": "vpa-test", "volume_kind": "tick",
+        "volume_provenance": {"raw_field": "tick_volume"},
+        "data_status": "limited", "comparators": {"seasonality": "unavailable"},
+        "evidence": [{"evidence_id": "vpa-e001", "volume": 12}],
+    }
+    job = _job()
+    job = replace(job, manifest=replace(job.manifest, role="vpa_evidence"),
+                  fact_projection={**job.fact_projection, "role_evidence": catalog},
+                  budget=AgentJobBudget(max_evidence_calls=3, max_evidence_bytes=4096))
+    core = FrozenEvidenceGateway(job).get_market_core()
+    assert core["vpa_catalog_context"] == {key: value for key, value in catalog.items() if key != "evidence"}
+    pa = replace(job, manifest=replace(job.manifest, role="stage1"))
+    assert "vpa_catalog_context" not in FrozenEvidenceGateway(pa).get_market_core()

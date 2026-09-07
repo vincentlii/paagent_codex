@@ -91,15 +91,24 @@ class FrozenEvidenceGateway:
             "vpa_evidence",
             "previous_analysis",
             "experience_entries",
+            "vpa_catalog_context",
         }
+        def resolve() -> dict[str, Any]:
+            core = {key: value for key, value in self._core_context.items() if key not in excluded}
+            if self._job.manifest.role in {"vpa_evidence", "joint_arbiter"}:
+                catalog = self._job.fact_projection.get("role_evidence")
+                if isinstance(catalog, dict):
+                    # The full catalog already belongs to this digest-bound job.
+                    # Preserve all metadata, including unknown/limited semantics;
+                    # evidence rows remain separately budgeted tool resources.
+                    core["vpa_catalog_context"] = {
+                        key: value for key, value in catalog.items() if key != "evidence"
+                    }
+            return core
         return self._query(
             "get_market_core",
             {},
-            lambda: {
-                key: value
-                for key, value in self._core_context.items()
-                if key not in excluded
-            },
+            resolve,
         )
 
     def get_measurements(self, *, limit: int = 100) -> list[dict[str, Any]]:

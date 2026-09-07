@@ -4,7 +4,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from pa_agent.data.bar_close_wait import has_forming_bar_at_head
+from pa_agent.data.bar_close_wait import has_forming_bar_at_head, timeframe_to_seconds
+from pa_agent.data.datetime_ts import ts_open_to_ms
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, normalize_kline_bar
 from pa_agent.data.volume_context import build_seasonality_metadata
 from pa_agent.util.timefmt import now_local_ms
@@ -78,37 +79,6 @@ def take_snapshot_from_bars(
             f"got {len(bars_raw)}."
         )
     return frame
-
-
-def _newest_closed_slice(
-    bars_raw: list[KlineBar],
-    n: int,
-    *,
-    timeframe: str = "",
-    symbol: str = "",
-    now_ms: int | None = None,
-) -> list[KlineBar] | None:
-    """Return *n* newest closed bars from a newest-first list.
-
-    Skips index 0 only when it is still forming. Stale ``closed=False`` after
-    halt (e.g. TradingView) is kept as K1.
-    """
-    if not bars_raw or n < 1:
-        return None
-    forming = has_forming_bar_at_head(
-        bars_raw,
-        timeframe or None,
-        symbol=symbol or None,
-        now_ms=now_ms,
-    )
-
-    if forming:
-        if len(bars_raw) < n + 1:
-            return None
-        return list(bars_raw[1 : n + 1])
-    if len(bars_raw) < n:
-        return None
-    return list(bars_raw[:n])
 
 
 def compute_indicators(bars: list[KlineBar]) -> IndicatorBundle:
@@ -251,8 +221,9 @@ def build_analysis_frame(
 ) -> KlineFrame | None:
     """Build a snapshot for AI analysis: *n* newest **closed** bars only.
 
-    *bars_raw* is newest-first. If ``bars_raw[0].closed`` is False it is the
-    forming bar and is discarded; otherwise all entries are treated as closed.
+    *bars_raw* is newest-first. Only provider-confirmed closed bars are eligible.
+    With an explicit ``now_ms``, theoretical close must also be at or before
+    that frozen cutoff. A stale unconfirmed payload requires a new fetch.
 
     Up to ``INDICATOR_WARMUP_BARS`` additional older closed bars are included
     when computing EMA20/ATR14, but only *n* bars are returned in the frame.
@@ -260,23 +231,22 @@ def build_analysis_frame(
     Chart and AI must both use this (or ``build_display_frame``) so K-line
     seq numbers refer to the same candles.
     """
-    forming = has_forming_bar_at_head(
-        bars_raw,
-        timeframe or None,
-        symbol=symbol or None,
-        now_ms=now_ms,
-    )
-    avail_closed = len(bars_raw) - (1 if forming else 0)
+    # A clock reaching the close cannot finalize bytes fetched before it.
+    # Both provider finality and the shared explicit observation cutoff apply.
+    duration_s = timeframe_to_seconds(timeframe)
+    eligible = [
+        bar for bar in bars_raw if bar.closed and (
+            now_ms is None or (
+                duration_s is not None
+                and ts_open_to_ms(bar.ts_open) + duration_s * 1000 <= now_ms
+            )
+        )
+    ]
+    avail_closed = len(eligible)
     if avail_closed < n:
         return None
     fetch_n = min(n + INDICATOR_WARMUP_BARS, avail_closed)
-    closed_raw = _newest_closed_slice(
-        bars_raw,
-        fetch_n,
-        timeframe=timeframe,
-        symbol=symbol,
-        now_ms=now_ms,
-    )
+    closed_raw = eligible[:fetch_n]
     if closed_raw is None or len(closed_raw) < n:
         return None
 
@@ -288,13 +258,9 @@ def build_analysis_frame(
         atr14=indicators_all.atr14[:n],
     )
     metadata = dict(data_metadata or {})
-    historical_raw = _newest_closed_slice(
-        bars_raw,
-        avail_closed,
-        timeframe=timeframe,
-        symbol=symbol,
-        now_ms=now_ms,
-    ) or []
+    if now_ms is not None:
+        metadata["analysis_as_of_ms"] = int(now_ms)
+    historical_raw = eligible
     historical = [normalize_kline_bar(item) for item in historical_raw[n:]]
     if "seasonality_samples" not in metadata:
         metadata.update(

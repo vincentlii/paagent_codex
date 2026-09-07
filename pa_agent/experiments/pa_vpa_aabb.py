@@ -35,6 +35,7 @@ from pa_agent.quality.runtime_fingerprint import (
     analysis_runtime_fingerprint as _shared_runtime_fingerprint,
 )
 from pa_agent.records.schema import AnalysisRecord
+from pa_agent.records.experience_reader import experience_pool_binding
 
 LEGACY_AABB_PROTOCOL_VERSION = "pa_vpa_aabb_v1"
 AABB_PROTOCOL_VERSION = "pa_vpa_aabb_v2"
@@ -258,10 +259,11 @@ def freeze_experiment_input(
             "catalog_id": frozen_catalog["catalog_id"],
             "cohort_id": cohort_id,
             "instrument_spec_hash": instrument_spec_hash,
+            **experience_pool_binding(frame.data_metadata),
         }
     )
     return FrozenExperimentInput(
-        frame=frame,
+        frame=copy.deepcopy(frame),
         htf_context=copy.deepcopy(htf_context),
         vpa_catalog=frozen_catalog,
         frozen_input_hash=frozen_hash,
@@ -291,6 +293,7 @@ def _record_frozen_input_hash(record: AnalysisRecord) -> str:
     }
     if context.get("protocol_version") == AABB_PROTOCOL_VERSION:
         payload["instrument_spec_hash"] = context.get("instrument_spec_hash")
+        payload.update(experience_pool_binding(record.role_runtime))
     return _stable_hash(payload)
 
 

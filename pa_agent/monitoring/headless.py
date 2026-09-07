@@ -718,6 +718,11 @@ class HeadlessMonitor:
             identity=identity,
             symbol=asset.symbol,
         )
+        metadata["analysis_as_of_ms"] = now_ms
+        if self._settings.prompt.experience_max_entries > 0:
+            from pa_agent.records.experience_reader import ExperienceReader
+
+            metadata["experience_pool"] = ExperienceReader(self._paths.experience_dir).freeze_pool()
         frame = build_display_frame(
             raw,
             analysis_bars,

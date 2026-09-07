@@ -1,6 +1,7 @@
 # AGENTS
 
 - 本轮联合分析升级必须先读 `docs/quality/joint_agent_implementation_plan.md`；其中明确区分新模式目标与尚未改变的旧运行协议，未接入验收不得宣称已实现。
+- 修改闭盘数据、经验或实验回放前必须读 `docs/architecture/ADR-0026-causal-snapshot-and-experience.md`：过期的未确认响应不能重标闭盘；Stage 2 经验必须有冻结池、同源身份和已知时间。
 
 - 上线前最终实施范围、三角色审计证据与未验证边界见 `docs/quality/pre_release_final_audit_20260813.md`。
 

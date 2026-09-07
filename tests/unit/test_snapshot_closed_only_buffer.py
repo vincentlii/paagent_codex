@@ -24,9 +24,9 @@ def test_analysis_frame_without_forming_uses_newest_closed_as_k1() -> None:
 
     now_ms = int(time.time() * 1000)
     bars = [
-        _bar(1, float(now_ms - 60_000), close=10.0),
-        _bar(2, float(now_ms - 960_000), close=9.0),
-        _bar(3, float(now_ms - 1_860_000), close=8.0),
+        _bar(1, float(now_ms - 900_000), close=10.0),
+        _bar(2, float(now_ms - 1_800_000), close=9.0),
+        _bar(3, float(now_ms - 2_700_000), close=8.0),
     ]
     frame = build_analysis_frame(bars, 3, "XAUUSD", "15m", now_ms=now_ms)
     assert frame is not None
@@ -71,8 +71,8 @@ def test_live_frame_without_forming_does_not_mark_k1_as_forming() -> None:
     assert all(b.closed for b in frame.bars)
 
 
-def test_analysis_keeps_head_when_closed_false_but_period_ended() -> None:
-    """Stale closed=False after halt must not skip the newest bar."""
+def test_analysis_requires_refetch_when_unconfirmed_period_ended() -> None:
+    """The UI countdown ending cannot finalize an old provider response."""
     ts_open = 1_700_000_000_000.0
     now_ms = int(ts_open) + 30 * 60 * 1000
     stale = KlineBar(
@@ -94,6 +94,5 @@ def test_analysis_keeps_head_when_closed_false_but_period_ended() -> None:
 
     assert not has_forming_bar_at_head(bars, "15m", now_ms=now_ms)
     frame = build_analysis_frame(bars, 3, "688981", "15m", now_ms=now_ms)
-    assert frame is not None
-    assert frame.bars[0].close == 10.5
-    assert frame.bars[0].ts_open == ts_open
+    assert frame is None
+    assert stale.closed is False

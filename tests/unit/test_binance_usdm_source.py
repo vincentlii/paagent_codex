@@ -116,7 +116,7 @@ def test_binance_source_resolves_tradifi_perpetual_and_closed_bars() -> None:
     assert bars[1].closed is True
     assert bars[1].volume == pytest.approx(12.5)
     assert bars[1].amount == pytest.approx(25062.5)
-    assert http.calls[-2][1] == {"symbol": "XAUUSDT", "interval": "1h", "limit": 2}
+    assert http.calls[-1][1] == {"symbol": "XAUUSDT", "interval": "1h", "limit": 2}
 
 
 def test_binance_source_rejects_unknown_or_non_trading_contract() -> None:
@@ -140,3 +140,23 @@ def test_binance_source_http_failure_is_retryable() -> None:
 
     with pytest.raises(DataSourceTransientError, match="429"):
         source.latest_snapshot(2)
+
+
+def test_snapshot_crossing_close_does_not_certify_preclose_payload() -> None:
+    class CrossingHttp(_Http):
+        def __init__(self):
+            super().__init__()
+            self.delivered_candles = False
+
+        def get(self, url, *, params=None, timeout):
+            if url.endswith("/time"):
+                return _Response({"serverTime": 1_700_007_200_001 if self.delivered_candles else 1_700_007_199_998})
+            result = super().get(url, params=params, timeout=timeout)
+            if url.endswith("/klines"):
+                self.delivered_candles = True
+            return result
+
+    source = BinanceUsdmSource(http=CrossingHttp())
+    source.connect()
+    source.subscribe("XAUUSDT", "1h")
+    assert source.latest_snapshot(2)[0].closed is False

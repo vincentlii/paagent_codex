@@ -29,7 +29,7 @@ def frame_from_record_klines(
                     close=bar["close"],
                     volume=bar.get("volume", 0),
                     volume_state=bar.get("volume_state"),
-                    amount=bar.get("amount", 0) or 0,
+                    amount=bar["amount"] if bar.get("amount") is not None else 0.0,
                     pct_chg=bar.get("pct_chg"),
                     closed=bool(bar.get("closed", True)),
                 )

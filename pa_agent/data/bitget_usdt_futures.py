@@ -134,6 +134,13 @@ class BitgetUsdtFuturesSource(DataSource):
         return self._specs[self._symbol]
 
     def _fetch(self, symbol: str, timeframe: str, n: int) -> list[KlineBar]:
+        # One observation boundary for all pages, captured before candle reads.
+        clock = self._data("/api/v2/public/time")
+        try:
+            clock_item = clock[0] if isinstance(clock, list) else clock
+            server_time = int(clock_item["serverTime"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DataSourceTransientError("Bitget server time is invalid") from exc
         target = max(1, int(n))
         rows: dict[int, list[Any]] = {}
         end_time: int | None = None
@@ -162,12 +169,6 @@ class BitgetUsdtFuturesSource(DataSource):
             if len(rows) == before or len(page) < limit:
                 break
             end_time = min(rows) - 1
-        clock = self._data("/api/v2/public/time")
-        try:
-            clock_item = clock[0] if isinstance(clock, list) else clock
-            server_time = int(clock_item["serverTime"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise DataSourceTransientError("Bitget server time is invalid") from exc
         duration = timeframe_to_seconds(timeframe)
         if duration is None:
             raise DataSourceTransientError(f"Bitget timeframe duration is unknown: {timeframe}")

@@ -87,6 +87,8 @@ class CodexJobPublisher:
             "cutoff_ts_open": int(request.cutoff_ts_open),
             "catalog_id": projection.get("catalog_id"),
         }
+        if "analysis_as_of_ms" in self._frame.data_metadata:
+            context["frozen_snapshot"]["analysis_as_of_ms"] = self._frame.data_metadata["analysis_as_of_ms"]
         context["evidence_index"] = {
             "fact_count": len(visible_fact_ids),
             "fact_prefixes": sorted({item.split(".", 1)[0] for item in visible_fact_ids}),

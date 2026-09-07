@@ -227,6 +227,8 @@ def freeze_backend_experiment_input(
             "analysis_fingerprint": analysis_digest,
         }
     )
+    from pa_agent.records.experience_reader import experience_pool_binding
+
     frozen_hash = _stable_hash(
         {
             "market_snapshot_hash": market_hash,
@@ -234,6 +236,7 @@ def freeze_backend_experiment_input(
             "instrument_spec_hash": instrument_hash,
             "cohort_id": cohort_id,
             "catalog_id": frozen_catalog["catalog_id"],
+            **experience_pool_binding(frame.data_metadata),
         }
     )
     return FrozenBackendExperimentInput(
@@ -446,6 +449,8 @@ def validate_backend_records(records: list[AnalysisRecord]) -> dict[str, Any]:
         )
         if record_market_hash != context.get("market_snapshot_hash"):
             errors.add("persisted_market_snapshot_hash_mismatch")
+        from pa_agent.records.experience_reader import experience_pool_binding
+
         reconstructed_frozen_hash = _stable_hash(
             {
                 "market_snapshot_hash": record_market_hash,
@@ -453,6 +458,7 @@ def validate_backend_records(records: list[AnalysisRecord]) -> dict[str, Any]:
                 "instrument_spec_hash": context.get("instrument_spec_hash"),
                 "cohort_id": context.get("cohort_id"),
                 "catalog_id": context.get("catalog_id"),
+                **experience_pool_binding(record.role_runtime),
             }
         )
         if reconstructed_frozen_hash != context.get("frozen_input_hash"):

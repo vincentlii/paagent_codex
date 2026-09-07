@@ -16,9 +16,10 @@ This module is strictly read-only — it never writes or deletes files.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +28,17 @@ from pa_agent.records.schema import ExperienceEntry
 # Regex to extract the timestamp portion from a filename.
 _TS_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})")
 _TS_FORMAT = "%Y-%m-%d_%H-%M-%S"
+
+
+def experience_pool_binding(metadata: dict) -> dict:
+    """History identity, separate from market sample identity."""
+    pool = metadata.get("experience_pool")
+    if pool is None:
+        return {}
+    as_of = metadata.get("analysis_as_of_ms")
+    if type(as_of) is not int or not isinstance(pool, dict) or pool.get("protocol_version") != "experience_pool_v1" or pool.get("digest") != ExperienceReader._pool_digest(pool.get("entries")):
+        raise ValueError("invalid frozen experience context")
+    return {"experience_pool_digest": pool["digest"], "experience_as_of_ms": as_of}
 
 
 def _default_logger() -> logging.Logger:
@@ -44,7 +56,7 @@ def _parse_timestamp_ms(filename: str) -> Optional[int]:
         return None
     ts_str = match.group(1)
     try:
-        dt = datetime.strptime(ts_str, _TS_FORMAT)
+        dt = datetime.strptime(ts_str, _TS_FORMAT).replace(tzinfo=timezone.utc)
         return int(dt.timestamp() * 1000)
     except ValueError:
         return None
@@ -154,9 +166,43 @@ class ExperienceReader:
         patterns: list[str] | None = None,
         max_entries: int = 3,
         max_chars_per_entry: int = 400,
+        as_of_ms: int | None = None,
+        source_identity: dict | None = None,
+        timeframe: str = "",
+        frozen_pool: dict | None = None,
     ) -> list[ExperienceEntry]:
-        """Return recent experience entries filtered for Stage 2 relevance."""
-        entries = self.read_top5(cycle_position)
+        """Select only same-market cases whose entire revision was known as-of.
+
+        Filename time is a legacy display field, never causal eligibility.
+        No frozen pool or identity means no experience, not a live-directory fallback.
+        """
+        from pa_agent.data.contracts import ResolvedInstrumentIdentity
+
+        identity = ResolvedInstrumentIdentity.from_value(source_identity)
+        if identity is None or not identity.venue or not identity.instrument_type or not timeframe or type(as_of_ms) is not int or frozen_pool is None:
+            return []
+        if frozen_pool.get("protocol_version") != "experience_pool_v1" or frozen_pool.get("digest") != self._pool_digest(frozen_pool.get("entries")):
+            raise ValueError("frozen experience pool identity mismatch")
+        entries = []
+        for row in frozen_pool["entries"]:
+            if row.get("cycle_position") != cycle_position:
+                continue
+            content = row["content"]
+            causal = content.get("causal_context", {})
+            if not isinstance(causal, dict):
+                continue
+            timestamps = [causal.get(key) for key in ("event_at_ms", "outcome_known_at_ms", "revision_at_ms")]
+            if any(type(value) is not int or value < 0 for value in timestamps):
+                continue
+            if not (timestamps[0] <= timestamps[1] <= timestamps[2] <= as_of_ms):
+                continue
+            candidate = ResolvedInstrumentIdentity.from_value(causal.get("source_identity"))
+            if candidate is None or not identity.same_instrument(candidate) or causal.get("timeframe") != timeframe:
+                continue
+            entries.append(ExperienceEntry(
+                filename=row["filename"], case_type=row["case_type"],
+                cycle_position=cycle_position, timestamp_ms=timestamps[2], content=content,
+            ))
         if not entries:
             return []
 
@@ -182,6 +228,25 @@ class ExperienceReader:
         ranked = sorted(entries, key=lambda e: (_score(e), e.timestamp_ms), reverse=True)
         cap = max(0, min(max_entries, 10))
         return ranked[:cap]
+
+    @staticmethod
+    def _pool_digest(entries: object) -> str:
+        return hashlib.sha256(json.dumps(entries, ensure_ascii=False, sort_keys=True,
+                                        separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+
+    def freeze_pool(self) -> dict:
+        """Capture source bytes once; all roles/arms consume this detached artifact."""
+        entries = []
+        for path in sorted(self._experience_dir.glob("*/*/*.json")):
+            case_type = {"success_cases": "success", "failure_cases": "failure"}.get(path.parent.name)
+            if case_type is None:
+                continue
+            content = self._read_json(path)
+            if isinstance(content, dict):
+                entries.append({"filename": path.name, "case_type": case_type,
+                                "cycle_position": path.parent.parent.name, "content": content})
+        return {"protocol_version": "experience_pool_v1", "entries": entries,
+                "digest": self._pool_digest(entries)}
 
     # ------------------------------------------------------------------
     # Internal helpers

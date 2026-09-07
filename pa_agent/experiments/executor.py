@@ -49,6 +49,8 @@ class OrchestratorArmExecutor:
         settings = self._settings.model_copy(deep=True)
         settings.prompt.vpa_mode = spec.mode
         settings.prompt.vpa_enabled = spec.group == "B"
+        if settings.prompt.experience_max_entries > 0 and "experience_pool" not in frozen.frame.data_metadata:
+            raise ValueError("experiment experience requires a pre-frozen pool; live-directory reads forbidden")
         client = create_ai_client(settings.provider, logger_=self._logger)
         experience_reader = ExperienceReader(
             experience_dir=self._experience_dir,
@@ -117,6 +119,8 @@ class BackendOrchestratorArmExecutor:
         settings.prompt.vpa_mode = "shadow"
         settings.prompt.vpa_enabled = True
         settings.general.higher_timeframe_enabled = True
+        if settings.prompt.experience_max_entries > 0 and "experience_pool" not in frozen.frame.data_metadata:
+            raise ValueError("experiment experience requires a pre-frozen pool; live-directory reads forbidden")
         experience_reader = ExperienceReader(
             experience_dir=self._experience_dir,
             logger=self._logger,

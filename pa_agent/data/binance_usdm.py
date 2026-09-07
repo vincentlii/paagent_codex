@@ -139,15 +139,17 @@ class BinanceUsdmSource(DataSource):
 
     def _fetch(self, symbol: str, timeframe: str, n: int) -> list[KlineBar]:
         limit = max(1, min(int(n), 1500))
-        payload = self._get(
-            "/fapi/v1/klines",
-            params={"symbol": symbol, "interval": timeframe, "limit": limit},
-        )
+        # Freeze the observation boundary before fetching mutable candle data.
+        # A request crossing a close cannot certify its earlier partial payload.
         clock = self._get("/fapi/v1/time")
         try:
             server_time = int(clock["serverTime"])
         except (KeyError, TypeError, ValueError) as exc:
             raise DataSourceTransientError("Binance server time is invalid") from exc
+        payload = self._get(
+            "/fapi/v1/klines",
+            params={"symbol": symbol, "interval": timeframe, "limit": limit},
+        )
         if not isinstance(payload, list):
             raise DataSourceTransientError("Binance kline response is not an array")
         chronological: list[KlineBar] = []

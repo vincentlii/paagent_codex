@@ -38,7 +38,7 @@ AGENTS 固化权限，Skills 编排分析程序，领域知识仍由 PA Agent �
 | --- | --- | --- | --- |
 | 0 | 保存既有工作区；固化本计划及审查项映射、Windows 历史故障基线 | 基线提交可回溯，既有成果未丢失 | 已保存基线和计划 |
 | 1 | ADR、版本化 pipeline/角色结果/联合 Draft/指标语义；复用 pa_provider_contracts 唯一物化器 | 旧配置与记录仍可读；incomplete/review_required 不携带可执行候选 | 契约已验收；运行接入在阶段 5/8 |
-| 2 | 行情观测时间先于抓取；主/HTF 同一 as-of；不重标旧未闭盘响应；暴露 VPA provenance；经验 UTC/身份/结果已知时间与冻结池 | 边界跨盘不前视；unknown 历史不入经验；回放身份稳定 | 待实现 |
+| 2 | 行情观测时间先于抓取；主/HTF 同一 as-of；不重标旧未闭盘响应；暴露 VPA provenance；经验 UTC/身份/结果已知时间与冻结池 | 边界跨盘不前视；unknown 历史不入经验；回放身份稳定 | 本地实现；90 项聚焦通过，扩大回归有 2 项既有失败 |
 | 3 | 完整 PA 与五模块 VPA 知识修订；区分理论/产品策略/协议；稳定章节 ID、别名、版本；修正 MM 符号、计数、机械阈值与知识召回 | 逐项内容迁移映射；保留案例、反证、阶段切片；不截断知识 | 待实现 |
 | 4 | Runtime AGENTS/role Skills/工具/必读验收矩阵；PA 与联合 Stage2 技能分开；独立上下文、pointer repair；有界确定性测量工具 | skill 与可执行契约一致；越权拒绝；派生证据可复算；预算不足不伪装 No Trade | 待实现 |
 | 5 | 现有 two_stage 分支内 VPA 前置；compile_pa_handoff(stage1, None, frame)；联合决策引用 VPA；最多三项有意义方案而非强制数量 | 无额外 PA baseline Stage2；旧 off/shadow 不回归；VPA 不创建方向/Setup；联合概率是明确主观先验 | 待实现 |
@@ -90,3 +90,23 @@ PA/VPA 交易员视角：背景和竞争解释完整、事实与推断分开、�
   版本化契约通过局部验收，但完整联合链路依然未接入，不可启用。
 - 下一步：阶段 2 因果数据边界与 VPA provenance，随后知识和 Runtime。阶段 5 接入上述契约，
   阶段 8 接入指标值域；不能把已定义接口冒充已生效的运行行为。
+
+### 阶段 2 实施与验收
+
+实现细节和长期约束见 [ADR-0026](../architecture/ADR-0026-causal-snapshot-and-experience.md)。
+已实现 Binance/Bitget 请求前时钟、快照严格 closed/as-of 筛选、主/HTF 共享边界、观察时间留存；
+VPA-only core 元数据；经验因果筛选和池冻结、任务/两类实验身份绑定、记录恢复；回放保留 amount 零值类型。
+数据修订仍产生不同事实 hash，冻结对象复制保留原输入；没有原地覆盖历史记录。
+
+阶段 2 聚焦验收：12 个直接相关测试文件共 90 项通过；全 pa_agent 关键 Ruff 检查和 diff --check 通过。
+扩大到 Publisher 和角色编排的 115 项回归：113 通过、2 失败；用 HEAD `4915673` 的对应模块在内存中
+替换后同样失败，未改写工作区用于验证。失败项：
+
+- `test_publisher_replaces_long_direct_prompt_with_bounded_core_context`：初始索引合法含 previous_analysis 名称，
+  旧测试要求该字符串完全不出现；完整内容仍不在初始 Prompt。
+- `test_codex_owns_pa_roles_while_shadow_vpa_stays_independent_direct`：旧 mock 未实现当前 bind_role，
+  且仍要求 VPA Direct；需要在 Runtime/角色验收阶段按当前 Backend 契约改写，不恢复旧混用路径。
+
+两项不是本阶段新增回归，但发布验收不能将其算通过。阶段 3/4 继续前须保留这两项跟踪。
+三角色自审通过上述变更方向及局部证据；尚未执行 Linux/live/VPS 验收，也没有专业判断改善结论。
+本轮不新增数据库 migration，不回填历史经验时间，不启用联合模式或实盘。
