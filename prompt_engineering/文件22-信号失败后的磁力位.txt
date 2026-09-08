@@ -1,8 +1,10 @@
+<!-- knowledge: overview; aliases: Magnet | 磁力位 -->
 【文件定位】本文件职责：失败信号、入场价、保护性止损集中区如何成为磁力位（Magnet）；用于止盈、失效、不追价与 watch_points。`detected_patterns` 含 failed_signal / magnet / trapped_traders 时加载。
 
 ---
 
 ## 1. 磁力位定义
+<!-- knowledge: chapter-001 -->
 
 **Magnet（磁力位）**：价格倾向于被吸引回去测试的价位，常引发停顿、反转或刮头皮。
 
@@ -20,6 +22,7 @@
 ---
 
 ## 2. 交易含义
+<!-- knowledge: chapter-002 -->
 
 - 市场常回到失败信号的入场价附近测试
 - 趋势中**失败的逆势信号**极点 → 常成为顺势目标
@@ -33,6 +36,7 @@
 ---
 
 ## 3. 跳数陷阱（17t / 41t / 5t / 9t）
+<!-- knowledge: chapter-003 -->
 
 Brooks 术语：止损单入场者常在目标前数个跳动被扫损离场，形成反转。
 
@@ -51,11 +55,12 @@ Brooks 术语：止损单入场者常在目标前数个跳动被扫损离场，�
 ---
 
 ## 4. 用于止盈（与文件23 优先级）
+<!-- knowledge: chapter-004 -->
 
 止盈优先序（结构位内）：
 1. 通道/区间对边、MM
 2. **前失败信号极点**（顺势时作第一目标）
-3. 1.5R 内最近结构位
+3. 最近有效结构位；不以1.5R范围筛掉真实目标或凭空制造目标，按文件23与独立 stop 评估
 
 若磁力位作 `take_profit_price`：
 - reasoning **必须**写明来源 K 线与价位
@@ -64,6 +69,7 @@ Brooks 术语：止损单入场者常在目标前数个跳动被扫损离场，�
 ---
 
 ## 5. 失效条件（invalidation_condition）
+<!-- knowledge: chapter-005 -->
 
 - 入场后跌破多头入场棒低点 / 升破空头入场棒高点 → 信号失败
 - 价格快速回到失败信号**另一侧** → 重评 cycle_position
@@ -72,6 +78,7 @@ Brooks 术语：止损单入场者常在目标前数个跳动被扫损离场，�
 ---
 
 ## 6. 与阶段一 detected_patterns 一致性
+<!-- knowledge: chapter-006 -->
 
 阶段一已标 `failed_signal` / `magnet` 时：
 - 阶段二 **reasoning 与 watch_points 必须引用**，不得忽略
@@ -80,6 +87,7 @@ Brooks 术语：止损单入场者常在目标前数个跳动被扫损离场，�
 ---
 
 ## 7. 阶段二 checklist
+<!-- knowledge: chapter-007 -->
 
 - [ ] TP 是否优先结构位而非随意 R？
 - [ ] 磁力位来源是否可追溯到 K 线表？

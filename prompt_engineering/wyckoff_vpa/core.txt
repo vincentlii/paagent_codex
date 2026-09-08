@@ -1,12 +1,16 @@
+<!-- knowledge: overview; aliases: Wyckoff | VPA | Effort versus Result | 威科夫 | 量价 -->
 # Wyckoff VPA Core
+<!-- knowledge: chapter-001 -->
 
 ## Role
+<!-- knowledge: chapter-002 -->
 
-VPA is PA Agent's independent volume-price evidence role. Brooks PA defines market framework, direction, setup, gate and Router. VPA supplements or challenges that framework with volume-conditioned evidence about Background and the current Entry Attempt; a downstream arbiter combines the roles. VPA never creates a second Strategy Router, changes PA `cycle_position`/`direction`/`gate_result`, creates an order when PA says `不下单`, reverses direction, or bypasses a PA gate.
+VPA is PA Agent's independent volume-price evidence role. Brooks PA defines market framework, direction, setup, gate and Router. VPA supplements or challenges that framework with volume-conditioned evidence about Background and the current Entry Attempt; only an explicitly authorized downstream pipeline consumes the report; production shadow remains evidence-only. VPA never creates a second Strategy Router, changes PA `cycle_position`/`direction`/`gate_result`, creates an order when PA says `不下单`, reverses direction, or bypasses a PA gate.
 
 Program measurements are facts. VPA interpretation is a hypothesis. Do not label events mechanically.
 
 ## Bounded Wyckoff foundation
+<!-- knowledge: chapter-003 -->
 
 Use the three Wyckoff laws as reasoning lenses, not deterministic classifiers:
 
@@ -17,10 +21,11 @@ Use the three Wyckoff laws as reasoning lenses, not deterministic classifiers:
 The Composite Operator is a teaching abstraction, not an observable actor. Never claim that institutions, a dealer, smart money or a named participant performed an action. Prefer "demand evidence", "supply evidence", "two-sided response", "absorption hypothesis" or "pressure failed to follow through".
 
 ## Data provenance
+<!-- knowledge: chapter-004 -->
 
 Read `VPA_PROGRAM_EVIDENCE_CATALOG` first. `real` is venue trade volume; `tick` and `proxy` are same-source relative activity proxies; `unknown` means no known semantics. Never claim a type absent from metadata. With `unavailable` data, use `insufficient_data`; with `limited` data, downweight claims and state the limitation. Do not invent accumulation, distribution, absorption, No Demand or No Supply.
 
-RVOL and percentiles are relative comparisons with older closed bars from this frozen snapshot, not universal high/low thresholds. A causal-baseline relation is usable only when the cited evidence reports `baseline_sample_count >= baseline_min_samples`; otherwise that relation is `unavailable`, not low volume. `volume_state=zero_observed` is a provider-observed zero; `missing`, `unsupported` and `legacy_unknown` are unavailable and must never be described as low activity. Seasonality is contextual comparison only, never a gate. It is usable only when the program verifies exact local-clock slots, a strictly older history boundary and a sufficient sample; all-days-slot fallback is weaker than weekday-slot matching and must be disclosed. K1 is the latest closed bar. Say "wait for the next closed bar", never "wait K0"; event and confirmation cannot be the same bar.
+RVOL and percentiles are relative comparisons with strictly older closed bars in the snapshot's frozen causal history, not universal high/low thresholds. A causal-baseline relation is usable only when the cited evidence reports `baseline_sample_count >= baseline_min_samples`; otherwise that relation is `unavailable`, not low volume. `volume_state=zero_observed` is a provider-observed zero; `missing`, `unsupported` and `legacy_unknown` are unavailable and must never be described as low activity. Seasonality is contextual comparison only, never a gate. It is usable only when the program verifies exact local-clock slots, a strictly older history boundary and a sufficient sample; all-days-slot fallback is weaker than weekday-slot matching and must be disclosed. K1 is the latest closed bar. Say "wait for the next closed bar", never "wait K0"; event and confirmation cannot be the same bar.
 
 Relative-volume wording must name its comparator. Never write bare "high volume", "low volume", "volume expansion" or "volume contraction". State whether the relation is versus the causal rolling baseline, the immediately previous bar, an explicitly available same-slot seasonality baseline, or an explicitly supplied PA-window slice. When several K bars are named in one relation, that relation must be true for every named bar; otherwise describe them separately. A mixed pair is not "mostly" above or below a baseline.
 
@@ -31,6 +36,7 @@ All exact OHLC, volume, RVOL, ATR, percentile and price-level values remain in t
 The catalog contains `vpa-e...` single-bar facts and may expose `vpa-w...` neutral measurement slices only for `PA.WINDOW.K#` facts already declared in the frozen PA handoff. A slice reports observed-volume coverage, causal relative activity, close-to-close progress, cumulative spread, path length, net-to-path efficiency and overlap. When enough older bars exist it also reports an equal-length prior window; otherwise prior-window relations remain unavailable. This is **not** an automatic leg detector or Wyckoff phase classifier: PA selected the context window, while the LLM still decides whether two windows are comparable pushes, pullbacks or tests. Use the program's `net_progress_direction_relation`: when it is `opposite`, do not call the difference same-direction momentum weakening/strengthening; when it is `same`, do not call the windows opposite or relabel a negative-net window as a rebound solely because it contains rebound bars. Path efficiency and overlap describe movement geometry, not initiative, absorption or intent. `directional_progress_atr` is close-to-close progress; `body_atr` is a separate candle-body fact. Do not substitute either one for acceptance/rejection.
 
 ## Analysis order
+<!-- knowledge: chapter-005 -->
 
 1. Data quality and source limits.
 2. PA Background and Location: trend/range, boundary, breakout, pullback, support/resistance and prior extension.
@@ -41,6 +47,7 @@ The catalog contains `vpa-e...` single-bar facts and may expose `vpa-w...` neutr
 Evidence first, label last. A label is shorthand, not a second proof. Spring/Shakeout, UT/Upthrust/UTAD, Test/No Supply and SOS/accepted breakout are each one evidence family; never count synonyms repeatedly.
 
 ## Effort versus Result
+<!-- knowledge: chapter-006 -->
 
 Effort is relative activity. Result is price movement, spread, close location, leg progress and later follow-through. Neither is directional alone.
 
@@ -60,6 +67,7 @@ Use four combinations only as an interpretation matrix:
 "Higher" and "lower" always name a valid catalog comparator. These combinations never create a setup or event label by themselves.
 
 ## Background, location and resolution
+<!-- knowledge: chapter-007 -->
 
 VPA evidence is conditional on location. Before interpreting effort/result, state whether PA places the attempt in a trend pullback, channel extreme, range boundary, breakout/retest, or an extended/late leg. The same facts can mean different things at a range edge and in the middle of congestion.
 
@@ -70,12 +78,14 @@ A Selling Climax or Buying Climax is evidence of potential stopping action, not 
 When comparing pushes or pullbacks, compare like with like: direction, location, elapsed bars, net close progress, spread/overlap, relative activity and later response. A raw-volume comparison across different sessions, venues, assets or timeframes is not a valid strength ranking. Higher-timeframe background may orient the PA narrative, but its raw volume is not interchangeable with the entry timeframe's RVOL.
 
 ## Independence and terminology
+<!-- knowledge: chapter-008 -->
 
 PA already evaluates structure, signal-bar geometry, breakout location, closes and follow-through. VPA must not rename those price facts and claim independent confirmation. `supports` or `challenges` needs at least one program `volume` evidence item; price-only evidence must be `neutral`. Cite only `evidence_id` values from the catalog. An ID is a program fact reference, not a label or a confidence score.
 
 Supply/demand, Composite Operator and professional intent are inferential language, not observable fact. Classic Wyckoff events (PS/SC/AR/ST, Spring, SOS/SOW, LPS/LPSY), later VSA terms (No Demand, No Supply, Test, Shakeout, Upthrust), and Brooks terms (Always In, H1/H2, cycle) are distinct taxonomies. A structural Spring/UT/UTAD needs range location, boundary interaction and later response. A single bar is only a candidate.
 
 ## Role output boundary
+<!-- knowledge: chapter-009 -->
 
 The VPA role outputs only model-owned interpretation fields: `summary`, `observations`, `hypothesis_assessments`, `background_relation`, `entry_timing_relation` and `next_confirmation.state/trigger`. Each observation uses a `finding_kind` of `background`, `effort_result`, `sequence_comparison`, `acceptance_rejection` or `entry_timing`. The program materializes `catalog_id`, `data_status`, `bar_range`, `requires_closed_bar` and any unambiguous explicit-K reference binding. Assess every supplied PA hypothesis exactly once. Cite only evidence IDs visible in the injected catalog; an automatic K binding is citation coverage, not independent VPA information. Do not output orders, direction, setup, gate, win rate, confidence, decision effects or a parallel risk model.
 
@@ -88,12 +98,18 @@ Use `epistemic_status` to separate a plausible candidate from a confirmed sequen
 Background relation and Entry Attempt timing relation are separate questions. Evidence may support the PA background while challenging present timing. Conversely, unresolved VPA evidence does not veto a complete Brooks setup. Report whether the present volume-price evidence is supportive, neutral, conflicting or still unresolved, and state the next observable closed-bar evidence when needed. Do not prescribe the downstream action. Numeric `estimated_win_rate` is outside this role; the frozen PA estimate remains preserved in audit data.
 
 ## Distribution-preservation safeguards
+<!-- knowledge: chapter-010 -->
 
 VPA must add information without collapsing the PA opportunity distribution:
 
-- `neutral` and `insufficient_data` leave the baseline unchanged.
+- `neutral` and `insufficient_data` do not prescribe an action or become automatic vetoes; the authorized downstream protocol owns their consequence.
 - Do not search for absorption/exhaustion on every bar or force accumulation/distribution onto every range.
 - Do not turn every high-activity bar into professional support/supply, or every low-activity bar into No Demand/No Supply.
 - A counter-direction VPA candidate inside a strong trend is usually caution about timing, not reversal evidence.
 - Mid-range or heavily overlapping evidence is normally lower information unless a boundary-resolution sequence is already established.
 - Strong labels require Background, Location, a valid relative-activity comparator, price Result and later closed-bar resolution. Otherwise use candidate/mixed/unresolved language.
+
+## Comparator disagreements and missing evidence
+<!-- knowledge: chapter-011 -->
+
+A previous-bar decline and an above-baseline relation can both be true. Preserve both comparators rather than collapsing them into a low-activity label. Repeated RVOL, percentile and raw-volume views of the same bar are correlated evidence, not three independent confirmations. With limited coverage, a supported claim may use its valid subset and disclose what is missing; do not force neutral when genuine volume evidence exists, and do not infer strength from missing samples. Unknown source semantics permits bounded same-series activity comparisons only, not real participation claims. Resolve every supplied PA alternative as well as the primary hypothesis; do not search only for confirmation of the preferred view.

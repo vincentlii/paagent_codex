@@ -1,4 +1,6 @@
+<!-- knowledge: overview; aliases: Spring | UTAD | Upthrust | Shakeout | 弹簧 | 上冲回落 -->
 # Trading Range and Wyckoff Event Reference
+<!-- knowledge: chapter-001 -->
 
 Apply only when PA identifies `trading_range`, `trending_tr` or a credible range boundary. A range can remain congestion; do not force an accumulation/distribution campaign or phase sequence.
 
@@ -31,3 +33,8 @@ Invalidation examples are symmetric: a Spring candidate that is accepted below t
 No Supply/Test requires reduced relative activity and limited downside result in a supportive bullish location, followed by upward response. No Demand requires the mirror conditions in a weak/bearish location, followed by downward response. Below an exceptional predecessor is not enough: the candidate must be low relative to an appropriate causal comparator or otherwise be described only as reduced versus that predecessor.
 
 No Demand, No Supply, Test, Shakeout and Upthrust are VSA bar/sequence descriptions, not guaranteed classic events. They need appropriate background and later confirmation. Without context, source quality or follow-through, state facts and remain neutral. Cause/effect may describe potential but PA Agent does not use Point-and-Figure projections. Do not assign a Wyckoff phase sequence merely because several familiar labels can be attached after the fact.
+
+## Competing campaign interpretations
+<!-- knowledge: chapter-002 -->
+
+A range may be accumulation, distribution, reaccumulation, redistribution or ordinary two-sided trading; not every range must receive a campaign phase. A boundary excursion without later rejection is not a confirmed Spring or UTAD. Continued acceptance outside invalidates the rejection hypothesis even if the excursion had unusual activity. If the PA boundary or an older comparator is absent, state that limitation rather than constructing a range from a single volume spike. Broad-channel boundary behavior can be studied here without relabeling the channel as a Wyckoff range.

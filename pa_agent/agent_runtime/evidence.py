@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -288,7 +289,13 @@ class FrozenEvidenceGateway:
                     continue
                 for section in self._knowledge_sections(module_id, document):
                     haystack = f"{section['title']}\n{section['text']}".casefold()
-                    if all(term in haystack for term in terms):
+                    aliases = {str(value).casefold() for value in section.get("aliases", [])}
+                    if " ".join(terms) in aliases or all(
+                        term in aliases or (
+                            re.search(r"(?<![a-z0-9_])" + re.escape(term) + r"(?![a-z0-9_])", haystack)
+                            if term.isascii() else term in haystack
+                        ) for term in terms
+                    ):
                         matches.append(
                             {
                                 "knowledge_module_id": module_id,

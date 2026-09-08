@@ -1,4 +1,6 @@
+<!-- knowledge: overview; aliases: SC | BC | Climax | Absorption | Exhaustion | 高潮 | 吸收 | 衰竭 -->
 # Climax, Absorption and Exhaustion Reference
+<!-- knowledge: chapter-001 -->
 
 Apply only near a PA-marked extended leg, climax risk, ending spike or clear boundary stress. It is a risk module, not a reversal predictor.
 
@@ -19,4 +21,9 @@ After a possible selling climax, a wide bullish response closing near its high c
 
 At a trend end, ask whether subsequent closed bars confirm a pause, two-legged correction, range formation or actual reversal chain. Brooks trendline break/test and Always-In semantics remain the framework. VPA can challenge chasing the current attempt, but it cannot turn potential stopping action into an opposite order.
 
-Allowed consequence: caution about the current Entry Attempt through later confirmation, retest preference or lower confidence when independent volume evidence exists. Never use this as a standalone reversal order signal or modify numeric estimated win rate.
+Output boundary: explain whether independent volume evidence supports or challenges the PA background or current Entry Attempt, and what later observable response would resolve uncertainty. Do not prescribe waiting, retiming, confidence changes or an order. Never modify numeric estimated win rate.
+
+## Symmetry and disconfirmation
+<!-- knowledge: chapter-002 -->
+
+At an upper boundary, activity meeting resistance may precede rejection or eventual accepted continuation; at a lower boundary the alternatives are symmetric. Continued progress accepted beyond the candidate area weakens a stopping hypothesis. Loss of progress without a later response remains unresolved, not a proven reversal. A PA wedge, final flag or reversal attempt authorizes this comparison but does not itself prove a climax or absorption. When there is no current Entry Attempt, keep timing insufficient and report background evidence only.

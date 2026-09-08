@@ -1,5 +1,7 @@
 # AGENTS
 
+- 修改 PA/VPA 知识与召回前读 `docs/quality/phase3_knowledge_acceptance.md`：原文 knowledge 锚点禁止重新编号；案例和反证不得摘要替代；理论/产品禁令/Host Draft 协议分层，章节及别名必须随 Frozen Job 冻结。
+
 - 本轮联合分析升级必须先读 `docs/quality/joint_agent_implementation_plan.md`；其中明确区分新模式目标与尚未改变的旧运行协议，未接入验收不得宣称已实现。
 - 修改闭盘数据、经验或实验回放前必须读 `docs/architecture/ADR-0026-causal-snapshot-and-experience.md`：过期的未确认响应不能重标闭盘；Stage 2 经验必须有冻结池、同源身份和已知时间。
 

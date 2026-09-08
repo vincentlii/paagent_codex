@@ -21,6 +21,10 @@ verification_scope:
 
 ## 联合分析升级进行中
 
+阶段 3 已完成共享 PA/VPA 知识一致性修订、持久章节 ID、冻结别名与无损交付；209 项聚焦回归通过。
+内容迁移、三角色自审及未验证边界见 [阶段 3 验收](../quality/phase3_knowledge_acceptance.md)。
+这不代表模型分析效果、Linux/VPS 或完整发布已经验收；Runtime 角色协议继续在阶段 4 实施。
+
 阶段 2 已实现因果闭盘/as-of、VPA provenance 读取、冻结经验池及回放绑定，90 项聚焦测试通过。
 扩大回归有两项已在修改前源码复现的失败，详见实施契约；不宣称全套验收通过或可发布。
 长期规则见 [ADR-0026](../architecture/ADR-0026-causal-snapshot-and-experience.md)。

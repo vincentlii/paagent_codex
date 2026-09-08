@@ -1,6 +1,9 @@
+<!-- knowledge: overview; aliases: 市场诊断框架 -->
 # 市场诊断框架（PA Stage 1 Core）
+<!-- knowledge: chapter-001 -->
 
 ## 1. 职责与裁决顺序
+<!-- knowledge: chapter-002 -->
 
 本文件只负责阶段一：用 Al Brooks 价格行为框架定义市场背景、周期位置、方向、Setup 候选与主要反证。具体订单、三价、交易者方程和执行方式属于阶段二。
 
@@ -16,6 +19,7 @@
 Brooks Router 是唯一策略路由。`cycle_position` 必须给一个主状态；只有另一种解释确实可能改变策略或风险时，才填写 `alternative_cycle_position`。二者不是并列答案，也不得为了显得全面而机械填充。
 
 ## 2. 观察尺度
+<!-- knowledge: chapter-003 -->
 
 同一张图可同时存在不同尺度的状态。以程序实际提供的 N 根已收盘 K 线为上限：
 
@@ -32,6 +36,7 @@ Brooks Router 是唯一策略路由。`cycle_position` 必须给一个主状态�
 若另有 HTF 数据，只把它作为更高周期 Background：引用 `HTF.H#` 说明同向、冲突或中性。HTF 不直接改写当前周期的方向、Gate 或订单。
 
 ## 3. 周期频谱的共同判据
+<!-- knowledge: chapter-004 -->
 
 八种状态是从强单边到极端双向的连续频谱。比较时综合以下维度：
 
@@ -47,8 +52,10 @@ Brooks Router 是唯一策略路由。`cycle_position` 必须给一个主状态�
 回撤深度、根数、ATR 比例和斜率都是描述证据，不是机械分类器。若多个维度冲突，降低 `diagnosis_confidence`，保留最有交易意义的替代状态，并明确下一根已收盘 K 线需要验证什么。
 
 ## 4. 八种周期状态
+<!-- knowledge: chapter-005 -->
 
 ### 4.1 spike
+<!-- knowledge: chapter-006 -->
 
 Spike 是带有紧迫感的突破性单边运动：连续强趋势棒、收盘靠近推进方向极点、重叠和反向回撤很少，价格快速远离原平衡区。单根大棒只构成 `spike_candidate`；只有形成可辨认的连续推进，才把 Spike 作为主路由。
 
@@ -61,48 +68,56 @@ Spike 是带有紧迫感的突破性单边运动：连续强趋势棒、收盘�
 Climax 是过度延伸与衰竭风险，不是反转证明。多根强趋势棒后出现长尾、小实体、反向响应或进展下降，只能提高 `climax_risk`；需要后续结构破坏和测试才能谈反转。PA Agent 不追高潮，不把第一次反向棒当作逆势 Setup。
 
 ### 4.2 micro_channel
+<!-- knowledge: chapter-007 -->
 
 Micro Channel 是一串几乎没有反向突破的紧密推进，常表现为连续高低点只向一个方向移动。它可以是 Spike 的局部表现，也可以是 Spike 后较有序的短通道。
 
 若紧迫性、实体推进和低重叠明显占主导，优先 `spike`；若已有稳定的小级别通道秩序而非爆发式位移，使用 `micro_channel`。首次逆向突破通常只是回撤候选，不能自动当成趋势反转。
 
 ### 4.3 tight_channel
+<!-- knowledge: chapter-008 -->
 
 Tight Channel 有清晰方向、浅而短的回撤、较少的反向强收盘，趋势线通常不易被有效突破。其核心不是某个固定回撤百分比，而是反方向交易长期缺乏空间和跟随。
 
 方向性强时只把逆向信号视为风险或回撤信息。通道末端出现高潮、反复测试同一边界或推进效率下降时，标记转弱，但仍需结构确认才能升级为反转。
 
 ### 4.4 normal_channel
+<!-- knowledge: chapter-009 -->
 
 Normal Channel 具有稳定的 HH/HL 或 LL/LH 波段序列，回撤可见但没有持续破坏主方向。价格会穿越短期均线，却通常在趋势结构或通道边界恢复。
 
 它比 Tight Channel 更适合等待回撤和二次入场，比 Broad Channel 更具方向连续性。一次趋势线突破通常先意味着通道调整；主要趋势反转仍需要趋势线突破、对原极点或结构位的测试，以及有质量的反向信号链。
 
 ### 4.5 broad_channel
+<!-- knowledge: chapter-010 -->
 
 Broad Channel 是带方向偏好的双向市场：波段大、回撤深、重叠多，但仍能识别重复的 HH/HL 或 LL/LH 序列和大致可画的通道。突破后常发生回测，追价风险高。
 
 与 `trending_tr` 的关键区别不是固定组数，而是结构稳定性：Broad Channel 的方向波段和边界足以支持可重复的通道解释；Trending TR 的方向偏好较弱或频繁中断，边界更像移动中的区间。模糊时把更能解释近期价格行为者设为主状态，并把另一者作为替代。
 
 ### 4.6 trending_tr
+<!-- knowledge: chapter-011 -->
 
 Trending Trading Range 是轻微倾斜的区间：存在方向偏好，但每个波段都有较高反转概率，趋势推进不流畅，突破后常回到重叠区。它仍可有 Always In 倾向，但不能按强趋势追踪。
 
 中部位置价值最低；边界、失败突破和回测比单根信号更重要。方向偏好只决定优先评估哪一侧，不把区间策略变成追涨杀跌。
 
 ### 4.7 trading_range
+<!-- knowledge: chapter-012 -->
 
 Trading Range 有可识别的上下边界、大量重叠、双向突破失败和频繁均线穿越。市场处于 Breakout Mode：在真正接受边界外价格前，不应把一次刺破或一根强棒当成新趋势。
 
 区间中部通常缺乏优势；边界附近需要信号、失败尝试或回测证据。`direction=neutral` 可以是诚实结论，但不等于数据不可分析，也不能据此把 Stage 1 Gate 机械设为 wait。
 
 ### 4.8 extreme_tr
+<!-- knowledge: chapter-013 -->
 
 Extreme Trading Range 是无法建立稳定周期和方向假设的极端混乱状态：重叠与反复反转占主导，边界和波段解释都不稳定，多个合理假设无法排序。它不是普通窄区间、低波动或一段 Barbwire 的同义词。
 
 只有当结构歧义已高到无法形成可审计的主假设时才使用；这是 Stage 1 少数可以合理停止的状态。不要为了规避困难而把普通 Trading Range 标成 extreme_tr。
 
 ## 5. 状态边界与转换
+<!-- knowledge: chapter-014 -->
 
 状态转换必须由已收盘价格行为确认，不由“看起来可能”确认：
 
@@ -115,6 +130,7 @@ Extreme Trading Range 是无法建立稳定周期和方向假设的极端混乱�
 `market_phase=transitioning` 表示当前状态仍可诊断，但不确定性上升。填写 `transition_risk` 并在阶段二提高选择性；它不是隐藏 Gate。
 
 ## 6. Background、Direction 与 Always In
+<!-- knowledge: chapter-015 -->
 
 Direction 是当前周期近期结构的交易倾向，不是对下一根 K 线颜色的预测。按以下证据综合：
 
@@ -127,12 +143,14 @@ Direction 是当前周期近期结构的交易倾向，不是对下一根 K 线�
 `bullish` / `bearish` 需要结构性依据；`neutral` 用于双方证据接近或 Breakout Mode。单根反转棒、影线、EMA 穿越或背景冲突都不足以独立翻转方向。
 
 ### 场景 5/6：长程背景与近期结构冲突
+<!-- knowledge: chapter-016 -->
 
 长程背景提供磁力和风险，近期结构决定当前周期主方向。例如长程仍偏空而近期出现有效多头 Spike，阶段一可以 `direction=bullish`，同时在 `htf_context` 写明上方背景阻力；不得用长程标签否决已发生的近期价格行为。反之亦然。
 
 若 HTF 与当前周期同向，它增加背景一致性但不创造 Setup；若冲突，它降低诊断或交易把握并强化失效条件，但不自动反向下单。
 
 ## 7. Setup 候选与信号链
+<!-- knowledge: chapter-017 -->
 
 阶段一只回答“当前有哪些 Brooks Setup 候选、处于什么状态”：
 
@@ -147,6 +165,7 @@ Direction 是当前周期近期结构的交易倾向，不是对下一根 K 线�
 `bar_by_bar_summary` 恰好覆盖最近 K5-K1（不足五根则全覆盖）。每根只写对当前结构的增量作用，不重复 OHLC/ATR/EMA 数字，不在阶段一写止损、目标或订单。
 
 ## 8. 支撑阻力、竞争假设与置信度
+<!-- knowledge: chapter-018 -->
 
 支撑/阻力来自可辨认的波段极点、区间边界、突破位、失败信号磁力位或结构目标。最多保留最相关的三项；不得把任意 K 线高低点全部列为关键位，也不得用模型手抄数值证明自己的叙述。
 
@@ -159,6 +178,7 @@ Direction 是当前周期近期结构的交易倾向，不是对下一根 K 线�
 `diagnosis_confidence` 表示对市场框架的把握，不是交易胜率。证据跨尺度一致、主假设明显优于替代解释时可较高；边界状态、HTF 冲突、转换期或多个解释接近时应降低。不得用固定分档触发交易动作。
 
 ## 9. Stage 1 Gate 边界
+<!-- knowledge: chapter-019 -->
 
 Gate 只判断市场框架是否足以进入阶段二，不判断最终是否交易：
 

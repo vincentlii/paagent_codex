@@ -1,4 +1,6 @@
+<!-- knowledge: overview; aliases: SOS | SOW | LPS | LPSY | Acceptance | Rejection | 突破接受 | 突破拒绝 -->
 # Breakout, Failure and Retest VPA
+<!-- knowledge: chapter-001 -->
 
 Apply only when PA identifies a breakout area, boundary test, failed breakout or retest. PA owns structure and order logic; VPA supplies additional volume-conditioned quality evidence.
 
@@ -19,3 +21,8 @@ Avoid “liquidity sweep”; use “boundary breach and recovery candidate” ab
 An upside breach that closes back inside can be an Upthrust/UT candidate only in a credible range context; a downside breach and recovery can be a Spring candidate under the symmetric conditions. Outside that context, use failed-breakout or boundary-rejection language. A failed failure, where price reclaims the breakout direction after trapping the first attempt, still requires later acceptance.
 
 A retest can provide cleaner timing evidence for an already-valid PA direction. Describe the evidence and the missing confirmation only. Never create orders, change direction or replace PA prices with a VPA target.
+
+## Boundary investigation without automatic failure
+<!-- knowledge: chapter-002 -->
+
+PA range or spike context can authorize investigation of boundary behavior before a breakout label is final. Read only PA-selected boundary/window facts; do not create a Setup from volume. No later response means unresolved, not rejected. Lower relative activity does not invalidate an accepted breakout; higher relative activity does not rescue a breakout that returns inside and cannot regain the boundary. Compare the crossing, later response and any retest in chronological order, keeping missing retests explicitly missing.

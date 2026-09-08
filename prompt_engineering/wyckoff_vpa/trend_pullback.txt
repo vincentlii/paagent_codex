@@ -1,4 +1,6 @@
+<!-- knowledge: overview; aliases: No Supply | No Demand | Test | 趋势回撤 | 无供给 | 无需求 -->
 # Trend and Pullback VPA
+<!-- knowledge: chapter-001 -->
 
 Apply only inside a PA-established trend, channel, micro-channel or trending range. Compare current push/pullback against prior comparable legs: distance, spread, closes, relative activity, overlap and later follow-through. A weakening counter-trend pullback can support continuation; a weakening with-trend impulse challenges continuation. Neither observation proves reversal by itself.
 
@@ -17,3 +19,8 @@ PA owns H1/H2, L1/L2, signal-bar quality and structural invalidation. VPA may ex
 At an extended channel end, weakening with-trend pushes challenge continuation timing more than weakening counter-trend pullbacks do. Keep these comparisons separate. Wedge, MTR and final-flag semantics remain PA diagnoses; VPA exhaustion evidence can support "do not chase" but never legalize a counter-trend order.
 
 When the pullback response is unresolved, describe exactly what later closed-bar response is missing. When immediate participation is weak relative to a named comparator, distinguish that fact from a failed setup. A material timing conflict needs independent volume evidence plus a PA-consistent failure of the current attempt; VPA still does not judge the larger Setup or create the opposite trade.
+
+## Applicability and counterexample
+<!-- knowledge: chapter-002 -->
+
+An active PA spike may have no pullback yet. Compare initiative and subsequent acceptance without inventing a completed pullback or Test. In a pullback, declining activity versus an extreme predecessor can coexist with elevated activity versus the causal baseline. Neither alone proves weak opposition. A quiet pullback that subsequently breaks and holds beyond the PA invalidation area challenges continuation; a high-activity pullback that holds and later resumes may instead support it. State the observed sequence, its competing explanation and its unresolved part, without changing PA labels.

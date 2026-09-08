@@ -13,6 +13,7 @@ from pa_agent.ai.pattern_routing import normalize_detected_patterns
 
 _TREND_CYCLES = frozenset(
     {
+        "spike",
         "micro_channel",
         "tight_channel",
         "normal_channel",
@@ -55,13 +56,18 @@ def build_vpa_knowledge_context(
 
     if cycles & _TREND_CYCLES or patterns & _TREND_PATTERN_KEYS:
         modules.append("trend_pullback")
-    if patterns & _BREAKOUT_PATTERN_KEYS:
+    if patterns & _BREAKOUT_PATTERN_KEYS or cycles & (_RANGE_CYCLES | {"spike", "broad_channel"}):
         modules.append("breakout_retest")
-    if cycles & _RANGE_CYCLES:
+    if cycles & (_RANGE_CYCLES | {"broad_channel"}) or patterns & {
+        "ascending_triangle", "descending_triangle", "symmetrical_triangle",
+        "expanding_triangle", "double_top_bottom",
+    }:
         modules.append("trading_range_events")
     if str(stage1.get("climax_risk") or "").lower() in {"warning", "triggered"} or str(
         stage1.get("spike_stage") or ""
-    ).lower() in {"ending", "transitioning"}:
+    ).lower() in {"ending", "transitioning"} or patterns & {
+        "wedge", "final_flag", "mtr", "reversal_attempt", "shrinking_stairs",
+    }:
         modules.append("climax_absorption_exhaustion")
 
     return VpaKnowledgeContext(cycles, patterns, tuple(dict.fromkeys(modules)))

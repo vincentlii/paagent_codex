@@ -523,7 +523,9 @@ def test_vpa_module_profile_uses_only_explicit_pa_context() -> None:
     )
 
     assert explicit.module_names == ("core", "trend_pullback", "breakout_retest")
-    assert absent.module_names == ("core",)
+    # Spike context itself needs initiative and acceptance counterevidence;
+    # an unknown pattern key neither grants nor removes reference knowledge.
+    assert absent.module_names == ("core", "trend_pullback", "breakout_retest")
 
 
 def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:

@@ -9,7 +9,8 @@ from typing import Any, Iterable
 
 from pa_agent.ai.prompt_assembler import select_agent_knowledge_text
 
-_HEADING = re.compile(r"^\s*(#{1,6}\s+.+|§\s*\S.+)$")
+_HEADING = re.compile(r"^\s*(#{1,6}\s+.+|§\s*\S.+|[一二三四五六七八九十]+、.+|(?:步骤|规则)\d+[：:].+|【[^】]+】)\s*$")
+_SECTION = re.compile(r"<!-- knowledge: ([a-z0-9_-]+)(?:; aliases: ([^<>\n]*))? -->")
 
 
 def build_knowledge_bundle(
@@ -69,35 +70,65 @@ def build_knowledge_bundle(
                 "section_ids": [item["section_id"] for item in sections],
             }
         )
-    return modules, {"schema_version": 1, "modules": manifest_entries}
+    return modules, {"schema_version": 2, "modules": manifest_entries}
 
 
-def _split_sections(module_id: str, text: str) -> list[dict[str, str]]:
-    lines = text.splitlines()
+def _split_sections(module_id: str, text: str) -> list[dict[str, Any]]:
+    # Keep every character, including headings and fenced examples. Stable
+    # anchors live in the source, so reorder/rename does not invalidate IDs.
+    lines = text.splitlines(keepends=True)
     chunks: list[tuple[str, list[str]]] = []
     title = "Overview"
     body: list[str] = []
+    fence: str | None = None
     for line in lines:
-        if _HEADING.match(line) and body:
-            chunks.append((title, body))
+        stripped = line.strip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[:3]
+            if fence is None:
+                fence = marker
+            elif marker == fence:
+                fence = None
+        if fence is None and _HEADING.match(line):
+            if body:
+                chunks.append((title, body))
             title = line.strip().lstrip("#").strip()
             body = []
-        elif _HEADING.match(line):
-            title = line.strip().lstrip("#").strip()
-        else:
-            body.append(line)
+        body.append(line)
     if body or not chunks:
         chunks.append((title, body))
 
-    sections: list[dict[str, str]] = []
-    for index, (heading, section_lines) in enumerate(chunks, start=1):
-        content = "\n".join(section_lines).strip()
-        section_id = f"{module_id}#s{index:03d}"
+    sections: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for heading, section_lines in chunks:
+        content = "".join(section_lines)
+        # Metadata belongs at the section start, never inside a quoted example.
+        metadata_line = 1 if section_lines and _HEADING.match(section_lines[0]) else 0
+        anchor = (
+            _SECTION.fullmatch(section_lines[metadata_line].strip())
+            if len(section_lines) > metadata_line else None
+        )
+        # Custom legacy prompt packs need no migration. Their unanchored IDs
+        # are title-derived. Indistinguishable legacy repeats need an occurrence
+        # suffix; only explicit source anchors promise cross-revision stability.
+        key = anchor.group(1) if anchor else hashlib.sha256(heading.encode()).hexdigest()[:16]
+        section_id = f"{module_id}#{key}"
+        if section_id in seen and not anchor:
+            base_id = section_id
+            occurrence = 2
+            while section_id in seen:
+                section_id = f"{base_id}-{occurrence}"
+                occurrence += 1
+        if section_id in seen:
+            raise ValueError(f"duplicate knowledge section id: {section_id}")
+        seen.add(section_id)
+        aliases = [value.strip() for value in (anchor.group(2) or "").split("|") if value.strip()] if anchor else []
         sections.append(
             {
                 "section_id": section_id,
                 "title": heading,
                 "text": content,
+                "aliases": aliases,
                 "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
             }
         )

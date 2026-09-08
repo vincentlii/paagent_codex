@@ -30,8 +30,9 @@ PA_THEORY_RULES: Final[dict[str, str]] = {
         "credibility when follow-through is absent or fails."
     ),
     "BROOKS.TREND.PULLBACK_CONTINUATION": (
-        "A pullback is a continuation candidate only in supportive trend context and after "
-        "a valid signal/trigger; weakness alone does not create an entry."
+        "A pullback continuation needs supportive trend context and a valid entry plan; "
+        "an authorized planned limit may await a future retracement, whereas a triggered "
+        "entry needs its actual trigger. Weakness alone does not create an entry."
     ),
     "BROOKS.BREAKOUT.REQUIRES_FOLLOW_THROUGH": (
         "A breakout bar is an attempt; acceptance, follow-through or a successful retest is "
