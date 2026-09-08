@@ -193,7 +193,7 @@ def test_shadow_and_soft_have_distinct_official_paths(
     assert events[-1] == OrchestratorEvent.RecordSaved
 
 
-def test_codex_owns_pa_roles_while_shadow_vpa_stays_independent_direct() -> None:
+def test_codex_owns_pa_roles_and_binds_an_independent_shadow_vpa_role() -> None:
     settings = Settings(
         prompt=PromptSettings(vpa_mode="shadow"),
         validation=ValidationSettings(retry_enabled=False),
@@ -215,6 +215,14 @@ def test_codex_owns_pa_roles_while_shadow_vpa_stays_independent_direct() -> None
     ]
     vpa_client = MagicMock()
     vpa_client.stream_chat.return_value = make_reply(_vpa_report())
+    vpa_backend = MagicMock()
+    vpa_backend.backend_id = "codex_agent"
+    vpa_backend.validation_retry_limit = 1
+    vpa_backend.run.return_value = AnalysisRoleResult(
+        reply=make_reply(_vpa_report()), backend_id="codex_agent",
+        runtime={"job_digest": "vpa-job"},
+    )
+    codex_backend.bind_role.side_effect = [codex_backend, vpa_backend]
     client = MagicMock()
     client.clone_with_provider.return_value = vpa_client
     writer = MagicMock()
@@ -245,8 +253,9 @@ def test_codex_owns_pa_roles_while_shadow_vpa_stays_independent_direct() -> None
         "stage2",
     ]
     assert all(call.args[0].agent_context for call in codex_backend.run.call_args_list)
-    assert vpa_client.stream_chat.call_count == 1
-    assert client.clone_with_provider.call_count == 1
+    assert vpa_client.stream_chat.call_count == 0
+    assert vpa_backend.run.call_args.args[0].role == "vpa_evidence"
+    assert vpa_backend.run.call_args.args[0].agent_context
     assert [item["arm"] for item in record.call_attempts[:2]] == ["pa", "pa"]
     assert record.call_attempts[2]["arm"] == "vpa_evidence"
     writer.save_full.assert_called_once()

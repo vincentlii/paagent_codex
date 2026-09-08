@@ -7,6 +7,12 @@ hide_agent_reasoning = true
 [features]
 shell_tool = false
 skill_mcp_dependency_install = false
+apps = false
+multi_agent = false
+memories = false
+hooks = false
+goals = false
+remote_plugin = false
 
 [tools]
 web_search = false

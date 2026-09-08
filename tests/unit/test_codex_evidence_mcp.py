@@ -90,6 +90,8 @@ def test_stdio_mcp_serves_only_budgeted_frozen_evidence(tmp_path: Path) -> None:
         "get_upstream_artifact",
         "get_experience_entries",
         "get_repair_findings",
+        "measure_price_window",
+        "project_price_leg",
     }
     assert called["result"]["isError"] is False
     assert called["result"]["structuredContent"]["facts"][0]["fact_id"] == "PA.BAR.K1"

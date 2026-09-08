@@ -12,6 +12,7 @@ from typing import Mapping
 _SKILL_PATHS = {
     "stage1": "skills/stage1/SKILL.md",
     "stage2": "skills/stage2/SKILL.md",
+    "joint_stage2": "skills/joint_stage2/SKILL.md",
     "vpa_evidence": "skills/vpa_evidence/SKILL.md",
     "joint_arbiter": "skills/joint_arbiter/SKILL.md",
     "draft_pointer_repair": "skills/draft_pointer_repair/SKILL.md",

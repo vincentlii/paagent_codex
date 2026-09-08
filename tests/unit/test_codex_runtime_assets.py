@@ -19,11 +19,13 @@ def test_runtime_assets_are_complete_and_deterministically_versioned() -> None:
     assert set(first.skill_documents) == {
         "stage1",
         "stage2",
+        "joint_stage2",
         "vpa_evidence",
         "joint_arbiter",
+        "draft_pointer_repair",
     }
     assert "禁止 Web" in first.agents_text
-    assert "Brooks Price Action 是主框架" in first.agents_text
+    assert "Brooks Price Action 是 Primary Market Framework" in first.agents_text
     assert all(text.startswith("---\n") for text in first.skill_documents.values())
 
 
@@ -34,7 +36,11 @@ def test_runtime_audit_verifies_authority_frontmatter_and_prohibited_tools() -> 
     assert report.asset_digest == load_codex_runtime_assets().asset_digest
     assert report.resource_names == (
         "AGENTS.md",
+        "config.toml",
+        "rules/pa-agent.rules",
+        "skills/draft_pointer_repair/SKILL.md",
         "skills/joint_arbiter/SKILL.md",
+        "skills/joint_stage2/SKILL.md",
         "skills/stage1/SKILL.md",
         "skills/stage2/SKILL.md",
         "skills/vpa_evidence/SKILL.md",

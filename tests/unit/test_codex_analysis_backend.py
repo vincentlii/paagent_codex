@@ -409,7 +409,7 @@ def test_worker_nonzero_exit_is_classified_without_exposing_stderr(tmp_path: Pat
             command,
             1,
             stdout="",
-            stderr="401 token-secret should not escape",
+            stderr="HTTP 401 token-secret should not escape",
         )
 
     worker = CodexCliWorker(

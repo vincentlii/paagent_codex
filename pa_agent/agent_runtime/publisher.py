@@ -59,6 +59,13 @@ class CodexJobPublisher:
         # enforce semantic parity for vNext jobs without retroactively changing
         # the meaning of already-frozen legacy jobs.
         context["context_policy"] = "semantic_parity_v1"
+        from pa_agent.agent_runtime.execution_contract import RUNTIME_CONTRACT, skill_key
+
+        context["runtime_contract_version"] = RUNTIME_CONTRACT
+        joint = skill_key(request.role, context) == "joint_stage2"
+        schema_protocol = (request.schema or {}).get("properties", {}).get("protocol_version", {}).get("const")
+        if joint != (schema_protocol == "pa_vpa_stage2_draft_v1"):
+            raise ValueError("joint Stage 2 protocol and output schema must agree")
         catalog = build_analysis_fact_catalog(self._frame)
         if catalog.snapshot_hash != str(request.snapshot_hash).lower():
             raise ValueError("agent_context frame does not match role snapshot")
@@ -216,7 +223,11 @@ class CodexJobPublisher:
             "vpa_evidence": "vpa_evidence_agent_protocol_v1",
             "joint_arbiter": "joint_arbiter_agent_protocol_v1",
         }
+        from pa_agent.agent_runtime.execution_contract import JOINT_PROTOCOL
+
         protocol = context.get("role_protocol")
+        if role == "stage2" and isinstance(protocol, dict) and protocol.get("contract_version") == JOINT_PROTOCOL:
+            expected_protocols["stage2"] = JOINT_PROTOCOL
         if not isinstance(protocol, dict) or protocol.get("contract_version") != expected_protocols.get(role):
             raise ValueError(f"Codex {role} requires the mature role protocol")
         required_context = {
@@ -232,6 +243,8 @@ class CodexJobPublisher:
             ),
         }
         missing = [key for key in required_context.get(role, ()) if key not in context]
+        if expected_protocols.get(role) == JOINT_PROTOCOL:
+            missing.extend(key for key in ("pa_hypotheses", "vpa_evidence") if key not in context)
         if missing:
             raise ValueError(
                 f"Codex {role} role handoff is incomplete: {', '.join(missing)}"

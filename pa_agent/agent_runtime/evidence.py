@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJob
@@ -32,10 +34,11 @@ class EvidenceAuditEvent:
     latency_ms: float = 0.0
     evidence_ids: tuple[str, ...] = ()
     reason: str | None = None
+    measurement: dict[str, Any] | None = None
 
 
 class FrozenEvidenceGateway:
-    """Serve facts and knowledge without computing or interpreting new signals."""
+    """Serve frozen evidence and bounded arithmetic, never classify signals."""
 
     def __init__(self, job: FrozenAgentJob) -> None:
         self._job = job
@@ -79,7 +82,7 @@ class FrozenEvidenceGateway:
         return self._query(
             "get_job_manifest",
             {},
-            lambda: self._job.manifest.as_dict(),
+            lambda: {**self._job.manifest.as_dict(), "budget": asdict(self._job.budget)},
         )
 
     def get_market_core(self) -> dict[str, Any]:
@@ -385,6 +388,68 @@ class FrozenEvidenceGateway:
             },
         )
 
+    def _price_value(self, seq: int, field: str) -> float:
+        if type(seq) is not int or seq <= 0 or field not in {"open", "high", "low", "close"}:
+            raise EvidenceAccessDenied("measurement requires a frozen OHLC anchor")
+        bar = self._bars.get(seq)
+        if not bar or bar.get("closed") is False or int(bar.get("ts_open", 0)) > self._job.manifest.cutoff_ts_open:
+            raise EvidenceAccessDenied("measurement anchor is outside frozen closed bars")
+        value = bar.get(field)
+        if type(value) not in {int, float} or not math.isfinite(value):
+            raise EvidenceAccessDenied("measurement anchor is missing or non-finite")
+        return float(value)
+
+    def _measurement(self, operation: str, request: dict[str, Any], values: dict[str, Any], seqs: list[int]) -> dict[str, Any]:
+        if any(not math.isfinite(value) for value in values.values()):
+            raise EvidenceAccessDenied("measurement result is non-finite")
+        result = {"protocol_version": "frozen_price_measurement_v1",
+                  "snapshot_identity": self.snapshot_identity,
+                  "operation": operation, "request": request, "values": values,
+                  "source_bar_refs": [f"K{seq}" for seq in dict.fromkeys(seqs)]}
+        encoded = json.dumps(result, sort_keys=True, allow_nan=False, separators=(",", ":")).encode()
+        result["measurement_digest"] = hashlib.sha256(encoded).hexdigest()
+        return result
+
+    def measure_price_window(self, *, older_seq: int, newer_seq: int) -> dict[str, Any]:
+        """Explicit window geometry; no leg boundaries, trend or VPA labels inferred."""
+        request = {"older_seq": older_seq, "newer_seq": newer_seq}
+
+        def resolve() -> dict[str, Any]:
+            if type(older_seq) is not int or type(newer_seq) is not int or not 1 <= newer_seq <= older_seq or older_seq - newer_seq >= 100:
+                raise EvidenceAccessDenied("measurement window must contain 1 to 100 ordered bars")
+            seqs = list(range(older_seq, newer_seq - 1, -1))
+            highs = [self._price_value(seq, "high") for seq in seqs]
+            lows = [self._price_value(seq, "low") for seq in seqs]
+            if any(high < low for high, low in zip(highs, lows, strict=True)):
+                raise EvidenceAccessDenied("measurement bar geometry is inconsistent")
+            return self._measurement("measure_price_window", request, {
+                "bar_count": len(seqs), "high": max(highs), "low": min(lows),
+                "range": max(highs) - min(lows),
+                "mean_bar_range": sum(high - low for high, low in zip(highs, lows, strict=True)) / len(seqs),
+                "net_change": self._price_value(newer_seq, "close") - self._price_value(older_seq, "open"),
+            }, seqs)
+
+        return self._query("measure_price_window", request, resolve)
+
+    def project_price_leg(self, *, start_seq: int, start_field: str, end_seq: int, end_field: str,
+                          origin_seq: int, origin_field: str) -> dict[str, Any]:
+        """origin + (end - start), preserving sign; applicability belongs to PA."""
+        request = {"start_seq": start_seq, "start_field": start_field,
+                   "end_seq": end_seq, "end_field": end_field,
+                   "origin_seq": origin_seq, "origin_field": origin_field}
+
+        def resolve() -> dict[str, Any]:
+            start = self._price_value(start_seq, start_field)
+            end = self._price_value(end_seq, end_field)
+            origin = self._price_value(origin_seq, origin_field)
+            if not start_seq >= end_seq >= origin_seq or start_seq - origin_seq >= 100:
+                raise EvidenceAccessDenied("projection anchors require chronological order within 100 bars")
+            return self._measurement("project_price_leg", request,
+                                     {"signed_leg": end - start, "projected_price": origin + (end - start)},
+                                     [start_seq, end_seq, origin_seq])
+
+        return self._query("project_price_leg", request, resolve)
+
     def get_experience_entries(self) -> list[dict[str, Any]]:
         def resolve() -> list[dict[str, Any]]:
             entries = self._core_context.get("experience_entries") or []
@@ -407,6 +472,13 @@ class FrozenEvidenceGateway:
             raise EvidenceBudgetExceeded("evidence call budget exceeded")
         self._calls_used = call_index
         try:
+            if self._job.repair_findings and operation not in {
+                "get_repair_findings", "get_facts", "get_pa_evidence", "get_htf_evidence",
+                "get_vpa_evidence", "read_allowed_knowledge",
+            }:
+                raise EvidenceAccessDenied("repair cannot start a fresh market investigation")
+            if operation == "get_vpa_evidence" and self._job.manifest.role in {"stage1", "stage2"}:
+                raise EvidenceAccessDenied("PA roles cannot read raw VPA evidence; joint Stage 2 uses the accepted report")
             response = resolver()
         except EvidenceAccessDenied:
             self._deny(call_index, operation, request, "access_denied")
@@ -437,6 +509,7 @@ class FrozenEvidenceGateway:
                 snapshot_hash=self._job.manifest.snapshot_hash,
                 latency_ms=max(0.0, (time.perf_counter() - started) * 1000),
                 evidence_ids=self._evidence_ids(response),
+                measurement=(dict(response) if isinstance(response, dict) and response.get("measurement_digest") else None),
             )
         )
         return response

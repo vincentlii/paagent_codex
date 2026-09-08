@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 from uuid import uuid4
 
+from pa_agent.agent_runtime.execution_contract import SKILL_NAMES
 from pa_agent.agent_runtime.runtime_assets import load_codex_runtime_assets
 
 _RESOURCE_PATHS = {
@@ -21,17 +22,12 @@ _RESOURCE_PATHS = {
     "rules/pa-agent.rules": None,
     "skills/stage1/SKILL.md": "stage1",
     "skills/stage2/SKILL.md": "stage2",
+    "skills/joint_stage2/SKILL.md": "joint_stage2",
     "skills/vpa_evidence/SKILL.md": "vpa_evidence",
     "skills/joint_arbiter/SKILL.md": "joint_arbiter",
     "skills/draft_pointer_repair/SKILL.md": "draft_pointer_repair",
 }
-_SKILL_NAMES = {
-    "stage1": "pa-stage1-diagnosis",
-    "stage2": "pa-stage2-decision",
-    "vpa_evidence": "vpa-evidence-analysis",
-    "joint_arbiter": "joint-arbiter-research",
-    "draft_pointer_repair": "draft-pointer-repair",
-}
+_SKILL_NAMES = SKILL_NAMES
 _REQUIRED_RULES = {
     "AGENTS.md": (
         "Brooks Price Action 是 Primary Market Framework",
@@ -53,10 +49,17 @@ _REQUIRED_RULES = {
         'forced_login_method = "chatgpt"',
         'web_search = "disabled"',
         "shell_tool = false",
+        "apps = false",
+        "multi_agent = false",
+        "memories = false",
+        "hooks = false",
+        "goals = false",
+        "remote_plugin = false",
     ),
     "rules/pa-agent.rules": ("decision = \"forbidden\"", "curl", "git", "ssh"),
     "skills/stage1/SKILL.md": ("禁止读取或引用 VPA", "不得生成 Setup 订单", "loading_policy=mandatory"),
     "skills/stage2/SKILL.md": ("Brooks Router", "不计算或修改 position size", "loading_policy=mandatory"),
+    "skills/joint_stage2/SKILL.md": ("pa_vpa_stage2_draft_v1", "loading_policy=mandatory", "review_required", "vpa_evidence_refs"),
     "skills/vpa_evidence/SKILL.md": ("独立的量价证据", "不创建或翻转 Brooks Setup", "loading_policy=mandatory"),
     "skills/joint_arbiter/SKILL.md": ("research-only", "不创建新 Setup", "不影响正式生产记录"),
     "skills/draft_pointer_repair/SKILL.md": (

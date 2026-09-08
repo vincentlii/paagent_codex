@@ -29,6 +29,24 @@ _TOOL_ANNOTATIONS = {
 def _tools() -> list[dict[str, Any]]:
     return [
         {
+            "name": "measure_price_window",
+            "description": "Measure explicit frozen price window geometry (1-100 bars); no market labels. Receipt is not a catalog fact ID.",
+            "inputSchema": {"type": "object", "additionalProperties": False,
+                            "properties": {key: {"type": "integer", "minimum": 1} for key in ("older_seq", "newer_seq")},
+                            "required": ["older_seq", "newer_seq"]},
+            "annotations": _TOOL_ANNOTATIONS,
+        },
+        {
+            "name": "project_price_leg",
+            "description": "Compute origin + (end - start) from explicit frozen OHLC anchors in chronological order within 100 bars. Not a target recommendation.",
+            "inputSchema": {"type": "object", "additionalProperties": False,
+                            "properties": {
+                                **{key: {"type": "integer", "minimum": 1} for key in ("start_seq", "end_seq", "origin_seq")},
+                                **{key: {"type": "string", "enum": ["open", "high", "low", "close"]} for key in ("start_field", "end_field", "origin_field")},
+                            }, "required": ["start_seq", "start_field", "end_seq", "end_field", "origin_seq", "origin_field"]},
+            "annotations": _TOOL_ANNOTATIONS,
+        },
+        {
             "name": "get_job_manifest",
             "description": "Read the immutable job identity, cutoff, hashes, and expiry.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -267,7 +285,11 @@ class EvidenceMcpServer:
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            if name == "get_job_manifest":
+            if name == "measure_price_window":
+                payload = {"measurement": self._gateway.measure_price_window(**arguments)}
+            elif name == "project_price_leg":
+                payload = {"measurement": self._gateway.project_price_leg(**arguments)}
+            elif name == "get_job_manifest":
                 payload = {"manifest": self._gateway.get_job_manifest()}
             elif name == "get_market_core":
                 payload = {"core_context": self._gateway.get_market_core()}
@@ -433,6 +455,20 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
     def get_job_manifest() -> dict[str, Any]:
         """Read immutable job identity, cutoff, hashes, and expiry."""
         return payload("get_job_manifest", {})
+
+    @mcp.tool(structured_output=True)
+    def measure_price_window(older_seq: int, newer_seq: int) -> dict[str, Any]:
+        """Measure an explicit 1-100 bar frozen window; no trend/Setup classification."""
+        return payload("measure_price_window", {"older_seq": older_seq, "newer_seq": newer_seq})
+
+    @mcp.tool(structured_output=True)
+    def project_price_leg(start_seq: int, start_field: str, end_seq: int, end_field: str,
+                          origin_seq: int, origin_field: str) -> dict[str, Any]:
+        """Compute origin + (end - start) using frozen OHLC anchors, never recommend a target."""
+        return payload("project_price_leg", {
+            "start_seq": start_seq, "start_field": start_field, "end_seq": end_seq,
+            "end_field": end_field, "origin_seq": origin_seq, "origin_field": origin_field,
+        })
 
     @mcp.tool(structured_output=True)
     def get_market_core() -> dict[str, Any]:

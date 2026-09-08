@@ -157,6 +157,8 @@ def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) 
     assert "--json" in command
     assert 'forced_login_method="chatgpt"' in command
     assert "features.shell_tool=false" in command
+    for feature in ("apps", "multi_agent", "memories", "hooks", "goals", "remote_plugin"):
+        assert f"features.{feature}=false" in command
     assert 'web_search="disabled"' in command
     assert "tools.view_image=false" not in command
     assert captured["kwargs"]["stdin"] is subprocess.DEVNULL

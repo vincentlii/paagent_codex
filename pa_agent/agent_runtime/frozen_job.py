@@ -265,7 +265,7 @@ class FrozenAgentJobBuilder:
         runtime = {
             "runtime_version": self._runtime_version,
             "agents_text": self._agents_text,
-            "skills": self._role_skills(role, repair=bool(repair_findings)),
+            "skills": self._role_skills(role, repair=bool(repair_findings), context=frozen_core),
             "backend_runtime_identity": runtime_identity,
             "model": model,
             "reasoning_effort": reasoning_effort,
@@ -368,14 +368,14 @@ class FrozenAgentJobBuilder:
             ):
                 raise ValueError("higher-timeframe evidence exceeds frozen cutoff")
 
-    def _role_skills(self, role: AgentRole, *, repair: bool) -> dict[str, str]:
+    def _role_skills(self, role: AgentRole, *, repair: bool, context: Mapping[str, Any]) -> dict[str, str]:
+        from pa_agent.agent_runtime.execution_contract import skill_key
+
         try:
-            selected = {role: self._skill_documents[role]}
             if repair:
-                selected["draft_pointer_repair"] = self._skill_documents[
-                    "draft_pointer_repair"
-                ]
-            return selected
+                return {"draft_pointer_repair": self._skill_documents["draft_pointer_repair"]}
+            key = skill_key(role, context)
+            return {key: self._skill_documents[key]}
         except KeyError as exc:
             raise ValueError(f"missing runtime skill for role: {role}") from exc
 

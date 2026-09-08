@@ -21,12 +21,14 @@ from pa_agent.agent_runtime.codex_worker import (
     CodexWorkerOutputError,
     CodexWorkerRateLimited,
     CodexWorkerResult,
+    CodexWorkerStopped,
     CodexWorkerTimeout,
     CodexWorkerUnavailable,
 )
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore, JobIntegrityError
 from pa_agent.agent_runtime.runtime_identity import codex_runtime_identity
 from pa_agent.ai.deepseek_client import AIUsage
+from pa_agent.ai.role_contracts import AnalysisRoleStop
 
 
 @dataclass(frozen=True)
@@ -344,6 +346,9 @@ class CodexSpoolService:
                 "error_type": type(exc).__name__,
                 "message": str(exc),
             }
+            if isinstance(exc, CodexWorkerStopped):
+                envelope["role_stop"] = exc.stop.model_dump(mode="json")
+                envelope["acceptance_key"] = job.manifest.acceptance_key
         except (JobIntegrityError, ValueError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
             envelope = {
                 "schema_version": 1,
@@ -395,6 +400,14 @@ def _decode_result(
     if raw.get("status") == "ok" and raw.get("acceptance_key") != acceptance_key:
         raise CodexWorkerOutputError("isolated result acceptance identity mismatch")
     if raw.get("status") != "ok":
+        if raw.get("error_type") == "CodexWorkerStopped":
+            if raw.get("acceptance_key") != acceptance_key or raw.get("runtime_identity") != runtime_identity:
+                raise CodexWorkerOutputError("isolated role stop identity mismatch")
+            try:
+                stop = AnalysisRoleStop.model_validate(raw.get("role_stop"))
+            except ValueError as exc:
+                raise CodexWorkerOutputError("isolated role stop is malformed") from exc
+            raise CodexWorkerStopped(stop)
         error_types = {
             "CodexWorkerAuthenticationError": CodexWorkerAuthenticationError,
             "CodexWorkerRateLimited": CodexWorkerRateLimited,

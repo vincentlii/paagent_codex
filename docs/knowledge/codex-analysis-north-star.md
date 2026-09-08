@@ -56,4 +56,10 @@ Dashboard 可以在不暴露凭据的前提下提交 allowlisted、版本化 Ana
 
 ## 当前边界
 
+阶段 4 的本地 Runtime / Skills / 必读矩阵和三角色自审见
+`docs/quality/phase4_runtime_acceptance.md`。result 封套携带原 Draft 或非决策停止对象；
+联合 Stage 2 使用显式 Skill 变体，仍复用 stage2 与唯一 materializer。独立 VPA、旧研究仲裁
+和修复角色不得互换。测量只做冻结锚点算术，回执不是新的 catalog fact ID。
+本阶段不改变正式 pipeline；真实 MCP SDK/CLI/Linux 与专业效果仍须后续验证。
+
 本地 Codex Analysis Backend 已存在，但 Analysis Profile UI 与真实 Codex 分析的 live evidence 仍待本阶段验证。未取得目标 VPS、真实账号、Frozen Snapshot 和 Paper 证据前，能力保持 `research-only`，生产默认 `deepseek_only`，不因实现存在而宣称模型、VPA 或交易结果已晋级。

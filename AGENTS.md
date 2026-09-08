@@ -1,5 +1,7 @@
 # AGENTS
 
+- 修改 Runtime、Skills、MCP、Worker 或联合编排前读 `docs/quality/phase4_runtime_acceptance.md`：联合 Stage 2 是 stage2 的显式 Skill 变体，不是研究仲裁；result 封套不替代唯一物化器；预算停止不得转成 No Trade 或 availability fallback；测量 digest 不是 catalog fact ID。真实 SDK/CLI/Linux 验证尚未完成，不得声称联合链路已启用。
+
 - 修改 PA/VPA 知识与召回前读 `docs/quality/phase3_knowledge_acceptance.md`：原文 knowledge 锚点禁止重新编号；案例和反证不得摘要替代；理论/产品禁令/Host Draft 协议分层，章节及别名必须随 Frozen Job 冻结。
 
 - 本轮联合分析升级必须先读 `docs/quality/joint_agent_implementation_plan.md`；其中明确区分新模式目标与尚未改变的旧运行协议，未接入验收不得宣称已实现。

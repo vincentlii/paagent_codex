@@ -87,7 +87,10 @@ def test_publisher_replaces_long_direct_prompt_with_bounded_core_context(tmp_pat
 
     assert len(encoded) < 32_768
     assert "x" * 100 not in encoded.decode("utf-8")
-    assert "previous_analysis" not in encoded.decode("utf-8")
+    initial_context = json.loads(job.request["messages"][1]["content"])["core_context"]
+    assert "previous_analysis" not in initial_context
+    assert initial_context["evidence_index"]["upstream_artifact_keys"] == ["previous_analysis"]
+    assert '"cycle"' not in encoded.decode("utf-8")
     assert job.core_context["previous_analysis"]["stage1_diagnosis"]["cycle"] == "trend"
     assert job.knowledge_documents["market.txt"]["sections"][0]["text"] == (
         "Brooks market cycle knowledge"

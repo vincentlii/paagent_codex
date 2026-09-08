@@ -27,6 +27,7 @@ def _job(
     role: str = "stage1",
     attempt: int = 1,
     runtime_identity: dict | None = None,
+    core_context: dict | None = None,
 ):
     return _builder().build(
         task_id="task-1",
@@ -76,6 +77,7 @@ def _job(
                 "cutoff_ts_open": 1_725_000_000_000,
             },
             "experience_entries": [{"summary": "bounded history"}],
+            **(core_context or {}),
         },
     )
 
