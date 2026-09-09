@@ -21,6 +21,10 @@ verification_scope:
 
 ## 联合分析升级进行中
 
+阶段 7 当前为部分实现：离线研究协议与完整证据评审工具已新增，真实 Host adapter、
+调查权限切换和冻结资源/outcome 自动绑定仍待补；不能视为完整验收或进入下一阶段。
+详见 [阶段 7 实现与未完成项](../quality/phase7_research_acceptance.md)。
+
 阶段 5 联合链路与阶段 6 交付后 Paper 已完成本地实现；最近阶段 6 的 188 项必要离线检查通过，
 三角色自审及边界见 [阶段 6 验收](../quality/phase6_delivery_paper_acceptance.md)。下一步为阶段 7。
 下文旧日期和证据是历史状态，不代表这次 VPS 已更新；默认权限、部署和专业效果均未晋级。

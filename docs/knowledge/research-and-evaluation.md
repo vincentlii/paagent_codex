@@ -13,6 +13,10 @@ verification_scope: not-verified
 
 # 研究与评价
 
+新版 `analysis_study_v1` 的本地实现与限制见 [阶段 7 报告](../quality/phase7_research_acceptance.md)。
+它区分 Backend、联合和调查三个问题，但实际 fixed/agentic 执行权限尚未接入；
+不能把协议登记成功当作纯 Agent 调查因果实验已可用。旧协议语义保持不变。
+
 ## 三层验收
 
 | 层级 | 核心问题 | 证据 |
