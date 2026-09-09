@@ -346,6 +346,23 @@ def test_same_snapshot_does_not_repeat_paper_market_observation(tmp_path) -> Non
     assert len(paper.observed) == 1
 
 
+def test_paper_expiry_runs_on_cached_snapshot_and_feed_failure(tmp_path, monkeypatch) -> None:
+    paper = _PaperExecution()
+    sweeps = []
+    paper.expire_pending = lambda: sweeps.append(True)
+    monitor, source, _audit, _service, _clock = _monitor(
+        tmp_path, source=_PaperSource(), paper_execution=paper,
+    )
+    monitor.poll_once()
+    monitor.poll_once()
+    def failed_fetch(*args):
+        raise OSError("feed unavailable")
+    monkeypatch.setattr(source, "latest_snapshot", failed_fetch)
+    assert monitor.poll_once().failed == 1
+    assert len(sweeps) == 3
+    assert len(paper.observed) == 1
+
+
 def test_paper_execution_does_not_submit_when_analysis_audit_failed(tmp_path) -> None:
     paper = _PaperExecution()
     monitor, _source, _audit, service, _clock = _monitor(

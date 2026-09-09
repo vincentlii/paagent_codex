@@ -14,7 +14,8 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
 - `AnalysisPipelineIdentity`：显式版本化运行协议，与 Backend 正交。阶段 5 的 `pa_vpa_joint`
   由 Stage 1 / Validator / Router → 独立 VPA → 联合 Stage 2 / 原校验组成；旧 off/shadow/研究
   协议不重标，默认配置不变。没有 PA baseline 订单和研究仲裁；`AnalysisRoleStop` 表示非决策停止。
-  当前本地实现、验收证据及未完成执行边界见 `docs/quality/phase5_joint_pipeline_acceptance.md`。
+  联合链路见 `docs/quality/phase5_joint_pipeline_acceptance.md`；阶段 6 本地交付及执行验收见
+  `docs/quality/phase6_delivery_paper_acceptance.md`。Host 保存交付时间，Paper 在实际激活后、下一主周期收盘前观察成交；柱内或缺失窗口保持不确定，TP2 不进入新版执行。默认未启用，未部署。
 - `AnalysisRequest`：一次分析意图，包含品种、周期、模式和调用策略。
 - `ResolvedInstrumentIdentity`：数据源实际解析出的 provider、symbol、venue、
   market、timezone；一次分析内不可漂移。

@@ -211,6 +211,7 @@ class HeadlessMonitor:
         finally:
             with self._lock:
                 self._data_futures.difference_update(futures)
+            self._expire_paper_pending()
         return PollCycleResult(
             prepared=prepared,
             accepted=accepted,
@@ -242,11 +243,21 @@ class HeadlessMonitor:
                     control,
                     verify_latest=True,
                 )
+            if paused:
+                self._expire_paper_pending()
             self._publish_runtime_status(paused=paused, control_error=control_error)
             wait_seconds = heartbeat_interval
             if not paused:
                 wait_seconds = min(wait_seconds, max(0.05, next_poll_at - self._monotonic()))
             self._stop.wait(wait_seconds)
+
+    def _expire_paper_pending(self) -> None:
+        expire = getattr(self._paper_execution, "expire_pending", None)
+        if callable(expire):
+            try:
+                expire()
+            except Exception:
+                logger.exception("Paper expiry reconciliation failed; analysis remains isolated")
 
     def _apply_control(
         self,

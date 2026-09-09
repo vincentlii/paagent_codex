@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -55,7 +56,28 @@ class PaperExecutionCoordinator:
     ) -> int:
         if not self.enabled:
             return 0
-        return self._broker("pa-official").observe_market(spec, timeframe, bars)
+        count = self._broker("pa-official").observe_market(spec, timeframe, bars)
+        # Shared frozen market store; each versioned account advances its own orders.
+        for account in self._pipeline_accounts():
+            self._broker(account).observe_market(spec, timeframe, bars)
+            self._broker(account).expire_pending(spec, timeframe, now_ms=int(datetime.now(timezone.utc).timestamp() * 1000))
+        return count
+
+    def _pipeline_accounts(self) -> list[str]:
+        # Ensure the ledger exists even before the first accepted plan.
+        self._broker("pa-official")
+        with self._connect() as connection:
+            return [row[0] for row in connection.execute(
+                "SELECT account_id FROM paper_accounts WHERE account_id IN "
+                "('pipeline-pa_only', 'pipeline-pa_shadow', 'pipeline-pa_vpa_joint')")]
+
+    def expire_pending(self) -> int:
+        """Clock-only sweep after observations, including paused/failed-feed cycles."""
+        if not self.enabled:
+            return 0
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        return sum(self._broker(account).expire_pending(now_ms=now_ms)
+                   for account in self._pipeline_accounts())
 
     def submit_official(
         self,
@@ -66,6 +88,10 @@ class PaperExecutionCoordinator:
     ) -> ExecutionAction:
         account_id = "pa-official"
         arm = "pa_official"
+        pipeline = getattr(record, "analysis_pipeline", None)
+        if pipeline is not None:
+            arm = pipeline.pipeline
+            account_id = f"pipeline-{arm}"
         if not self.enabled:
             return ExecutionAction(account_id, arm, "disabled")
         existing = self._existing_action(account_id, arm, task_id)
@@ -83,11 +109,15 @@ class PaperExecutionCoordinator:
         timeframe = str(getattr(getattr(record, "meta", None), "timeframe", "") or "")
         try:
             broker.observe_market(spec, timeframe, closed_bars_from_record(record))
+            if pipeline is not None:
+                # Recheck at activation, after any stored-bar replay/IO delay.
+                plan = official_paper_plan(record, spec, dedupe_key=task_id)
             broker.supersede_pending(
                 spec,
                 timeframe,
                 as_of_bar_ts=decision_bar_ts(record),
                 excluding_dedupe_key=task_id,
+                expires_at_ms=(record.analysis_timing.decision_expires_at_ms if pipeline is not None else None),
             )
         except ValueError as exc:
             action = ExecutionAction(
@@ -124,9 +154,7 @@ class PaperExecutionCoordinator:
             str(job.get("run_id") or ""): str(job.get("task_id") or "")
             for job in successful_jobs
             if job.get("run_id") and job.get("task_id")
-            and self._existing_action(
-                "pa-official", "pa_official", str(job.get("task_id"))
-            ) is None
+            and not self._has_official_disposition(str(job.get("task_id")))
         }
         if not pending:
             return ()
@@ -241,7 +269,7 @@ class PaperExecutionCoordinator:
     ) -> ExecutionAction:
         broker = self._broker(account_id)
         try:
-            order = broker.submit(plan, spec)
+            order = broker.submit(plan, spec, activate_now=plan.available_at_ms is not None)
         except ValueError as exc:
             broker.record_rejection(plan, spec, str(exc))
             logger.warning("Paper plan rejected for %s: %s", account_id, exc)
@@ -315,6 +343,15 @@ class PaperExecutionCoordinator:
                 if row["treatment_received"] is not None else None
             ),
         )
+
+    def _has_official_disposition(self, task_id: str) -> bool:
+        with self._connect() as connection:
+            self._ensure_disposition_schema(connection)
+            return connection.execute(
+                "SELECT 1 FROM paper_decisions WHERE dedupe_key = ? AND account_id IN "
+                "('pa-official', 'pipeline-pa_only', 'pipeline-pa_shadow', 'pipeline-pa_vpa_joint') LIMIT 1",
+                (task_id,),
+            ).fetchone() is not None
 
     def _broker(self, account_id: str) -> PaperBroker:
         with self._lock:

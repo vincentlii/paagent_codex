@@ -7,6 +7,8 @@
 范围说明：下列旧 Joint/soft/Shadow 约束指旧研究仲裁及旧生产协议；ADR-0025 授权的新
 显式 pa_vpa_joint 使用原 stage2 角色和唯一物化器，不是放开研究 arbiter 的订单权限。
 新版额外验收项与当前非 live 证据见 `phase5_joint_pipeline_acceptance.md`，不代表生产晋级。
+新版交付后执行必须同时符合 `phase6_delivery_paper_acceptance.md`：Host 时间、固定 expiry、
+入场限价保护、柱内/缺失窗口 censored；`paper_latency_v3` 不与旧 v1/v2 混合统计。
 
 1. 已接受结构化 Claim 的程序事实矛盾为 0。
 2. VPA 创建 Setup、翻转方向或改写胜率的权限越界为 0。

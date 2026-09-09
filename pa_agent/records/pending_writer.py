@@ -120,6 +120,24 @@ class PendingWriter:
             audit = self._audit_store.record_analysis(record, record_path=path)
             audit_ok = audit.ok
             audit_error = audit.error
+            timing = record.analysis_timing
+            if audit_ok and timing is not None and timing.validated_at_ms is not None and timing.result_available_at_ms is None:
+                # The full candidate and its index are durable before availability
+                # is observed. Publish the receipt before releasing the caller.
+                from pa_agent.records.schema import AnalysisTiming
+                available = int(datetime.now(timezone.utc).timestamp() * 1000)
+                try:
+                    record.analysis_timing = AnalysisTiming.model_validate({
+                        **timing.model_dump(), "result_available_at_ms": available,
+                    })
+                except ValueError:
+                    return PersistResult(ok=False, path=path, audit_ok=False, audit_error="delivery clock conflict")
+                ok = self._write_json(path, self._sanitize(dump_record(record), self._api_key))
+                if ok:
+                    audit = self._audit_store.record_analysis(record, record_path=path)
+                    audit_ok, audit_error = audit.ok, audit.error
+                if not ok or not audit_ok:
+                    record.analysis_timing = timing
         return PersistResult(ok=ok, path=path, audit_ok=audit_ok, audit_error=audit_error)
 
     def save_partial(self, record: AnalysisRecord | None, reason: str) -> PersistResult | None:

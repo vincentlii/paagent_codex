@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -16,6 +17,7 @@ Side = Literal["long", "short"]
 PaperOrderType = Literal["market", "limit", "breakout"]
 PAPER_SIMULATION_VERSION = "paper_ohlc_v2"
 LEGACY_PAPER_SIMULATION_VERSION = "paper_ohlc_v1"
+LATENCY_PAPER_SIMULATION_VERSION = "paper_latency_v3"
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,8 @@ class PaperTradePlan:
     take_profit_price_2: float | None
     created_bar_ts: int
     dedupe_key: str | None = None
+    available_at_ms: int | None = None
+    expires_at_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -137,7 +141,7 @@ class PaperBroker:
                 (self._account_id, float(initial_equity), float(initial_equity)),
             )
 
-    def submit(self, plan: PaperTradePlan, spec: InstrumentSpec) -> PaperOrder:
+    def submit(self, plan: PaperTradePlan, spec: InstrumentSpec, *, activate_now: bool = False) -> PaperOrder:
         self._validate_plan(plan, spec)
         with self._connect() as connection:
             self._ensure_schema(connection)
@@ -151,6 +155,13 @@ class PaperBroker:
             ).fetchone()
             if existing is not None:
                 return self._paper_order(existing)
+            if activate_now and plan.available_at_ms is not None:
+                # Observe activation after acquiring the write lock, not before IO.
+                now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                if now_ms < plan.available_at_ms:
+                    raise ValueError("paper activation clock precedes availability")
+                plan = replace(plan, available_at_ms=now_ms)
+                self._validate_plan(plan, spec)
             equity = float(connection.execute(
                 "SELECT equity FROM paper_accounts WHERE account_id = ?", (self._account_id,)
             ).fetchone()[0])
@@ -171,8 +182,8 @@ class PaperBroker:
                     symbol, timeframe, side, order_type, entry_price, stop_price,
                     take_profit_price, take_profit_price_2, created_bar_ts, dedupe_key,
                     quantity, contract_multiplier, instrument_spec_json,
-                    simulation_version, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                    simulation_version, available_at_ms, expires_at_ms, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     order_id, self._account_id, plan.run_id, plan.arm, spec.provider,
@@ -181,7 +192,8 @@ class PaperBroker:
                     plan.take_profit_price_2, int(plan.created_bar_ts), plan.dedupe_key,
                     sized.quantity, spec.contract_multiplier,
                     json.dumps(spec.to_dict(), sort_keys=True, separators=(",", ":")),
-                    PAPER_SIMULATION_VERSION,
+                    LATENCY_PAPER_SIMULATION_VERSION if plan.available_at_ms is not None else PAPER_SIMULATION_VERSION,
+                    plan.available_at_ms, plan.expires_at_ms,
                 ),
             )
             self._event(connection, order_id, "submitted", None, {"sizing": asdict(sized)})
@@ -373,14 +385,18 @@ class PaperBroker:
         *,
         as_of_bar_ts: int,
         excluding_dedupe_key: str,
+        expires_at_ms: int | None = None,
     ) -> int:
         """Cancel stale unfilled plans after later market bars were replayed."""
         with self._connect() as connection:
             self._ensure_schema(connection)
             connection.commit()
             connection.execute("BEGIN IMMEDIATE")
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            if expires_at_ms is not None and now_ms >= expires_at_ms:
+                raise ValueError("replacement decision expired")
             rows = connection.execute(
-                "SELECT order_id FROM paper_orders WHERE account_id = ? "
+                "SELECT * FROM paper_orders WHERE account_id = ? "
                 "AND provider = ? AND venue = ? AND instrument_type = ? "
                 "AND symbol = ? AND timeframe = ? AND status = 'pending' "
                 "AND created_bar_ts <= ? AND COALESCE(dedupe_key, '') != ?",
@@ -391,6 +407,16 @@ class PaperBroker:
                 ),
             ).fetchall()
             for row in rows:
+                if row["simulation_version"] == LATENCY_PAPER_SIMULATION_VERSION:
+                    # The unobserved partial bar may have filled before replacement.
+                    connection.execute(
+                        "UPDATE paper_orders SET status = 'ambiguous', "
+                        "exit_reason = 'superseded_unobserved_window' WHERE order_id = ?",
+                        (row["order_id"],),
+                    )
+                    self._event(connection, row["order_id"], "ambiguous", now_ms,
+                                {"reason": "superseded_unobserved_window"})
+                    continue
                 connection.execute(
                     "UPDATE paper_orders SET status = 'cancelled', "
                     "exit_reason = 'superseded_by_new_analysis' WHERE order_id = ?",
@@ -414,6 +440,28 @@ class PaperBroker:
     ) -> None:
         if int(bar.ts_open) <= int(row["created_bar_ts"]):
             return
+        latency = str(row["simulation_version"]) == LATENCY_PAPER_SIMULATION_VERSION
+        bar_close = None
+        if latency and row["status"] == "pending":
+            from pa_agent.data.bar_close_wait import timeframe_to_seconds
+            from pa_agent.data.datetime_ts import ts_open_to_ms
+            bar_open = int(ts_open_to_ms(bar.ts_open))
+            bar_close = bar_open + int(timeframe_to_seconds(row["timeframe"]) * 1000)
+            available, expiry = int(row["available_at_ms"]), int(row["expires_at_ms"])
+            if bar_open >= expiry:
+                # An eligible closed bar was never evaluated; its fills are unknown.
+                self._missing_delivery_window(connection, row, expiry)
+                return
+            if bar_close <= available:
+                return
+            if bar_open < available or bar_close > expiry:
+                # OHLC cannot locate a touch within the eligible part of a bar.
+                if self._entry_fill(row, bar) is not None:
+                    connection.execute("UPDATE paper_orders SET status = 'ambiguous', exit_reason = 'delivery_window_intrabar' WHERE order_id = ?", (row["order_id"],))
+                    self._event(connection, row["order_id"], "ambiguous", int(bar.ts_open), {"reason": "delivery_window_intrabar"})
+                elif bar_close >= expiry:
+                    self._expire(connection, row, expiry)
+                return
         stored_spec = spec
         if row["instrument_spec_json"]:
             try:
@@ -428,6 +476,9 @@ class PaperBroker:
         if filled_this_bar:
             entry_fill = self._entry_fill(row, bar)
             if entry_fill is None:
+                if latency and bar_close >= int(row["expires_at_ms"]):
+                    self._expire(connection, row, int(row["expires_at_ms"]))
+                    return
                 self._event(connection, row["order_id"], "bar_observed", int(bar.ts_open), {"status": "pending"})
                 return
             fill_price, entry_timing = entry_fill
@@ -467,7 +518,7 @@ class PaperBroker:
         if (
             filled_this_bar
             and entry_timing == "intrabar"
-            and str(row["simulation_version"]) == PAPER_SIMULATION_VERSION
+            and str(row["simulation_version"]) in {PAPER_SIMULATION_VERSION, LATENCY_PAPER_SIMULATION_VERSION}
         ):
             connection.execute(
                 "UPDATE paper_orders SET status = 'ambiguous', "
@@ -481,7 +532,7 @@ class PaperBroker:
                 int(bar.ts_open),
                 {
                     "reason": "ambiguous_entry_bar",
-                    "simulation_version": PAPER_SIMULATION_VERSION,
+                    "simulation_version": row["simulation_version"],
                     "entry_price": fill_price,
                 },
             )
@@ -543,7 +594,39 @@ class PaperBroker:
                 or (side == "short" and bar.open <= entry)
                 else "intrabar"
             )
-        return self._with_slippage(base, buy=side == "long"), timing
+        price = self._with_slippage(base, buy=side == "long")
+        if row["simulation_version"] == LATENCY_PAPER_SIMULATION_VERSION and order_type == "limit":
+            price = min(price, entry) if side == "long" else max(price, entry)
+        return price, timing
+
+    def _expire(self, connection: sqlite3.Connection, row: sqlite3.Row, at_ms: int) -> None:
+        connection.execute("UPDATE paper_orders SET status = 'cancelled', exit_reason = 'decision_expired' WHERE order_id = ?", (row["order_id"],))
+        self._event(connection, row["order_id"], "cancelled", at_ms, {"reason": "decision_expired"})
+
+    def _missing_delivery_window(self, connection: sqlite3.Connection, row: sqlite3.Row, at_ms: int) -> None:
+        connection.execute("UPDATE paper_orders SET status = 'ambiguous', exit_reason = 'missing_delivery_window_bars' WHERE order_id = ?", (row["order_id"],))
+        self._event(connection, row["order_id"], "ambiguous", at_ms, {"reason": "missing_delivery_window_bars"})
+
+    def expire_pending(self, spec: InstrumentSpec | None = None, timeframe: str | None = None, *, now_ms: int) -> int:
+        """Bound pending lifetime even if the feed stops confirming closed bars.
+
+        Call after replaying available bars. Remaining expired orders have an
+        unobserved delivery window, so their outcome is censored, never 0R.
+        """
+        with self._connect() as connection:
+            self._ensure_schema(connection)
+            connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
+            query = ("SELECT * FROM paper_orders WHERE account_id = ? AND status = 'pending' "
+                     "AND simulation_version = ? AND expires_at_ms <= ?")
+            params = [self._account_id, LATENCY_PAPER_SIMULATION_VERSION, now_ms]
+            if spec is not None:
+                query += " AND provider = ? AND venue = ? AND instrument_type = ? AND symbol = ? AND timeframe = ?"
+                params.extend((spec.provider, spec.venue, spec.instrument_type, spec.symbol, timeframe))
+            rows = connection.execute(query, params).fetchall()
+            for row in rows:
+                self._missing_delivery_window(connection, row, now_ms)
+            return len(rows)
 
     def _exit_fill(
         self,
@@ -617,6 +700,14 @@ class PaperBroker:
 
     @staticmethod
     def _validate_plan(plan: PaperTradePlan, spec: InstrumentSpec) -> None:
+        if plan.available_at_ms is not None or plan.expires_at_ms is not None:
+            from pa_agent.data.bar_close_wait import timeframe_to_seconds
+            if any(type(value) is not int or value < 0 for value in (plan.available_at_ms, plan.expires_at_ms)):
+                raise ValueError("paper delivery timing must contain non-negative UTC milliseconds")
+            if plan.available_at_ms >= plan.expires_at_ms:
+                raise ValueError("paper decision expired before availability")
+            if "M" in plan.timeframe or not timeframe_to_seconds(plan.timeframe):
+                raise ValueError("paper timing requires a fixed-duration timeframe")
         if not plan.run_id or not plan.arm or not plan.symbol or not plan.timeframe:
             raise ValueError("paper trade plan identity is incomplete")
         if plan.symbol.upper() != spec.symbol.upper():
@@ -711,6 +802,9 @@ class PaperBroker:
             str(row[1])
             for row in connection.execute("PRAGMA table_info(paper_orders)").fetchall()
         }
+        for column in ("available_at_ms", "expires_at_ms"):
+            if column not in existing:
+                connection.execute(f"ALTER TABLE paper_orders ADD COLUMN {column} INTEGER")
         if "dedupe_key" not in existing:
             connection.execute("ALTER TABLE paper_orders ADD COLUMN dedupe_key TEXT")
         if "evaluated_through_ts" not in existing:
@@ -787,6 +881,8 @@ class PaperBroker:
                                  if row["take_profit_price_2"] is not None else None),
             created_bar_ts=int(row["created_bar_ts"]),
             dedupe_key=row["dedupe_key"],
+            available_at_ms=row["available_at_ms"],
+            expires_at_ms=row["expires_at_ms"],
         )
         return PaperOrder(
             order_id=row["order_id"], status=row["status"],

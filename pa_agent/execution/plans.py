@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Any
 
 from pa_agent.data.base import KlineBar
@@ -63,10 +65,14 @@ def official_paper_plan(
     spec: InstrumentSpec,
     *,
     dedupe_key: str,
+    now_ms: int | None = None,
 ) -> PaperTradePlan | None:
     """Return only a production PA decision; Shadow VPA never becomes authority."""
     outcome = _outcome(record)
-    if outcome.get("official_path") != "pa_only":
+    pipeline = _field(record, "analysis_pipeline")
+    pipeline_name = _field(pipeline, "pipeline")
+    joint = pipeline_name == "pa_vpa_joint"
+    if outcome.get("official_path") != "pa_only" and not (joint and outcome.get("official_path") == "joint"):
         raise ValueError("official paper execution requires PA-only authority")
     if str(outcome.get("effective_vpa_mode") or "off") == "soft":
         raise ValueError("research soft output cannot enter the official paper account")
@@ -74,17 +80,53 @@ def official_paper_plan(
         raise ValueError("experiment arm cannot enter the official paper account")
     if _field(record, "joint_stage2") or _field(record, "joint_decision"):
         raise ValueError("Joint fields cannot enter the official paper account")
+    if joint and outcome.get("official_path") == "pa_only" and _decision(record).get("order_type") != _NO_TRADE:
+        raise ValueError("joint pipeline cannot execute a PA-only fallback candidate")
     stage1 = _field(record, "stage1_diagnosis", {})
     if not isinstance(stage1, Mapping) or stage1.get("gate_result") != "proceed":
         decision = _decision(record)
         if str(decision.get("order_type") or "") != _NO_TRADE:
             raise ValueError("official order requires a proceeded PA gate")
-    return _plan_from_decision(
+    delivery = None
+    if pipeline is not None:
+        from pa_agent.records.schema import AnalysisTiming
+        from pa_agent.config.analysis_pipeline import AnalysisPipelineIdentity
+        from pa_agent.data.bar_close_wait import timeframe_to_seconds
+        from pa_agent.data.datetime_ts import ts_open_to_ms
+        AnalysisPipelineIdentity.model_validate(pipeline.model_dump() if hasattr(pipeline, "model_dump") else pipeline)
+        timing = _field(record, "analysis_timing")
+        if timing is None:
+            raise ValueError("new pipeline requires persisted delivery timing")
+        timing = AnalysisTiming.model_validate(timing.model_dump() if hasattr(timing, "model_dump") else timing)
+        now = int(datetime.now(timezone.utc).timestamp() * 1000) if now_ms is None else now_ms
+        timeframe = _field(_field(record, "meta"), "timeframe")
+        duration = None if "M" in str(timeframe) else timeframe_to_seconds(timeframe)
+        if timing.result_available_at_ms is None or timing.decision_expires_at_ms is None or not duration:
+            raise ValueError("new pipeline requires complete delivery timing")
+        expected_expiry = int(ts_open_to_ms(decision_bar_ts(record))) + 2 * duration * 1000
+        if timing.decision_expires_at_ms != expected_expiry:
+            raise ValueError("delivery expiry does not match frozen snapshot")
+        if now < timing.result_available_at_ms:
+            raise ValueError("delivery result is not yet available")
+        if now >= timing.decision_expires_at_ms:
+            raise ValueError("delivery decision expired")
+        if _field(record, "role_stop") is not None:
+            raise ValueError("stopped role is not executable")
+        if joint and outcome.get("official_path") == "joint":
+            stage2 = _field(record, "stage2_decision", {})
+            if (stage2.get("analysis_basis", {}).get("protocol_version") != "pa_vpa_stage2_draft_v1"
+                    or not _field(record, "vpa_evidence")):
+                raise ValueError("joint decision provenance is missing")
+        delivery = (now, timing.decision_expires_at_ms)
+    plan = _plan_from_decision(
         record,
         spec,
-        arm="pa_official",
+        arm=pipeline_name or "pa_official",
         dedupe_key=dedupe_key,
     )
+    if plan is not None and delivery is not None:
+        return replace(plan, available_at_ms=delivery[0], expires_at_ms=delivery[1], take_profit_price_2=None)
+    return plan
 
 
 def research_arm_plan(

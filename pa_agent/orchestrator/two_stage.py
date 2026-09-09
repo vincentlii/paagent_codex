@@ -888,6 +888,9 @@ class TwoStageOrchestrator:
     ) -> bool:
         """Persist a completed record and emit an event matching the write result."""
         self._apply_pipeline_record(record)
+        if record.analysis_pipeline is not None:
+            from pa_agent.execution.delivery import validated_delivery
+            record.analysis_timing = validated_delivery(record, now_ms=int(datetime.now().timestamp() * 1000))
         record.usage_total = _usage_from_call_attempts(record.call_attempts)
         result = self._pending_writer.save_full(record)
         ok = bool(getattr(result, "ok", True))
