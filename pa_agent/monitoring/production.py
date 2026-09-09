@@ -127,6 +127,7 @@ class ProductionOrchestratorFactory:
         return FullChainFallbackOrchestrator(
             primary=primary,
             cold_fallback=self._build_direct(),
+            pipeline_identity=settings.analysis_pipeline,
         )
 
     def _build_direct(self, *, client: Any | None = None) -> TwoStageOrchestrator:

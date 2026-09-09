@@ -163,6 +163,36 @@ def _usage_from_call_attempts(calls: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+_VPA_ROLE_PROTOCOL = {
+    "contract_version": "vpa_evidence_agent_protocol_v1",
+    "authority": "secondary_evidence_only",
+    "mandatory_sequence": [
+        "read_frozen_pa_hypotheses",
+        "read_all_mandatory_vpa_modules",
+        "read_exact_vpa_evidence_ids",
+        "compare_effort_result_and_sequence",
+        "report_support_challenge_or_uncertainty",
+    ],
+    "prohibitions": [
+        "do_not_rewrite_brooks_context",
+        "do_not_create_setup_or_trade",
+        "do_not_infer_unpublished_volume",
+        "do_not_upgrade_candidate_event_without_confirmation",
+    ],
+    "interpretation_contract": [
+        "Start with Evidence Catalog facts, then compare competing explanations; labels come last.",
+        "Comparator above/below records direction only; magnitude requires signed deviation evidence.",
+        "Sequence claims require explicit older and newer non-overlapping evidence IDs in chronological order.",
+        "Do not restate OHLC, volume or RVOL numbers in interpretation prose.",
+        "Every PA hypothesis receives exactly one supports, neutral, challenges or insufficient_data assessment.",
+        "A candidate event remains candidate or unresolved until follow-through or rejection evidence confirms it.",
+        "When no Entry Attempt exists, entry_timing_relation must be insufficient_data.",
+        "next_confirmation is pending_closed_bar only for a concrete unresolved VPA competition; otherwise not_applicable.",
+        "Available data must add genuine Effort/Result, sequence, acceptance/rejection or timing information, not paraphrase PA.",
+    ],
+}
+
+
 def _role_execution_status(
     result: StructuredRoleResult | None,
     *,
@@ -632,6 +662,7 @@ def _build_empty_record(
             "stage2": provider_draft_schema_digest(
                 "stage2",
                 decision_tree_path=decision_tree_path,
+                joint_stage2=getattr(getattr(settings, "analysis_pipeline", None), "pipeline", None) == "pa_vpa_joint",
             ),
         },
     }
@@ -856,6 +887,7 @@ class TwoStageOrchestrator:
         on_event: Callable[[OrchestratorEvent], None],
     ) -> bool:
         """Persist a completed record and emit an event matching the write result."""
+        self._apply_pipeline_record(record)
         record.usage_total = _usage_from_call_attempts(record.call_attempts)
         result = self._pending_writer.save_full(record)
         ok = bool(getattr(result, "ok", True))
@@ -872,6 +904,7 @@ class TwoStageOrchestrator:
         on_event: Callable[[OrchestratorEvent], None],
     ) -> bool:
         """Persist a partial record without confusing it with a completed result."""
+        self._apply_pipeline_record(record)
         record.usage_total = _usage_from_call_attempts(record.call_attempts)
         result = self._pending_writer.save_partial(record, reason)
         ok = result is not None and bool(getattr(result, "ok", True))
@@ -880,6 +913,301 @@ class TwoStageOrchestrator:
         elif not bool(getattr(result, "audit_ok", True)):
             on_event(OrchestratorEvent.RecordAuditFailed)
         return ok
+
+    def _apply_pipeline_record(self, record: AnalysisRecord) -> None:
+        """Version only explicitly configured runs; never relabel legacy research."""
+        pipeline = getattr(self._settings, "analysis_pipeline", None)
+        if pipeline is None:
+            return
+        record.analysis_pipeline = pipeline
+        if pipeline.pipeline != "pa_vpa_joint":
+            return
+        from pa_agent.ai.role_contracts import AnalysisRoleStop
+
+        failure = record.exception or {}
+        raw_stop = failure.get("role_stop")
+        if raw_stop is not None:
+            stop = AnalysisRoleStop.model_validate(raw_stop)
+        elif record.run_outcome.get("status") in {
+            "unavailable_provider",
+            "invalid_model_output",
+            "unavailable_input",
+        }:
+            failed_role = failure.get("stage", "stage1")
+            if failed_role == "preflight":
+                failed_role = "stage1"  # Stage 1 could not start; preflight is not a model role.
+            stop = AnalysisRoleStop(
+                role=failed_role,
+                status="review_required"
+                if failure.get("code") == "joint_upstream_invalid"
+                else "incomplete",
+                reason=str(failure.get("message") or "Required analysis did not complete"),
+            )
+        else:
+            stop = None
+        if stop is not None:
+            record.role_stop = stop
+            record.role_statuses[stop.role] = stop.status
+            record.stage2_decision = None
+            record.pa_baseline_stage2 = None
+            record.joint_stage2 = None
+            record.joint_decision = None
+            record.run_outcome = {
+                **record.run_outcome,
+                "status": stop.status,
+                "official_path": "none",
+                "reason": stop.reason,
+            }
+        elif record.stage2_decision is not None and record.vpa_evidence is not None:
+            record.run_outcome = {**record.run_outcome, "official_path": "joint"}
+        # model_copy does not validate updates; enforce the non-decision invariant.
+        AnalysisRecord.model_validate(record.model_dump())
+
+    def _joint_direct_contract(self, role: str, schema: dict, messages: list[dict]) -> dict:
+        """Direct has the same stop semantics; Codex already has a transport envelope."""
+        from pa_agent.ai.role_contracts import AnalysisRoleStop
+
+        pipeline = getattr(self._settings, "analysis_pipeline", None)
+        if (
+            pipeline is None
+            or pipeline.pipeline != "pa_vpa_joint"
+            or self._analysis_backend.backend_id == "codex_agent"
+        ):
+            return schema
+        marker = "ANALYSIS_ROLE_STOP_CONTRACT"
+        if not any(marker in str(message.get("content", "")) for message in messages):
+            messages.append(
+                {
+                    "role": "user",
+                    "content": marker
+                    + "\n"
+                    + "正常输出当前角色 Draft。必要资源缺失返回 analysis_role_stop_v1 / incomplete；"
+                    "必须推翻已验收上游才能继续时返回 review_required，不自动重跑或伪造 No Trade。"
+                    "停止对象不含订单，evidence_refs 使用空数组。停止 Schema："
+                    + json.dumps(AnalysisRoleStop.model_json_schema(), ensure_ascii=False),
+                }
+            )
+        draft_schema = copy.deepcopy(schema)
+        definitions = draft_schema.pop("$defs", None)
+        transport = {"anyOf": [draft_schema, AnalysisRoleStop.model_json_schema()]}
+        if definitions is not None:
+            transport["$defs"] = definitions  # Draft references stay root-relative.
+        return transport
+
+    @staticmethod
+    def _check_direct_stop(reply: Any, role: str) -> None:
+        from pa_agent.ai.role_contracts import AnalysisRoleStop, AnalysisRoleStopped
+        from pa_agent.ai.provider_failures import ProviderFailure
+
+        try:
+            payload = json.loads(reply.content)
+        except (TypeError, json.JSONDecodeError):
+            return  # Normal schema/parse failure belongs to the existing Validator.
+        if (
+            not isinstance(payload, dict)
+            or payload.get("protocol_version") != "analysis_role_stop_v1"
+        ):
+            return
+        try:
+            stop = AnalysisRoleStop.model_validate(payload)
+            if stop.role != role or stop.evidence_refs:
+                raise ValueError("Direct stop requires matching role and empty optional references")
+        except ValueError as exc:
+            raise ModelCallFailure(
+                ProviderFailure(
+                    kind="invalid_request", message="Invalid role stop", retryable=False
+                ),
+                original=exc,
+            ) from exc
+        raise ModelCallFailure(
+            ProviderFailure(kind="invalid_request", message=stop.reason, retryable=False),
+            original=AnalysisRoleStopped(stop),
+        )
+
+    def _run_predecision_vpa(
+        self,
+        record: AnalysisRecord,
+        frame: KlineFrame,
+        cancel_token: CancelToken,
+        on_event: Callable,
+        assembler: Any,
+        *,
+        frozen_vpa_catalog: dict | None,
+        htf_context: dict | None,
+    ) -> tuple[AnalysisRecord, VpaEvidenceReport | None, dict | None]:
+        """The new pipeline's VPA role, before any Stage 2 order exists."""
+        from pa_agent.ai.prompt_assembler import VPA_KNOWLEDGE_MODULES, VpaPromptBuildError
+        from pa_agent.ai.vpa_context_profile import build_vpa_knowledge_context
+        from pa_agent.ai.vpa_measurements import (
+            build_vpa_evidence_catalog,
+            validate_frozen_vpa_catalog,
+        )
+
+        hypotheses = compile_pa_handoff(record.stage1_diagnosis, None, frame)
+        record.pa_hypotheses = hypotheses.model_dump(mode="json")
+        catalog = None
+        try:
+            catalog = (
+                validate_frozen_vpa_catalog(frame, frozen_vpa_catalog)
+                if frozen_vpa_catalog is not None
+                else build_vpa_evidence_catalog(frame)
+            )
+            record.vpa_catalog = copy.deepcopy(catalog)
+            settings = self._settings.model_copy(deep=True)
+            settings.prompt.vpa_mode = "shadow"
+            settings.prompt.vpa_enabled = True
+            role_assembler = assembler.clone_with_prompt_settings(
+                settings.prompt, vpa_evidence_catalog=catalog
+            )
+            messages = role_assembler.build_vpa_evidence_report(
+                frame, record.stage1_diagnosis, record.pa_hypotheses, htf_context=htf_context
+            )
+        except (ValueError, VpaPromptBuildError) as exc:
+            record.exception = {
+                "type": "invalid_input",
+                "stage": "vpa_evidence",
+                "message": str(exc),
+            }
+            record.run_outcome = {"status": "unavailable_input", "official_path": "none"}
+            self._persist_partial(record, "joint_vpa_input", on_event)
+            return record, None, catalog
+        client, isolated = self._clone_role_client(settings.provider)
+        if not isolated:
+            record.exception = {
+                "type": "isolation_error",
+                "stage": "vpa_evidence",
+                "message": "Independent VPA client unavailable",
+            }
+            record.run_outcome = {"status": "unavailable_provider", "official_path": "none"}
+            self._persist_partial(record, "joint_vpa_isolation", on_event)
+            return record, None, catalog
+        backend = self._analysis_backend.bind_role(client=client, settings=settings)
+        vpa_schema = self._joint_direct_contract("vpa_evidence", VPA_EVIDENCE_SCHEMA, messages)
+        context = {
+            "task_id": record.meta.run_id,
+            "symbol": frame.symbol,
+            "timeframe": frame.timeframe,
+            "stage1_diagnosis": copy.deepcopy(record.stage1_diagnosis),
+            "pa_hypotheses": copy.deepcopy(record.pa_hypotheses),
+            "role_evidence": copy.deepcopy(catalog),
+            "vpa_catalog_id": catalog["catalog_id"],
+            "vpa_data_status": catalog.get("data_status"),
+            "allowed_knowledge_ids": [
+                VPA_KNOWLEDGE_MODULES[name]
+                for name in build_vpa_knowledge_context(record.stage1_diagnosis).module_names
+            ],
+            "role_protocol": copy.deepcopy(_VPA_ROLE_PROTOCOL),
+        }
+
+        def call_api(current_messages: list[dict]) -> Any:
+            if cancel_token.is_set():
+                from pa_agent.ai.provider_failures import ProviderFailure
+
+                raise ModelCallFailure(
+                    ProviderFailure(kind="cancelled", message="Cancelled before VPA")
+                )
+            profile = self._thinking_profile("vpa_evidence")
+            try:
+                result = backend.run(
+                    AnalysisRoleRequest(
+                        role="vpa_evidence",
+                        messages=current_messages,
+                        schema=vpa_schema,
+                        thinking=profile.thinking,
+                        reasoning_effort=profile.reasoning_effort,
+                        snapshot_hash=catalog["snapshot_hash"],
+                        cutoff_ts_open=int(frame.bars[0].ts_open),
+                        agent_context=context,
+                    ),
+                    on_reasoning_token=None,
+                    on_content_token=None,
+                    cancel_token=cancel_token,
+                )
+            except ModelCallFailure as exc:
+                record.call_attempts.append(
+                    _call_attempt_entry(
+                        arm="vpa_evidence",
+                        stage="vpa_evidence",
+                        attempt=1
+                        + sum(c.get("stage") == "vpa_evidence" for c in record.call_attempts),
+                        messages=current_messages,
+                        status="request_failed",
+                        error_type=exc.failure.kind,
+                    )
+                )
+                raise
+            record.call_attempts.append(
+                _call_attempt_entry(
+                    arm="vpa_evidence",
+                    stage="vpa_evidence",
+                    attempt=1 + sum(c.get("stage") == "vpa_evidence" for c in record.call_attempts),
+                    messages=current_messages,
+                    reply=result.reply,
+                )
+            )
+            record.role_responses.setdefault("vpa_evidence", []).append(
+                copy.deepcopy(result.reply.raw)
+            )
+            self._check_direct_stop(result.reply, "vpa_evidence")
+            return result.reply
+
+        try:
+            result = run_structured_role(
+                role="vpa_evidence",
+                messages=messages,
+                call_api=call_api,
+                validate=lambda raw: validate_vpa_evidence(
+                    raw, catalog=catalog, pa_hypotheses=hypotheses
+                ),
+                max_repairs=min(1, self._validation_settings().retry_max)
+                if self._validation_settings().retry_enabled
+                else 0,
+            )
+        except FullChainFallbackRequired:
+            raise
+        except ModelCallFailure as exc:
+            record.exception = self._provider_failure_payload(exc, stage="vpa_evidence")
+            record.run_outcome = {
+                "status": "cancelled"
+                if exc.failure.kind == "cancelled"
+                else "unavailable_provider",
+                "official_path": "none",
+            }
+            self._persist_partial(record, "joint_vpa_failure", on_event)
+            return record, None, catalog
+        record.validation_audit.extend(
+            {"stage": "vpa_evidence", **event} for event in result.validation_events
+        )
+        record.role_statuses["vpa_evidence"] = _role_execution_status(result, applicable=True)
+        _apply_validation_to_call_attempts(
+            record.call_attempts,
+            arm="vpa_evidence",
+            stage="vpa_evidence",
+            validation_events=list(result.validation_events),
+            result=Ok(result.obj or {})
+            if result.ok
+            else ValidationError(
+                category="c",
+                stage="vpa_evidence",
+                raw_text="",
+                message="; ".join(result.hard_errors),
+            ),
+        )
+        if cancel_token.is_set() or not result.ok:
+            record.exception = {
+                "type": "validation_error",
+                "stage": "vpa_evidence",
+                "message": "; ".join(result.hard_errors) or "Cancelled after VPA",
+            }
+            record.run_outcome = {
+                "status": "cancelled" if cancel_token.is_set() else "invalid_model_output",
+                "official_path": "none",
+            }
+            self._persist_partial(record, "joint_vpa_incomplete", on_event)
+            return record, None, catalog
+        report = VpaEvidenceReport.model_validate(result.obj["vpa_report"])
+        record.vpa_evidence = report.model_dump(mode="json")
+        return record, report, catalog
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -942,6 +1270,12 @@ class TwoStageOrchestrator:
             if configured_mode == "soft" and self._allow_research_joint
             else resolve_production_vpa_mode(getattr(self._settings, "prompt", None))
         )
+        pipeline = getattr(self._settings, "analysis_pipeline", None)
+        joint_enabled = pipeline is not None and pipeline.pipeline == "pa_vpa_joint"
+        if pipeline is not None and self._allow_research_joint:
+            raise ValueError("versioned analysis pipeline cannot be mixed with legacy research")
+        if pipeline is not None:
+            mode = {"pa_only": "off", "pa_shadow": "shadow", "pa_vpa_joint": "off"}[pipeline.pipeline]
         if mode in {"shadow", "soft"}:
             return self._submit_vpa_roles(
                 frame,
@@ -1081,6 +1415,12 @@ class TwoStageOrchestrator:
         frozen_snapshot_hash = analysis_catalog.snapshot_hash
         frozen_cutoff_ts_open = int(frame.bars[0].ts_open)
         run_assembler = self._assembler.clone_with_analysis_fact_catalog(analysis_catalog)
+        joint_catalog = None
+        joint_report = None
+        if pipeline is not None:
+            # Stage 1 remains price-only even when an old vpa_mode is present.
+            pa_prompt = self._settings.prompt.model_copy(update={"vpa_mode": "off", "vpa_enabled": False})
+            run_assembler = run_assembler.clone_with_prompt_settings(pa_prompt)
 
         # ── Step 3: Stage 1 started ───────────────────────────────────────────
         on_event(OrchestratorEvent.Stage1Started)
@@ -1113,9 +1453,10 @@ class TwoStageOrchestrator:
 
         previous_context = None
         if previous_record is not None:
+            from pa_agent.ai.vpa_sanitizer import price_only_history
             previous_context = {
-                "stage1_diagnosis": copy.deepcopy(previous_record.stage1_diagnosis),
-                "stage2_decision": copy.deepcopy(previous_record.stage2_decision),
+                "stage1_diagnosis": price_only_history(previous_record.stage1_diagnosis),
+                "stage2_decision": price_only_history(previous_record.stage2_decision),
             }
         stage1_agent_context = {
             "task_id": record.meta.run_id,
@@ -1178,7 +1519,8 @@ class TwoStageOrchestrator:
                 on_attempt_error=lambda exc: _append_call(
                     "stage1",
                     messages_s1,
-                    status="request_failed",
+                    reply=getattr(exc, "role_reply", None),
+                    status="role_stopped" if hasattr(exc, "role_reply") else "request_failed",
                     error_type=type(exc).__name__,
                 ),
                 snapshot_hash=frozen_snapshot_hash,
@@ -1285,7 +1627,8 @@ class TwoStageOrchestrator:
                 on_attempt_error=lambda exc: _append_call(
                     "stage1",
                     msgs,
-                    status="request_failed",
+                    reply=getattr(exc, "role_reply", None),
+                    status="role_stopped" if hasattr(exc, "role_reply") else "request_failed",
                     error_type=type(exc).__name__,
                 ),
                 snapshot_hash=frozen_snapshot_hash,
@@ -1527,6 +1870,19 @@ class TwoStageOrchestrator:
             on_event(OrchestratorEvent.RecordSaved)
             return record
 
+        if joint_enabled:
+            record = record.model_copy(update={
+                "stage1_messages": messages_s1, "stage1_response": reply_s1.raw,
+                "stage1_diagnosis": stage1_json, "strategy_files_used": strategy_files,
+            })
+            record, joint_report, joint_catalog = self._run_predecision_vpa(
+                record, frame, cancel_token, on_event, run_assembler,
+                frozen_vpa_catalog=frozen_vpa_catalog, htf_context=htf_context,
+            )
+            call_attempts = list(record.call_attempts)
+            if joint_report is None:
+                return record
+
         # ── Step 14: Build Stage 2 messages ───────────────────────────────────
         _enable_next_bar = bool(
             getattr(getattr(self._settings, "general", None), "enable_next_bar_prediction", False)
@@ -1543,6 +1899,7 @@ class TwoStageOrchestrator:
             enable_next_bar_prediction=_enable_next_bar,
             provider_settings=getattr(self._settings, "provider", None),
             htf_context=htf_context,
+            joint_stage2=joint_enabled,
         )
         self._initial_stage2_messages = copy.deepcopy(messages_s2)
         from pa_agent.ai.prompt_assembler import stage2_prompt_txt_files
@@ -1565,6 +1922,7 @@ class TwoStageOrchestrator:
                 decision_stance=record.meta.decision_stance,
                 previous_record=previous_record,
                 enable_next_bar_prediction=_enable_next_bar,
+                joint_stage2=joint_enabled,
             ),
             "allowed_knowledge_ids": stage2_prompt_txt_files(
                 strategy_files,
@@ -1574,6 +1932,22 @@ class TwoStageOrchestrator:
                 ),
             ),
         }
+
+        if joint_enabled:
+            joint_guidance = (
+                "联合 Stage 2：保持 validated Stage 1 与 Brooks Router 不变，结合已验收 VPA 报告直接选择最终方案。"
+                "不是先生成 PA baseline 再改单；比较最多三项有意义方案与等待，不强凑数量。"
+                "VPA 背景支持不等于即时入场支持；数据不足的完整报告可明确仅价格依据。"
+                "交易概率是未校准联合主观先验，不对旧 PA 胜率机械加减。结构 stop、TP1 与限价可达性须独立论证。"
+                "本次输出使用 pa_vpa_stage2_draft_v1，替代旧 PA Draft 版本；其余 PA 规则和唯一 Host 校验不变。"
+            )
+            stage2_agent_context["role_protocol"]["joint_guidance"] = joint_guidance
+            stage2_agent_context["pa_hypotheses"] = copy.deepcopy(record.pa_hypotheses)
+            stage2_agent_context["vpa_evidence"] = joint_report.model_dump(mode="json")
+            messages_s2.append({"role": "user", "content": joint_guidance + "\n" + json.dumps({
+                "vpa_report": joint_report.model_dump(mode="json"),
+            }, ensure_ascii=False)})
+            self._initial_stage2_messages = copy.deepcopy(messages_s2)
 
         # ── Step 15: Call AI for Stage 2 ──────────────────────────────────────
         logger.debug("\n" + "="*80)
@@ -1620,7 +1994,8 @@ class TwoStageOrchestrator:
                 on_attempt_error=lambda exc: _append_call(
                     "stage2",
                     messages_s2,
-                    status="request_failed",
+                    reply=getattr(exc, "role_reply", None),
+                    status="role_stopped" if hasattr(exc, "role_reply") else "request_failed",
                     error_type=type(exc).__name__,
                 ),
                 snapshot_hash=frozen_snapshot_hash,
@@ -1761,7 +2136,8 @@ class TwoStageOrchestrator:
                 on_attempt_error=lambda exc: _append_call(
                     "stage2",
                     msgs,
-                    status="request_failed",
+                    reply=getattr(exc, "role_reply", None),
+                    status="role_stopped" if hasattr(exc, "role_reply") else "request_failed",
                     error_type=type(exc).__name__,
                 ),
                 snapshot_hash=frozen_snapshot_hash,
@@ -1788,6 +2164,7 @@ class TwoStageOrchestrator:
                     "stage1_json": stage1_for_stage2,
                     "skip_next_bar": not _enable_next_bar,
                     "analysis_fact_catalog": analysis_catalog,
+                    **({"joint_vpa_report": joint_report, "joint_vpa_catalog": joint_catalog} if joint_enabled else {}),
                 },
                 call_api=_call_s2_retry,
                 provider_settings=getattr(self._settings, "provider", None),
@@ -1888,6 +2265,7 @@ class TwoStageOrchestrator:
                         "stage": "stage2",
                         "category": err.category,
                         "message": err_message,
+                        "code": err.code,
                         "missing_fields": err.missing_fields,
                         "invalid_fields": err.invalid_fields,
                         "raw_text": err.raw_text,
@@ -2125,6 +2503,7 @@ class TwoStageOrchestrator:
                 return preflight_record
 
         baseline_settings = self._settings.model_copy(deep=True)
+        baseline_settings.analysis_pipeline = None
         baseline_settings.prompt.vpa_mode = "off"
         baseline_settings.prompt.vpa_enabled = False
         role_settings = self._settings.model_copy(deep=True)
@@ -2649,34 +3028,7 @@ class TwoStageOrchestrator:
             ),
             "vpa_catalog_id": catalog.get("catalog_id"),
             "vpa_data_status": copy.deepcopy(catalog.get("data_status")),
-            "role_protocol": {
-                "contract_version": "vpa_evidence_agent_protocol_v1",
-                "authority": "secondary_evidence_only",
-                "mandatory_sequence": [
-                    "read_frozen_pa_hypotheses",
-                    "read_all_mandatory_vpa_modules",
-                    "read_exact_vpa_evidence_ids",
-                    "compare_effort_result_and_sequence",
-                    "report_support_challenge_or_uncertainty",
-                ],
-                "prohibitions": [
-                    "do_not_rewrite_brooks_context",
-                    "do_not_create_setup_or_trade",
-                    "do_not_infer_unpublished_volume",
-                    "do_not_upgrade_candidate_event_without_confirmation",
-                ],
-                "interpretation_contract": [
-                    "Start with Evidence Catalog facts, then compare competing explanations; labels come last.",
-                    "Comparator above/below records direction only; magnitude requires signed deviation evidence.",
-                    "Sequence claims require explicit older and newer non-overlapping evidence IDs in chronological order.",
-                    "Do not restate OHLC, volume or RVOL numbers in interpretation prose.",
-                    "Every PA hypothesis receives exactly one supports, neutral, challenges or insufficient_data assessment.",
-                    "A candidate event remains candidate or unresolved until follow-through or rejection evidence confirms it.",
-                    "When no Entry Attempt exists, entry_timing_relation must be insufficient_data.",
-                    "next_confirmation is pending_closed_bar only for a concrete unresolved VPA competition; otherwise not_applicable.",
-                    "Available data must add genuine Effort/Result, sequence, acceptance/rejection or timing information, not paraphrase PA.",
-                ],
-            },
+            "role_protocol": copy.deepcopy(_VPA_ROLE_PROTOCOL),
             "allowed_knowledge_ids": vpa_knowledge_ids,
             "role_evidence": copy.deepcopy(catalog),
         }
@@ -2924,8 +3276,12 @@ class TwoStageOrchestrator:
         """Run one typed role through the selected analysis backend."""
         schema_for = getattr(self._validator, "schema_for", None)
         schema = schema_for(stage) if callable(schema_for) else None
+        if (agent_context or {}).get("role_protocol", {}).get("contract_version") == "joint_stage2_agent_protocol_v1":
+            from pa_agent.ai.pa_provider_contracts import schema_for_joint_stage2_draft
+            schema = schema_for_joint_stage2_draft(decision_tree_path=self._validator.decision_tree_path)
         del stage_label  # retained in the stable orchestrator helper interface
-        return self._analysis_backend.run(
+        schema = self._joint_direct_contract(stage, schema, messages)
+        reply = self._analysis_backend.run(
             AnalysisRoleRequest(
                 role=stage,
                 messages=messages,
@@ -2941,6 +3297,17 @@ class TwoStageOrchestrator:
             cancel_token=cancel_token,
             on_attempt_error=on_attempt_error,
         ).reply
+        pipeline = getattr(self._settings, "analysis_pipeline", None)
+        if pipeline is not None and pipeline.pipeline == "pa_vpa_joint":
+            try:
+                self._check_direct_stop(reply, stage)
+            except ModelCallFailure as exc:
+                # Retain the actual response/usage, not a fictitious network failure.
+                exc.role_reply = reply
+                if on_attempt_error is not None:
+                    on_attempt_error(exc)
+                raise
+        return reply
 
     @staticmethod
     def _provider_failure_payload(
@@ -2949,6 +3316,7 @@ class TwoStageOrchestrator:
         stage: str,
     ) -> dict[str, Any]:
         return {
+            **({"role_stop": exc.original.stop.model_dump(mode="json")} if hasattr(exc.original, "stop") else {}),
             "type": "provider_error",
             "stage": stage,
             "failure_kind": exc.failure.kind,

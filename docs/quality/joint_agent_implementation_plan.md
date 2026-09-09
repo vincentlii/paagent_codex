@@ -41,7 +41,7 @@ AGENTS 固化权限，Skills 编排分析程序，领域知识仍由 PA Agent �
 | 2 | 行情观测时间先于抓取；主/HTF 同一 as-of；不重标旧未闭盘响应；暴露 VPA provenance；经验 UTC/身份/结果已知时间与冻结池 | 边界跨盘不前视；unknown 历史不入经验；回放身份稳定 | 本地实现；90 项聚焦通过，扩大回归有 2 项既有失败 |
 | 3 | 完整 PA 与五模块 VPA 知识修订；区分理论/产品策略/协议；稳定章节 ID、别名、版本；修正 MM 符号、计数、机械阈值与知识召回 | 逐项内容迁移映射；保留案例、反证、阶段切片；不截断知识 | 本地完成；209 项聚焦通过，三角色自审及迁移见阶段 3 验收 |
 | 4 | Runtime AGENTS/role Skills/工具/必读验收矩阵；PA 与联合 Stage2 技能分开；独立上下文、pointer repair；有界确定性测量工具 | skill 与可执行契约一致；越权拒绝；派生证据可复算；预算不足不伪装 No Trade | 本地实现与 194 项离线检查通过；真实 MCP SDK/CLI/Linux 验证待补，见阶段 4 验收 |
-| 5 | 现有 two_stage 分支内 VPA 前置；compile_pa_handoff(stage1, None, frame)；联合决策引用 VPA；最多三项有意义方案而非强制数量 | 无额外 PA baseline Stage2；旧 off/shadow 不回归；VPA 不创建方向/Setup；联合概率是明确主观先验 | 待实现 |
+| 5 | 现有 two_stage 分支内 VPA 前置；compile_pa_handoff(stage1, None, frame)；联合决策引用 VPA；最多三项有意义方案而非强制数量 | 无额外 PA baseline Stage2；旧 off/shadow 不回归；VPA 不创建方向/Setup；联合概率是明确主观先验 | 本地完成；290 项聚焦检查及三角色自审通过，默认未启用，见阶段 5 验收 |
 | 6 | 结构目标与限价可达性；持久化后 available_at；下一主周期收盘挂单过期/显式替代；版本化 latency-aware Paper | 限价不劣于限价成交；无中途回溯成交；同棒不确定保留；旧账本不重写；TP2 非 Gate | 待实现 |
 | 7 | 完整冻结证据盲评包、独立解盲 key、VPA rubric、finite 分数、coverage；Backend/联合增量/调查增量三独立协议 | 预注册、重复臂、episode 配对、missing/censored、holdout；不把诊断视为校准或自动晋级 | 待实现 |
 | 8 | 实际/估算/未知分离；完整 token/cache/tool/process/queue/wall time；Direct 渲染延迟到需要时 | 不无条件拼大 Prompt；重复开销先优化；未证明非劣不默认删减必读内容 | 待实现 |
@@ -119,5 +119,13 @@ VPA-only core 元数据；经验因果筛选和池冻结、任务/两类实验�
 本轮没有运行模型、市场或收益测试，也未部署；阶段 2 的两项旧测试失败仍跟踪于阶段 4。
 阶段 4 本地实现及三角色自审见 `docs/quality/phase4_runtime_acceptance.md`，194 项聚焦检查通过。
 真实 MCP SDK/CLI/Linux 与专业效果未验证；没有删除领域知识、部署或调用真实模型。
-下一步阶段 5 在现有 two_stage 内接入 VPA 前置、联合 Stage 2 和 typed role_stop 持久化；
-不能先生成 PA baseline 再改单，不跳过既有 Validator / Risk。
+阶段 4 当时的下一步为阶段 5 接入，不允许先生成 PA baseline 再改单或跳过 Validator / Risk。
+
+### 阶段 5 实施与验收
+
+详见 [联合链路验收](phase5_joint_pipeline_acceptance.md)。显式 pipeline 接入原 two_stage，
+在 Router 后先运行独立 VPA，再运行一次联合 Stage 2（校验修复不计独立决策臂）；保留原
+PA 物化器、Validator、Trader Equation 与执行资格策略。Direct/Codex typed stop 均保持
+非决策，引用与重试契约/审计 digest 一致，旧联合判断不作为 Stage 1 的 price-only 历史。
+290 项必要离线检查和关键静态检查通过。默认配置未改，没有部署、真实模型或交易效果结论。
+下一步阶段 6 补持久可用时间、新鲜度/挂单有效期及 latency-aware Paper；不提前宣称整项升级完成。

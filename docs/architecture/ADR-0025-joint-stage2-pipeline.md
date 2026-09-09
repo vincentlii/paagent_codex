@@ -1,6 +1,8 @@
 # ADR-0025：VPA 前置与联合 Stage 2
 
 - 状态：Accepted for implementation；契约准备不等于运行链路启用。
+- 阶段 5 已完成本地显式编排及必要离线验收，详见 `../quality/phase5_joint_pipeline_acceptance.md`；
+  默认配置、生产晋级和 VPS 均未改变，执行交付与真实效果继续按后续阶段验收。
 - 实施基线：`e445907`；进度见 `../quality/joint_agent_implementation_plan.md`。
 
 ## 决策与兼容范围

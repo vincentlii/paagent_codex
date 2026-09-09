@@ -335,6 +335,10 @@ def validate_with_retry(
             else None
         )
 
+        contract_renderer = getattr(validator, "render_provider_contract", None)
+        if contract_renderer is not None and validate_kwargs.get("joint_vpa_catalog") is not None:
+            from functools import partial
+            contract_renderer = partial(contract_renderer, joint_stage2=True)
         feedback = build_retry_feedback(
             err,
             stage=stage,
@@ -342,11 +346,7 @@ def validate_with_retry(
             max_attempts=effective_max_attempts,
             frame=validate_kwargs.get("kline_frame"),
             previous_raw=previous_raw,
-            contract_renderer=getattr(
-                validator,
-                "render_provider_contract",
-                None,
-            ),
+            contract_renderer=contract_renderer,
         )
         if previous_obj is not None:
             editable_pointers = previous_contract_editable or {

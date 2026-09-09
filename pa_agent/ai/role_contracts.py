@@ -387,6 +387,8 @@ class RunOutcome(BaseModel):
         "invalid_model_output",
         "cancelled",
         "internal_error",
+        "incomplete",
+        "review_required",
     ]
     official_path: Literal["pa_only", "joint", "none"]
     requested_vpa_mode: Literal["off", "shadow", "soft"]
@@ -415,6 +417,14 @@ class AnalysisRoleStop(BaseModel):
     role: Literal["stage1", "vpa_evidence", "stage2"]
     reason: str = Field(min_length=1)
     evidence_refs: list[str] = Field(default_factory=list)
+
+
+class AnalysisRoleStopped(RuntimeError):
+    """Backend-neutral non-decision, distinct from provider availability."""
+
+    def __init__(self, stop: AnalysisRoleStop) -> None:
+        self.stop = stop
+        super().__init__(f"Analysis role {stop.status}: {stop.reason}")
 
 
 class AnalysisMetric(BaseModel):

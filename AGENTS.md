@@ -1,5 +1,7 @@
 # AGENTS
 
+- 修改联合编排、重试、历史或停止状态前读 `docs/quality/phase5_joint_pipeline_acceptance.md`。显式 `analysis_pipeline_v1:pa_vpa_joint` 已在原 two_stage 内接入 VPA 前置与联合 Stage 2；默认未开启、未部署。下文 off/shadow/研究 Joint 限制继续适用于旧协议，不能用于删除新版已授权链路。新版仍只有一个物化器；停止不生成订单；联合历史不得伪装为 Stage 1 的 price-only 依据；availability 回退须保留整条指定 pipeline。
+
 - 修改 Runtime、Skills、MCP、Worker 或联合编排前读 `docs/quality/phase4_runtime_acceptance.md`：联合 Stage 2 是 stage2 的显式 Skill 变体，不是研究仲裁；result 封套不替代唯一物化器；预算停止不得转成 No Trade 或 availability fallback；测量 digest 不是 catalog fact ID。真实 SDK/CLI/Linux 验证尚未完成，不得声称联合链路已启用。
 
 - 修改 PA/VPA 知识与召回前读 `docs/quality/phase3_knowledge_acceptance.md`：原文 knowledge 锚点禁止重新编号；案例和反证不得摘要替代；理论/产品禁令/Host Draft 协议分层，章节及别名必须随 Frozen Job 冻结。

@@ -56,6 +56,12 @@ Dashboard 可以在不暴露凭据的前提下提交 allowlisted、版本化 Ana
 
 ## 当前边界
 
+阶段 5 已在现有 two_stage 内接通显式 pa_vpa_joint：price-only Stage 1 / Router → VPA →
+联合 Stage 2 / 原物化器与校验。没有先出 PA baseline 再改单，typed stop 禁止伪装 No Trade。
+初次 Prompt、重试和审计使用同一联合契约，完整 mandatory 知识未删减；历史联合 Stage 2 不得
+作为 Stage 1 的独立 PA 依据。详见 `docs/quality/phase5_joint_pipeline_acceptance.md`。
+默认配置、VPS 与生产晋级均未改变；真实效果、阶段 6 的交付后执行及后续盲评仍未验收。
+
 阶段 4 的本地 Runtime / Skills / 必读矩阵和三角色自审见
 `docs/quality/phase4_runtime_acceptance.md`。result 封套携带原 Draft 或非决策停止对象；
 联合 Stage 2 使用显式 Skill 变体，仍复用 stage2 与唯一 materializer。独立 VPA、旧研究仲裁

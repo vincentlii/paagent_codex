@@ -50,6 +50,21 @@ def strip_vpa_fields(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
+def price_only_history(value: Any) -> Any:
+    """Do not relabel a prior joint judgment as independent PA evidence.
+
+    Joint rationales can contain VPA in ordinary decision fields. Keep the prior
+    Stage 1 separately; stripping a few keys cannot safely unmix that judgment.
+    The stored record itself is never edited.
+    """
+    if isinstance(value, dict):
+        basis = value.get("analysis_basis") or {}
+        if (value.get("protocol_version") == "pa_vpa_stage2_draft_v1"
+                or isinstance(basis, dict) and basis.get("protocol_version") == "pa_vpa_stage2_draft_v1"):
+            return {}
+    return strip_vpa_fields(value or {})
+
+
 def wrap_vpa_prompt_block(content: str) -> str:
     if not content:
         return ""

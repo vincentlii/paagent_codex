@@ -11,6 +11,7 @@ from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pa_agent.config.analysis_pipeline import AnalysisPipelineIdentity
 
 DecisionStance = Literal["conservative", "balanced", "aggressive", "extreme_aggressive"]
 DataSourceKind = Literal[
@@ -319,6 +320,9 @@ class Settings(BaseModel):
     """Root settings object persisted to config/settings.json."""
 
     model_config = ConfigDict(extra="ignore")
+
+    #: Explicit opt-in; missing legacy configuration retains its original mode.
+    analysis_pipeline: AnalysisPipelineIdentity | None = None
 
     provider: AIProviderSettings = Field(default_factory=AIProviderSettings)
     general: GeneralSettings = Field(default_factory=GeneralSettings)

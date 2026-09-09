@@ -427,12 +427,13 @@ class JsonValidator:
     def decision_tree_path(self) -> Path:
         return self._decision_tree_path
 
-    def render_provider_contract(self, stage: Literal["stage1", "stage2"]) -> str:
+    def render_provider_contract(self, stage: Literal["stage1", "stage2"], *, joint_stage2: bool = False) -> str:
         from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
 
         return render_provider_draft_contract(
             stage,
             decision_tree_path=self._decision_tree_path,
+            joint_stage2=joint_stage2,
         )
 
     def provider_contract_digest(self, stage: Literal["stage1", "stage2"]) -> str:
@@ -473,6 +474,82 @@ class JsonValidator:
             skip_next_bar=skip_next_bar,
         )
 
+    def validate_joint_stage2(
+        self,
+        raw_text: str,
+        *,
+        vpa_report: Any,
+        vpa_catalog: dict[str, Any],
+        **kwargs: Any,
+    ) -> Result:
+        """Validate the joint extension, then reuse the sole PA validation path."""
+        import jsonschema
+        from pa_agent.ai.pa_provider_contracts import (
+            joint_stage2_reference_issues,
+            schema_for_joint_stage2_draft,
+        )
+        from pa_agent.ai.vpa_measurements import validate_frozen_vpa_catalog
+
+        try:
+            catalog = validate_frozen_vpa_catalog(kwargs["kline_frame"], vpa_catalog)
+            joint_stage2_reference_issues({}, validated_report=vpa_report, frozen_catalog=catalog)
+        except (KeyError, TypeError, ValueError) as exc:
+            return ValidationError(
+                category="c",
+                stage="stage2",
+                raw_text=raw_text,
+                code="joint_upstream_invalid",
+                message=str(exc),
+            )
+        try:
+            draft = json.loads(_strip_fences(raw_text))
+        except json.JSONDecodeError:
+            return ValidationError(
+                category="a",
+                stage="stage2",
+                raw_text=raw_text,
+                message="Joint Stage 2 response is not valid JSON",
+            )
+        schema = schema_for_joint_stage2_draft(decision_tree_path=self._decision_tree_path)
+        if isinstance(draft, dict):
+            from pa_agent.ai.pa_provider_contracts import normalize_provider_draft
+
+            draft = normalize_provider_draft("stage2", draft)
+        issues = _provider_contract_issues(
+            list(jsonschema.Draft7Validator(schema).iter_errors(draft))
+        )
+        if isinstance(draft, dict):
+            issues.extend(
+                joint_stage2_reference_issues(
+                    draft, validated_report=vpa_report, frozen_catalog=catalog
+                )
+            )
+        if issues:
+            return ValidationError(
+                category="c",
+                stage="stage2",
+                raw_text=raw_text,
+                code="provider_draft_contract",
+                contract_issues=issues,
+                invalid_fields=[issue["path"] for issue in issues],
+                message="Joint Stage 2 contract or VPA reference mismatch",
+            )
+        pa_draft = copy.deepcopy(draft)
+        joint_analysis = pa_draft.pop("joint_analysis")
+        pa_draft["protocol_version"] = "pa_draft_v2"
+        result = self.validate("stage2", json.dumps(pa_draft, ensure_ascii=False), **kwargs)
+        if isinstance(result, Ok):
+            result.provider_obj = copy.deepcopy(draft)
+            result.obj["joint_analysis"] = copy.deepcopy(joint_analysis)
+            result.obj["analysis_basis"] = {
+                "protocol_version": "pa_vpa_stage2_draft_v1",
+                "win_rate_provenance": "llm_joint_subjective_prior",
+                "calibration_id": None,
+            }
+        else:
+            result.raw_text = raw_text
+        return result
+
     def validate(
         self,
         stage: Literal["stage1", "stage2"],
@@ -485,11 +562,22 @@ class JsonValidator:
         skip_next_bar: bool = False,
         htf_context: dict[str, Any] | None = None,
         analysis_fact_catalog: Any = None,
+        joint_vpa_report: Any = None,
+        joint_vpa_catalog: dict[str, Any] | None = None,
     ) -> Result:
         """Validate *raw_text* against the schema for *stage*.
 
         Returns Ok(obj) on success, ValidationError on any failure.
         """
+        if joint_vpa_catalog is not None:
+            if stage != "stage2":
+                raise ValueError("joint validation applies only to Stage 2")
+            return self.validate_joint_stage2(
+                raw_text, vpa_report=joint_vpa_report, vpa_catalog=joint_vpa_catalog,
+                kline_frame=kline_frame, stage1_json=stage1_json,
+                skip_next_bar=skip_next_bar, htf_context=htf_context,
+                analysis_fact_catalog=analysis_fact_catalog,
+            )
         schema = self._schemas[stage]
 
         # ── Category d / e: plain text (no JSON at all) ───────────────────────

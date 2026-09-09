@@ -286,9 +286,12 @@ def _serialized_provider_schema(
     stage: str,
     *,
     decision_tree_path: Path | None = None,
+    joint_stage2: bool = False,
 ) -> str:
+    if joint_stage2 and stage != "stage2":
+        raise ValueError("joint contract applies only to Stage 2")
     return json.dumps(
-        schema_for_provider_draft(
+        schema_for_joint_stage2_draft(decision_tree_path=decision_tree_path) if joint_stage2 else schema_for_provider_draft(
             stage,
             decision_tree_path=decision_tree_path,
         ),
@@ -302,12 +305,14 @@ def provider_draft_schema_digest(
     stage: str,
     *,
     decision_tree_path: Path | None = None,
+    joint_stage2: bool = False,
 ) -> str:
     """Stable identity shared by prompts, validation, and audit tests."""
     return hashlib.sha256(
         _serialized_provider_schema(
             stage,
             decision_tree_path=decision_tree_path,
+            joint_stage2=joint_stage2,
         ).encode("utf-8")
     ).hexdigest()
 
@@ -316,11 +321,13 @@ def render_provider_draft_contract(
     stage: str,
     *,
     decision_tree_path: Path | None = None,
+    joint_stage2: bool = False,
 ) -> str:
     """Render the minified exact runtime contract for schema-less providers."""
     digest = provider_draft_schema_digest(
         stage,
         decision_tree_path=decision_tree_path,
+        joint_stage2=joint_stage2,
     )
     return (
         f"Provider contract digest: {digest}\n"
@@ -328,6 +335,7 @@ def render_provider_draft_contract(
         + _serialized_provider_schema(
             stage,
             decision_tree_path=decision_tree_path,
+            joint_stage2=joint_stage2,
         )
         + "\nPA_PROVIDER_DRAFT_CONTRACT_END"
     )

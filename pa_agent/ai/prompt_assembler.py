@@ -239,13 +239,14 @@ def _stage1_tail_reminder() -> str:
 def _stage2_output_contract(
     *,
     decision_tree_path: Path | None = None,
+    joint_stage2: bool = False,
 ) -> str:
     from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
 
     return (
         f"{_STAGE2_OUTPUT_CONTRACT}\n\n"
         "## Exact Stage 2 provider contract\n"
-        f"{render_provider_draft_contract('stage2', decision_tree_path=decision_tree_path)}"
+        f"{render_provider_draft_contract('stage2', decision_tree_path=decision_tree_path, joint_stage2=joint_stage2)}"
     )
 
 
@@ -787,7 +788,8 @@ class PromptAssembler:
 
     def _record_context(self, value: Any) -> Any:
         """Return legacy-record context without obsolete embedded VPA fields."""
-        return strip_vpa_fields(value or {})
+        from pa_agent.ai.vpa_sanitizer import price_only_history
+        return price_only_history(value)
 
     # ── Process-level system-prompt cache ────────────────────────────────────
     # DeepSeek KV Cache hits require the *prefix* of consecutive requests to
@@ -1643,6 +1645,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
         decision_stance: str,
         previous_record: Any | None,
         enable_next_bar_prediction: bool,
+        joint_stage2: bool = False,
     ) -> dict[str, Any]:
         """Publish mature code-generated Stage 2 rules beside routed knowledge."""
         from pa_agent.ai.decision_continuity import (
@@ -1662,7 +1665,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
         breakout_tick_hint = format_breakout_price_hint(frame)
         previous_prediction = self._render_previous_prediction(previous_record)
         return {
-            "contract_version": "pa_stage2_agent_protocol_v1",
+            "contract_version": "joint_stage2_agent_protocol_v1" if joint_stage2 else "pa_stage2_agent_protocol_v1",
             "role": "stage2",
             "semantic_parity_policy": (
                 "Apply this contract and every Brooks Router-selected mandatory "
@@ -1687,7 +1690,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
                 self._render_transition_guidance(stage1_json),
                 breakout_tick_hint or "",
                 previous_prediction,
-                _stage2_output_contract(decision_tree_path=self.decision_tree_path),
+                _stage2_output_contract(decision_tree_path=self.decision_tree_path, joint_stage2=joint_stage2),
                 (
                     _NEXT_BAR_PREDICTION_INSTRUCTION
                     if enable_next_bar_prediction
@@ -1788,6 +1791,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
         provider_settings: Any | None = None,
         use_prefix_chain: bool | None = None,
         htf_context: dict[str, Any] | None = None,
+        joint_stage2: bool = False,
     ) -> list[dict]:
         """Build Stage 2 messages, optionally chaining after Stage 1 for KV cache.
 
@@ -1814,6 +1818,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
             omit_kline_block=chain_after_s1,
             htf_context=htf_context,
             omit_htf_context=chain_after_s1,
+            joint_stage2=joint_stage2,
         )
 
         if chain_after_s1:
@@ -1847,6 +1852,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
         omit_kline_block: bool = False,
         htf_context: dict[str, Any] | None = None,
         omit_htf_context: bool = False,
+        joint_stage2: bool = False,
     ) -> str:
         """Build the Stage 2 task turn for standalone or prefix-chain mode."""
         from pa_agent.ai.decision_continuity import (
@@ -1895,6 +1901,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
         stage2_parts.append(
             _stage2_output_contract(
                 decision_tree_path=self.decision_tree_path,
+                joint_stage2=joint_stage2,
             )
         )
         if enable_next_bar_prediction:

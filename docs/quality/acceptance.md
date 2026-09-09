@@ -4,6 +4,10 @@
 
 ## 硬不变量
 
+范围说明：下列旧 Joint/soft/Shadow 约束指旧研究仲裁及旧生产协议；ADR-0025 授权的新
+显式 pa_vpa_joint 使用原 stage2 角色和唯一物化器，不是放开研究 arbiter 的订单权限。
+新版额外验收项与当前非 live 证据见 `phase5_joint_pipeline_acceptance.md`，不代表生产晋级。
+
 1. 已接受结构化 Claim 的程序事实矛盾为 0。
 2. VPA 创建 Setup、翻转方向或改写胜率的权限越界为 0。
 3. 同一 Snapshot Bundle 的主周期与高周期来源身份漂移为 0。

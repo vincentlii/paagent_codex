@@ -19,9 +19,10 @@ _VISIBLE_CALLBACKS = (
 class FullChainFallbackOrchestrator:
     """Retry the same frozen cycle from Stage 1 on a cold Direct orchestrator."""
 
-    def __init__(self, *, primary: Any, cold_fallback: Any) -> None:
+    def __init__(self, *, primary: Any, cold_fallback: Any, pipeline_identity: Any = None) -> None:
         self._primary = primary
         self._cold_fallback = cold_fallback
+        self._pipeline_identity = pipeline_identity
 
     def submit(self, *args: Any, **kwargs: Any) -> Any:
         on_event = kwargs.get("on_event")
@@ -66,6 +67,9 @@ class FullChainFallbackOrchestrator:
                 "failure_kind": exc.failure.kind,
                 "attempts": [dict(attempt) for attempt in exc.attempts],
             }
+            if self._pipeline_identity is not None:
+                fallback_context["restart_scope"] = "full_analysis_pipeline"
+                fallback_context["analysis_pipeline"] = self._pipeline_identity.model_dump(mode="json")
             fallback_kwargs["backend_fallback_context"] = fallback_context
             result = self._cold_fallback.submit(*fallback_args, **fallback_kwargs)
             runtime = dict(getattr(result, "role_runtime", {}) or {})
