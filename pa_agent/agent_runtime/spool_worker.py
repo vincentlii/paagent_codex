@@ -468,7 +468,10 @@ def _runtime_identity_matches(
         "reasoning_effort",
         "profile_fingerprint",
         "analysis_profile_fingerprint",
+        "investigation_policy",
     }
+    if expected.get("investigation_policy", "agentic") not in {"fixed", "agentic"}:
+        return False
     actual_immutable = {
         key: value for key, value in actual.items() if key not in selection_keys
     }

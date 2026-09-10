@@ -77,6 +77,13 @@ class StudyPlan(BaseModel):
             c.backend == "deepseek_direct" and c.investigation != "fixed" for c in (self.a, self.b)
         ):
             raise ValueError("Direct is a fixed-context backend")
+        for condition in (self.a, self.b):
+            if condition.backend == "codex_agent" and (
+                condition.model != "gpt-5.6-luna" or condition.reasoning != "max"
+            ):
+                raise ValueError(
+                    "phase 7 Codex arms require gpt-5.6-luna with max reasoning"
+                )
         return self
 
 
@@ -176,7 +183,7 @@ def register_study(root: Path, plan: dict, samples: list[dict]) -> dict:
     return registration
 
 
-def run_study(root: Path, execute_arm) -> None:
+def run_study(root: Path, execute_arm, *, on_completed=None) -> None:
     """One attempt per assignment. Crashes leave missing receipts, never reruns."""
     registered = _load_registration(root)
     write_once(
@@ -263,6 +270,11 @@ def run_study(root: Path, execute_arm) -> None:
                 or record.role_runtime.get("backend_fallback")
             ):
                 raise ValueError("backend treatment was not delivered without fallback")
+            if backend == "codex_agent" and any(
+                c.get("investigation_policy") != observed["investigation"]
+                for c in record.call_attempts
+            ):
+                raise ValueError("Codex investigation treatment was not delivered")
             # JSON validation rejects NaN and nonserializable provider objects.
             digest(result)
             receipt.update(status="completed", result=result)
@@ -272,6 +284,13 @@ def run_study(root: Path, execute_arm) -> None:
         receipt["completed_at_ms"] = time_ns() // 1_000_000
         receipt["receipt_digest"] = digest(receipt)
         write_once(root / "receipts" / f"{assignment['case_id']}.json", receipt)
+        if receipt["status"] == "completed" and on_completed is not None:
+            try:
+                on_completed(assignment["case_id"])
+            except Exception as exc:
+                # Paper recovery may be retried; the model arm never is.
+                write_once(root / "paper_errors" / f"{assignment['case_id']}.json",
+                           {"failure_type": type(exc).__name__, "case_id": assignment["case_id"]})
 
 
 def summarize_study(root: Path) -> dict:

@@ -59,6 +59,9 @@ class CodexJobPublisher:
         # enforce semantic parity for vNext jobs without retroactively changing
         # the meaning of already-frozen legacy jobs.
         context["context_policy"] = "semantic_parity_v1"
+        context["investigation_policy"] = self._runtime_identity.get(
+            "investigation_policy", "agentic"
+        )
         from pa_agent.agent_runtime.execution_contract import RUNTIME_CONTRACT, skill_key
 
         context["runtime_contract_version"] = RUNTIME_CONTRACT
@@ -260,6 +263,7 @@ class CodexJobPublisher:
             "analysis_mode",
             "decision_stance",
             "context_policy",
+            "investigation_policy",
             "vpa_catalog_id",
             "vpa_data_status",
             "frozen_snapshot",

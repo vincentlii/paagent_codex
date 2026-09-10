@@ -104,6 +104,24 @@ def test_pa_price_frame_is_complete_and_contains_no_volume(tmp_path: Path) -> No
     assert all("volume" not in item for item in rows)
 
 
+def test_fixed_study_condition_allows_baseline_but_denies_optional_investigation() -> None:
+    from dataclasses import replace
+    from pa_agent.agent_runtime.frozen_job import AgentJobBudget
+
+    job = replace(
+        _job(runtime_identity={"investigation_policy": "fixed"}),
+        budget=AgentJobBudget(max_evidence_calls=5, max_evidence_bytes=2048),
+    )
+    gateway = FrozenEvidenceGateway(job)
+
+    assert gateway.get_market_core()["frozen_snapshot"]["snapshot_hash"] == "a" * 64
+    assert gateway.get_price_frame(older_seq=2, newer_seq=1)
+    assert gateway.read_knowledge_module(knowledge_id="brooks/context")
+    with pytest.raises(EvidenceAccessDenied, match="fixed investigation"):
+        gateway.measure_price_window(older_seq=2, newer_seq=1)
+    assert gateway.audit_events[-1].status == "denied"
+
+
 def test_vpa_core_exposes_frozen_catalog_semantics_without_copying_rows():
     from dataclasses import replace
     from pa_agent.agent_runtime.frozen_job import AgentJobBudget

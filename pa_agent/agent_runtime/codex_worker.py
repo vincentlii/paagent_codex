@@ -570,6 +570,12 @@ class CodexCliWorker:
                 raise CodexWorkerOutputError("evidence budget exceeded")
         successful = [item for item in events if item.get("status") == "ok"]
         operations = {str(item.get("operation") or "") for item in successful}
+        from pa_agent.agent_runtime.evidence import OPTIONAL_INVESTIGATION_OPERATIONS
+        policy = (job.runtime.get("backend_runtime_identity") or {}).get("investigation_policy", "agentic")
+        if policy not in {"fixed", "agentic"}:
+            raise CodexWorkerOutputError("unknown frozen investigation policy")
+        if policy == "fixed" and not job.repair_findings and operations & OPTIONAL_INVESTIGATION_OPERATIONS:
+            raise CodexWorkerOutputError("fixed investigation audit contains forbidden successful reads")
         if job.repair_findings:
             if "get_repair_findings" not in operations:
                 raise CodexWorkerOutputError(

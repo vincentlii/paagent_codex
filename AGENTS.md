@@ -1,6 +1,6 @@
 # AGENTS
 
-- 修改盲评、研究 assignment 或调查增量实验前读 `docs/quality/phase7_research_acceptance.md`。阶段 7 仅完成离线协议与评审工具，真实 Host adapter、fixed/agentic 权限和冻结资源/outcome 自动绑定仍待补；不得把执行器自报身份冒充 treatment 已生效，不得进入阶段 8 冒充阶段 7 已完整验收。
+- 修改盲评、研究 assignment 或调查增量实验前读 `docs/quality/phase7_research_acceptance.md`。阶段 7 本地 Host adapter、fixed/agentic 权限、完整冻结资源与 Paper 绑定已实现；真实研究尚未完成，不得宣称交易效果或上线验收。实验 Codex 固定 `gpt-5.6-luna/max`，默认只预检，真实调用须显式执行；不得把历史回放倒填成前向 Paper，失败/缺失不得以重跑洗掉。
 
 - 修改持久化、Paper 或 Headless 执行前读 `docs/quality/phase6_delivery_paper_acceptance.md`：新 pipeline 必须有 Host 持久交付时间与固定下一收盘 expiry；Paper 激活不得倒填，柱内/缺失窗口不确定不能计零。v3 与旧账本分层，TP2 不进入新版执行；回退不能让旧 Broker 接管 v3 活跃订单。
 

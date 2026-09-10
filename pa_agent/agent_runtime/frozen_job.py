@@ -251,6 +251,11 @@ class FrozenAgentJobBuilder:
                 "source_request_digest",
             )
         runtime_identity = dict(backend_runtime_identity or {})
+        investigation_policy = str(
+            runtime_identity.get("investigation_policy") or "agentic"
+        )
+        if investigation_policy not in {"fixed", "agentic"}:
+            raise ValueError("investigation_policy must be fixed or agentic")
         model = str(runtime_identity.get("model") or "").strip()
         reasoning_effort = str(
             runtime_identity.get("reasoning_effort") or ""

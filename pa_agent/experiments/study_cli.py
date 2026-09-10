@@ -32,6 +32,12 @@ def main(argv=None) -> int:
     freeze = commands.add_parser("freeze")
     for name in ("record", "knowledge", "measurements", "output"):
         freeze.add_argument(name, type=Path)
+    frozen_host = commands.add_parser("freeze-host")
+    for name in ("record", "prompt_dir", "output"):
+        frozen_host.add_argument(name, type=Path)
+    domain = commands.add_parser("domain-fingerprint")
+    for name in ("settings", "prompt_dir"):
+        domain.add_argument(name, type=Path)
     register = commands.add_parser("register")
     register.add_argument("spec", type=Path)
     register.add_argument("root", type=Path)
@@ -53,7 +59,16 @@ def main(argv=None) -> int:
     release.add_argument("root", type=Path)
     release.add_argument("--reason", required=True)
     args = parser.parse_args(argv)
-    if args.command == "freeze":
+    if args.command == "domain-fingerprint":
+        from pa_agent.config.settings import Settings
+        from pa_agent.experiments.study_resources import study_domain_fingerprint
+        print(study_domain_fingerprint(args.prompt_dir, Settings.model_validate(_read(args.settings))))
+    elif args.command == "freeze-host":
+        from pa_agent.experiments.study_resources import freeze_host_evidence
+        write_once(args.output, freeze_host_evidence(
+            AnalysisRecord.model_validate(_read(args.record)), prompt_dir=args.prompt_dir,
+        ))
+    elif args.command == "freeze":
         result = freeze_review_evidence(
             AnalysisRecord.model_validate(_read(args.record)),
             knowledge=_read(args.knowledge),

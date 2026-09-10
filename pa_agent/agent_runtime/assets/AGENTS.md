@@ -21,6 +21,8 @@
 
 ## Evidence 调查纪律
 
+- `investigation_policy=fixed` 是完整基线研究组：照常完成所有 Skill 必读资源，只依据这些资源判断，跳过可选定向复查、检索和新增测量。`agentic` 才允许基线后的按需调查；无需为实验强行增加调用。两组的知识、角色、Router 与输出权限相同。pointer repair 仍只修复 Host 已圈定的问题。
+
 - 先读核心 Context 和其中的当前阶段协议；再读取 knowledge manifest 中全部
   `loading_policy=mandatory` 的 PA 已选模块。完成语义基线后，列出真正影响当前判断的争议点，
   再进行最小、定向 Evidence 查询。

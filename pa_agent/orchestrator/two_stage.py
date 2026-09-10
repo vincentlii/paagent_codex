@@ -309,6 +309,8 @@ def _call_attempt_entry(
             model_call_meta.get("transport_attempts") or []
         ),
         "job_digest": _audit_text(model_call_meta.get("job_digest")),
+        "investigation_policy": _audit_text(model_call_meta.get("investigation_policy")),
+        "evidence_events": copy.deepcopy(model_call_meta.get("evidence_events") or []),
         "codex_thread_id": _audit_text(model_call_meta.get("thread_id")),
         "initial_context_bytes": max(
             0, int(model_call_meta.get("initial_context_bytes") or 0)

@@ -333,6 +333,9 @@ class CodexAnalysisRoleBackend:
             "analysis_backend": self.backend_id,
             "job_digest": job.manifest.job_digest,
             "attempt": attempt,
+            "investigation_policy": frozen_runtime_identity.get(
+                "investigation_policy", "agentic"
+            ),
         }
         try:
             result = self._worker.run(
@@ -441,6 +444,9 @@ class CodexAnalysisRoleBackend:
             "effective_reasoning_effort": job.manifest.reasoning_effort
             or self._runtime_identity.get("reasoning_effort", request.reasoning_effort),
             "model": job.manifest.model or self._runtime_identity.get("model"),
+            "investigation_policy": frozen_runtime_identity.get(
+                "investigation_policy", "agentic"
+            ),
             "runtime_version": self._runtime_identity.get("runtime_version"),
             "provider_fallback_used": False,
             "transport_attempts": [attempt_meta],

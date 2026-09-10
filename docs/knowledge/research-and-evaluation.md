@@ -14,8 +14,9 @@ verification_scope: not-verified
 # 研究与评价
 
 新版 `analysis_study_v1` 的本地实现与限制见 [阶段 7 报告](../quality/phase7_research_acceptance.md)。
-它区分 Backend、联合和调查三个问题，但实际 fixed/agentic 执行权限尚未接入；
-不能把协议登记成功当作纯 Agent 调查因果实验已可用。旧协议语义保持不变。
+它区分 Backend、联合和调查三个问题；fixed/agentic 已接入 Frozen Job/Gateway/Worker，
+Host 复用成熟编排并验证完整冻结资源、模型/推理身份和持久交付。默认入口只预检。
+本地实现不等于真实因果增益已证明；额度恢复后仍需前向采样和盲评。旧协议语义保持不变。
 
 ## 三层验收
 

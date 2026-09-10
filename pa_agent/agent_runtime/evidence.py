@@ -13,6 +13,11 @@ from typing import Any, Callable
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJob
 from pa_agent.ai.token_counter import estimate_tokens
 
+OPTIONAL_INVESTIGATION_OPERATIONS = frozenset({
+    "list_fact_ids", "get_measurements", "get_pa_evidence", "get_facts", "get_bars",
+    "search_allowed_knowledge", "read_allowed_knowledge", "measure_price_window", "project_price_leg",
+})
+
 
 class EvidenceAccessDenied(RuntimeError):
     """A query requested evidence outside this job's frozen allowlist."""
@@ -472,6 +477,19 @@ class FrozenEvidenceGateway:
             raise EvidenceBudgetExceeded("evidence call budget exceeded")
         self._calls_used = call_index
         try:
+            investigation = str(
+                (self._job.runtime.get("backend_runtime_identity") or {}).get(
+                    "investigation_policy", "agentic"
+                )
+            )
+            if (
+                investigation == "fixed"
+                and not self._job.repair_findings
+                and operation in OPTIONAL_INVESTIGATION_OPERATIONS
+            ):
+                raise EvidenceAccessDenied(
+                    "fixed investigation condition permits mandatory semantic-parity reads only"
+                )
             if self._job.repair_findings and operation not in {
                 "get_repair_findings", "get_facts", "get_pa_evidence", "get_htf_evidence",
                 "get_vpa_evidence", "read_allowed_knowledge",

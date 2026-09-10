@@ -210,13 +210,28 @@ def build_codex_experiment_backend_factory(
         ).encode("utf-8")
     ).hexdigest()
 
-    def experiment_factory(_spec: Any, frozen: Any, settings: Any) -> tuple[Any, dict[str, Any]]:
+    def experiment_factory(spec: Any, frozen: Any, settings: Any) -> tuple[Any, dict[str, Any]]:
         del settings
+        arm_identity = dict(identity)
+        investigation = getattr(spec, "investigation", None)
+        if investigation is not None:
+            if investigation not in {"fixed", "agentic"}:
+                raise ValueError("invalid study investigation condition")
+            arm_identity["investigation_policy"] = investigation
+            arm_identity["profile_fingerprint"] = hashlib.sha256(
+                json.dumps(
+                    arm_identity,
+                    ensure_ascii=True,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
         publisher = CodexJobPublisher(
             frame=frozen.frame,
             prompt_dir=prompt_dir,
             job_root=config.job_root,
-            runtime_identity=identity,
+            runtime_identity=arm_identity,
         )
         worker = CodexSpoolClient(
             CodexSpoolConfig(
@@ -230,8 +245,8 @@ def build_codex_experiment_backend_factory(
             publish_job=publisher,
             request_full_chain_fallback=False,
             circuit_breaker=CodexCircuitBreaker(),
-            runtime_identity=identity,
+            runtime_identity=arm_identity,
         )
-        return backend, dict(identity)
+        return backend, arm_identity
 
     return experiment_factory, dict(identity)

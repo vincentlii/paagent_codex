@@ -6,8 +6,8 @@ import pytest
 def condition(**changes):
     return {
         "backend": "codex_agent",
-        "model": "fixture",
-        "reasoning": "high",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
         "pipeline": "pa_only",
         "investigation": "fixed",
         **changes,
@@ -48,6 +48,9 @@ def execution(request):
 
     record = _record(request["case_id"], "codex_agent")
     record.analysis_pipeline = AnalysisPipelineIdentity(pipeline=request["condition"]["pipeline"])
+    for call in record.call_attempts:
+        if call.get("analysis_backend") == "codex_agent":
+            call["investigation_policy"] = request["condition"]["investigation"]
     evidence = request["evidence"]
     for name in ("kline_data", "snapshot_context", "htf_context", "htf_kline_data", "vpa_catalog"):
         setattr(record, name, evidence[name])
@@ -67,6 +70,18 @@ def test_protocol_rejects_confounding_model_change():
 
     with pytest.raises(ValueError, match="investigation"):
         study.StudyPlan.model_validate(config(b=condition(model="other", investigation="agentic")))
+
+
+def test_phase7_codex_arm_is_pinned_to_luna_max():
+    from pa_agent.experiments import study_protocol as study
+
+    with pytest.raises(ValueError, match="gpt-5.6-luna"):
+        study.StudyPlan.model_validate(
+            config(
+                a=condition(reasoning="high"),
+                b=condition(reasoning="high", investigation="agentic"),
+            )
+        )
 
 
 def test_preregistration_survives_missing_arm_and_blocks_rerun(tmp_path):
