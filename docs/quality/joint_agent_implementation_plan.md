@@ -43,7 +43,7 @@ AGENTS 固化权限，Skills 编排分析程序，领域知识仍由 PA Agent �
 | 4 | Runtime AGENTS/role Skills/工具/必读验收矩阵；PA 与联合 Stage2 技能分开；独立上下文、pointer repair；有界确定性测量工具 | skill 与可执行契约一致；越权拒绝；派生证据可复算；预算不足不伪装 No Trade | 本地实现与 194 项离线检查通过；真实 MCP SDK/CLI/Linux 验证待补，见阶段 4 验收 |
 | 5 | 现有 two_stage 分支内 VPA 前置；compile_pa_handoff(stage1, None, frame)；联合决策引用 VPA；最多三项有意义方案而非强制数量 | 无额外 PA baseline Stage2；旧 off/shadow 不回归；VPA 不创建方向/Setup；联合概率是明确主观先验 | 本地完成；290 项聚焦检查及三角色自审通过，默认未启用，见阶段 5 验收 |
 | 6 | 结构目标与限价可达性；持久化后 available_at；下一主周期收盘挂单过期/显式替代；版本化 latency-aware Paper | 限价不劣于限价成交；无中途回溯成交；同棒不确定保留；旧账本不重写；TP2 非 Gate | 本地完成；188 项必要检查及三角色自审通过，未部署，见阶段 6 验收 |
-| 7 | 完整冻结证据盲评包、独立解盲 key、VPA rubric、finite 分数、coverage；Backend/联合增量/调查增量三独立协议 | 预注册、重复臂、episode 配对、missing/censored、holdout；不把诊断视为校准或自动晋级 | 本地实现完成；两批真实 Luna/max 工程试跑失败，接入修复后新复核待外发授权，见 phase7_luna_pilot_20260913.md |
+| 7 | 完整冻结证据盲评包、独立解盲 key、VPA rubric、finite 分数、coverage；Backend/联合增量/调查增量三独立协议 | 预注册、重复臂、episode 配对、missing/censored、holdout；不把诊断视为校准或自动晋级 | 本地实现完成；pilot-03 真实 MCP 已通但无完整分析，2 失败/2 缺失；不追加同配置本地实验，后续研究留 VPS，见 phase7_luna_pilot_20260913.md |
 | 8 | 实际/估算/未知分离；完整 token/cache/tool/process/queue/wall time；Direct 渲染延迟到需要时 | 不无条件拼大 Prompt；重复开销先优化；未证明非劣不默认删减必读内容 | 本地实现，239 项定向离线检查通过；真实性能未验收，见阶段 8 报告 |
 | 9 | dedupe 故障阻止新任务；先持久任务再派发；Worker 所有权/租约；完整备份与暂停恢复；有界全链预算 | accept-once/execute-once 边界明确；不宣称网络 exactly-once；备份含 raw records/冻结资源并保留 pin | 待实现 |
 | 10 | 看板 pipeline/模型/强度/时间/依据/失败/新鲜度/简单订单；独立 outcome 类型与指标 | 只读无凭据；idle 生效；旧配置不变；联合默认带未验证提示 | 待实现 |

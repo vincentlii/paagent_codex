@@ -26,8 +26,8 @@ Codex 不再预先构建未使用的 Direct 大 Prompt，mandatory 知识与完�
 2026-09-13 的 239 项定向离线检查通过，详见 [阶段 8 验收](../quality/phase8_metrics_acceptance.md)；真实实验仍按独立研究记录评价。
 
 阶段 7 的本地实现已补齐 Host adapter、fixed/agentic 调查权限、完整冻结资源与 Paper outcome 绑定。
-Codex 实验固定 `gpt-5.6-luna/max`；本机已登录并执行两批真实工程试跑，均 0/4 完成，修复了依赖、Schema 和 MCP SDK 适配问题，未部署。
-新四臂复核因数据外发授权审核暂停，详见 [Luna 实验补充](../quality/phase7_luna_pilot_20260913.md)。
+Codex 实验固定 `gpt-5.6-luna/max`；前两批均 0/4 完成。获外发授权后 pilot-03 已验证真实 MCP 读取，前两臂约 240 秒失败；为减少冗余实验中止后两臂，最终 0 完成/2 失败/2 缺失。
+已修复 typed stop 的身份比较误报，45 项定向检查通过；本地停止同配置重跑，后续阶段 9—11 发布准备及 VPS 单任务贯通/持续模拟盘分开进行，未部署。详见 [Luna 实验补充](../quality/phase7_luna_pilot_20260913.md)。
 真实盲评、前向样本和效果校准仍未完成，不代表上线或专业效果通过。
 详见 [阶段 7 验收与研究边界](../quality/phase7_research_acceptance.md)。
 

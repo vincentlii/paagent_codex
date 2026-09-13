@@ -407,7 +407,9 @@ def _decode_result(
         raise CodexWorkerOutputError("isolated result acceptance identity mismatch")
     if raw.get("status") != "ok":
         if raw.get("error_type") == "CodexWorkerStopped":
-            if raw.get("acceptance_key") != acceptance_key or raw.get("runtime_identity") != runtime_identity:
+            if raw.get("acceptance_key") != acceptance_key or not _runtime_identity_matches(
+                dict(raw.get("runtime_identity") or {}), runtime_identity,
+            ):
                 raise CodexWorkerOutputError("isolated role stop identity mismatch")
             try:
                 stop = AnalysisRoleStop.model_validate(raw.get("role_stop"))

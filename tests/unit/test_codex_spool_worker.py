@@ -26,6 +26,26 @@ from tests.unit.test_codex_analysis_backend import _request
 from tests.unit.test_frozen_agent_job import _job
 
 
+@pytest.mark.parametrize("investigation", ["fixed", "agentic"])
+def test_role_stop_accepts_job_selection_but_rejects_runtime_drift(investigation):
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped, CodexWorkerOutputError
+    from pa_agent.ai.role_contracts import AnalysisRoleStop
+
+    actual = {"runtime_asset_digest": "a" * 64, "model": "gpt-5.6-luna", "reasoning_effort": "max"}
+    expected = {**actual, "profile_fingerprint": "b" * 64, "investigation_policy": investigation}
+    raw = {"schema_version": 1, "request_id": "request", "job_digest": "digest",
+           "acceptance_key": "key", "runtime_identity": actual, "status": "error",
+           "error_type": "CodexWorkerStopped", "role_stop": AnalysisRoleStop(
+               role="stage1", status="incomplete", reason="wall-clock budget exceeded").model_dump(mode="json")}
+    kwargs = dict(request_id="request", job_digest="digest", acceptance_key="key", runtime_identity=expected)
+    with pytest.raises(CodexWorkerStopped):
+        spool_module._decode_result(raw, **kwargs)
+    with pytest.raises(CodexWorkerOutputError):
+        spool_module._decode_result({**raw, "runtime_identity": {**actual, "runtime_asset_digest": "c" * 64}}, **kwargs)
+    with pytest.raises(CodexWorkerOutputError):
+        spool_module._decode_result({**raw, "acceptance_key": "wrong"}, **kwargs)
+
+
 def test_environment_worker_identity_provider_passes_legacy_defaults(
     tmp_path: Path,
     monkeypatch,
