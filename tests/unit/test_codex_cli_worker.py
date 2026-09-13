@@ -22,6 +22,21 @@ from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from tests.unit.test_frozen_agent_job import _job
 
 
+def test_codex_schema_projects_uniqueness_without_weakening_host_validation(tmp_path):
+    from jsonschema import Draft7Validator
+
+    source = {"type": "object", "properties": {
+        "evidence_refs": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+        "uniqueItems": {"type": "boolean"},
+    }, "required": ["evidence_refs", "uniqueItems"], "additionalProperties": False}
+    job = replace(_job(), output_schema=source)
+    generated = json.loads(CodexCliWorker._materialize_workspace(tmp_path / "workspace", job).read_text("utf-8"))
+    assert "uniqueItems" not in generated["properties"]["evidence_refs"]
+    assert generated["properties"]["uniqueItems"] == {"type": "boolean"}
+    assert source["properties"]["evidence_refs"]["uniqueItems"] is True
+    assert not Draft7Validator(source).is_valid({"evidence_refs": ["K1", "K1"], "uniqueItems": True})
+
+
 def test_materialized_schema_removes_only_codex_unsupported_composition(
     tmp_path: Path,
 ) -> None:

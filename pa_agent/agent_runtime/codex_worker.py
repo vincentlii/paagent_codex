@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -93,6 +93,7 @@ class CodexWorkerResult:
     model: str = ""
     reasoning_effort: str = ""
     profile_fingerprint: str = ""
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 class CodexCliWorker:
@@ -137,6 +138,7 @@ class CodexCliWorker:
             )
             environment = self._environment()
             try:
+                process_started = time.monotonic()
                 completed = self._process_runner(
                     command,
                     cwd=workspace,
@@ -161,6 +163,7 @@ class CodexCliWorker:
                 raise CodexWorkerUnavailable(
                     "Codex process could not be started"
                 ) from exc
+            process_ms = (time.monotonic() - process_started) * 1000
             if completed.returncode != 0:
                 raise _classify_failed_process(
                     completed.returncode,
@@ -199,6 +202,7 @@ class CodexCliWorker:
                 "thread_id": thread_id,
                 "usage": asdict(usage),
                 "latency_ms": latency_ms,
+                "timings": {"process_ms": process_ms, "worker_wall_ms": latency_ms},
                 "evidence_events": list(evidence_events),
             }
             _atomic_write_json(final_path, envelope)
@@ -212,6 +216,7 @@ class CodexCliWorker:
                 model=model,
                 reasoning_effort=reasoning_effort,
                 profile_fingerprint=profile_fingerprint,
+                timings={"process_ms": process_ms, "worker_wall_ms": latency_ms},
             )
         finally:
             output_tmp.unlink(missing_ok=True)
@@ -509,6 +514,7 @@ class CodexCliWorker:
     def _parse_events(stdout: str) -> tuple[str | None, AIUsage]:
         thread_id: str | None = None
         usage = AIUsage()
+        completed_turns = 0
         for line in str(stdout or "").splitlines():
             if not line.strip():
                 continue
@@ -524,12 +530,18 @@ class CodexCliWorker:
                 prompt = max(0, int(raw.get("input_tokens") or 0))
                 cached = max(0, int(raw.get("cached_input_tokens") or 0))
                 completion = max(0, int(raw.get("output_tokens") or 0))
+                fields = tuple(name for name, key in (
+                        ("prompt_tokens", "input_tokens"), ("cached_prompt_tokens", "cached_input_tokens"),
+                        ("completion_tokens", "output_tokens"), ("total_tokens", "input_tokens"),
+                    ) if raw.get(key) is not None and (name != "total_tokens" or raw.get("output_tokens") is not None))
                 usage = AIUsage(
-                    prompt_tokens=prompt,
-                    cached_prompt_tokens=min(prompt, cached),
-                    completion_tokens=completion,
-                    total_tokens=prompt + completion,
+                    prompt_tokens=usage.prompt_tokens + prompt,
+                    cached_prompt_tokens=usage.cached_prompt_tokens + min(prompt, cached),
+                    completion_tokens=usage.completion_tokens + completion,
+                    total_tokens=usage.total_tokens + prompt + completion,
+                    reported_fields=tuple(name for name in fields if not completed_turns or name in usage.reported_fields),
                 )
+                completed_turns += 1
             elif event_type in {"turn.failed", "error"}:
                 raise _classify_failed_process(1, stdout, None)
         return thread_id, usage
@@ -750,6 +762,7 @@ def _classify_failed_process(
             "temporary failure",
             "service unavailable",
             "required mcp server failed to start",
+            "required mcp servers failed to initialize",
             "mcp server timed out",
         )
     ):

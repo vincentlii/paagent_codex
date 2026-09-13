@@ -8,7 +8,7 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -82,6 +82,7 @@ class CodexSpoolClient:
                 float(job.budget.max_wall_seconds),
                 max(1.0, float(timeout_seconds)),
             ) if timeout_seconds is not None else float(job.budget.max_wall_seconds)
+            dispatch_started = time.monotonic()
             _atomic_json(
                 dispatch,
                 {
@@ -92,6 +93,7 @@ class CodexSpoolClient:
                     "acceptance_key": job.manifest.acceptance_key,
                     "lease_seconds": self._config.lease_seconds,
                     "deadline_epoch": time.time() + effective_timeout,
+                    "dispatched_at_epoch": time.time(),
                 },
             )
             deadline = time.monotonic() + (
@@ -118,7 +120,8 @@ class CodexSpoolClient:
                         request_id=request_id,
                         envelope=envelope,
                     )
-                    return decoded
+                    return replace(decoded, timings={**decoded.timings,
+                        "spool_wall_ms": (time.monotonic() - dispatch_started) * 1000})
                 time.sleep(self._config.poll_seconds)
             raise CodexWorkerTimeout("isolated Codex worker response timed out")
         except CodexWorkerError:
@@ -318,6 +321,8 @@ class CodexSpoolService:
             remaining = deadline_epoch - time.time()
             if remaining <= 0:
                 raise CodexWorkerTimeout("isolated Codex dispatch deadline expired")
+            queued_at = raw.get("dispatched_at_epoch")
+            queue_ms = max(0.0, (time.time() - float(queued_at)) * 1000) if queued_at is not None else None
             result = self._worker.run(published, timeout_seconds=remaining)
             envelope = {
                 "schema_version": 1,
@@ -330,6 +335,7 @@ class CodexSpoolService:
                 "thread_id": result.thread_id,
                 "usage": asdict(result.usage),
                 "latency_ms": result.latency_ms,
+                "timings": {**result.timings, **({"queue_ms": queue_ms} if queue_ms is not None else {})},
                 "evidence_events": list(result.evidence_events),
                 "outbox_path": str(result.outbox_path),
                 "model": result.model,
@@ -446,6 +452,7 @@ def _decode_result(
         thread_id=str(raw.get("thread_id") or "") or None,
         usage=AIUsage(**usage),
         latency_ms=float(raw.get("latency_ms") or 0.0),
+        timings=dict(raw.get("timings") or {}),
         evidence_events=tuple(dict(item) for item in raw.get("evidence_events") or ()),
         outbox_path=Path(str(raw.get("outbox_path") or "isolated-outbox.json")),
         model=str(raw.get("model") or ""),

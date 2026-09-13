@@ -21,8 +21,13 @@ verification_scope:
 
 ## 联合分析升级进行中
 
+阶段 8 已接入 actual/estimated/unknown 指标、调用 coverage、进程/队列/全程耗时与按 Backend 渲染。
+Codex 不再预先构建未使用的 Direct 大 Prompt，mandatory 知识与完整 Evidence 保留。
+2026-09-13 的 239 项定向离线检查通过，详见 [阶段 8 验收](../quality/phase8_metrics_acceptance.md)；真实实验仍按独立研究记录评价。
+
 阶段 7 的本地实现已补齐 Host adapter、fixed/agentic 调查权限、完整冻结资源与 Paper outcome 绑定。
-Codex 实验固定 `gpt-5.6-luna/max`；本次仅离线验收，额度不足未调用模型，未部署。
+Codex 实验固定 `gpt-5.6-luna/max`；本机已登录并执行两批真实工程试跑，均 0/4 完成，修复了依赖、Schema 和 MCP SDK 适配问题，未部署。
+新四臂复核因数据外发授权审核暂停，详见 [Luna 实验补充](../quality/phase7_luna_pilot_20260913.md)。
 真实盲评、前向样本和效果校准仍未完成，不代表上线或专业效果通过。
 详见 [阶段 7 验收与研究边界](../quality/phase7_research_acceptance.md)。
 

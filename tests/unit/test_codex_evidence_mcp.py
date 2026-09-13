@@ -17,6 +17,18 @@ def _request(process: subprocess.Popen[str], payload: dict) -> dict:
     return json.loads(process.stdout.readline())
 
 
+def _initialize(process: subprocess.Popen[str]) -> dict:
+    response = _request(process, {
+        "jsonrpc": "2.0", "id": 0, "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                   "clientInfo": {"name": "pa-agent-test", "version": "1"}},
+    })
+    assert "result" in response, response
+    process.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+    process.stdin.flush()
+    return response
+
+
 def test_stdio_mcp_serves_only_budgeted_frozen_evidence(tmp_path: Path) -> None:
     job_root = tmp_path / "jobs"
     published = FrozenAgentJobStore(job_root).publish(_job())
@@ -41,15 +53,7 @@ def test_stdio_mcp_serves_only_budgeted_frozen_evidence(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     try:
-        initialized = _request(
-            process,
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {"protocolVersion": "2025-06-18"},
-            },
-        )
+        initialized = _initialize(process)
         listed = _request(
             process,
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
@@ -71,7 +75,11 @@ def test_stdio_mcp_serves_only_budgeted_frozen_evidence(tmp_path: Path) -> None:
             process.stdin.close()
         process.wait(timeout=5)
 
-    assert initialized["result"]["capabilities"]["tools"]["listChanged"] is False
+    assert "tools" in initialized["result"]["capabilities"]
+    for tool in listed["result"]["tools"]:
+        assert tool["annotations"]["readOnlyHint"] is True
+        assert tool["annotations"]["destructiveHint"] is False
+        assert tool["annotations"]["openWorldHint"] is False
     assert {item["name"] for item in listed["result"]["tools"]} == {
         "get_job_manifest",
         "get_market_core",
@@ -121,6 +129,7 @@ def test_stdio_mcp_returns_tool_error_for_role_boundary(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     try:
+        _initialize(process)
         denied = _request(
             process,
             {

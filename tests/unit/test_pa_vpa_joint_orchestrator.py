@@ -193,7 +193,11 @@ def test_shadow_and_soft_have_distinct_official_paths(
     assert events[-1] == OrchestratorEvent.RecordSaved
 
 
-def test_codex_owns_pa_roles_and_binds_an_independent_shadow_vpa_role() -> None:
+def test_codex_owns_pa_roles_and_binds_an_independent_shadow_vpa_role(monkeypatch) -> None:
+    def forbidden_render(*args, **kwargs):
+        raise AssertionError("Codex must not render the unused Direct prompt")
+    for method in ("build_stage1", "build_incremental_stage1", "build_stage2_continuation", "build_vpa_evidence_report"):
+        monkeypatch.setattr(PromptAssembler, method, forbidden_render)
     settings = Settings(
         prompt=PromptSettings(vpa_mode="shadow"),
         validation=ValidationSettings(retry_enabled=False),

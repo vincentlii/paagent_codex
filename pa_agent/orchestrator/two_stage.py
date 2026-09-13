@@ -257,6 +257,8 @@ def _call_attempt_entry(
     )
     if not isinstance(model_call_meta, dict):
         model_call_meta = {}
+    from pa_agent.ai.analysis_metrics import call_metrics
+    metrics = model_call_meta.get("metrics") or call_metrics(usage, model_call_meta)
     return {
         "arm": arm,
         "stage": stage,
@@ -311,6 +313,7 @@ def _call_attempt_entry(
         "job_digest": _audit_text(model_call_meta.get("job_digest")),
         "investigation_policy": _audit_text(model_call_meta.get("investigation_policy")),
         "evidence_events": copy.deepcopy(model_call_meta.get("evidence_events") or []),
+        "metrics": copy.deepcopy(metrics),
         "codex_thread_id": _audit_text(model_call_meta.get("thread_id")),
         "initial_context_bytes": max(
             0, int(model_call_meta.get("initial_context_bytes") or 0)
@@ -893,6 +896,7 @@ class TwoStageOrchestrator:
         if record.analysis_pipeline is not None:
             from pa_agent.execution.delivery import validated_delivery
             record.analysis_timing = validated_delivery(record, now_ms=int(datetime.now().timestamp() * 1000))
+        self._record_metrics(record)
         record.usage_total = _usage_from_call_attempts(record.call_attempts)
         result = self._pending_writer.save_full(record)
         ok = bool(getattr(result, "ok", True))
@@ -910,6 +914,7 @@ class TwoStageOrchestrator:
     ) -> bool:
         """Persist a partial record without confusing it with a completed result."""
         self._apply_pipeline_record(record)
+        self._record_metrics(record)
         record.usage_total = _usage_from_call_attempts(record.call_attempts)
         result = self._pending_writer.save_partial(record, reason)
         ok = result is not None and bool(getattr(result, "ok", True))
@@ -918,6 +923,17 @@ class TwoStageOrchestrator:
         elif not bool(getattr(result, "audit_ok", True)):
             on_event(OrchestratorEvent.RecordAuditFailed)
         return ok
+
+    def _record_metrics(self, record: AnalysisRecord) -> None:
+        from pa_agent.ai.analysis_metrics import metric, summarize_call_metrics
+        import time
+        metrics = summarize_call_metrics(record.call_attempts)
+        started = getattr(self, "_analysis_started_monotonic", None)
+        metrics["analysis_to_persist_ms"] = metric(
+            (time.monotonic() - started) * 1000 if started is not None else None,
+            "milliseconds", "host_monotonic_excludes_final_write",
+        )
+        record.role_runtime["metrics"] = metrics
 
     def _apply_pipeline_record(self, record: AnalysisRecord) -> None:
         """Version only explicitly configured runs; never relabel legacy research."""
@@ -1064,7 +1080,7 @@ class TwoStageOrchestrator:
             role_assembler = assembler.clone_with_prompt_settings(
                 settings.prompt, vpa_evidence_catalog=catalog
             )
-            messages = role_assembler.build_vpa_evidence_report(
+            messages = [] if self._analysis_backend.backend_id == "codex_agent" else role_assembler.build_vpa_evidence_report(
                 frame, record.stage1_diagnosis, record.pa_hypotheses, htf_context=htf_context
             )
         except (ValueError, VpaPromptBuildError) as exc:
@@ -1257,6 +1273,8 @@ class TwoStageOrchestrator:
         """
         from pa_agent.config.vpa import resolve_production_vpa_mode, resolve_vpa_mode
 
+        import time
+        self._analysis_started_monotonic = time.monotonic()
         # GUI/direct submissions also freeze history before the first model call.
         # Headless tasks and experimental replays already carry their pinned pool.
         if (self._settings and self._settings.prompt.experience_max_entries > 0
@@ -1438,7 +1456,9 @@ class TwoStageOrchestrator:
             )
 
         # ── Step 4: Build Stage 1 messages ───────────────────────────────────
-        if previous_record is not None and incremental_new_bar_count is not None:
+        if self._analysis_backend.backend_id == "codex_agent":
+            messages_s1 = []
+        elif previous_record is not None and incremental_new_bar_count is not None:
             messages_s1 = run_assembler.build_incremental_stage1(
                 frame,
                 previous_record,
@@ -1892,7 +1912,7 @@ class TwoStageOrchestrator:
         _enable_next_bar = bool(
             getattr(getattr(self._settings, "general", None), "enable_next_bar_prediction", False)
         )
-        messages_s2 = run_assembler.build_stage2_continuation(
+        messages_s2 = [] if self._analysis_backend.backend_id == "codex_agent" else run_assembler.build_stage2_continuation(
             frame=frame,
             stage1_messages=messages_s1,
             stage1_reply_content=reply_s1.content,
@@ -2956,7 +2976,7 @@ class TwoStageOrchestrator:
         from pa_agent.ai.prompt_assembler import VpaPromptBuildError
 
         try:
-            vpa_messages = role_assembler.build_vpa_evidence_report(
+            vpa_messages = [] if self._analysis_backend.backend_id == "codex_agent" else role_assembler.build_vpa_evidence_report(
                 frame,
                 stage1,
                 hypotheses_dict,
@@ -3100,7 +3120,7 @@ class TwoStageOrchestrator:
             )
 
         try:
-            joint_messages = role_assembler.build_joint_decision(
+            joint_messages = [] if self._analysis_backend.backend_id == "codex_agent" else role_assembler.build_joint_decision(
                 baseline_stage2,
                 hypotheses_dict,
                 vpa_report_obj,

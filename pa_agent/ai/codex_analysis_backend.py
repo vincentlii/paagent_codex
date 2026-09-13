@@ -219,6 +219,7 @@ class CodexAnalysisRoleBackend:
         cancel_token: Any,
         on_attempt_error: Callable[[Exception], None] | None = None,
     ) -> AnalysisRoleResult:
+        started = time.monotonic()
         del on_reasoning_token  # hidden Codex reasoning is deliberately never persisted
         if cancel_token is not None and bool(cancel_token.is_set()):
             raise ModelCallFailure(
@@ -469,6 +470,9 @@ class CodexAnalysisRoleBackend:
             "repair_mode": repair_context is not None,
             "strict_null_pruned_count": strict_null_pruned_count,
         }
+        from pa_agent.ai.analysis_metrics import call_metrics
+        runtime["timings"] = result.timings
+        runtime["metrics"] = call_metrics(result.usage, runtime, wall_ms=(time.monotonic() - started) * 1000)
         reply = AIReply(
             content=content,
             reasoning_content="",

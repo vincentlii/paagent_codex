@@ -434,6 +434,8 @@ def _parser() -> argparse.ArgumentParser:
 def _run_official_sdk(server: EvidenceMcpServer) -> None:
     """Serve the bounded gateway through the pinned official MCP Python SDK."""
     from mcp.server import MCPServer
+    from mcp.types import ToolAnnotations
+    from mcp.server.mcpserver.exceptions import ToolError
 
     mcp = MCPServer(
         "pa-agent-frozen-evidence",
@@ -448,20 +450,22 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
         if result.get("isError"):
             content = result.get("content") or []
             message = content[0].get("text") if content and isinstance(content[0], dict) else name
-            raise RuntimeError(str(message))
+            # Only gateway permission/budget errors reach this branch. Preserve
+            # their public stop guidance; unexpected exceptions stay SDK-masked.
+            raise ToolError(str(message))
         return dict(result.get("structuredContent") or {})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_job_manifest() -> dict[str, Any]:
         """Read immutable job identity, cutoff, hashes, and expiry."""
         return payload("get_job_manifest", {})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def measure_price_window(older_seq: int, newer_seq: int) -> dict[str, Any]:
         """Measure an explicit 1-100 bar frozen window; no trend/Setup classification."""
         return payload("measure_price_window", {"older_seq": older_seq, "newer_seq": newer_seq})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def project_price_leg(start_seq: int, start_field: str, end_seq: int, end_field: str,
                           origin_seq: int, origin_field: str) -> dict[str, Any]:
         """Compute origin + (end - start) using frozen OHLC anchors, never recommend a target."""
@@ -470,32 +474,32 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
             "end_field": end_field, "origin_seq": origin_seq, "origin_field": origin_field,
         })
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_market_core() -> dict[str, Any]:
         """Read the bounded core context selected by PA Agent."""
         return payload("get_market_core", {})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def list_fact_ids(prefix: str = "", limit: int = 100) -> dict[str, Any]:
         """List visible fact IDs in this frozen role."""
         return payload("list_fact_ids", {"prefix": prefix, "limit": limit})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_facts(fact_ids: list[str]) -> dict[str, Any]:
         """Read deterministic facts by exact ID."""
         return payload("get_facts", {"fact_ids": fact_ids})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_bars(older_seq: int, newer_seq: int) -> dict[str, Any]:
         """Read an inclusive bar range inside the frozen cutoff."""
         return payload("get_bars", {"older_seq": older_seq, "newer_seq": newer_seq})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_measurements(limit: int = 100) -> dict[str, Any]:
         """Read deterministic measurement facts."""
         return payload("get_measurements", {"limit": limit})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_price_frame(older_seq: int, newer_seq: int) -> dict[str, Any]:
         """Read up to 100 frozen PA-only bars and aligned measurements."""
         return payload(
@@ -503,27 +507,27 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
             {"older_seq": older_seq, "newer_seq": newer_seq},
         )
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_pa_evidence(fact_ids: list[str]) -> dict[str, Any]:
         """Read exact PA evidence IDs from this role."""
         return payload("get_pa_evidence", {"fact_ids": fact_ids})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_htf_evidence(fact_ids: list[str]) -> dict[str, Any]:
         """Read exact HTF evidence IDs from this Frozen Snapshot."""
         return payload("get_htf_evidence", {"fact_ids": fact_ids})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_vpa_evidence(evidence_ids: list[str]) -> dict[str, Any]:
         """Read exact VPA evidence IDs from this role catalog."""
         return payload("get_vpa_evidence", {"evidence_ids": evidence_ids})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def list_allowed_knowledge() -> dict[str, Any]:
         """List PA-selected knowledge modules and section IDs."""
         return payload("list_allowed_knowledge", {})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def search_allowed_knowledge(
         query: str,
         knowledge_id: str | None = None,
@@ -535,7 +539,7 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
             {"query": query, "knowledge_id": knowledge_id, "limit": limit},
         )
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def read_allowed_knowledge(
         knowledge_id: str,
         section_ids: list[str],
@@ -546,22 +550,22 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
             {"knowledge_id": knowledge_id, "section_ids": section_ids},
         )
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def read_knowledge_module(knowledge_id: str) -> dict[str, Any]:
         """Read one complete PA-selected mandatory knowledge module."""
         return payload("read_knowledge_module", {"knowledge_id": knowledge_id})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_upstream_artifact() -> dict[str, Any]:
         """Read the validated upstream artifact authorized for this role."""
         return payload("get_upstream_artifact", {})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_experience_entries() -> dict[str, Any]:
         """Read the bounded historical experience selected for Stage 2."""
         return payload("get_experience_entries", {})
 
-    @mcp.tool(structured_output=True)
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_repair_findings() -> dict[str, Any]:
         """Read the prior draft and Validator-authorized repair pointers."""
         return payload("get_repair_findings", {})

@@ -41,6 +41,7 @@ class AIUsage:
     cached_prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    reported_fields: tuple[str, ...] = ()
 
     @property
     def cache_hit_rate(self) -> float:
@@ -151,6 +152,15 @@ def supports_kv_prefix_chain(settings: AIProviderSettings | None) -> bool:
     if _is_openclaw_agent_model(settings.model):
         return False
     return _is_deepseek_native(settings.base_url) or _is_deepseek_model(settings.model)
+
+
+def _reported_usage_fields(usage: Any) -> tuple[str, ...]:
+    fields = [name for name in ("prompt_tokens", "completion_tokens", "total_tokens")
+              if getattr(usage, name, None) is not None]
+    details = getattr(usage, "prompt_tokens_details", None)
+    if getattr(usage, "prompt_cache_hit_tokens", None) is not None or getattr(details, "cached_tokens", None) is not None:
+        fields.append("cached_prompt_tokens")
+    return tuple(fields)
 
 
 def _extract_cached_prompt_tokens(usage: Any) -> int:
@@ -552,6 +562,7 @@ class DeepSeekClient:
             cached_prompt_tokens=_extract_cached_prompt_tokens(u),
             completion_tokens=getattr(u, "completion_tokens", 0),
             total_tokens=getattr(u, "total_tokens", 0),
+            reported_fields=_reported_usage_fields(u),
         )
 
         request_id = getattr(response, "id", "") or ""
@@ -669,6 +680,7 @@ class DeepSeekClient:
         content = ""
         request_id = ""
         model_name = ""
+        reported_fields = ()
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
@@ -712,6 +724,7 @@ class DeepSeekClient:
                 # Extract usage from the final chunk (stream_options)
                 if hasattr(chunk, "usage") and chunk.usage is not None:
                     u = chunk.usage
+                    reported_fields = _reported_usage_fields(u)
                     prompt_tokens = getattr(u, "prompt_tokens", 0) or prompt_tokens
                     completion_tokens = getattr(u, "completion_tokens", 0) or completion_tokens
                     total_tokens = getattr(u, "total_tokens", 0) or total_tokens
@@ -764,6 +777,7 @@ class DeepSeekClient:
             cached_prompt_tokens=cached_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            reported_fields=reported_fields,
         )
 
         raw: dict[str, Any] = {

@@ -16,7 +16,9 @@ verification_scope: not-verified
 新版 `analysis_study_v1` 的本地实现与限制见 [阶段 7 报告](../quality/phase7_research_acceptance.md)。
 它区分 Backend、联合和调查三个问题；fixed/agentic 已接入 Frozen Job/Gateway/Worker，
 Host 复用成熟编排并验证完整冻结资源、模型/推理身份和持久交付。默认入口只预检。
-本地实现不等于真实因果增益已证明；额度恢复后仍需前向采样和盲评。旧协议语义保持不变。
+本地实现不等于真实因果增益已证明；仍需前向采样和盲评。旧协议语义保持不变。
+2026-09-13 更新：Windows Luna/max 两批工程试跑均失败，接入层根因与修复见
+[真实实验补充](../quality/phase7_luna_pilot_20260913.md)。新版复核待具体数据外发授权；不得把失败、CLI 退出成功或测试通过写成分析成功。
 
 ## 三层验收
 

@@ -15,6 +15,7 @@ _UNSUPPORTED_STRICT_OUTPUT_KEYWORDS = frozenset(
         "if",
         "then",
         "else",
+        "uniqueItems",
     }
 )
 _NAMED_SCHEMA_MAPS = frozenset({"properties", "patternProperties", "$defs", "definitions"})

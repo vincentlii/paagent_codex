@@ -51,6 +51,8 @@ def main(argv=None) -> int:
             command.add_argument(field, type=Path)
     coverage = commands.add_parser("coverage")
     coverage.add_argument("root", type=Path)
+    metrics = commands.add_parser("metrics")
+    metrics.add_argument("record", type=Path)
     outcomes = commands.add_parser("outcomes")
     outcomes.add_argument("root", type=Path)
     outcomes.add_argument("outcomes", type=Path)
@@ -59,7 +61,12 @@ def main(argv=None) -> int:
     release.add_argument("root", type=Path)
     release.add_argument("--reason", required=True)
     args = parser.parse_args(argv)
-    if args.command == "domain-fingerprint":
+    if args.command == "metrics":
+        from pa_agent.ai.analysis_metrics import summarize_call_metrics
+        from pa_agent.records.codec import load_record
+        print(json.dumps(summarize_call_metrics(load_record(args.record).record.call_attempts),
+                         ensure_ascii=False, indent=2, allow_nan=False))
+    elif args.command == "domain-fingerprint":
         from pa_agent.config.settings import Settings
         from pa_agent.experiments.study_resources import study_domain_fingerprint
         print(study_domain_fingerprint(args.prompt_dir, Settings.model_validate(_read(args.settings))))

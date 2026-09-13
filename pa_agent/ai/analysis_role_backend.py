@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping, Protocol
 
@@ -109,6 +110,7 @@ class DirectAnalysisRoleBackend:
         cancel_token: Any,
         on_attempt_error: Callable[[Exception], None] | None = None,
     ) -> AnalysisRoleResult:
+        started = time.monotonic()
         provider = self._provider_settings()
         try:
             result = self._run_once(
@@ -125,6 +127,7 @@ class DirectAnalysisRoleBackend:
                 result,
                 provider=provider,
                 provider_fallback_used=False,
+                wall_ms=(time.monotonic() - started) * 1000,
             )
         except ModelCallFailure as primary_failure:
             if (
@@ -174,6 +177,7 @@ class DirectAnalysisRoleBackend:
                 provider=fallback_provider,
                 provider_fallback_used=True,
                 prior_attempts=primary_failure.attempts,
+                wall_ms=(time.monotonic() - started) * 1000,
             )
 
     @staticmethod
@@ -219,6 +223,7 @@ class DirectAnalysisRoleBackend:
         provider: Any,
         provider_fallback_used: bool,
         prior_attempts: tuple[dict[str, Any], ...] = (),
+        wall_ms: float | None = None,
     ) -> AnalysisRoleResult:
         provider_id = str(result.capabilities.provider_id)
         transport_attempts = [
@@ -276,6 +281,8 @@ class DirectAnalysisRoleBackend:
             "evidence_denied_count": 0,
             "evidence_latency_ms": 0.0,
         }
+        from pa_agent.ai.analysis_metrics import call_metrics
+        runtime["metrics"] = call_metrics(result.reply.usage, runtime, wall_ms=wall_ms)
         try:
             result.reply._pa_model_call_meta = dict(runtime)
         except (AttributeError, TypeError):
