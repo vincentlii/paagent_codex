@@ -8,14 +8,21 @@ import math
 import re
 import time
 from dataclasses import asdict, dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJob
+from pa_agent.agent_runtime.execution_contract import ANALYSIS_EXECUTION_POLICY, skill_key
 from pa_agent.ai.token_counter import estimate_tokens
+
+PRICE_FRAME_CHUNK_SIZE = 50
 
 OPTIONAL_INVESTIGATION_OPERATIONS = frozenset({
     "list_fact_ids", "get_measurements", "get_pa_evidence", "get_facts", "get_bars",
     "search_allowed_knowledge", "read_allowed_knowledge", "measure_price_window", "project_price_leg",
+})
+REPAIR_OPERATIONS = frozenset({
+    "get_repair_findings", "get_facts", "get_pa_evidence", "get_htf_evidence",
+    "get_vpa_evidence", "read_allowed_knowledge",
 })
 
 
@@ -65,10 +72,72 @@ class FrozenEvidenceGateway:
         return tuple(self._audit)
 
     @property
+    def frozen_job(self) -> FrozenAgentJob:
+        """Expose immutable identity to the local MCP transport, not to the model."""
+        return self._job
+
+    @property
     def snapshot_identity(self) -> dict[str, Any]:
         return {
             "snapshot_hash": self._job.manifest.snapshot_hash,
             "cutoff_ts_open": self._job.manifest.cutoff_ts_open,
+        }
+
+    @property
+    def analysis_execution_enabled(self) -> bool:
+        return self._core_context.get("analysis_execution_policy") == ANALYSIS_EXECUTION_POLICY
+
+    @property
+    def pa_continuation(self) -> dict[str, Any]:
+        value = self._core_context.get("pa_session_continuation")
+        if not isinstance(value, Mapping) or value.get("protocol_version") != "pa_session_continuation_v1":
+            return {}
+        return {
+            "protocol_version": value["protocol_version"],
+            "parent_job_digest": value.get("parent_job_digest"),
+            "inherited_price_frame": bool(value.get("inherited_price_frame")),
+            "inherited_higher_timeframe": bool(value.get("inherited_higher_timeframe")),
+            "inherited_knowledge_ids": list(value.get("inherited_knowledge_ids") or []),
+        }
+
+    def available_tool_names(self) -> list[str]:
+        """Discovery mirrors existing gateway restrictions, not a second authority."""
+        names = set(REPAIR_OPERATIONS) if self._job.repair_findings else {
+            "get_role_baseline", "get_job_manifest", "get_market_core",
+            "list_allowed_knowledge", "read_knowledge_module", "get_upstream_artifact",
+            "get_experience_entries", "get_price_frame", "get_htf_evidence", "get_vpa_evidence",
+            *OPTIONAL_INVESTIGATION_OPERATIONS,
+        }
+        if self._job.manifest.role in {"stage1", "stage2"}:
+            names.discard("get_vpa_evidence")
+        else:
+            names.discard("get_price_frame")
+        identity = self._job.runtime.get("backend_runtime_identity") or {}
+        if not self._job.repair_findings and identity.get("investigation_policy") == "fixed":
+            names.difference_update(OPTIONAL_INVESTIGATION_OPERATIONS)
+        return sorted(names)
+
+    def baseline_delivery_index(self, resources: list[dict[str, Any]]) -> dict[str, Any]:
+        """Index values actually delivered; references in prose/upstream are not reads."""
+        delivered: set[str] = set()
+        for resource in resources:
+            payload = resource["payload"]
+            if resource["operation"] == "get_price_frame":
+                for row in payload["price_frame"]:
+                    for record in (row, row.get("measurements") or {}):
+                        if record.get("fact_id"):
+                            delivered.add(str(record["fact_id"]))
+            elif resource["operation"] in {"get_htf_evidence", "get_vpa_evidence"}:
+                # Nested references are not the referenced record's values.
+                for record in payload.get("facts", payload.get("evidence", [])):
+                    identity = record.get("evidence_id") or record.get("fact_id")
+                    if identity:
+                        delivered.add(str(identity))
+        return {
+            "delivered_value_ids": sorted(delivered),
+            "indexed_only_fact_ids": sorted(set(self._facts) - delivered),
+            "value_delivery_note": "Delivered values may be aligned in price_frame rather than catalog-record metadata. An index or upstream reference alone is not delivery.",
+            "measurement_note": "Existing bar measurements are in price_frame. measure_price_window/project_price_leg compute only explicitly requested frozen anchors; their receipts are not catalog IDs.",
         }
 
     def list_fact_ids(self, *, prefix: str = "", limit: int = 100) -> list[str]:
@@ -90,6 +159,46 @@ class FrozenEvidenceGateway:
             lambda: {**self._job.manifest.as_dict(), "budget": asdict(self._job.budget)},
         )
 
+    def mandatory_read_plan(self) -> list[tuple[str, dict[str, Any]]]:
+        """Host-selected read sequence; execution still uses each budgeted query."""
+        role = self._job.manifest.role
+        plan: list[tuple[str, dict[str, Any]]] = [
+            ("get_job_manifest", {}), ("get_market_core", {}),
+        ]
+        if role in {"stage2", "vpa_evidence", "joint_arbiter"} or self._core_context.get("previous_analysis"):
+            plan.append(("get_upstream_artifact", {}))
+        plan.append(("list_allowed_knowledge", {}))
+        continuation = self.pa_continuation if role == "stage2" else {}
+        inherited_knowledge = set(continuation.get("inherited_knowledge_ids") or [])
+        modules = self._job.knowledge_manifest.get("modules", [])
+        for module in sorted(
+            (item for item in modules if item.get("loading_policy") == "mandatory"),
+            key=lambda item: int(item.get("load_order") or 0),
+        ):
+            if module.get("knowledge_module_id") in inherited_knowledge:
+                continue
+            plan.append(("read_knowledge_module", {"knowledge_id": module["knowledge_module_id"]}))
+        if role in {"stage1", "stage2"}:
+            if not continuation.get("inherited_price_frame"):
+                for newer in range(1, len(self._bars) + 1, PRICE_FRAME_CHUNK_SIZE):
+                    plan.append(("get_price_frame", {
+                        "older_seq": min(newer + PRICE_FRAME_CHUNK_SIZE - 1, len(self._bars)),
+                        "newer_seq": newer,
+                    }))
+            htf_ids = [item["evidence_id"] for item in
+                       (self._core_context.get("higher_timeframe") or {}).get("evidence", [])]
+            if not continuation.get("inherited_higher_timeframe"):
+                for offset in range(0, len(htf_ids), 50):
+                    plan.append(("get_htf_evidence", {"fact_ids": htf_ids[offset:offset + 50]}))
+        if role == "stage2" and self._core_context.get("experience_entries"):
+            plan.append(("get_experience_entries", {}))
+        if role == "vpa_evidence":
+            vpa_ids = [item["evidence_id"] for item in
+                       (self._job.fact_projection.get("role_evidence") or {}).get("evidence", [])]
+            for offset in range(0, len(vpa_ids), 25):
+                plan.append(("get_vpa_evidence", {"evidence_ids": vpa_ids[offset:offset + 25]}))
+        return plan
+
     def get_market_core(self) -> dict[str, Any]:
         excluded = {
             "higher_timeframe",
@@ -101,9 +210,17 @@ class FrozenEvidenceGateway:
             "previous_analysis",
             "experience_entries",
             "vpa_catalog_context",
+            "pa_session_continuation",
         }
         def resolve() -> dict[str, Any]:
             core = {key: value for key, value in self._core_context.items() if key not in excluded}
+            if (self._job.runtime.get("backend_runtime_identity") or {}).get("provider") == "deepseek_codex_responses":
+                # Provider cannot enforce object unions; deliver the unchanged,
+                # digest-bound Draft schema as evidence, never as a giant prompt.
+                core["provider_output_schema"] = dict(self._job.output_schema)
+            if self.analysis_execution_enabled or (self._job.runtime.get("backend_runtime_identity") or {}).get("provider") == "deepseek_codex_responses":
+                selected = skill_key(self._job.manifest.role, self._core_context)
+                core["role_skill"] = self._job.runtime["skills"][selected]
             if self._job.manifest.role in {"vpa_evidence", "joint_arbiter"}:
                 catalog = self._job.fact_projection.get("role_evidence")
                 if isinstance(catalog, dict):
@@ -151,9 +268,17 @@ class FrozenEvidenceGateway:
             if any(seq not in self._bars for seq in requested):
                 raise EvidenceAccessDenied("price frame crosses frozen snapshot cutoff")
             indicators = {
-                int(item.get("value", {}).get("seq")): dict(item.get("value") or {})
+                int(item.get("value", {}).get("seq")): {
+                    **item["value"], "fact_id": item["fact_id"],
+                }
                 for item in self._facts.values()
                 if item.get("fact_type") == "bar_indicator_measurements"
+                and isinstance(item.get("value"), dict)
+            }
+            price_facts = {
+                int(item["value"]["seq"]): item
+                for item in self._facts.values()
+                if item.get("fact_type") == "bar_ohlc_geometry"
                 and isinstance(item.get("value"), dict)
             }
             rows: list[dict[str, Any]] = []
@@ -166,6 +291,11 @@ class FrozenEvidenceGateway:
                 rows.append(
                     {
                         **bar,
+                        **({
+                            "fact_id": price_facts[seq]["fact_id"],
+                            "geometry": {key: value for key, value in price_facts[seq]["value"].items()
+                                         if key not in {"seq", "open", "high", "low", "close", "closed"}},
+                        } if seq in price_facts else {}),
                         "measurements": indicators.get(seq, {}),
                     }
                 )
@@ -211,7 +341,12 @@ class FrozenEvidenceGateway:
         def resolve() -> dict[str, Any]:
             if not self._job.repair_findings:
                 raise EvidenceAccessDenied("this job is not an authorized repair attempt")
-            return dict(self._job.repair_findings)
+            findings = dict(self._job.repair_findings)
+            if (self._job.runtime.get("backend_runtime_identity") or {}).get("provider") == "deepseek_codex_responses":
+                findings["provider_output_schema"] = dict(self._job.output_schema)
+            if self.analysis_execution_enabled or (self._job.runtime.get("backend_runtime_identity") or {}).get("provider") == "deepseek_codex_responses":
+                findings["role_skill"] = self._job.runtime["skills"]["draft_pointer_repair"]
+            return findings
 
         return self._query("get_repair_findings", {}, resolve)
 
@@ -268,7 +403,7 @@ class FrozenEvidenceGateway:
     def list_allowed_knowledge(self) -> list[dict[str, Any]]:
         def resolve() -> list[dict[str, Any]]:
             manifest = self._job.knowledge_manifest
-            modules = manifest.get("modules", []) if isinstance(manifest, dict) else []
+            modules = manifest.get("modules", []) if isinstance(manifest, Mapping) else []
             if modules:
                 return [dict(item) for item in modules if isinstance(item, dict)]
             return [
@@ -490,10 +625,7 @@ class FrozenEvidenceGateway:
                 raise EvidenceAccessDenied(
                     "fixed investigation condition permits mandatory semantic-parity reads only"
                 )
-            if self._job.repair_findings and operation not in {
-                "get_repair_findings", "get_facts", "get_pa_evidence", "get_htf_evidence",
-                "get_vpa_evidence", "read_allowed_knowledge",
-            }:
+            if self._job.repair_findings and operation not in REPAIR_OPERATIONS:
                 raise EvidenceAccessDenied("repair cannot start a fresh market investigation")
             if operation == "get_vpa_evidence" and self._job.manifest.role in {"stage1", "stage2"}:
                 raise EvidenceAccessDenied("PA roles cannot read raw VPA evidence; joint Stage 2 uses the accepted report")

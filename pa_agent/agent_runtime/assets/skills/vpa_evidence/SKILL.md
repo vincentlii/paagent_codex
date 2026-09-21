@@ -7,9 +7,9 @@ description: Use when a frozen PA Agent job requests an independent VPA evidence
 
 目标是形成独立的量价证据草案，不替代 Brooks PA 结论。
 
-1. 调用 `get_job_manifest` 核对 Job identity，再用 `get_market_core` 与 `get_upstream_artifact` 核对当前阶段协议、volume provenance、capability、data status、PA hypotheses 与 entry-attempt applicability。
-2. 调用 `list_allowed_knowledge`，严格按 `load_order` 顺序用 `read_knowledge_module` 完整读取每个 `loading_policy=mandatory` 的 PA 已选 VPA 模块。不得固定截取前若干段，也不得用 Skill 摘要替代当前知识版本。
-3. 按 `evidence_index.vpa_evidence_chunk_size` 分批，用 `get_vpa_evidence` 完整读取 `vpa_evidence_ids` 中的本次授权目录。这是原 Windows VPA Prompt 的量价信息基线，不能只抽取支持既有假设的证据。
+1. 首先调用一次 `get_role_baseline`，按 resources 顺序完整阅读其中 manifest、core_context 与 upstream_artifact，核对 Job identity、当前阶段协议、volume provenance、capability、data status、PA hypotheses 与 entry-attempt applicability。下列基线材料已在本次返回中，不逐项重复调用。
+2. 按 manifest 的 `load_order` 阅读全部 `loading_policy=mandatory` PA 已选 VPA 模块原文。不得固定截取前若干段，也不得用 Skill 摘要替代当前知识版本。
+3. 阅读随包交付的全部 VPA evidence 分块，覆盖本次授权目录。这是原 Windows VPA Prompt 的量价信息基线，不能只抽取支持既有假设的证据。任一必读交付失败即停止，不用部分内容继续判断。
 4. 按 `Background → Location → Effort/Result → Leg/Wave Comparison → Acceptance/Follow-through` 调查；最后才考虑 Wyckoff 标签。
 5. 从完整目录中为每个 observation 选择精确 VPA evidence ID；不得猜测或枚举 index 外 ID。必须同时寻找挑战 primary hypothesis 的证据，说明支持、挑战、中性或信息不足。比较必须有明确对象和同源因果基线。
 6. 标签不能替代 Evidence，也不能成为第二个 Setup Router。

@@ -60,8 +60,9 @@ Snapshot 一旦排队即冻结；分析期间 GUI 暂停网络刷新，Headless 
 Stage 1、Stage 2、VPA 和研究 Joint 的模型调用现已通过 `AnalysisRoleBackend` interface；当前
 `DirectAnalysisRoleBackend` 保持原 Provider、structured output、role profile 和 fallback 行为；
 `CodexAnalysisRoleBackend` 已返回同一 Provider Draft/role draft，并进入相同 materializer、Validator、
-Router、Risk 与持久化链。Codex 只在同一 Frozen Snapshot 内按需读取授权 Evidence；每个角色使用
-独立 ephemeral 任务，Stage 2 不继承 Stage 1 chat history。Codex 能力仍为 `research-only`。
+Router、Risk 与持久化链。Codex 只在同一 Frozen Snapshot 内按需读取授权 Evidence；不同 Snapshot
+会话完全隔离，同一 Snapshot 仅 PA Stage 1 首稿通过后受控续接 PA Stage 2。VPA、Joint 与 repair
+始终独立。Codex 能力仍为 `research-only`。
 
 Codex 调用前必须生成 Frozen Agent Job v4。Job 以 canonical JSON digest 绑定 Snapshot cutoff、请求、
 output schema、角色可见 facts/knowledge、Runtime AGENTS/skill 与预算，并以完整目录原子发布。
@@ -77,14 +78,19 @@ PromptAssembler 代码生成的阶段规则，以及 PA/Router 当前选中的 m
 `二元决策` 只含 §0–§8，Stage 2 只含全局原则与 §9–§15，避免跨阶段污染；Router 策略文件保持全文。
 知识 manifest 的 `load_order` 保留 Windows 成熟 Prompt 的模块顺序。Worker 根据 Evidence audit 拒绝
 任何跳过或乱序读取 mandatory Context 的 Draft；旧 Job 没有该策略标记时继续按原契约回放。完成基线后，额外事实和章节才按
-争议点读取。知识选择权仍属于 PA Agent，Codex 不能遍历仓库或自行引入另一套交易体系。Stage 2 只接收
-结构化 Stage 1 handoff，不继承会话。
+争议点读取。知识选择权仍属于 PA Agent，Codex 不能遍历仓库或自行引入另一套交易体系。不同 Frozen
+Snapshot 之间绝不续接；同一 Snapshot 内，只有 attempt 1 直接通过原 Validator 的 PA Stage 1 可以由
+PA Stage 2 受控续接。Stage 2 同时必须读取冻结的结构化 Stage 1 handoff 与 Router 结果，聊天历史不构成
+权限或事实来源。VPA、Joint 与 repair 始终独立；Stage 1 经 repair 后，Stage 2 从已验证 Artifact 新开任务。
 
 PA Stage 1/2 的 `bars.json` 在 Job 构建时删除 `volume/amount/volume_state`；完整价格帧只组合 OHLC 与
 确定性 indicator/geometry measurements。VPA 原始量价证据保留在独立角色目录中，防止 Brooks 主分析
 因工具读取绕过 VPA Shadow 边界。
 
-Codex CLI Worker 使用 `codex exec --ephemeral --sandbox read-only --output-schema`。运行时使用
+Codex CLI Worker 对 VPA、Joint、repair 与无法安全续接的 PA 任务使用
+`codex exec --ephemeral --sandbox read-only --output-schema`；对合格的同 Snapshot PA 链使用专用
+workspace 执行 Stage 1，并在 Host 核验 parent job/thread/task/Snapshot/cutoff/runtime identity 后以
+`codex exec resume` 执行 Stage 2。运行时使用
 独立且 digest 校验的 `CODEX_HOME/config.toml` 与 `rules/pa-agent.rules`，强制 ChatGPT login，禁用
 shell、Web、image 与 skill dependency install，
 并要求 frozen-evidence stdio MCP 成功启动。AGENTS 与单一 role skill 从 Job 内已绑定的 Runtime

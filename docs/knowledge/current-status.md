@@ -19,6 +19,74 @@ verification_scope:
 
 # 当前状态
 
+2026-09-21：性能优化恢复原 Windows Direct 主链的 PA 阶段连续性，但不恢复长期会话。
+不同 Frozen Snapshot 严格独立；同一 Snapshot 内仅 Stage 1 attempt 1 直接通过后可由
+Stage 2 续接。VPA、研究 Joint 与 repair 始终独立；Stage 1 一旦进入 repair，Stage 2
+便从已验证 Artifact 新开会话。Publisher 校验 parent/thread/task/Snapshot/cutoff/runtime，
+并仅对 digest 完全一致的 price frame、HTF 和知识做无损继承；新 Stage 2 产物仍必读。
+该实现已通过会话身份、VPA 隔离、delta baseline、Worker/Spool 与 Direct 相关离线回归；
+本机 Codex CLI 0.155.0-alpha.9.2 的 localhost 合成验收进一步证明同 thread 续接与
+Stage 2 delta 确实切换到新 Frozen Job。持久 PA workspace 使用 Host 原子更新的只读
+evidence binding，防止 `resume` 恢复 Stage 1 MCP 参数后继续读旧 Job。尚未做新一轮 VPS
+真实时延和专业质量验收，阶段 8 仍 no-go。
+
+2026-09-21：已定位 Luna 工具不可用的配置根因：模型要求 Code Mode，而分析运行时
+禁用了宿主。Worker 现将传输与权限分开：OpenAI 受限 Code Mode、DeepSeek 直接 MCP，
+两者均使用原冻结 Gateway 与完整 Skill/知识。显式关闭协作工具，隔离父桌面会话身份。
+51+24 项定向回归和两个 Provider 的真实 CLI 本机合成传输检查通过；完整指令、基线
+无损，Luna 嵌套工具仅冻结证据。不能据此宣称性能或交易质量通过；阶段 8 仍 no-go。
+本条取代下文历史“所有新模型直接 MCP、关闭 Code Mode”的实现口径，详情见运行审计。
+随后一次 fresh Luna/max 真实验收：工具基线和追加 PA 调查成功，但 Stage 1 在
+239.703 秒超时，无 Draft、VPA、Stage 2。工具处理累计约 0.119 秒；剩余延迟尚不能
+细分为模型计算或服务端等待。传输缺陷修复不等于性能达标；未追加付费运行或部署。
+该超时曾被泛化为 invalid_request；现已新增独立非重试 `role_stopped`，统一 Codex、
+Direct、预算停止和调用账本语义，不再误导为 Schema 错误或触发 availability fallback。
+186 项运行链定向回归及两条 Provider 本机真实 CLI 协议检查通过。
+
+2026-09-21 延长预算单次 fresh Luna/max：临时单角色 900 秒、全链 2400 秒，正式配置
+未改。Stage 1 431.406 秒、VPA 607.954 秒、Stage 2 561.391 秒、定向修复 58.547 秒；
+Host 共 1662.375 秒，755,382 Token。Gateway 44 条事件仅 0.601 秒、队列 1.950 秒，
+慢速集中在模型进程侧。前三角色均返回，但 Stage 2 首稿及修复先后错误绑定 K4/K2.high，
+最终被原 Validator 阻止，状态 incomplete、无正式交易决策。故放宽预算证明链路非死锁，
+但性能与精确事实质量仍不达标；不能永久放宽预算作为上线方案。详见运行审计。
+
+2026-09-18 第四步：实际 CLI→localhost 合成 Responses 请求已确认 AGENTS 双重注入，
+新 Job 以 `single_frozen_agents_v1` 冻结单份交付：保留完整 model_instructions_file，
+仅关闭自动项目文档重注入。真实 MCP 基线在此路径本来就只交付一份，因此不改 MCP
+双表示协议。35 项定向测试及新旧传输对照通过；完整指令、Skill、基线无损。未调用付费
+模型、未部署，真实性能与交易质量仍未验收。CLI 升级时用 `scripts/check_codex_delivery.py`
+复核，参见运行审计“第四步”节；不要在缺少显式完整指令绑定时关闭自动 AGENTS 装载。
+
+2026-09-18 优化步骤 1–3：分析专用指令与功能配置、全模型冻结 Skill 交付、按角色工具
+筛选、已交付/仅索引证据导航及 Stage 1 缺口驱动流程已实现。83 项相关离线测试、真实
+MCP SDK 内存调用、资产审计和当前 CLI 功能配置检查通过。保留完整知识、PA/VPA、HTF
+及原 Host 交易链；未追加付费分析或部署，尚不能宣布提速、质量非劣或阶段 8 通过。
+新执行语义用 `analysis_execution_v1` 冻结；再次运行前需显式同步专用 CODEX_HOME 的
+版本化策略文件，不能绕过摘要校验。细节与三角色自审见运行审计的“优化步骤 1–3”节。
+
+2026-09-18：Codex + DeepSeek Flash/high 同冻结快照已贯通 Stage 1→VPA→联合 Stage 2→
+原校验/持久化，无输出修复；Host 至持久化前 392.578 秒，CLI 合计 390.876 秒，仍超过
+300 秒目标。本次含被沙箱阻止的写 Skill 尝试，且交易文本有语义矛盾，不能作为合格样本
+或质量非劣证明。后续只读模型目录、直接 MCP 提示、完整 Skill/Schema 交付及审计标签
+已离线修正，未追加真实复测、未部署。完整数据与限制见运行审计文档的 2026-09-18 节。
+
+2026-09-17 离线补充：PA 基线增加冻结的精确 fact ID 索引，省去必须单独发现 ID 的依赖，
+索引不进入初始 Prompt；共享提示纠正旧 pa_evidence.fact_refs 输出位置。56项定向回归通过，
+无付费调用。原知识/HTF/Validator保留，真实提速尚未验证；不能把该局部优化称为性能达标。
+
+2026-09-17 最新：阶段 8 尚未通过真实完整链路验收，阶段 9 暂缓。已修复并发审计、长修复
+反馈、价格几何/引用及 VPA 身份交接缺口；无损合并后补齐 MCP / exec / history 交付容量。
+最新 fresh Stage 1 原校验通过但耗时 507 秒，性能不合格。VPA 暴露 Codex 发布完整 catalog、
+原 Validator 只允许 PA 已引用窗口的范围不一致；`vpa-w005` 并非不存在。Publisher 已复用原
+选择器，保留选中事实全部字段、原 catalog 和知识全文；引用错误路径同步修复，54 项定向
+回归通过。当前分段验证 VPA → Stage 2；尚不代表全链通过，也不自动切回 Direct。
+补充：唯一获批的 Luna/high 工程对比已 fresh 贯通并落库，无修复；三个角色 CLI 合计
+563.358 秒，仍超过性能目标。与 max 主周期判断存在分歧，未证明质量非劣；正式配置
+不变，停止追加付费测试。max 分段记录虽 completed，但 trace 改编号存在语义错配，
+已补修复身份保护并通过55项回归，不把该旧记录算质量通过。
+后续贯通与性能证据见 [真实运行审计](../quality/runtime_chain_audit_20260914.md)。
+下文关于“先进入阶段 9—11”的历史安排不再适用。
+
 ## 联合分析升级进行中
 
 阶段 8 已接入 actual/estimated/unknown 指标、调用 coverage、进程/队列/全程耗时与按 Backend 渲染。
@@ -110,7 +178,7 @@ Profile UI 已完成，真实 Codex 分析、权限负向测试和 live canary e
 | DeepSeek role reasoning profiles | implemented | local/provider-dependent | requested effort 与 provider 实际 applied effort 必须分别记录；某些模型可能不支持细粒度强度 |
 | Analysis Backend seam | implemented | not-verified working tree | Direct 与 Codex Adapter 均返回现有 Provider Draft；Codex 统一接管 Stage 1、Stage 2、VPA 与 research Joint，`codex_only` 不创建 Direct client；VPA 仍不改变 PA official path |
 | Frozen Agent Job / Evidence | implemented | not-verified working tree | v4 将完整 role context 独立冻结；显式 `semantic_parity_v1` 强制按 `load_order` 读取角色安全完整价格帧、全部 HTF、阶段协议和 PA/Router mandatory 知识切片，再按需调查争议 Evidence；PA roles 的 bars 已删除 volume；所有资源受 digest、cutoff、role 与预算约束 |
-| Codex CLI Worker | research-only | not-verified working tree | Ephemeral CLI、ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、Runtime identity、strict-output schema 投影、stdout failure taxonomy，以及无敏感信息的 auth/heartbeat 状态已补充实现；尚未重新运行本地或 VPS 验证 |
+| Codex CLI Worker | research-only | local focused | 不同 Snapshot 独立；同 Snapshot PA Stage 1 首稿通过后可受控续接 Stage 2；VPA/Joint/repair 独立 ephemeral。ChatGPT-only auth、read-only/no-shell/no-Web、required MCP、AGENTS/role skills、Runtime identity、strict-output schema 投影、stdout failure taxonomy 与无敏感信息的 auth/heartbeat 已实现；真实 CLI+MCP 合成续接已通过，仍待 VPS 真实模型验收 |
 | Codex Analysis Backend | research-only | local focused | 已有有界 core context、独立 Unix spool worker、端到端 runtime identity、一次定向修复、熔断、完整 Direct PA 冷回退与环境 Factory；部署默认仍为 `deepseek_only` |
 | Codex audit projection | implemented | local focused | `analysis_calls` 投影 backend、provider、job/thread identity 与 Evidence 调用/字节量；完整 JSON record 仍是唯一原始记录 |
 | Analysis Backend A/A/B/B | research-only | not-verified working tree | `analysis_backend_aabb_v2` 强制四臂共用 HTF + VPA Shadow catalog，预登记 Direct/Codex 各两臂、ABBA/BAAB、独立 runtime、禁 fallback、失败 coverage、PA/VPA signature、cohort 去重、盲评 packet/独立解盲 key、已有 closed-OHLC ledger 结果联结与 CLI 入口已实现；尚无真实 Codex 样本，不能晋级 |

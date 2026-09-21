@@ -34,10 +34,13 @@ def test_budget_denial_cannot_pass_as_a_market_decision():
         gateway.list_fact_ids()
     with pytest.raises(EvidenceBudgetExceeded, match="budget"):
         gateway.list_fact_ids()
-    with pytest.raises(CodexWorkerOutputError, match="budget"):
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped
+
+    with pytest.raises(CodexWorkerStopped, match="budget") as caught:
         CodexCliWorker._validate_required_evidence_reads(
             job, tuple(asdict(e) for e in gateway.audit_events),
         )
+    assert caught.value.stop.status == "incomplete"
 
 
 def test_projection_is_signed_replayable_and_not_a_setup_classifier():
@@ -147,7 +150,8 @@ def test_joint_skill_selected_only_by_matching_frozen_protocol_and_schema(tmp_pa
     job = FrozenAgentJobStore(published.parent).open(published.name)
     assert job.manifest.role == "stage2"
     assert set(job.runtime["skills"]) == {"joint_stage2"}
-    assert "$pa-vpa-stage2-decision" in CodexCliWorker._initial_prompt(job)
+    assert "pa-vpa-stage2-decision" in CodexCliWorker._initial_prompt(job)
+    assert FrozenEvidenceGateway(job).get_market_core()["role_skill"] == job.runtime["skills"]["joint_stage2"]
     assert all("volume" not in bar for bar in job.bars)
     assert job.fact_projection["role_evidence"] is None
 
@@ -211,8 +215,7 @@ def test_incomplete_transport_never_creates_a_success_outbox(tmp_path):
 
 
 def test_mcp_sdk_registration_uses_the_same_gateway(monkeypatch):
-    import sys
-    import types
+    import mcp.server
 
     from pa_agent.agent_runtime.evidence_mcp import EvidenceMcpServer, _run_official_sdk, _tools
 
@@ -231,9 +234,7 @@ def test_mcp_sdk_registration_uses_the_same_gateway(monkeypatch):
         def run(self):
             pass
 
-    module = types.ModuleType("mcp.server")
-    module.MCPServer = RegistrationOnly
-    monkeypatch.setitem(sys.modules, "mcp.server", module)
+    monkeypatch.setattr(mcp.server, "MCPServer", RegistrationOnly)
     job = measurement_job()
     _run_official_sdk(EvidenceMcpServer(FrozenEvidenceGateway(job), job_digest=job.manifest.job_digest))
     assert set(registered) == {t["name"] for t in _tools()}

@@ -108,7 +108,7 @@ _PA_FACTUAL_CLAIM_RULE = """
 _PA_EVIDENCE_OUTPUT_RULE = """
 ## PA_EVIDENCE 结构化理论契约
 
-- `pa_evidence.fact_refs` 只能引用 ANALYSIS_FACT_CATALOG 中存在的 `PA.*` ID；确定性计数、连续段、极值与比较不得自行重算。
+- 事实引用只填写当前 Provider Draft schema 的引用字段：阶段一假设的 `supporting_fact_refs` / `challenging_fact_refs` 与 `gate_trace.evidence_refs`，阶段二的 `decision_trace.evidence_refs`。只引用当前冻结目录中存在的 `PA.*` ID，不额外输出程序物化的 `pa_evidence.fact_refs`；确定性计数、连续段、极值与比较不得自行重算。
 - `theory_rule_ids` 只能引用 PA_THEORY_RULE_CATALOG 中存在且本轮实际使用的 Brooks 规则，不得自造或为了凑字段罗列无关规则。
 - 非 `spike` 周期时 `spike_analysis=null` 且 `spike_stage=null`，不得残留上一轮 Spike 状态。
 - `spike` 周期必须严格填写 `spike_analysis={"anchor_bar":"K#","post_anchor_state":"no_closed_bar_after_anchor|continuation_only|pause_or_pullback_present","first_pause_or_pullback_bar":"K#|null"}`。字段名不得缩写或改名；`anchor_bar` 是本轮识别的 Spike 锚点。

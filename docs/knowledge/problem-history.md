@@ -217,11 +217,13 @@ issue_status: monitoring
 ### PH-19 长会话、Backend 混合与 availability/quality 混淆
 
 - `issue_status`：active prevention。
-- **症状：**定时任务 resume 旧对话；Stage 2 继承未经验证的 Stage 1 prose；Codex 输出质量错误被 DeepSeek 静默兜底；同一交易链混用两个 Backend。
+- **症状：**定时任务 resume 其他 Snapshot 的旧对话；Stage 2 继承未经验证或经过 repair 的 Stage 1 prose；Codex 输出质量错误被 DeepSeek 静默兜底；同一交易链混用两个 Backend。
 - **影响：**上下文污染、不可重放、ITT 幸存者偏差和无法解释的正式决策。
 - **根因：**没有把 Snapshot、role、attempt、runtime fingerprint 和失败类型作为稳定身份。
 - **错误修法：**无限 retry、自动换模型重写，或只保存最后成功结果。
-- **正确原则：**每个 role 独立 ephemeral；只传已验证 Artifact；fallback 仅限 availability，且从 Direct Stage 1 重启完整链；实验禁用 fallback 并保留失败 arm。
+- **正确原则：**不同 Snapshot 独立；同一 Snapshot 只允许 Stage 1 attempt 1 → PA Stage 2 受控续接，
+  并由冻结 parent/thread/runtime identity 和已验证 Artifact 约束；VPA/Joint/repair 独立 ephemeral。
+  fallback 仅限 availability，且从 Direct Stage 1 重启完整链；实验禁用 fallback 并保留失败 arm。
 - **当前实现/证据：**[ADR-0024](../architecture/ADR-0024-codex-analysis-backend.md)。
 - **复发检查：**审计 role session、backend、failure kind、fallback reason、Snapshot/runtime digests 和 ITT coverage。
 

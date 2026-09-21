@@ -178,6 +178,20 @@ def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) 
     assert "tools.view_image=false" not in command
     assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
     assert any("mcp_servers.pa_evidence.required=true" == item for item in command)
+    # MCP limits alone leave both outer exec and history truncation active.
+    history_limit = next((int(item.split("=", 1)[1]) for item in command
+                          if item.startswith("tool_output_token_limit=")), None)
+    assert history_limit is not None and history_limit >= 2 * _job().budget.max_evidence_bytes
+    prompt = command[command.index("exec") + 1]
+    pragma_line = next(line for line in prompt.splitlines() if line.startswith("// @exec: "))
+    assert json.loads(pragma_line.removeprefix("// @exec: "))["max_output_tokens"] == history_limit
+    from pa_agent.agent_runtime.evidence_mcp import _tools
+    for tool in _tools():
+        prefix = f"mcp_servers.pa_evidence.tools.{tool['name']}.output_token_limit="
+        budget = _job().budget
+        bound = (budget.max_evidence_bytes if tool["name"] == "get_role_baseline"
+                 else budget.max_evidence_response_bytes)
+        assert any(item.startswith(prefix) and int(item.split("=")[1]) >= 2 * bound for item in command)
     assert "OPENAI_API_KEY" not in captured["kwargs"]["env"]
     assert "CODEX_API_KEY" not in captured["kwargs"]["env"]
     assert result.content == '{"cycle":"trading_range"}'
@@ -454,3 +468,136 @@ def test_worker_rejects_unknown_legacy_default_model(tmp_path: Path) -> None:
 
     with pytest.raises(CodexWorkerOutputError, match="legacy worker model/effort"):
         worker.run(published)
+
+
+def test_worker_persists_stage1_workspace_then_uses_codex_resume_for_stage2(
+    tmp_path: Path,
+) -> None:
+    from pa_agent.agent_runtime.frozen_job import AgentJobBudget, FrozenAgentJobBuilder
+
+    builder = FrozenAgentJobBuilder(
+        runtime_version="runtime-session-test",
+        agents_text="Frozen PA runtime rules.",
+        skill_documents={"stage1": "Stage 1 skill.", "stage2": "Stage 2 skill."},
+    )
+    common = dict(
+        task_id="task-session",
+        attempt=1,
+        snapshot_hash="a" * 64,
+        cutoff_ts_open=1_725_000_000_000,
+        messages=[{"role": "user", "content": "analyze"}],
+        output_schema={"type": "object", "required": ["cycle"]},
+        fact_projection={"snapshot_hash": "a" * 64, "facts": [], "relations": []},
+        bars=[{"seq": 1, "ts_open": 1_725_000_000_000, "close": 100.0}],
+        knowledge_documents={},
+        allowed_knowledge_ids=(),
+        budget=AgentJobBudget(max_evidence_calls=3, max_evidence_bytes=4096),
+    )
+    stage1 = builder.build(
+        request_id="task-session:stage1:1",
+        role="stage1",
+        core_context={
+            "task_id": "task-session",
+            "frozen_snapshot": {"snapshot_hash": "a" * 64, "cutoff_ts_open": 1_725_000_000_000},
+        },
+        **common,
+    )
+    jobs = FrozenAgentJobStore(tmp_path / "jobs")
+    stage1_path = jobs.publish(stage1)
+    stage2 = builder.build(
+        request_id="task-session:stage2:1",
+        role="stage2",
+        core_context={
+            "task_id": "task-session",
+            "frozen_snapshot": {"snapshot_hash": "a" * 64, "cutoff_ts_open": 1_725_000_000_000},
+            "pa_session_continuation": {
+                "protocol_version": "pa_session_continuation_v1",
+                "parent_job_digest": stage1_path.name,
+                "thread_id": "thread-pa-0001",
+                "inherited_price_frame": True,
+                "inherited_higher_timeframe": True,
+                "inherited_knowledge_ids": [],
+            },
+        },
+        **common,
+    )
+    stage2_path = jobs.publish(stage2)
+    calls: list[tuple[list[str], dict]] = []
+    bindings: list[dict] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((list(command), kwargs))
+        mcp_args = json.loads(next(
+            item.split("=", 1)[1]
+            for item in command
+            if item.startswith("mcp_servers.pa_evidence.args=")
+        ))
+        binding_path = Path(mcp_args[mcp_args.index("--binding-file") + 1])
+        bindings.append(json.loads(binding_path.read_text(encoding="utf-8")))
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text('{"cycle":"trading_range"}', encoding="utf-8")
+        stdout = json.dumps({"type": "thread.started", "thread_id": "thread-pa-0001"})
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    config = CodexCliConfig(
+        codex_home=tmp_path / "home",
+        runtime_root=tmp_path / "runtime",
+        outbox_root=tmp_path / "outbox",
+        model="gpt-5.6-terra",
+        reasoning_effort="high",
+    )
+    worker = CodexCliWorker(config, process_runner=fake_run)
+    worker.run(stage1_path, persist_session=True)
+    stable_workspace = Path(calls[0][1]["cwd"])
+    assert stable_workspace.is_dir()
+    worker.run(
+        stage2_path,
+        resume_thread_id="thread-pa-0001",
+        parent_job_digest=stage1_path.name,
+    )
+
+    initial_command, resume_command = calls[0][0], calls[1][0]
+    assert initial_command[:2] == ["codex", "exec"]
+    assert "--ephemeral" not in initial_command
+    assert resume_command[:3] == ["codex", "exec", "resume"]
+    assert resume_command[3] == "thread-pa-0001"
+    assert "--ephemeral" not in resume_command
+    assert "--cd" not in resume_command
+    assert Path(calls[1][1]["cwd"]) == stable_workspace
+    assert bindings[0]["job_digest"] == stage1_path.name
+    assert bindings[1]["job_digest"] == stage2_path.name
+    assert bindings[0]["job_root"] == bindings[1]["job_root"]
+    assert bindings[0]["audit_output"] != bindings[1]["audit_output"]
+    assert not stable_workspace.exists()
+
+
+def test_worker_rejects_resume_thread_not_bound_to_frozen_stage2(
+    tmp_path: Path,
+) -> None:
+    job = replace(
+        _job(),
+        core_context={
+            "pa_session_continuation": {
+                "protocol_version": "pa_session_continuation_v1",
+                "parent_job_digest": "b" * 64,
+                "thread_id": "thread-pa-0001",
+            }
+        },
+    )
+    worker = CodexCliWorker(
+        CodexCliConfig(
+            codex_home=tmp_path / "home",
+            runtime_root=tmp_path / "runtime",
+            outbox_root=tmp_path / "outbox",
+            model="gpt-5.6-terra",
+            reasoning_effort="high",
+        )
+    )
+
+    with pytest.raises(CodexWorkerOutputError, match="continuation"):
+        worker._validate_session_options(
+            job,
+            persist_session=False,
+            resume_thread_id="thread-pa-other",
+            parent_job_digest="b" * 64,
+        )

@@ -7,7 +7,7 @@ description: Use when a research-only frozen job requests Brooks and VPA arbitra
 
 目标是在研究臂中裁决已有 PA candidate 与独立 VPA evidence，不复制 Stage 2。
 
-1. 调用 `get_job_manifest`、`get_market_core` 核对 Job identity 与研究协议，再用 `get_upstream_artifact` 读取 PA candidate、Stage 1、Router 与 VPA report；前三者是主边界，VPA 只能支持、挑战或降低置信度。调用 `list_allowed_knowledge`，按 `load_order` 用 `read_knowledge_module` 完整读取全部 `loading_policy=mandatory` 模块，不能只凭报告措辞裁决。
+1. 首先调用一次 `get_role_baseline`，按 resources 顺序完整阅读其中 identity、研究协议、PA candidate、Stage 1、Router 与 VPA report；前三者是主边界，VPA 只能支持、挑战或降低置信度。按 manifest 的 `load_order` 阅读随包交付的全部 mandatory 模块原文，不能只凭报告措辞裁决；不逐项重复调用基线工具。必读交付失败即停止，不以部分内容裁决。
 2. 只用 `get_pa_evidence`、`get_bars`，以及从 `evidence_index.vpa_evidence_ids` 选择的 `get_vpa_evidence` 调查争议点所需冻结证据，不猜测 ID、不重新扫描全部市场或创造第三套方法。
 3. 允许的输出仅限协议授权的 timing/confidence/watch/risk narrative patch 或维持 PA baseline。
 4. 不创建新 Setup、方向、entry、stop、target、position size 或订单。

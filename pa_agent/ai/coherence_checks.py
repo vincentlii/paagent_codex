@@ -200,6 +200,23 @@ _BAR_PRICE_FIELD_NAMES = {
     "收盘价": "close",
 }
 
+_GROUPED_K_REFERENCE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])K\s*\d+(?:\s*[/\uff0f\u3001,\uff0c]\s*K\s*\d+)+",
+    re.IGNORECASE,
+)
+_GROUPED_BAR_PRICE_RANGE_RE = re.compile(
+    r"(?P<refs>(?<![A-Za-z0-9_])K\s*\d+"
+    r"(?:\s*[/\uff0f\u3001,\uff0c]\s*K\s*\d+)+)"
+    r"\s*(?:\u7684\s*)?"
+    r"(?P<field>open|high|low|close|\u5f00\u76d8(?:\u4ef7)?|\u6700\u9ad8(?:\u4ef7|\u70b9)?|"
+    r"\u6700\u4f4e(?:\u4ef7|\u70b9)?|\u6536\u76d8(?:\u4ef7)?|\u9ad8\u70b9|\u4f4e\u70b9)"
+    r"\s*(?:\u533a\u95f4|\u8303\u56f4|\u533a\u57df|range)?\s*"
+    r"(?P<first>[-+]?(?:\d+(?:\.\d+)?|\.\d+))\s*"
+    r"[-\u2013\u2014~\u81f3\u5230]\s*"
+    r"(?P<second>[-+]?(?:\d+(?:\.\d+)?|\.\d+))",
+    re.IGNORECASE,
+)
+
 _EXPLICIT_WINDOW_PRICE_RANGE_RE = re.compile(
     r"K(?P<left>\d+)\s*[-\u2013\u2014~\u81f3\u5230]\s*K(?P<right>\d+)"
     r"(?P<context>[^\u3002\uff1b;.!?\uff01\uff1f\n]{0,120})",
@@ -388,8 +405,36 @@ def _validate_explicit_bar_price_claims(value: Any, frame: Any) -> list[str]:
     errors: list[str] = []
     seen: set[tuple[str, int, str, str]] = set()
     for path, text in _narrative_strings(value):
+        grouped_reference_spans = [
+            match.span() for match in _GROUPED_K_REFERENCE_RE.finditer(text)
+        ]
+        for match in _GROUPED_BAR_PRICE_RANGE_RE.finditer(text):
+            field = _BAR_PRICE_FIELD_NAMES.get(match.group("field").lower())
+            seqs = [
+                int(item)
+                for item in re.findall(r"K\s*(\d+)", match.group("refs"), re.IGNORECASE)
+            ]
+            if field is None or not seqs or any(seq not in bars for seq in seqs):
+                continue
+            first_raw = match.group("first")
+            second_raw = match.group("second")
+            stated_low, stated_high = sorted((float(first_raw), float(second_raw)))
+            actual_values = [float(getattr(bars[seq], field)) for seq in seqs]
+            actual_low, actual_high = min(actual_values), max(actual_values)
+            low_tolerance = 0.5 * (10 ** (-len(first_raw.partition(".")[2]))) + 1e-12
+            high_tolerance = 0.5 * (10 ** (-len(second_raw.partition(".")[2]))) + 1e-12
+            if (
+                abs(stated_low - actual_low) > low_tolerance
+                or abs(stated_high - actual_high) > high_tolerance
+            ):
+                errors.append(
+                    f"{path} grouped K {field} range states {first_raw}-{second_raw}, "
+                    f"but frozen grouped range is {actual_low:.12g}-{actual_high:.12g}"
+                )
         for pattern in _EXPLICIT_BAR_PRICE_PATTERNS:
             for match in pattern.finditer(text):
+                if any(start <= match.start() < end for start, end in grouped_reference_spans):
+                    continue
                 seq = int(match.group("seq"))
                 field = _BAR_PRICE_FIELD_NAMES.get(match.group("field").lower())
                 bar = bars.get(seq)

@@ -30,11 +30,16 @@ Brooks Router、Risk、Trader Equation、VPA failure semantics 或 persistence�
 
 - `deepseek_direct` 封装当前 PromptAssembler + ModelCallRunner 行为，保留 Stage 2 prefix
   continuation 和现有 Provider fallback 语义。
-- `codex_agent` 为每个 Stage 1、Stage 2、VPA、研究 Joint 启动独立 ephemeral Codex 任务，
-  只返回同一 Provider Draft v2/role draft。
+- `codex_agent` 在每个 Frozen Snapshot 内建立受控 PA 会话：Stage 1 首稿通过后才允许 Stage 2
+  resume；VPA、研究 Joint 与 repair 始终启动独立 ephemeral Codex 任务。所有角色只返回同一
+  Provider Draft v2/role draft。
 
-一个 Frozen Snapshot 是逻辑分析周期，但不是一个长期 Codex 对话。Stage 1、Stage 2 和 VPA
-不得 resume 或共享自然语言会话；Stage 2 只接收已验证 Stage 1 artifact 与 Brooks Router manifest。
+一个 Frozen Snapshot 是 PA 会话的最大生命周期，不是长期 Codex 对话。不同 Snapshot 必须使用
+独立会话；同一 Snapshot 只允许 PA Stage 1 → Stage 2 续接，VPA 不进入 PA 会话。Stage 2 的权限
+仍只来自已验证 Stage 1 artifact 与 Brooks Router manifest，不能把未验证聊天内容当作 authority。
+只有 attempt 1 直接通过的 Stage 1 可以续接；Stage 1 经 repair、Snapshot/cutoff/runtime identity
+不一致或 parent job 校验失败时，Stage 2 必须基于已验证 artifact 启动全新 PA 任务。Stage 2 完成
+或失败后销毁该 Snapshot 的 PA 会话；不得跨 Snapshot、跨资产或跨 cohort resume。
 
 ### 2. Frozen Agent Job
 
@@ -151,7 +156,9 @@ Codex 晋级必须通过历史 replay、故障注入、至少 20 个独立 Snaps
 ## 验证
 
 - Direct Adapter 与当前 Prompt、Draft、Router、VPA off/shadow、records 和 Paper 行为回归一致。
-- 每个 Codex role 使用新 ephemeral task；Stage 2 无 Stage 1 chat history。
+- 不同 Frozen Snapshot 的 PA 会话完全隔离；同一 Snapshot 的 Stage 1 首稿通过后，Stage 2 受控
+  续接同一 PA 会话，并校验 parent job、Snapshot、cutoff、runtime identity 与 thread identity。
+- VPA、Joint 与 repair 始终独立；Stage 1 repair 后的 Stage 2 不继承含无效首稿的会话。
 - Snapshot/contract/knowledge/runtime digest 漂移和越界 Evidence 请求均 fail closed。
 - `semantic_parity_v1` 的 mandatory Evidence 覆盖与 `load_order` 由 Worker 机械验收；历史 Job 不被新策略重解释。
 - Codex 用户无法修改源码、读取生产 DB/credential 或产生订单。

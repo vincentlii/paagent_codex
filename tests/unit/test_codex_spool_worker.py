@@ -67,6 +67,7 @@ def test_environment_worker_identity_provider_passes_legacy_defaults(
         "model": "gpt-5.6-sol",
         "reasoning_effort": "high",
         "codex_binary": "codex",
+        "model_catalog": None,
     }
 
 
@@ -330,3 +331,95 @@ def test_worker_runtime_unavailable_reaches_auto_full_chain_fallback(
     assert len(caught) == 1
     assert isinstance(caught[0], FullChainFallbackRequired)
     assert caught[0].failure.kind == "unavailable"
+
+
+def test_spool_binds_and_forwards_pa_resume_identity(tmp_path: Path) -> None:
+    from pa_agent.agent_runtime.publisher import CodexJobPublisher
+    from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
+    from tests.integration.conftest import make_frame
+    from tests.unit.test_codex_job_publisher import _request as role_request
+
+    jobs = tmp_path / "jobs"
+    inbox = tmp_path / "inbox"
+    results = tmp_path / "results"
+    inbox.mkdir()
+    results.mkdir()
+    frame = make_frame()
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    runtime_identity = {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "max",
+        "runtime_version": "runtime-v1",
+    }
+    publisher = CodexJobPublisher(
+        frame=frame,
+        prompt_dir=prompt_dir,
+        job_root=jobs,
+        runtime_identity=runtime_identity,
+    )
+    common = {"task_id": "task-session", "allowed_knowledge_ids": [], "higher_timeframe": {}}
+    stage1 = publisher(role_request("stage1", {
+        **common,
+        "role_protocol": {"contract_version": "pa_stage1_agent_protocol_v1"},
+    }), 1)
+    stage2 = publisher(role_request("stage2", {
+        **common,
+        "role_protocol": {"contract_version": "pa_stage2_agent_protocol_v1"},
+        "stage1_diagnosis": {},
+        "router_manifest": [],
+        "pa_session_continuation": {
+            "parent_job_digest": stage1.name,
+            "thread_id": "thread-pa-0001",
+        },
+    }), 1)
+    worker = MagicMock()
+    worker.run.return_value = CodexWorkerResult(
+        content="{}",
+        thread_id="thread-pa-0001",
+        usage=AIUsage(),
+        latency_ms=1.0,
+        evidence_events=(),
+        outbox_path=tmp_path / "outbox.json",
+    )
+    config = CodexSpoolConfig(
+        job_root=jobs,
+        inbox_root=inbox,
+        result_root=results,
+        poll_seconds=0.01,
+        response_grace_seconds=1.0,
+    )
+    client = CodexSpoolClient(config)
+    service = CodexSpoolService(
+        spool=config,
+        worker=worker,
+        max_workers=1,
+        runtime_identity_provider=lambda: runtime_identity,
+    )
+    captured: list[CodexWorkerResult] = []
+    thread = threading.Thread(target=lambda: captured.append(client.run(
+        stage2,
+        resume_thread_id="thread-pa-0001",
+        parent_job_digest=stage1.name,
+    )))
+    thread.start()
+    deadline = time.monotonic() + 2
+    dispatches: list[Path] = []
+    while time.monotonic() < deadline and not dispatches:
+        dispatches = list(inbox.glob("*.json"))
+        time.sleep(0.01)
+    assert len(dispatches) == 1
+    dispatch = json.loads(dispatches[0].read_text(encoding="utf-8"))
+    assert dispatch["schema_version"] == 3
+    assert dispatch["resume_thread_id"] == "thread-pa-0001"
+    assert dispatch["parent_job_digest"] == stage1.name
+    claimed = dispatches[0].with_suffix(".running")
+    dispatches[0].replace(claimed)
+    service._execute(claimed)
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert captured[0].thread_id == "thread-pa-0001"
+    assert worker.run.call_args.kwargs["resume_thread_id"] == "thread-pa-0001"
+    assert worker.run.call_args.kwargs["parent_job_digest"] == stage1.name
+    assert worker.run.call_args.kwargs["persist_session"] is False

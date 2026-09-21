@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,12 @@ _TOOL_ANNOTATIONS = {
 
 def _tools() -> list[dict[str, Any]]:
     return [
+        {
+            "name": "get_role_baseline",
+            "description": "Read the complete Host-selected mandatory baseline in frozen order, without summarizing or dropping resources. Not for repair jobs.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": _TOOL_ANNOTATIONS,
+        },
         {
             "name": "measure_price_window",
             "description": "Measure explicit frozen price window geometry (1-100 bars); no market labels. Receipt is not a catalog fact ID.",
@@ -60,7 +67,7 @@ def _tools() -> list[dict[str, Any]]:
         },
         {
             "name": "list_fact_ids",
-            "description": "List fact IDs visible to this role in the frozen snapshot.",
+            "description": "List visible frozen fact IDs. PA role baselines already include the complete fact_id_index in core_context; use that index directly without listing it again.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -73,7 +80,7 @@ def _tools() -> list[dict[str, Any]]:
         },
         {
             "name": "get_facts",
-            "description": "Read selected deterministic fact records by exact fact ID.",
+            "description": "Read exact fact IDs whose values are missing from the baseline, or deliberately recheck a disputed record. Batch independent IDs in one call; an index is not a value read.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -104,7 +111,7 @@ def _tools() -> list[dict[str, Any]]:
         },
         {
             "name": "get_measurements",
-            "description": "Read deterministic indicator measurements from the frozen catalog.",
+            "description": "Read deterministic indicator records. PA baseline price_frame already includes aligned indicator values; use it first, and call this only for a missing field or explicit recheck.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 500}},
@@ -131,7 +138,7 @@ def _tools() -> list[dict[str, Any]]:
         },
         {
             "name": "get_pa_evidence",
-            "description": "Read exact PA.* evidence IDs selected from the frozen fact catalog.",
+            "description": "Read exact PA.* IDs from the supplied fact_id_index, preferably batching missing/disputed records. baseline delivery_index distinguishes delivered values from indexed-only facts.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"fact_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 100}},
@@ -239,10 +246,29 @@ class EvidenceMcpServer:
         *,
         job_digest: str,
         audit_output: Path | None = None,
+        binding_file: Path | None = None,
+        job_root: Path | None = None,
     ) -> None:
         self._gateway = gateway
+        self._job = gateway.frozen_job
         self._job_digest = job_digest
         self._audit_output = audit_output
+        self._binding_file = binding_file
+        self._binding_job_root = Path(job_root).resolve() if job_root is not None else None
+        self._binding_audit_root = (
+            audit_output.resolve().parent if audit_output is not None else None
+        )
+        if binding_file is not None and (
+            self._binding_job_root is None or self._binding_audit_root is None
+        ):
+            raise ValueError("bound evidence server requires fixed job and audit roots")
+        self._binding_state = (
+            job_digest,
+            str(audit_output.resolve()) if audit_output is not None else None,
+        )
+        self._call_lock = threading.Lock()
+        self._mcp_calls = 0
+        self._audit_call_indices: list[int] = []
 
     def handle(self, message: dict[str, Any]) -> dict[str, Any] | None:
         request_id = message.get("id")
@@ -284,8 +310,79 @@ class EvidenceMcpServer:
             return self._error(request_id, -32602, f"invalid params: {exc}")
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        # The SDK runs synchronous tools in a thread pool. Budget accounting and
+        # its durable receipt must be one transaction, including denied calls.
+        with self._call_lock:
+            self._refresh_binding()
+            self._mcp_calls += 1
+            return self._dispatch_tool(name, arguments)
+
+    def _refresh_binding(self) -> None:
+        """Rebind a resumed PA session before serving any Stage 2 evidence."""
+        if self._binding_file is None:
+            return
+        job_root, job_digest, audit_output = _read_binding_file(self._binding_file)
+        if (
+            job_root.resolve() != self._binding_job_root
+            or audit_output.resolve().parent != self._binding_audit_root
+        ):
+            raise ValueError("evidence binding escaped its fixed runtime roots")
+        state = (job_digest, str(audit_output.resolve()))
+        if state == self._binding_state:
+            return
+        job = FrozenAgentJobStore(job_root).open(job_digest)
+        self._validate_binding_transition(job)
+        self._gateway = FrozenEvidenceGateway(job)
+        self._job = job
+        self._job_digest = job.manifest.job_digest
+        self._audit_output = audit_output
+        self._binding_state = state
+        self._mcp_calls = 0
+        self._audit_call_indices = []
+
+    def _validate_binding_transition(self, job: Any) -> None:
+        current = self._job
+        continuation = job.core_context.get("pa_session_continuation")
+        if (
+            current.manifest.role != "stage1"
+            or current.manifest.attempt != 1
+            or job.manifest.role != "stage2"
+            or job.manifest.attempt != 1
+            or not isinstance(continuation, dict)
+            or continuation.get("protocol_version") != "pa_session_continuation_v1"
+            or continuation.get("parent_job_digest") != current.manifest.job_digest
+            or job.manifest.task_id != current.manifest.task_id
+            or job.manifest.snapshot_hash != current.manifest.snapshot_hash
+            or job.manifest.cutoff_ts_open != current.manifest.cutoff_ts_open
+            or dict(job.runtime.get("backend_runtime_identity") or {})
+            != dict(current.runtime.get("backend_runtime_identity") or {})
+        ):
+            raise ValueError("evidence binding is not an authorized PA Stage 2 transition")
+
+    def _dispatch_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            if name == "measure_price_window":
+            if name == "get_role_baseline":
+                if arguments:
+                    raise ValueError("role baseline accepts no arguments")
+                resources = []
+                for operation, resource_arguments in self._gateway.mandatory_read_plan():
+                    result = self._dispatch_tool(operation, resource_arguments)
+                    if result.get("isError"):
+                        return result
+                    resources.append({"operation": operation, "arguments": resource_arguments,
+                                      "payload": result["structuredContent"]})
+                continuation = self._gateway.pa_continuation
+                payload = {
+                    "baseline_version": (
+                        "mandatory_pa_delta_v1" if continuation else "mandatory_baseline_v1"
+                    ),
+                    "resources": resources,
+                }
+                if continuation:
+                    payload["pa_session_continuation"] = continuation
+                if self._gateway.analysis_execution_enabled:
+                    payload["delivery_index"] = self._gateway.baseline_delivery_index(resources)
+            elif name == "measure_price_window":
                 payload = {"measurement": self._gateway.measure_price_window(**arguments)}
             elif name == "project_price_leg":
                 payload = {"measurement": self._gateway.project_price_leg(**arguments)}
@@ -393,10 +490,15 @@ class EvidenceMcpServer:
     def _publish_audit(self) -> None:
         if self._audit_output is None:
             return
+        events = self._gateway.audit_events
+        self._audit_call_indices.extend(
+            [self._mcp_calls] * (len(events) - len(self._audit_call_indices))
+        )
         payload = {
             "schema_version": 1,
             "job_digest": self._job_digest,
-            "events": [asdict(item) for item in self._gateway.audit_events],
+            "events": [{**asdict(item), "mcp_call_index": call_index}
+                       for item, call_index in zip(events, self._audit_call_indices, strict=True)],
         }
         _atomic_write_json(self._audit_output, payload)
 
@@ -425,10 +527,37 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Serve one frozen PA Agent evidence job")
-    parser.add_argument("--job-root", type=Path, required=True)
-    parser.add_argument("--job-digest", required=True)
+    parser.add_argument("--job-root", type=Path)
+    parser.add_argument("--job-digest")
     parser.add_argument("--audit-output", type=Path)
+    parser.add_argument("--binding-file", type=Path)
     return parser
+
+
+def _resolve_job_binding(args: argparse.Namespace) -> tuple[Path, str, Path | None]:
+    if args.binding_file is not None:
+        if args.job_root is not None or args.job_digest is not None or args.audit_output is not None:
+            raise ValueError("binding-file cannot be combined with direct job arguments")
+        return _read_binding_file(args.binding_file)
+    if args.job_root is None or not args.job_digest:
+        raise ValueError("job-root and job-digest are required without binding-file")
+    return args.job_root, str(args.job_digest), args.audit_output
+
+
+def _read_binding_file(path: Path) -> tuple[Path, str, Path]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("evidence binding is unreadable or malformed") from exc
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version", "job_root", "job_digest", "audit_output",
+    } or value.get("schema_version") != 1:
+        raise ValueError("evidence binding schema is invalid")
+    job_root = Path(str(value.get("job_root") or ""))
+    audit_output = Path(str(value.get("audit_output") or ""))
+    if not job_root.is_absolute() or not audit_output.is_absolute():
+        raise ValueError("evidence binding paths must be absolute")
+    return job_root, str(value.get("job_digest") or ""), audit_output
 
 
 def _run_official_sdk(server: EvidenceMcpServer) -> None:
@@ -456,6 +585,11 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
         return dict(result.get("structuredContent") or {})
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
+    def get_role_baseline() -> dict[str, Any]:
+        """Read all Host-selected mandatory resources, in order and without loss, in one call."""
+        return payload("get_role_baseline", {})
+
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_job_manifest() -> dict[str, Any]:
         """Read immutable job identity, cutoff, hashes, and expiry."""
         return payload("get_job_manifest", {})
@@ -481,12 +615,16 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def list_fact_ids(prefix: str = "", limit: int = 100) -> dict[str, Any]:
-        """List visible fact IDs in this frozen role."""
+        """List visible fact IDs. PA baselines already supply the complete fact_id_index
+        in core_context; use that index directly without listing it again.
+        """
         return payload("list_fact_ids", {"prefix": prefix, "limit": limit})
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_facts(fact_ids: list[str]) -> dict[str, Any]:
-        """Read deterministic facts by exact ID."""
+        """Read missing/disputed deterministic records by exact ID, batching independent IDs.
+        An index or upstream reference is not a value read; prefer already delivered values.
+        """
         return payload("get_facts", {"fact_ids": fact_ids})
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
@@ -496,7 +634,9 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_measurements(limit: int = 100) -> dict[str, Any]:
-        """Read deterministic measurement facts."""
+        """Read deterministic indicator records. PA baseline price_frame already includes
+        aligned values; use those first, and call only for a missing field or explicit recheck.
+        """
         return payload("get_measurements", {"limit": limit})
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
@@ -509,7 +649,9 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_pa_evidence(fact_ids: list[str]) -> dict[str, Any]:
-        """Read exact PA evidence IDs from this role."""
+        """Read missing/disputed PA IDs from fact_id_index, batching independent records.
+        baseline delivery_index distinguishes delivered values from indexed-only facts.
+        """
         return payload("get_pa_evidence", {"fact_ids": fact_ids})
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
@@ -575,11 +717,17 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    job = FrozenAgentJobStore(args.job_root).open(args.job_digest)
+    try:
+        job_root, job_digest, audit_output = _resolve_job_binding(args)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    job = FrozenAgentJobStore(job_root).open(job_digest)
     server = EvidenceMcpServer(
         FrozenEvidenceGateway(job),
         job_digest=job.manifest.job_digest,
-        audit_output=args.audit_output,
+        audit_output=audit_output,
+        binding_file=args.binding_file,
+        job_root=job_root,
     )
     _run_official_sdk(server)
     return 0

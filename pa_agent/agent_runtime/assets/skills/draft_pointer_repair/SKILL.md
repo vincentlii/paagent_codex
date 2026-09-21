@@ -10,6 +10,7 @@ description: Use when PA Agent Validator authorizes a bounded repair of a parsea
 1. 首先调用 `get_repair_findings`，读取原始 parseable draft、typed findings 和允许修改的 JSON Pointers；只在 finding 必需时读取额外冻结 Evidence。
 2. 对每个 pointer 只做满足 finding 的最小替换；未列出的字段必须保持语义和值不变。
 3. 不新增、删除、重排或置空未授权路径。pointer 授权只允许修复所指问题，不授权重新选择方向、Setup、订单语义、价格或 Risk；需要新市场判断或改写上游时必须 unrepairable。Host 仍执行原重试语义保护，不能以“路径在白名单”绕过它。
+   gate_trace / decision_trace 的节点身份冻结：不能引入原稿未有的 node_id，也不能借别的编号掩盖重复。重复节点只有在容器路径获授权、能保留原问题与判断时才可合并或移除冗余项；若必须新增决策问题或重新判断，返回 unrepairable。
 4. 不以新故事解释旧错误，不重新扫描市场，不调用未解决当前 pointer 所必需的 Evidence。
 5. 输出受限 Patch Envelope：`status`、`changed_pointers`、`replacement_fragments`、`supporting_evidence_ids`、`unrepairable_reason`。每个 replacement 使用相同 pointer、`replace|remove` operation；replace 值放入 `value_json` 字符串。
 6. `changed_pointers` 的顺序必须与 `replacement_fragments` 完全一致，且不得包含 allowlist 外路径。

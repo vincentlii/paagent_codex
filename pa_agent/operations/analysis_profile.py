@@ -83,6 +83,9 @@ def validate_analysis_profile(value: AnalysisProfile | Mapping[str, object]) -> 
 
 def codex_model_effort_supported(model: str, effort: str) -> bool:
     """Return whether a credential-free Codex selection is in the release catalog."""
+    # Explicit engineering backend; not yet promoted to the Dashboard catalog.
+    if model == "deepseek-flash":
+        return effort in {"low", "high", "max"}
     return effort in _CODEX_EFFORTS.get(model, ())
 
 

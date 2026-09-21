@@ -133,6 +133,11 @@ if [ ! -f "$CONFIG_DIR/pa-agent-codex.env" ]; then
     "$APP_DIR/deploy/systemd/pa-agent-codex.env.example" \
     "$CONFIG_DIR/pa-agent-codex.env"
 fi
+if [ ! -f "$CONFIG_DIR/pa-agent-codex-secret.env" ]; then
+  install -o root -g root -m 0600 \
+    "$APP_DIR/deploy/systemd/pa-agent-codex-secret.env.example" \
+    "$CONFIG_DIR/pa-agent-codex-secret.env"
+fi
 
 install -o root -g root -m 0644 \
   "$APP_DIR/deploy/systemd/pa-agent.service" /etc/systemd/system/pa-agent.service

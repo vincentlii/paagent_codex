@@ -57,6 +57,39 @@ def _vpa_payload(
     }
 
 
+def test_unknown_vpa_references_produce_bounded_repair_pointers() -> None:
+    from types import SimpleNamespace
+    from pa_agent.agent_runtime.repair_contract import extract_repair_context
+    from pa_agent.orchestrator.role_call import run_structured_role
+
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    valid = _vpa_payload(catalog, hypotheses)
+    invalid = copy.deepcopy(valid)
+    invalid["vpa_report"]["observations"][0]["evidence_ids"] = ["vpa-unknown"]
+    invalid["vpa_report"]["hypothesis_assessments"][0]["evidence_ids"] = ["vpa-unknown"]
+    calls = []
+
+    def call(messages):
+        calls.append(messages)
+        if len(calls) == 1:
+            return SimpleNamespace(content=json.dumps(invalid))
+        repair = extract_repair_context(messages)
+        assert repair is not None
+        assert set(repair["editable_pointers"]) == {
+            "/vpa_report/observations/0/evidence_ids",
+            "/vpa_report/hypothesis_assessments/0/evidence_ids",
+        }
+        return SimpleNamespace(content=json.dumps(valid))
+
+    result = run_structured_role(
+        role="vpa_evidence", messages=[], call_api=call,
+        validate=lambda raw: validate_vpa_evidence(raw, catalog=catalog, pa_hypotheses=hypotheses),
+    )
+    assert result.ok
+    assert len(calls) == 2
+
+
 def test_pa_hypothesis_set_delegates_stage1_without_new_direction() -> None:
     hypotheses = _hypotheses()
 
@@ -66,6 +99,31 @@ def test_pa_hypothesis_set_delegates_stage1_without_new_direction() -> None:
     assert hypotheses.alternative.cycle_position == "trending_tr"
     assert hypotheses.setup_candidates[0].candidate_id == "pa-setup-1"
     assert hypotheses.setup_candidates[0].timing_state == "eligible"
+
+
+def test_vpa_reports_all_reference_findings_before_bounded_repair() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    observation = payload["vpa_report"]["observations"][0]
+    observation["evidence_ids"].append("vpa-w999")
+    observation["interpretation"] = "vpa-w999 supports the response at K999; acceptance is uncertain."
+    result = validate_vpa_evidence(json.dumps(payload), catalog=catalog, pa_hypotheses=hypotheses)
+    assert not result.ok
+    assert any("observations[0].evidence_ids" in error for error in result.hard_errors)
+    assert any("observations[0].interpretation" in error and "vpa-w999" in error
+               for error in result.hard_errors)
+    assert any("references K999 outside" in error for error in result.hard_errors)
+
+
+def test_vpa_rejects_unknown_narrative_id_even_with_valid_declared_ids() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    payload["vpa_report"]["observations"][0]["interpretation"] = "vpa-w999 supports acceptance."
+    result = validate_vpa_evidence(json.dumps(payload), catalog=catalog, pa_hypotheses=hypotheses)
+    assert not result.ok
+    assert any("interpretation" in error and "vpa-w999" in error for error in result.hard_errors)
 
 
 def test_stage2_plan_creates_candidate_without_inventing_a_setup_name() -> None:

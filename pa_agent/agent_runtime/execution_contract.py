@@ -2,6 +2,8 @@
 from typing import Any, Mapping
 
 RUNTIME_CONTRACT = "analysis_runtime_v2"
+ANALYSIS_EXECUTION_POLICY = "analysis_execution_v1"
+INSTRUCTION_DELIVERY_POLICY = "single_frozen_agents_v1"
 JOINT_PROTOCOL = "joint_stage2_agent_protocol_v1"
 SKILL_NAMES = {
     "stage1": "pa-stage1-diagnosis",

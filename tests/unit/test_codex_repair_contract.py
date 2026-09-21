@@ -82,3 +82,56 @@ def test_patch_envelope_projects_to_strict_codex_output_schema() -> None:
     assert projected["properties"]["replacement_fragments"]["items"][
         "additionalProperties"
     ] is False
+
+
+@pytest.mark.parametrize("pointer", ["/decision_trace/1/node_id", "/decision_trace"])
+def test_repair_cannot_relabel_duplicate_trace_as_a_new_decision_node(pointer) -> None:
+    trace = [{"node_id": "10.1", "reason": "structural stop"},
+             {"node_id": "10.1", "reason": "trader equation"}]
+    context = {"original_draft": json.dumps({"decision_trace": trace}),
+               "editable_pointers": [pointer]}
+    replacement = "11.1" if pointer.endswith("node_id") else [trace[0], {**trace[1], "node_id": "11.1"}]
+    with pytest.raises(ValueError, match="trace node identities"):
+        apply_patch_envelope(context, {
+            "status": "repaired", "changed_pointers": [pointer],
+            "replacement_fragments": [{"pointer": pointer, "operation": "replace",
+                                       "value_json": json.dumps(replacement)}],
+        })
+
+
+def test_repair_can_remove_authorized_duplicate_without_renaming_nodes() -> None:
+    trace = [{"node_id": "10.1", "reason": "structural stop"},
+             {"node_id": "10.1", "reason": "trader equation"}]
+    repaired = apply_patch_envelope({
+        "original_draft": json.dumps({"decision_trace": trace}),
+        "editable_pointers": ["/decision_trace"],
+    }, {"status": "repaired", "changed_pointers": ["/decision_trace"],
+        "replacement_fragments": [{"pointer": "/decision_trace", "operation": "replace",
+                                   "value_json": json.dumps(trace[:1])}]})
+    assert repaired == {"decision_trace": trace[:1]}
+
+
+def test_repair_context_projects_explicit_price_mismatch_as_typed_fact() -> None:
+    feedback = (
+        "s2:decision.watch_points[1] K2.high states 4379.78, "
+        "but frozen bar value is 4380.13"
+    )
+    context = extract_repair_context([{
+        "role": "user",
+        "content": append_repair_context(
+            feedback,
+            original_draft=json.dumps({"decision": {"watch_points": ["a", "b"]}}),
+            findings=["decision.watch_points[1]"],
+            editable_pointers=["/decision/watch_points/1"],
+        ),
+    }])
+
+    assert context is not None
+    price_finding = next(
+        item for item in context["typed_findings"]
+        if item["code"] == "explicit_bar_price_mismatch"
+    )
+    assert price_finding["pointer"] == "/decision/watch_points/1"
+    assert price_finding["fact_refs"] == ["PA.BAR.K2"]
+    assert price_finding["stated_value"] == 4379.78
+    assert price_finding["frozen_value"] == 4380.13

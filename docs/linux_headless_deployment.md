@@ -106,7 +106,23 @@ PA_AGENT_CODEX_REASONING=high
 PA_AGENT_CODEX_BINARY=/usr/local/bin/codex
 PA_AGENT_CODEX_STATE_DIR=/var/lib/pa-agent-codex
 PA_AGENT_CODEX_MAX_WORKERS=1
+# ChatGPT Codex 模型留空；仅 deepseek-flash 工程 Backend 填只含该模型的只读 catalog。
+PA_AGENT_CODEX_MODEL_CATALOG=
 ```
+
+如果只做 ChatGPT Codex/Luna 验收，`/etc/pa-agent/pa-agent-codex-secret.env` 保持安装器创建的
+空文件。只有选择 `deepseek-flash` Codex 工程 Backend 时，才用与 Direct API credential
+独立的 key 写入该 Worker-only 文件；不写入共享非密配置：
+
+```bash
+read -rsp 'DeepSeek Codex API key: ' DS_CODEX_KEY; echo
+printf 'DEEPSEEK_API_KEY=%s\n' "$DS_CODEX_KEY" | \
+  sudo install -o root -g root -m 0600 /dev/stdin \
+  /etc/pa-agent/pa-agent-codex-secret.env
+unset DS_CODEX_KEY
+```
+
+systemd 只将该文件注入 `pa-agent-codex-worker`；Headless、Dashboard、源码、Job 和审计日志均不读取它。
 
 不要猜测 model id；使用部署时 CLI 实际返回且实验 cohort 已冻结的值。`--check` 会在启用时验证
 binary executable digest、model、reasoning、Runtime AGENTS/Skills 版本和隔离 spool 目录；这些
@@ -139,6 +155,7 @@ sudo -u pa-agent env $COMMON_ENV \
   PA_AGENT_CODEX_REASONING="$PA_AGENT_CODEX_REASONING" \
   PA_AGENT_CODEX_BINARY="$PA_AGENT_CODEX_BINARY" \
   PA_AGENT_CODEX_STATE_DIR="$PA_AGENT_CODEX_STATE_DIR" \
+  PA_AGENT_CODEX_MODEL_CATALOG="$PA_AGENT_CODEX_MODEL_CATALOG" \
   "$BIN/pa-agent-headless" --check
 
 sudo -u pa-agent-codex env \
@@ -146,8 +163,12 @@ sudo -u pa-agent-codex env \
   PA_AGENT_CODEX_MODEL="$PA_AGENT_CODEX_MODEL" \
   PA_AGENT_CODEX_REASONING="$PA_AGENT_CODEX_REASONING" \
   PA_AGENT_CODEX_BINARY="$PA_AGENT_CODEX_BINARY" \
+  PA_AGENT_CODEX_MODEL_CATALOG="$PA_AGENT_CODEX_MODEL_CATALOG" \
   "$BIN/pa-agent-codex-worker" --check
 ```
+
+上述 Worker 手工检查适用于 ChatGPT Codex。`deepseek-flash` 的凭据由 systemd 秘密环境注入，
+应用 `sudo systemctl start pa-agent-codex-worker` 触发同一 `ExecStartPre --check`，不在命令行展开 key。
 
 安装器已执行静态 Runtime 审计，并比较源码与当前安装包中的 `AGENTS.md`、`config.toml`、rules、
 四个 Role Skill 和 pointer repair Skill。
@@ -190,6 +211,24 @@ sudo -u pa-agent-codex env \
   --model "$PA_AGENT_CODEX_MODEL" \
   --reasoning-effort "$PA_AGENT_CODEX_REASONING"
 ```
+
+升级 Codex CLI 或修改会话续接后，还应在不调用付费模型的本地 Responses 合成服务上验证
+Stage 1 → Stage 2 `resume`。该检查要求同一 thread、完整 AGENTS、只限冻结工具，且 Stage 2
+实际读到新 Job 的 `mandatory_pa_delta_v1`，而非 Stage 1 旧 baseline：
+
+```bash
+sudo -u pa-agent-codex env \
+  HOME=/var/lib/pa-agent-codex \
+  CODEX_HOME=/var/lib/pa-agent-codex/home \
+  "$BIN/python" /opt/pa-agent/scripts/check_codex_delivery.py \
+  --model-catalog /var/lib/pa-agent-codex/home/models_cache.json \
+  --codex-binary "$PA_AGENT_CODEX_BINARY" \
+  --model "$PA_AGENT_CODEX_MODEL" \
+  --session-continuation
+```
+
+`models_cache.json` 不存在时不得猜测生成；先用目标 CLI 完成登录/模型列表刷新。该检查不读取
+ChatGPT 会话凭据、不访问外部模型 endpoint；只使用 catalog 描述和 localhost 合成响应。
 
 canary 返回非零、sentinel 不匹配或 Skill 未观察到时必须保持 Headless paused，禁止启动部署。
 
@@ -304,9 +343,11 @@ Dashboard 以独立的 `pa-agent-dashboard` 用户运行，只能访问
 Codex CLI 由独立 `pa-agent-codex` worker 执行。Headless 只能向共享 spool 发布 digest-bound Job
 与读取结果；Codex 用户只能只读 Job，不能遍历 `/var/lib/pa-agent`、生产数据库、Paper ledger 或
 systemd API credential。systemd 将 `/opt/pa-agent` 和 Python environment 设为只读，只允许
-`/var/lib/pa-agent-codex/{home,runtime,outbox,inbox,results}` 写入；CLI 每个 role 使用 `--ephemeral`、
-`--sandbox read-only`、`approval_policy="never"`，关闭 shell/Web，并只启用 required Frozen
-Evidence MCP。Codex 输出先写 outbox，再由 PA Validator、Router、Risk 和 canonical writer 接管；
+`/var/lib/pa-agent-codex/{home,runtime,outbox,inbox,results}` 写入。不同 Snapshot 使用独立 PA
+session；Stage 1 attempt 1 不加 `--ephemeral`，仅在同 Snapshot Stage 2 通过冻结 identity 执行
+`codex exec resume`，随后清理专用 workspace；VPA、Joint、repair 继续 `--ephemeral`。所有调用保持
+read-only sandbox、`approval_policy="never"`，关闭 shell/Web，并只启用 required Frozen Evidence
+MCP。Codex 输出先写 outbox，再由 PA Validator、Router、Risk 和 canonical writer 接管；
 Codex 本身不直接改代码、配置、Risk、Paper 或订单。
 
 ## 7. 更新与回滚

@@ -5,8 +5,81 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from tests.unit.test_frozen_agent_job import _job
+
+
+def test_concurrent_tool_calls_cannot_overwrite_newer_audit(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from pa_agent.agent_runtime import evidence_mcp
+    from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
+
+    job = _job()
+    audit = tmp_path / "audit.json"
+    server = evidence_mcp.EvidenceMcpServer(
+        FrozenEvidenceGateway(job), job_digest=job.manifest.job_digest, audit_output=audit,
+    )
+    first_snapshot = Event()
+    newer_written = Event()
+    write = evidence_mcp._atomic_write_json
+
+    def delayed_write(path, payload):
+        if len(payload["events"]) == 1:
+            first_snapshot.set()
+            newer_written.wait(0.2)
+            write(path, payload)
+        else:
+            write(path, payload)
+            newer_written.set()
+
+    monkeypatch.setattr(evidence_mcp, "_atomic_write_json", delayed_write)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(server._call_tool, "get_bars", {"older_seq": 1, "newer_seq": 1})
+        assert first_snapshot.wait(2)
+        second = pool.submit(server._call_tool, "get_bars", {"older_seq": 2, "newer_seq": 2})
+        assert not first.result(timeout=3)["isError"]
+        assert not second.result(timeout=3)["isError"]
+    events = json.loads(audit.read_text("utf-8"))["events"]
+    assert [event["call_index"] for event in events] == [1, 2]
+
+
+def test_bound_server_rejects_rebinding_to_unrelated_frozen_job(tmp_path: Path) -> None:
+    from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
+    from pa_agent.agent_runtime.evidence_mcp import EvidenceMcpServer
+
+    job_root = tmp_path / "jobs"
+    store = FrozenAgentJobStore(job_root)
+    first_path = store.publish(_job())
+    unrelated_path = store.publish(_job(core_context={"unrelated": True}))
+    first = store.open(first_path.name)
+    binding = tmp_path / "runtime" / "binding.json"
+    binding.parent.mkdir()
+    audit = tmp_path / "outbox" / "stage1-audit.json"
+    audit.parent.mkdir()
+
+    def write(job_digest: str) -> None:
+        binding.write_text(json.dumps({
+            "schema_version": 1,
+            "job_root": str(job_root.resolve()),
+            "job_digest": job_digest,
+            "audit_output": str(audit.resolve()),
+        }), encoding="utf-8")
+
+    write(first_path.name)
+    server = EvidenceMcpServer(
+        FrozenEvidenceGateway(first),
+        job_digest=first_path.name,
+        audit_output=audit,
+        binding_file=binding,
+        job_root=job_root,
+    )
+    write(unrelated_path.name)
+
+    with pytest.raises(ValueError, match="authorized PA Stage 2 transition"):
+        server._call_tool("get_job_manifest", {})
 
 
 def _request(process: subprocess.Popen[str], payload: dict) -> dict:
@@ -81,6 +154,7 @@ def test_stdio_mcp_serves_only_budgeted_frozen_evidence(tmp_path: Path) -> None:
         assert tool["annotations"]["destructiveHint"] is False
         assert tool["annotations"]["openWorldHint"] is False
     assert {item["name"] for item in listed["result"]["tools"]} == {
+        "get_role_baseline",
         "get_job_manifest",
         "get_market_core",
         "list_fact_ids",

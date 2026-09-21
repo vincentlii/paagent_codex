@@ -1,5 +1,7 @@
 # AGENTS
 
+- 当前真实运行排障先读 `docs/quality/runtime_chain_audit_20260914.md`：阶段 8 尚未通过完整模型链路验收，先贯通再进入阶段 9。短初始 Prompt 不等于低总 token；复用旧 Draft 的分段诊断不等于 fresh 完整运行。完整价格几何/事实 ID、修复反馈均必须无损交付。
+
 - 真实 Codex 实验或 MCP/Schema 适配前读 `docs/quality/phase7_luna_pilot_20260913.md`：真实 SDK 必须发布只读 annotations；受控权限/预算拒绝用 ToolError，未知异常不得泄露。输出 generation projection 不能替代本地原始 Schema。旧过期 Job 不改 expiry；新代码复核重新登记，失败结果保留。
 
 - 修改性能指标或 Prompt 渲染前读 `docs/quality/phase8_metrics_acceptance.md`。使用版本化 actual/estimated/unknown 指标与 coverage；旧零值不能证明实际用量。Codex 跳过 Direct 渲染但完整 mandatory 资源仍须读取；未知成本不估作免费，重叠耗时不得相加。
@@ -51,7 +53,7 @@
 - 多资产队列只能接收已冻结 Snapshot；同资产必须 FIFO 单飞、全局并发与 pending 数必须有界。每个任务使用独立 client/orchestrator，任务身份必须绑定 source、venue、symbol、timeframe、snapshot 与 cohort，禁止静默丢弃或复用 GUI 的共享 client。
 - Linux Headless 入口不得导入 Qt；`PROJECT_ROOT/PROMPT_DIR` 为只读资源，配置、日志、records、audit 与 experience 必须写入 `PA_AGENT_HOME`。只有已落盘的成功分析进入去重历史，Provider/持久化失败按同一 task ID 有界退避重试。
 - 同一分析的 Prompt 文本、Provider Contract、decision-tree materialization、validator、retry contract 与审计 digest 必须来自同一个显式 `prompt_dir`；不得重新引入 import-time 路径分裂或以修改全局环境变量掩盖依赖注入。
-- Codex 只能作为 `AnalysisRoleBackend` 产生现有 Provider Draft；不得拥有 Snapshot、Brooks Router、materializer、Validator、Risk、Trader Equation、VPA/Joint 权限或持久化。Stage 1、Stage 2 与 VPA 必须是独立 ephemeral 任务，且只读同一 Frozen Snapshot 内的授权 Evidence。
+- Codex 只能作为 `AnalysisRoleBackend` 产生现有 Provider Draft；不得拥有 Snapshot、Brooks Router、materializer、Validator、Risk、Trader Equation、VPA/Joint 权限或持久化。不同 Frozen Snapshot 必须使用独立会话；同一 Snapshot 内仅 PA Stage 1 首稿通过后可受控续接 PA Stage 2。VPA、Joint 与任何 repair 始终使用独立任务，不得进入 PA 会话；Stage 1 经 repair、Snapshot/cutoff/runtime identity 不一致或续接校验失败时，Stage 2 必须基于已验证 artifact 使用全新 PA 任务。
 - VPS Codex 使用独立只读运行用户和发布固定的 Runtime AGENTS/Skills；不得直接读取生产数据库、Provider credential、修改源码或写交易状态。Codex availability fallback 必须重跑完整 Direct PA 链，Schema、事实、权限或专业判断失败不得触发 fallback。
 - 发布依赖以 `uv.lock` 为准；Windows/Linux CI 必须运行全部 `not live` 测试、wheel 资源 smoke test 与关键静态错误检查。真实 Provider、行情和交易所测试只能显式标记 `live`，不得进入 CI。
 - 业务结果信号不得覆盖 Qt 原生 `QThread.finished()`。运行中的线程必须保持强引用；窗口关闭时若仍有线程，只能协作取消并延迟销毁，禁止 `terminate()` 或对运行线程调用 `deleteLater()`。

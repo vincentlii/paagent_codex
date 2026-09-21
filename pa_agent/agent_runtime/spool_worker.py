@@ -58,6 +58,9 @@ class CodexSpoolClient:
         published_job: str | Path,
         *,
         timeout_seconds: float | None = None,
+        persist_session: bool = False,
+        resume_thread_id: str | None = None,
+        parent_job_digest: str | None = None,
     ) -> CodexWorkerResult:
         dispatch: Path | None = None
         result: Path | None = None
@@ -70,6 +73,12 @@ class CodexSpoolClient:
             if published.parent != root:
                 raise CodexWorkerOutputError("published job is outside the isolated spool")
             job = FrozenAgentJobStore(root).open(published.name)
+            CodexCliWorker._validate_session_options(
+                job,
+                persist_session=bool(persist_session),
+                resume_thread_id=resume_thread_id,
+                parent_job_digest=parent_job_digest,
+            )
             expected_runtime = dict(job.runtime.get("backend_runtime_identity") or {})
             if not expected_runtime:
                 raise CodexWorkerOutputError("frozen job has no backend runtime identity")
@@ -86,7 +95,7 @@ class CodexSpoolClient:
             _atomic_json(
                 dispatch,
                 {
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "request_id": request_id,
                     "job_digest": job.manifest.job_digest,
                     "expected_runtime_identity": expected_runtime,
@@ -94,6 +103,9 @@ class CodexSpoolClient:
                     "lease_seconds": self._config.lease_seconds,
                     "deadline_epoch": time.time() + effective_timeout,
                     "dispatched_at_epoch": time.time(),
+                    "persist_session": bool(persist_session),
+                    "resume_thread_id": resume_thread_id,
+                    "parent_job_digest": parent_job_digest,
                 },
             )
             deadline = time.monotonic() + (
@@ -289,7 +301,7 @@ class CodexSpoolService:
         result_path = self._spool.result_root / f"{request_id}.json"
         try:
             raw = json.loads(claimed.read_text(encoding="utf-8"))
-            if raw.get("schema_version") not in {1, 2} or raw.get("request_id") != request_id:
+            if raw.get("schema_version") not in {1, 2, 3} or raw.get("request_id") != request_id:
                 raise CodexWorkerOutputError("invalid isolated dispatch identity")
             digest = str(raw.get("job_digest") or "")
             published = self._spool.job_root / digest
@@ -323,7 +335,22 @@ class CodexSpoolService:
                 raise CodexWorkerTimeout("isolated Codex dispatch deadline expired")
             queued_at = raw.get("dispatched_at_epoch")
             queue_ms = max(0.0, (time.time() - float(queued_at)) * 1000) if queued_at is not None else None
-            result = self._worker.run(published, timeout_seconds=remaining)
+            persist_session = bool(raw.get("persist_session", False))
+            resume_thread_id = raw.get("resume_thread_id")
+            parent_job_digest = raw.get("parent_job_digest")
+            CodexCliWorker._validate_session_options(
+                job,
+                persist_session=persist_session,
+                resume_thread_id=resume_thread_id,
+                parent_job_digest=parent_job_digest,
+            )
+            result = self._worker.run(
+                published,
+                timeout_seconds=remaining,
+                persist_session=persist_session,
+                resume_thread_id=resume_thread_id,
+                parent_job_digest=parent_job_digest,
+            )
             envelope = {
                 "schema_version": 1,
                 "request_id": request_id,
@@ -507,6 +534,7 @@ def _service_from_environment() -> CodexSpoolService:
     binary = os.environ.get("PA_AGENT_CODEX_BINARY", "codex")
     model = os.environ.get("PA_AGENT_CODEX_MODEL", "").strip()
     effort = os.environ.get("PA_AGENT_CODEX_REASONING", "high").strip()
+    catalog = os.environ.get("PA_AGENT_CODEX_MODEL_CATALOG", "").strip()
     spool = CodexSpoolConfig(
         job_root=root / "jobs",
         inbox_root=root / "inbox",
@@ -520,6 +548,7 @@ def _service_from_environment() -> CodexSpoolService:
             model=model,
             reasoning_effort=effort,
             codex_binary=binary,
+            model_catalog=Path(catalog) if catalog else None,
         )
     )
     return CodexSpoolService(
@@ -530,6 +559,7 @@ def _service_from_environment() -> CodexSpoolService:
             model=model,
             reasoning_effort=effort,
             codex_binary=binary,
+            model_catalog=Path(catalog) if catalog else None,
         ),
     )
 

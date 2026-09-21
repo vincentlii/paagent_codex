@@ -45,7 +45,8 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
 - `AnalysisRoleBackend`：Stage 1、Stage 2、VPA 与研究 Joint 的模型分析 seam；Adapter 只能返回
   Provider Draft 和运行审计，不能拥有 materializer、Router、Validator、Risk 或持久化。
 - `FrozenAgentJob`：绑定同一 Snapshot cutoff、role、attempt、contract、knowledge、AGENTS、Skills、
-  model 和预算 digest 的不可变 Codex 任务。不同角色不得共享会话。
+  model 和预算 digest 的不可变 Codex 任务。不同 Snapshot 不得共享会话；同一 Snapshot 内只有
+  已通过首稿校验的 PA Stage 1 可受控续接 PA Stage 2。VPA、Joint 与 repair 始终独立。
 - `AgentRuntimeFingerprint`：一次 Agent 调用实际使用的 Codex CLI、model、reasoning profile、
   AGENTS、Skills、Evidence interface 与知识清单身份；必须进入 record/cohort。
 
@@ -89,8 +90,11 @@ Codex Backend、Dashboard 与 Runtime 资产的长期设计依据见
    Paper/未来执行器只消费 effective order 语义。
 8. 程序验证补丁与执行安全，随后持久化完整审计链。
 
-选择 Codex Backend 时，步骤 2、3、5、6 各自使用新的 ephemeral 任务；下游只接收已验证的结构化
-上游 Artifact，不继承聊天历史。Codex 输出仍先进入现有 Provider Draft/materializer/Validator 链。
+选择 Codex Backend 时，PA Stage 1 与 PA Stage 2 在同一 Frozen Snapshot、cutoff、runtime identity
+且 Stage 1 首稿直接通过时使用一条受控 PA 会话；Stage 2 仍只以已验证 Stage 1 Artifact 和 Router
+manifest 为权限依据，不把聊天历史当作可信事实。VPA、Joint 与 repair 各自使用新的独立任务，绝不
+进入 PA 会话。Stage 1 经 repair 或续接身份校验失败时，Stage 2 基于已验证 Artifact 新开 PA 任务。
+Codex 输出仍先进入现有 Provider Draft/materializer/Validator 链。
 
 这是一条信息依赖链，不代表 VPA 从属于 PA，也不允许形成第二套 Strategy Router。
 

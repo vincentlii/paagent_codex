@@ -1,6 +1,6 @@
 # 阶段 8：性能指标与 Direct 渲染边界
 
-更新：2026-09-13。实现基线：`e21903d`。状态：阶段 8 本地实现和定向验收完成；真实性能与专业效果未验收。
+更新：2026-09-14。实现基线：`e21903d`。状态：阶段 8 指标代码已实现、原定向检查通过；阶段整体尚未完成，真实完整链路与性能未验收。先处理 [真实运行审计](runtime_chain_audit_20260914.md)，暂不进入阶段 9。
 
 ## 范围与实现
 
@@ -11,6 +11,13 @@
 5. Provider 未返回美元账单，`cost_usd` 保持 unknown。不把订阅额度换算为虚构 API 成本。Direct 隐藏传输重试之前的用量未观测时标注 `final_response_only`，不得把最终回复用量冒充全程成本。
 6. `_persist_full` / `_persist_partial` 保存调用指标及汇总 coverage；新字段保存在现有 record JSON / role_runtime，不新增数据库 schema，不回填历史。旧 SQLite 的零值投影不具有 actual 语义。
 7. Codex Stage 1、Stage 2、VPA 和旧研究 Joint 跳过不用的 Direct 渲染；完整 role_protocol、HTF、上游结果、冻结价格/测量、知识仍经原 Publisher/MCP/Worker 必读矩阵交付。Direct 继续使用原 PromptAssembler；完整链回退重新走 Direct 编排。没有删除或摘要任何 mandatory 模块。
+8. 同一 Frozen Snapshot 内，仅已直接通过的 PA Stage 1 attempt 1 可在冻结身份校验后续接
+   PA Stage 2；Stage 2 仅省略 digest 完全一致且已在会话中完整读取的 price frame、HTF
+   和知识，新 Router/Stage 1/VPA Artifact 和角色协议仍必读。不同 Snapshot、VPA、研究
+   Joint 与 repair 继续独立 ephemeral；Stage 1 repair 后不得 resume。Direct 链路不变。
+9. PA 续接不依赖 CLI 是否重用 Stage 1 MCP 启动参数。会话 workspace 保留稳定的
+   evidence binding 路径，Host 在 Stage 2 启动前原子切换至新 Job/audit；MCP 在调用边界
+   重新校验 Frozen Job 并重置该角色预算。从而保证续接的是推理历史，不是旧证据权限。
 
 ## 使用
 
@@ -21,6 +28,9 @@ python -m pa_agent.experiments.study_cli metrics path/to/record.json
 输出分别列 actual/estimated 的已知小计、unknown_count 与 complete_actual；缺失样本不补零。
 `usage_coverage_complete` 同时要求全部调用实际报告 input/output/total/cache 且无隐藏重试用量；只“没有重试”不代表用量完整。旧 Evidence 事件缺少字节/token/耗时字段时也保持 unknown。
 首轮 token 和 retrieval token 是局部文本估算，不等于 Provider 多轮累计输入，不能相加替代 API usage。
+合并基线后，`evidence_call_count` 仍统计逐资源 Gateway 查询；新增
+`evidence_mcp_call_count` 按审计 `mcp_call_index` 去重统计工具往返。旧事件缺该身份时后者
+保持 unknown，Direct 为 0，不把一次 MCP 内多份资源误记为多次模型往返。
 优化成功不能仅以首轮 Prompt 大小判断；需结合调用总用量、成功率、完整证据和盲评分。
 
 ## 三角色自审

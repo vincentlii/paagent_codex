@@ -32,6 +32,7 @@ class CodexProductionConfig:
     outbox_root: Path
     inbox_root: Path
     result_root: Path
+    model_catalog: Path | None = None
 
     @classmethod
     def from_environment(
@@ -59,6 +60,7 @@ class CodexProductionConfig:
             outbox_root=root / "outbox",
             inbox_root=root / "inbox",
             result_root=root / "results",
+            model_catalog=Path(env["PA_AGENT_CODEX_MODEL_CATALOG"]) if env.get("PA_AGENT_CODEX_MODEL_CATALOG") else None,
         )
 
     def public_runtime_identity(self) -> dict[str, Any]:
@@ -66,6 +68,7 @@ class CodexProductionConfig:
             model=self.model,
             reasoning_effort=self.reasoning_effort,
             codex_binary=self.codex_binary,
+            model_catalog=self.model_catalog,
         )
 
 
@@ -81,6 +84,23 @@ def validate_codex_production_config(
         errors.append("PA_AGENT_CODEX_MODEL is required when Codex is enabled")
     elif not codex_model_effort_supported(config.model, config.reasoning_effort):
         errors.append("PA_AGENT_CODEX_MODEL/PA_AGENT_CODEX_REASONING pair is unsupported")
+    if config.model == "deepseek-flash":
+        if config.model_catalog is None:
+            errors.append("PA_AGENT_CODEX_MODEL_CATALOG is required for deepseek-flash")
+        elif not config.model_catalog.is_file():
+            errors.append("DeepSeek Codex model catalog is unavailable")
+        else:
+            try:
+                catalog = json.loads(config.model_catalog.read_text(encoding="utf-8"))
+                models = catalog.get("models", [])
+                if (
+                    len(models) != 1
+                    or models[0].get("slug") != "deepseek-flash"
+                    or models[0].get("apply_patch_tool_type") is not None
+                ):
+                    raise ValueError
+            except (OSError, UnicodeError, json.JSONDecodeError, AttributeError, ValueError):
+                errors.append("DeepSeek Codex model catalog is invalid")
     if not config.codex_binary:
         errors.append("PA_AGENT_CODEX_BINARY is required")
     elif resolve_executable(config.codex_binary) is None:

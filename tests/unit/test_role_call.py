@@ -7,6 +7,20 @@ from pa_agent.ai.role_validator import RoleValidationResult
 from pa_agent.orchestrator.role_call import run_structured_role
 
 
+def test_k_reference_findings_grant_only_the_failing_narrative_path() -> None:
+    from pa_agent.ai.factual_grounding import validate_vpa_k_references
+    from pa_agent.orchestrator.role_call import _error_paths
+
+    findings = validate_vpa_k_references(
+        "K10 remains unresolved", evidence_items=[{"bar_range": "K1"}],
+        path="vpa_report.observations[3].interpretation",
+    )
+    assert findings
+    assert _error_paths(tuple(findings)) == (
+        ("vpa_report", "observations", 3, "interpretation"),
+    )
+
+
 @dataclass
 class _Reply:
     content: str

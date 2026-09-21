@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,9 @@ from pa_agent.agent_runtime.frozen_job import (
     AgentJobBudget,
     FrozenAgentJobBuilder,
     FrozenAgentJobStore,
+    JobIntegrityError,
 )
+from pa_agent.agent_runtime.evidence import PRICE_FRAME_CHUNK_SIZE
 from pa_agent.agent_runtime.knowledge_bundle import build_knowledge_bundle
 from pa_agent.agent_runtime.repair_contract import (
     PATCH_ENVELOPE_SCHEMA,
@@ -22,6 +25,9 @@ from pa_agent.agent_runtime.runtime_assets import load_codex_runtime_assets
 from pa_agent.ai.analysis_role_backend import AnalysisRoleRequest
 from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
 from pa_agent.data.snapshot_bundle import serialize_frame_bars
+
+
+_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 
 
 class CodexJobPublisher:
@@ -42,6 +48,7 @@ class CodexJobPublisher:
         self._budget = budget
         self._runtime_identity = dict(runtime_identity or {})
         assets = load_codex_runtime_assets()
+        self._skills = assets.skill_documents
         self._builder = FrozenAgentJobBuilder(
             runtime_version=assets.runtime_version,
             agents_text=assets.agents_text,
@@ -55,6 +62,11 @@ class CodexJobPublisher:
         if not context:
             raise ValueError("Codex publishing requires bounded agent_context")
         self._validate_role_context(request.role, context)
+        raw_continuation = context.pop("pa_session_continuation", None)
+        if raw_continuation is not None and (
+            request.role != "stage2" or int(attempt) != 1
+        ):
+            raise ValueError("PA session continuation is allowed only for Stage 2 attempt 1")
         # Version the evidence-read contract explicitly.  This lets the worker
         # enforce semantic parity for vNext jobs without retroactively changing
         # the meaning of already-frozen legacy jobs.
@@ -62,9 +74,13 @@ class CodexJobPublisher:
         context["investigation_policy"] = self._runtime_identity.get(
             "investigation_policy", "agentic"
         )
-        from pa_agent.agent_runtime.execution_contract import RUNTIME_CONTRACT, skill_key
+        from pa_agent.agent_runtime.execution_contract import (
+            ANALYSIS_EXECUTION_POLICY, INSTRUCTION_DELIVERY_POLICY, RUNTIME_CONTRACT, skill_key,
+        )
 
         context["runtime_contract_version"] = RUNTIME_CONTRACT
+        context["analysis_execution_policy"] = ANALYSIS_EXECUTION_POLICY
+        context["instruction_delivery_policy"] = INSTRUCTION_DELIVERY_POLICY
         joint = skill_key(request.role, context) == "joint_stage2"
         schema_protocol = (request.schema or {}).get("properties", {}).get("protocol_version", {}).get("const")
         if joint != (schema_protocol == "pa_vpa_stage2_draft_v1"):
@@ -77,14 +93,46 @@ class CodexJobPublisher:
             dict.fromkeys(str(item) for item in context.pop("allowed_knowledge_ids", ()))
         )
         role_evidence = context.pop("role_evidence", None)
+        if request.role == "vpa_evidence" and isinstance(role_evidence, dict):
+            from pa_agent.ai.vpa_measurements import prompt_vpa_evidence_ids
+
+            # Match the original Direct renderer and Validator selection exactly.
+            # Keep selected facts intact; never expose a window the role cannot cite.
+            selected_ids = prompt_vpa_evidence_ids(role_evidence, context.get("pa_hypotheses"))
+            role_evidence = {
+                **role_evidence,
+                "evidence": [
+                    item for item in role_evidence.get("evidence", [])
+                    if isinstance(item, dict) and item.get("evidence_id") in selected_ids
+                ],
+            }
         knowledge, knowledge_manifest = build_knowledge_bundle(
             prompt_dir=self._prompt_dir,
             knowledge_ids=allowed_ids,
             role=request.role,
         )
         repair_context = extract_repair_context(request.messages)
+        if int(attempt) > 1 and repair_context is None:
+            raise ValueError("Codex repair requires Validator-authorized pointers; cannot restart full analysis")
         if repair_context is not None and int(attempt) <= 1:
             raise ValueError("repair context is invalid on an initial attempt")
+        if repair_context is not None:
+            repair_context["validator_feedback"] = strip_repair_context(
+                str(request.messages[-1].get("content") or "")
+            )
+        task_id = str(context.get("task_id") or "").strip()
+        if not task_id:
+            raise ValueError("agent_context requires task_id")
+        if raw_continuation is not None:
+            context["pa_session_continuation"] = self._verify_pa_continuation(
+                raw_continuation,
+                task_id=task_id,
+                snapshot_hash=str(request.snapshot_hash).lower(),
+                cutoff_ts_open=int(request.cutoff_ts_open),
+                frozen_bars=frozen_bars,
+                higher_timeframe=context.get("higher_timeframe") or {},
+                knowledge_manifest=knowledge_manifest,
+            )
         projection = catalog.view("pa")
         projection["relations"] = [item.as_dict() for item in catalog.relations]
         visible_fact_ids = sorted(
@@ -92,6 +140,10 @@ class CodexJobPublisher:
             for item in projection.get("facts", [])
             if item.get("fact_id")
         )
+        if request.role in {"stage1", "stage2"}:
+            # Freeze navigation with the baseline, not the initial prompt. This
+            # avoids a model round trip merely to discover already-visible IDs.
+            context["fact_id_index"] = visible_fact_ids
         context["frozen_snapshot"] = {
             "snapshot_hash": catalog.snapshot_hash,
             "cutoff_ts_open": int(request.cutoff_ts_open),
@@ -103,7 +155,7 @@ class CodexJobPublisher:
             "fact_count": len(visible_fact_ids),
             "fact_prefixes": sorted({item.split(".", 1)[0] for item in visible_fact_ids}),
             "bar_count": len(frozen_bars),
-            "price_frame_chunk_size": 100,
+            "price_frame_chunk_size": PRICE_FRAME_CHUNK_SIZE,
             "newest_seq": min((int(item["seq"]) for item in frozen_bars), default=None),
             "oldest_seq": max((int(item["seq"]) for item in frozen_bars), default=None),
             "htf_evidence_ids": sorted(
@@ -159,9 +211,6 @@ class CodexJobPublisher:
         ]
         if request.role in {"vpa_evidence", "joint_arbiter"} and role_evidence is not None:
             projection["role_evidence"] = role_evidence
-        task_id = str(context.get("task_id") or "").strip()
-        if not task_id:
-            raise ValueError("agent_context requires task_id")
         job = self._builder.build(
             task_id=task_id,
             request_id=f"{task_id}:{request.role}:{int(attempt)}",
@@ -208,6 +257,13 @@ class CodexJobPublisher:
                     if isinstance(role_evidence, dict)
                     else 0
                 ),
+                repair_context_bytes=len(json.dumps(
+                    ({**repair_context, "role_skill": self._skills["draft_pointer_repair"],
+                      **({"provider_output_schema": PATCH_ENVELOPE_SCHEMA}
+                         if self._runtime_identity.get("provider") == "deepseek_codex_responses" else {})}
+                     if repair_context else {}), ensure_ascii=False, allow_nan=False,
+                    separators=(",", ":"), sort_keys=True,
+                ).encode("utf-8")),
             ),
             backend_runtime_identity=self._runtime_identity,
             source_request_digest=analysis_role_request_digest(request, attempt),
@@ -216,6 +272,73 @@ class CodexJobPublisher:
             core_context=context,
         )
         return self._store.publish(job)
+
+    def _verify_pa_continuation(
+        self,
+        value: Any,
+        *,
+        task_id: str,
+        snapshot_hash: str,
+        cutoff_ts_open: int,
+        frozen_bars: list[dict[str, Any]],
+        higher_timeframe: Any,
+        knowledge_manifest: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Derive inheritance only from an integrity-checked Stage 1 parent job."""
+        if not isinstance(value, dict) or set(value) != {
+            "parent_job_digest",
+            "thread_id",
+        }:
+            raise ValueError("PA parent job continuation is malformed")
+        parent_digest = str(value.get("parent_job_digest") or "").strip().lower()
+        thread_id = str(value.get("thread_id") or "").strip()
+        if not _THREAD_ID_RE.fullmatch(thread_id):
+            raise ValueError("PA parent job thread identity is invalid")
+        try:
+            parent = self._store.open(parent_digest, allow_expired=True)
+        except (ValueError, JobIntegrityError) as exc:
+            raise ValueError("PA parent job is unavailable or invalid") from exc
+        manifest = parent.manifest
+        if (
+            manifest.role != "stage1"
+            or manifest.attempt != 1
+            or manifest.task_id != task_id
+            or manifest.snapshot_hash != snapshot_hash
+            or manifest.cutoff_ts_open != cutoff_ts_open
+            or dict(parent.runtime.get("backend_runtime_identity") or {})
+            != self._runtime_identity
+        ):
+            raise ValueError("PA parent job identity does not match Stage 2")
+        price_fields = ("seq", "ts_open", "open", "high", "low", "close", "closed")
+        current_price_bars = [
+            {key: item[key] for key in price_fields if key in item}
+            for item in frozen_bars
+        ]
+        inherited_price_frame = [dict(item) for item in parent.bars] == current_price_bars
+        inherited_higher_timeframe = (
+            parent.core_context.get("higher_timeframe") or {}
+        ) == higher_timeframe
+        parent_modules = {
+            str(item.get("knowledge_module_id") or ""): str(item.get("sha256") or "")
+            for item in parent.knowledge_manifest.get("modules", [])
+            if isinstance(item, dict) and item.get("knowledge_module_id")
+        }
+        inherited_knowledge_ids = [
+            str(item["knowledge_module_id"])
+            for item in knowledge_manifest.get("modules", [])
+            if isinstance(item, dict)
+            and item.get("knowledge_module_id")
+            and parent_modules.get(str(item["knowledge_module_id"]))
+            == str(item.get("sha256") or "")
+        ]
+        return {
+            "protocol_version": "pa_session_continuation_v1",
+            "parent_job_digest": parent_digest,
+            "thread_id": thread_id,
+            "inherited_price_frame": inherited_price_frame,
+            "inherited_higher_timeframe": inherited_higher_timeframe,
+            "inherited_knowledge_ids": inherited_knowledge_ids,
+        }
 
     @staticmethod
     def _validate_role_context(role: str, context: dict[str, Any]) -> None:
@@ -281,18 +404,19 @@ class CodexJobPublisher:
         bar_count: int,
         role_evidence_count: int,
         role_evidence_bytes: int,
+        repair_context_bytes: int = 0,
     ) -> AgentJobBudget:
         if self._budget is not None:
             return self._budget
         if int(attempt) > 1:
             return AgentJobBudget(
                 max_evidence_calls=2,
-                max_evidence_response_bytes=32_768,
-                max_evidence_bytes=65_536,
+                max_evidence_response_bytes=max(32_768, repair_context_bytes),
+                max_evidence_bytes=max(65_536, repair_context_bytes + 32_768),
                 max_wall_seconds=180,
             )
         if role == "stage2":
-            frame_calls = max(1, (int(bar_count) + 99) // 100)
+            frame_calls = max(1, (int(bar_count) + PRICE_FRAME_CHUNK_SIZE - 1) // PRICE_FRAME_CHUNK_SIZE)
             return AgentJobBudget(
                 max_evidence_calls=max(
                     10,
@@ -317,7 +441,7 @@ class CodexJobPublisher:
                 ),
                 max_wall_seconds=180,
             )
-        frame_calls = max(1, (int(bar_count) + 99) // 100)
+        frame_calls = max(1, (int(bar_count) + PRICE_FRAME_CHUNK_SIZE - 1) // PRICE_FRAME_CHUNK_SIZE)
         return AgentJobBudget(
             max_evidence_calls=max(
                 8,
@@ -334,6 +458,12 @@ class CodexJobPublisher:
     def _repair_instruction(request: AnalysisRoleRequest, attempt: int) -> str | None:
         if int(attempt) <= 1 or not request.messages:
             return None
+        if extract_repair_context(request.messages) is not None:
+            return (
+                "Read get_repair_findings for the complete original draft, Validator "
+                "feedback/contract and authorized pointers. Repair only those findings; "
+                "do not restart market analysis."
+            )
         final = request.messages[-1]
         if str(final.get("role") or "") != "user":
             return None

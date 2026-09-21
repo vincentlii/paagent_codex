@@ -10,6 +10,7 @@ Group=pa-agent-codex
 SupplementaryGroups=pa-agent-codex-spool
 WorkingDirectory=/opt/pa-agent
 EnvironmentFile=/etc/pa-agent/pa-agent-codex.env
+EnvironmentFile=-/etc/pa-agent/pa-agent-codex-secret.env
 ExecStartPre=/opt/miniconda3/envs/pa-agent/bin/pa-agent-codex-worker --check
 ExecStart=/opt/miniconda3/envs/pa-agent/bin/pa-agent-codex-worker
 Restart=on-failure

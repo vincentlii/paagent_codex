@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 from pathlib import Path
@@ -26,6 +27,7 @@ def codex_runtime_identity(
     model: str,
     reasoning_effort: str,
     codex_binary: str,
+    model_catalog: Path | None = None,
 ) -> dict[str, Any]:
     path = resolve_executable(codex_binary)
     if path is None:
@@ -35,7 +37,7 @@ def codex_runtime_identity(
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     assets = load_codex_runtime_assets()
-    return {
+    identity = {
         "backend": "codex_agent",
         "provider": "openai_codex_chatgpt",
         "model": str(model),
@@ -45,3 +47,15 @@ def codex_runtime_identity(
         "codex_binary": path.name,
         "codex_binary_digest": digest.hexdigest(),
     }
+    if model == "deepseek-flash":
+        if model_catalog is None:
+            raise ValueError("DeepSeek Codex requires an explicit model catalog")
+        data = model_catalog.read_bytes()
+        models = json.loads(data).get("models", [])
+        if len(models) != 1 or models[0].get("slug") != model:
+            raise ValueError("DeepSeek Codex catalog must contain only deepseek-flash")
+        if models[0].get("apply_patch_tool_type") is not None:
+            raise ValueError("DeepSeek analysis catalog must not advertise apply_patch")
+        identity.update(provider="deepseek_codex_responses",
+                        model_catalog_digest=hashlib.sha256(data).hexdigest())
+    return identity

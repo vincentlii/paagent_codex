@@ -84,10 +84,13 @@ def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     assert "/var/lib/pa-agent-codex/home" in installer
     assert "User=pa-agent-codex" in codex_service
     assert "LoadCredential=" not in codex_service
+    assert "EnvironmentFile=-/etc/pa-agent/pa-agent-codex-secret.env" in codex_service
     assert "ReadOnlyPaths=/opt/pa-agent" in codex_service
     assert "ReadOnlyPaths=/opt/pa-agent /opt/miniconda3/envs/pa-agent /var/lib/pa-agent-codex/jobs" in codex_service
     assert "/var/lib/pa-agent\n" not in codex_service
     assert "pa-agent-codex-worker.service" in installer
+    assert "pa-agent-codex-secret.env.example" in installer
+    assert '"$CONFIG_DIR/pa-agent-codex-secret.env"' in installer
     assert "pa_agent.agent_runtime.runtime_audit" in installer
     assert '--source-assets "$APP_DIR/pa_agent/agent_runtime/assets"' in installer
     assert 'chmod -R go-w "$APP_DIR"' in installer

@@ -570,6 +570,43 @@ def test_stage2_explicit_bar_price_claim_uses_the_same_fact_guard() -> None:
     assert any("K6.low" in error and "2020" in error for error in errors)
 
 
+def test_grouped_bar_high_range_is_not_misread_as_one_bar_price() -> None:
+    frame = make_frame()
+    bars = list(frame.bars)
+    bars[1] = replace(bars[1], high=4380.13)
+    bars[2] = replace(bars[2], high=4379.78)
+    bars[3] = replace(bars[3], high=4382.86)
+    frame = replace(frame, bars=tuple(bars))
+    stage2 = copy.deepcopy(VALID_STAGE2)
+    stage2["decision"]["watch_points"] = [
+        "若价格收回并接受K3/K2/K4高点4379.78至4382.86区域，则重新评估。"
+    ]
+
+    errors = _validate_stage2_hard(stage2, VALID_STAGE1, kline_frame=frame)
+
+    assert not any("decision.watch_points[0]" in error for error in errors)
+
+
+def test_grouped_bar_high_range_still_rejects_wrong_group_extreme() -> None:
+    frame = make_frame()
+    bars = list(frame.bars)
+    bars[1] = replace(bars[1], high=4380.13)
+    bars[2] = replace(bars[2], high=4379.78)
+    bars[3] = replace(bars[3], high=4382.86)
+    frame = replace(frame, bars=tuple(bars))
+    stage2 = copy.deepcopy(VALID_STAGE2)
+    stage2["decision"]["watch_points"] = [
+        "若价格收回并接受K3/K2/K4高点4378.00至4382.86区域，则重新评估。"
+    ]
+
+    errors = _validate_stage2_hard(stage2, VALID_STAGE1, kline_frame=frame)
+
+    assert any(
+        "decision.watch_points[0]" in error and "grouped K high range" in error
+        for error in errors
+    )
+
+
 def test_adjacent_pair_fact_can_ground_a_non_k1_extreme_claim() -> None:
     frame = make_mixed_frame()
     k3 = replace(frame.bars[2], high=4100.0, close=4098.0)

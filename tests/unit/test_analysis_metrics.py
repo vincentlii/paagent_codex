@@ -32,6 +32,17 @@ def test_cache_zero_requires_a_provider_field():
     assert "cached_prompt_tokens" not in usage.reported_fields
 
 
+def test_batched_evidence_counts_resources_separately_from_mcp_roundtrips():
+    runtime = {"evidence_call_count": 3, "evidence_events": [
+        {"mcp_call_index": 1}, {"mcp_call_index": 1}, {"mcp_call_index": 2},
+    ]}
+    values = call_metrics(AIUsage(), runtime)["values"]
+    assert values["evidence_call_count"]["value"] == 3
+    assert values["evidence_mcp_call_count"]["value"] == 2
+    runtime["evidence_events"].append({"operation": "legacy_read"})
+    assert call_metrics(AIUsage(), runtime)["values"]["evidence_mcp_call_count"]["status"] == "unknown"
+
+
 def test_legacy_evidence_missing_measurements_cannot_be_actual_zero():
     measured = call_metrics(AIUsage(), {"evidence_events": [{"status": "ok"}],
         "evidence_response_bytes": 0, "retrieval_context_tokens": 0, "evidence_latency_ms": 0})

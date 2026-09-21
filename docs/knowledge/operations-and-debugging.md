@@ -110,7 +110,9 @@ Headless 启动失败时检查：
 
 ## Codex Analysis Worker
 
-- 每个 role 必须出现新的 ephemeral task，不允许 `resume` 或共享自然语言会话。
+- 每个 Frozen Snapshot 必须出现新的 PA 会话；只有该 Snapshot 的 PA Stage 1 attempt 1 可由 Stage 2
+  以冻结 parent job/thread identity `resume`。VPA、Joint、repair 必须是新的 ephemeral task；任何
+  跨 Snapshot、Stage 1 repair 后续接或身份不一致都应在模型启动前失败。
 - CLI 必须为 read-only、approval `never`，并禁用 shell、Web、image、用户 config；唯一工具为
   `required=true` 的 `pa_evidence` stdio MCP。
 - Codex CLI 0.153.0 尚不接受文档中的 `tools.view_image` strict-config key。当前通过不传
@@ -118,8 +120,9 @@ Headless 启动失败时检查：
   目标 CLI 不接受的 key。`codex exec` subprocess 必须使用 `stdin=DEVNULL`。
 - production 保留 workspace `AGENTS.md` 与 Role Skill discovery，不传 `--ignore-rules`；上线前必须以
   `runtime_audit --live-canary` 的随机 sentinel 验证两者确实生效。
-- VPS 只允许 ChatGPT account auth；使用 `codex login --device-auth`，`auth.json` 按密码管理，
-  不设置 `OPENAI_API_KEY`/`CODEX_API_KEY` fallback。
+- OpenAI Codex profile 使用 ChatGPT account auth；`auth.json` 按密码管理，不设置隐式
+  `OPENAI_API_KEY`/`CODEX_API_KEY` fallback。显式 DeepSeek Codex profile 只读取隔离 worker 的
+  `DEEPSEEK_API_KEY` credential，不改变会话隔离、Evidence 或 Host authority。
 - `PA_AGENT_CODEX_ENABLED` 默认关闭；启用前 model/effort 必须来自发布 catalog，并确认 Codex binary、Prompt 目录、
   `$PA_AGENT_HOME/codex/{home,jobs,runtime,outbox}` 权限通过离线 `--check`。
 - systemd 以独立 `pa-agent-codex` 用户运行 spool worker。Headless 只写 Job/inbox、读取 result；

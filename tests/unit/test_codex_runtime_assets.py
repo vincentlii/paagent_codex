@@ -81,5 +81,7 @@ def test_posix_permission_contract_separates_code_secrets_jobs_and_outputs() -> 
     assert contract["runtime_root"].codex_access == "read_write"
     assert contract["outbox_root"].codex_access == "read_write"
     assert contract["provider_credential"].codex_access == "none"
+    assert contract["codex_deepseek_credential"].codex_access == "none"
+    assert contract["codex_deepseek_credential"].mode == 0o600
     assert contract["production_database"].codex_access == "none"
     assert contract["paper_ledger"].codex_access == "none"

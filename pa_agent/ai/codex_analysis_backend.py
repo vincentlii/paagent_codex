@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -172,7 +173,7 @@ class CodexCircuitBreaker:
 
 
 class CodexAnalysisRoleBackend:
-    """Run one role as a fresh Codex task over a published frozen job."""
+    """Run bounded roles, with one verified PA Stage 1→Stage 2 continuation."""
 
     validation_retry_limit = 1
 
@@ -197,6 +198,7 @@ class CodexAnalysisRoleBackend:
         self._cycle_started_at: float | None = None
         self._role_attempts: dict[str, int] = {}
         self._attempt_lock = threading.Lock()
+        self._pa_session: dict[str, Any] | None = None
 
     @property
     def backend_id(self) -> str:
@@ -240,13 +242,29 @@ class CodexAnalysisRoleBackend:
                 attempts=(),
             )
 
-        attempt = self._next_attempt(request.role)
+        attempt = self._next_attempt(request)
+        request, session_options = self._prepare_session_invocation(request, attempt)
         if self._cycle_started_at is None:
             self._cycle_started_at = self._monotonic()
         remaining_cycle_seconds = self._cycle_wall_seconds - (
             self._monotonic() - self._cycle_started_at
         )
         if remaining_cycle_seconds <= 0:
+            if request.agent_context and request.role in {"stage1", "stage2", "vpa_evidence"}:
+                from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped
+                from pa_agent.ai.role_contracts import AnalysisRoleStop
+                stopped = CodexWorkerStopped(AnalysisRoleStop(
+                    role=request.role, status="incomplete", reason="analysis cycle wall-clock budget exceeded",
+                ))
+                if on_attempt_error is not None:
+                    on_attempt_error(stopped)
+                self._raise_failure(ProviderFailure(
+                    kind="role_stopped", message=stopped.stop.reason, retryable=False,
+                ), attempts=({
+                    "stage": request.role,
+                    "analysis_backend": self.backend_id,
+                    "attempt": attempt,
+                },), original=stopped)
             self._circuit.record_availability_failure()
             self._raise_failure(
                 ProviderFailure(
@@ -342,6 +360,9 @@ class CodexAnalysisRoleBackend:
             result = self._worker.run(
                 published,
                 timeout_seconds=remaining_cycle_seconds,
+                persist_session=session_options["persist_session"],
+                resume_thread_id=session_options["resume_thread_id"],
+                parent_job_digest=session_options["parent_job_digest"],
             )
         except CodexWorkerError as exc:
             if on_attempt_error is not None:
@@ -430,8 +451,8 @@ class CodexAnalysisRoleBackend:
         runtime = {
             "analysis_backend": self.backend_id,
             "role": request.role,
-            "provider_id": "openai_codex",
-            "structured_output_mode": "json_schema",
+            "provider_id": "deepseek_codex" if frozen_runtime_identity.get("provider") == "deepseek_codex_responses" else "openai_codex",
+            "structured_output_mode": "text" if frozen_runtime_identity.get("provider") == "deepseek_codex_responses" else "json_schema",
             "requested_model": job.manifest.model
             or self._runtime_identity.get("model"),
             "effective_model": job.manifest.model
@@ -469,6 +490,14 @@ class CodexAnalysisRoleBackend:
             "circuit": self._circuit.snapshot(),
             "repair_mode": repair_context is not None,
             "strict_null_pruned_count": strict_null_pruned_count,
+            "session_mode": (
+                "pa_continuation"
+                if session_options["resume_thread_id"]
+                else "pa_session_origin"
+                if session_options["persist_session"]
+                else "ephemeral"
+            ),
+            "parent_job_digest": session_options["parent_job_digest"],
         }
         from pa_agent.ai.analysis_metrics import call_metrics
         runtime["timings"] = result.timings
@@ -488,17 +517,83 @@ class CodexAnalysisRoleBackend:
             latency_ms=result.latency_ms,
         )
         reply._pa_model_call_meta = dict(runtime)
+        if session_options["persist_session"]:
+            if not result.thread_id:
+                self._raise_failure(
+                    ProviderFailure(
+                        kind="invalid_request",
+                        message="Codex PA Stage 1 did not return a resumable thread identity",
+                        retryable=False,
+                    ),
+                    attempts=(attempt_meta,),
+                )
+            with self._attempt_lock:
+                self._pa_session = {
+                    "thread_id": result.thread_id,
+                    "parent_job_digest": job.manifest.job_digest,
+                    "task_id": str((request.agent_context or {}).get("task_id") or ""),
+                    "snapshot_hash": str(request.snapshot_hash or "").lower(),
+                    "cutoff_ts_open": int(request.cutoff_ts_open or 0),
+                }
         return AnalysisRoleResult(
             reply=reply,
             backend_id=self.backend_id,
             runtime=runtime,
         )
 
-    def _next_attempt(self, role: str) -> int:
+    def _next_attempt(self, request: AnalysisRoleRequest) -> int:
+        task_id = str((request.agent_context or {}).get("task_id") or "")
+        key = "|".join(
+            (
+                task_id,
+                str(request.snapshot_hash or "").lower(),
+                str(request.cutoff_ts_open or ""),
+                request.role,
+            )
+        )
         with self._attempt_lock:
-            attempt = self._role_attempts.get(role, 0) + 1
-            self._role_attempts[role] = attempt
+            attempt = self._role_attempts.get(key, 0) + 1
+            self._role_attempts[key] = attempt
             return attempt
+
+    def _prepare_session_invocation(
+        self,
+        request: AnalysisRoleRequest,
+        attempt: int,
+    ) -> tuple[AnalysisRoleRequest, dict[str, Any]]:
+        """Bind continuation from trusted worker output, never caller authority."""
+        context = dict(request.agent_context or {})
+        context.pop("pa_session_continuation", None)
+        task_id = str(context.get("task_id") or "")
+        identity = {
+            "task_id": task_id,
+            "snapshot_hash": str(request.snapshot_hash or "").lower(),
+            "cutoff_ts_open": int(request.cutoff_ts_open or 0),
+        }
+        options = {
+            "persist_session": False,
+            "resume_thread_id": None,
+            "parent_job_digest": None,
+        }
+        with self._attempt_lock:
+            if request.role == "stage1":
+                # A new Stage 1 or any Stage 1 repair invalidates the previous
+                # candidate.  Repair history contains an untrusted draft.
+                self._pa_session = None
+                options["persist_session"] = bool(task_id and attempt == 1)
+            elif request.role == "stage2" and attempt == 1:
+                candidate = dict(self._pa_session or {})
+                self._pa_session = None
+                if candidate and all(candidate.get(key) == value for key, value in identity.items()):
+                    options["resume_thread_id"] = candidate["thread_id"]
+                    options["parent_job_digest"] = candidate["parent_job_digest"]
+                    context["pa_session_continuation"] = {
+                        "parent_job_digest": candidate["parent_job_digest"],
+                        "thread_id": candidate["thread_id"],
+                    }
+        if context != dict(request.agent_context or {}):
+            request = replace(request, agent_context=context)
+        return request, options
 
     def _raise_failure(
         self,
@@ -527,6 +622,14 @@ class CodexAnalysisRoleBackend:
 
 
 def _worker_failure(exc: CodexWorkerError) -> ProviderFailure:
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped
+
+    if isinstance(exc, CodexWorkerStopped):
+        return ProviderFailure(
+            kind="role_stopped",
+            message=exc.stop.reason,
+            retryable=False,
+        )
     if isinstance(exc, CodexWorkerAuthenticationError):
         return ProviderFailure(
             kind="authentication",

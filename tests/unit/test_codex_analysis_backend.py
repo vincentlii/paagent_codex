@@ -267,6 +267,80 @@ def test_backend_rejects_role_when_full_cycle_budget_is_already_exhausted() -> N
     worker.run.assert_not_called()
 
 
+def test_failed_call_ledger_keeps_selected_backend_without_inventing_usage():
+    entry = _call_attempt_entry(
+        arm="pa", stage="stage1", attempt=2, messages=[],
+        status="request_failed", backend_id="codex_agent",
+    )
+    assert entry["analysis_backend"] == "codex_agent"
+    assert entry["response_hash"] is None
+    assert entry["metrics"]["values"]["prompt_tokens"]["status"] == "unknown"
+
+
+def test_current_role_cycle_budget_stops_without_availability_fallback():
+    from dataclasses import replace
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped
+
+    backend = CodexAnalysisRoleBackend(
+        worker=MagicMock(), publish_job=MagicMock(), request_full_chain_fallback=True,
+        cycle_wall_seconds=600, monotonic=MagicMock(side_effect=[100.0, 701.0]),
+    )
+    request = replace(_request(), agent_context={
+        "role_protocol": {"contract_version": "pa_stage1_agent_protocol_v1"},
+    })
+    with pytest.raises(ModelCallFailure) as caught:
+        backend.run(request, on_reasoning_token=None, on_content_token=None, cancel_token=None)
+    assert not isinstance(caught.value, FullChainFallbackRequired)
+    assert caught.value.failure.kind == "role_stopped"
+    assert isinstance(caught.value.original, CodexWorkerStopped)
+    assert caught.value.original.stop.status == "incomplete"
+    assert backend._circuit.snapshot()["failures"] == 0
+
+
+def test_worker_role_stop_is_not_misclassified_as_invalid_output(tmp_path: Path) -> None:
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped
+    from pa_agent.ai.role_contracts import AnalysisRoleStop
+
+    published = FrozenAgentJobStore(tmp_path).publish(_job())
+    stop = AnalysisRoleStop(
+        role="stage1", status="incomplete", reason="wall-clock budget exceeded",
+    )
+    worker = MagicMock()
+    worker.run.side_effect = CodexWorkerStopped(stop)
+    backend = CodexAnalysisRoleBackend(
+        worker=worker,
+        publish_job=lambda _request, _attempt: published,
+        request_full_chain_fallback=True,
+    )
+
+    with pytest.raises(ModelCallFailure) as caught:
+        backend.run(
+            _request(), on_reasoning_token=None, on_content_token=None, cancel_token=None,
+        )
+
+    assert not isinstance(caught.value, FullChainFallbackRequired)
+    assert caught.value.failure.kind == "role_stopped"
+    assert caught.value.failure.message == stop.reason
+    assert caught.value.failure.retryable is False
+
+
+def test_role_stop_attempt_status_is_not_recorded_as_request_failure() -> None:
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped
+    from pa_agent.ai.role_contracts import AnalysisRoleStop
+    from pa_agent.ai.provider_failures import ProviderFailure
+    from pa_agent.orchestrator.two_stage import _attempt_failure_status
+
+    stop = CodexWorkerStopped(AnalysisRoleStop(
+        role="stage1", status="incomplete", reason="wall-clock budget exceeded",
+    ))
+    assert _attempt_failure_status(stop) == "role_stopped"
+    wrapped = ModelCallFailure(
+        ProviderFailure(kind="role_stopped", message=stop.stop.reason), original=stop,
+    )
+    assert _attempt_failure_status(wrapped) == "role_stopped"
+    assert _attempt_failure_status(ValueError("bad output")) == "request_failed"
+
+
 def test_auto_mode_treats_job_spool_oserror_as_full_chain_availability() -> None:
     def unavailable(_request: AnalysisRoleRequest, _attempt: int) -> Path:
         raise OSError("spool is read-only")
@@ -459,3 +533,86 @@ def test_codex_backend_can_own_all_analysis_roles_without_direct_client() -> Non
 
     assert orchestrator._analysis_backend.backend_id == "codex_agent"
     assert orchestrator._clone_role_client(settings.provider) == (None, True)
+
+
+def test_backend_continues_only_pa_stage2_and_keeps_vpa_ephemeral(
+    tmp_path: Path,
+) -> None:
+    frame = make_frame()
+    snapshot_hash = build_analysis_fact_catalog(frame).snapshot_hash
+    runtime_identity = {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "max",
+        "runtime_version": "runtime-v1",
+    }
+    publisher = CodexJobPublisher(
+        frame=frame,
+        prompt_dir=tmp_path / "prompts",
+        job_root=tmp_path / "jobs",
+        runtime_identity=runtime_identity,
+    )
+    (tmp_path / "prompts").mkdir()
+
+    def role_request(role: str, context: dict) -> AnalysisRoleRequest:
+        return AnalysisRoleRequest(
+            role=role,
+            messages=[{"role": "user", "content": role}],
+            schema={"type": "object"},
+            thinking=True,
+            reasoning_effort="max",
+            snapshot_hash=snapshot_hash,
+            cutoff_ts_open=frame.bars[0].ts_open,
+            agent_context={"task_id": "task-session", "allowed_knowledge_ids": [], **context},
+        )
+
+    worker = MagicMock()
+    worker.run.side_effect = [
+        _result(thread_id="thread-pa-0001"),
+        _result(thread_id="thread-vpa-001"),
+        _result(thread_id="thread-pa-0001"),
+    ]
+    backend = CodexAnalysisRoleBackend(
+        worker=worker,
+        publish_job=publisher,
+        runtime_identity=runtime_identity,
+    )
+    common = dict(
+        on_reasoning_token=None,
+        on_content_token=None,
+        cancel_token=None,
+    )
+    backend.run(role_request("stage1", {
+        "role_protocol": {"contract_version": "pa_stage1_agent_protocol_v1"},
+        "higher_timeframe": {},
+    }), **common)
+    backend.run(role_request("vpa_evidence", {
+        "role_protocol": {"contract_version": "vpa_evidence_agent_protocol_v1"},
+        "stage1_diagnosis": {},
+        "pa_hypotheses": {},
+    }), **common)
+    stage2 = backend.run(role_request("stage2", {
+        "role_protocol": {"contract_version": "pa_stage2_agent_protocol_v1"},
+        "stage1_diagnosis": {},
+        "router_manifest": [],
+        "higher_timeframe": {},
+    }), **common)
+
+    first, vpa, second = worker.run.call_args_list
+    assert first.kwargs["persist_session"] is True
+    assert first.kwargs["resume_thread_id"] is None
+    assert vpa.kwargs["persist_session"] is False
+    assert vpa.kwargs["resume_thread_id"] is None
+    assert second.kwargs["persist_session"] is False
+    assert second.kwargs["resume_thread_id"] == "thread-pa-0001"
+    assert second.kwargs["parent_job_digest"] == first.args[0].name
+    assert stage2.runtime["session_mode"] == "pa_continuation"
+    assert stage2.runtime["parent_job_digest"] == first.args[0].name
+    ledger = _call_attempt_entry(
+        arm="pa",
+        stage="stage2",
+        attempt=1,
+        messages=[],
+        reply=stage2.reply,
+    )
+    assert ledger["session_mode"] == "pa_continuation"
+    assert ledger["parent_job_digest"] == first.args[0].name

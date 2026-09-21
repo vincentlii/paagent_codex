@@ -34,6 +34,16 @@ def call_metrics(usage, runtime, *, wall_ms=None):
         if event_field and any(event.get(event_field) is None for event in runtime.get("evidence_events", ())):
             value = None
         values[name] = metric(value, unit, "host_evidence_accounting", estimated=estimated)
+    events = runtime.get("evidence_events")
+    mcp_calls = None
+    if events is not None and all(
+        type(event.get("mcp_call_index")) is int and event["mcp_call_index"] > 0
+        for event in events
+    ):
+        mcp_calls = len({event["mcp_call_index"] for event in events})
+    elif runtime.get("analysis_backend") == "direct":
+        mcp_calls = 0
+    values["evidence_mcp_call_count"] = metric(mcp_calls, "count", "host_mcp_audit")
     timings = runtime.get("timings") or {}
     for name in ("process_ms", "queue_ms", "worker_wall_ms", "spool_wall_ms"):
         values[name] = metric(timings.get(name), "milliseconds", "host_clock")

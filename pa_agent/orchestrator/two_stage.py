@@ -238,6 +238,7 @@ def _call_attempt_entry(
     status: str = "received",
     validation_category: str | None = None,
     error_type: str | None = None,
+    backend_id: str = "direct",
 ) -> dict[str, Any]:
     """Build a content-free, reproducible ledger entry for one provider call."""
     usage = getattr(reply, "usage", None)
@@ -276,7 +277,7 @@ def _call_attempt_entry(
         "validation_category": validation_category,
         "error_type": error_type,
         "analysis_backend": _audit_text(
-            model_call_meta.get("analysis_backend", "direct")
+            model_call_meta.get("analysis_backend", backend_id)
         ) or "direct",
         "provider_id": _audit_text(model_call_meta.get("provider_id")),
         "model": _audit_text(model_call_meta.get("model")),
@@ -311,6 +312,8 @@ def _call_attempt_entry(
             model_call_meta.get("transport_attempts") or []
         ),
         "job_digest": _audit_text(model_call_meta.get("job_digest")),
+        "session_mode": _audit_text(model_call_meta.get("session_mode")),
+        "parent_job_digest": _audit_text(model_call_meta.get("parent_job_digest")),
         "investigation_policy": _audit_text(model_call_meta.get("investigation_policy")),
         "evidence_events": copy.deepcopy(model_call_meta.get("evidence_events") or []),
         "metrics": copy.deepcopy(metrics),
@@ -1041,7 +1044,7 @@ class TwoStageOrchestrator:
                 original=exc,
             ) from exc
         raise ModelCallFailure(
-            ProviderFailure(kind="invalid_request", message=stop.reason, retryable=False),
+            ProviderFailure(kind="role_stopped", message=stop.reason, retryable=False),
             original=AnalysisRoleStopped(stop),
         )
 
@@ -1057,6 +1060,7 @@ class TwoStageOrchestrator:
         htf_context: dict | None,
     ) -> tuple[AnalysisRecord, VpaEvidenceReport | None, dict | None]:
         """The new pipeline's VPA role, before any Stage 2 order exists."""
+        from pa_agent.ai.fact_catalog import analysis_snapshot_hash
         from pa_agent.ai.prompt_assembler import VPA_KNOWLEDGE_MODULES, VpaPromptBuildError
         from pa_agent.ai.vpa_context_profile import build_vpa_knowledge_context
         from pa_agent.ai.vpa_measurements import (
@@ -1136,7 +1140,9 @@ class TwoStageOrchestrator:
                         schema=vpa_schema,
                         thinking=profile.thinking,
                         reasoning_effort=profile.reasoning_effort,
-                        snapshot_hash=catalog["snapshot_hash"],
+                        # Role jobs share the PA frame identity; the validated
+                        # volume catalog retains its own hash in role_evidence.
+                        snapshot_hash=analysis_snapshot_hash(frame),
                         cutoff_ts_open=int(frame.bars[0].ts_open),
                         agent_context=context,
                     ),
@@ -1152,8 +1158,9 @@ class TwoStageOrchestrator:
                         attempt=1
                         + sum(c.get("stage") == "vpa_evidence" for c in record.call_attempts),
                         messages=current_messages,
-                        status="request_failed",
+                        status=_attempt_failure_status(exc),
                         error_type=exc.failure.kind,
+                        backend_id=backend.backend_id,
                     )
                 )
                 raise
@@ -1164,6 +1171,7 @@ class TwoStageOrchestrator:
                     attempt=1 + sum(c.get("stage") == "vpa_evidence" for c in record.call_attempts),
                     messages=current_messages,
                     reply=result.reply,
+                    backend_id=backend.backend_id,
                 )
             )
             record.role_responses.setdefault("vpa_evidence", []).append(
@@ -1387,6 +1395,7 @@ class TwoStageOrchestrator:
                     status=status,
                     validation_category=validation_category,
                     error_type=error_type,
+                    backend_id=self._analysis_backend.backend_id,
                 )
             )
 
@@ -1545,7 +1554,7 @@ class TwoStageOrchestrator:
                     "stage1",
                     messages_s1,
                     reply=getattr(exc, "role_reply", None),
-                    status="role_stopped" if hasattr(exc, "role_reply") else "request_failed",
+                    status=_attempt_failure_status(exc),
                     error_type=type(exc).__name__,
                 ),
                 snapshot_hash=frozen_snapshot_hash,
@@ -1565,7 +1574,10 @@ class TwoStageOrchestrator:
                 self._persist_partial(record, "user_cancelled", on_event)
                 on_event(OrchestratorEvent.Cancelled)
                 return record
-            logger.warning("Stage 1 provider failure (%s): %s", exc.failure.kind, exc)
+            if exc.failure.kind == "role_stopped":
+                logger.info("Stage 1 analysis role stopped: %s", exc)
+            else:
+                logger.warning("Stage 1 provider failure (%s): %s", exc.failure.kind, exc)
             record = record.model_copy(
                 update={
                     "stage1_messages": messages_s1,
@@ -1653,7 +1665,7 @@ class TwoStageOrchestrator:
                     "stage1",
                     msgs,
                     reply=getattr(exc, "role_reply", None),
-                    status="role_stopped" if hasattr(exc, "role_reply") else "request_failed",
+                    status=_attempt_failure_status(exc),
                     error_type=type(exc).__name__,
                 ),
                 snapshot_hash=frozen_snapshot_hash,
@@ -2020,7 +2032,7 @@ class TwoStageOrchestrator:
                     "stage2",
                     messages_s2,
                     reply=getattr(exc, "role_reply", None),
-                    status="role_stopped" if hasattr(exc, "role_reply") else "request_failed",
+                    status=_attempt_failure_status(exc),
                     error_type=type(exc).__name__,
                 ),
                 snapshot_hash=frozen_snapshot_hash,
@@ -2058,7 +2070,10 @@ class TwoStageOrchestrator:
                 self._persist_partial(record, "user_cancelled", on_event)
                 on_event(OrchestratorEvent.Cancelled)
                 return record
-            logger.warning("Stage 2 provider failure (%s): %s", exc.failure.kind, exc)
+            if exc.failure.kind == "role_stopped":
+                logger.info("Stage 2 analysis role stopped: %s", exc)
+            else:
+                logger.warning("Stage 2 provider failure (%s): %s", exc.failure.kind, exc)
             record = record.model_copy(
                 update={
                     "stage1_messages": messages_s1,
@@ -2162,7 +2177,7 @@ class TwoStageOrchestrator:
                     "stage2",
                     msgs,
                     reply=getattr(exc, "role_reply", None),
-                    status="role_stopped" if hasattr(exc, "role_reply") else "request_failed",
+                    status=_attempt_failure_status(exc),
                     error_type=type(exc).__name__,
                 ),
                 snapshot_hash=frozen_snapshot_hash,
@@ -2647,7 +2662,8 @@ class TwoStageOrchestrator:
             if frozen_vpa_catalog is not None
             else build_vpa_evidence_catalog(frame)
         )
-        snapshot_hash = str(catalog.get("snapshot_hash") or "")
+        from pa_agent.ai.fact_catalog import analysis_snapshot_hash
+        snapshot_hash = analysis_snapshot_hash(frame)
         role_assembler = self._assembler.clone_with_prompt_settings(
             role_settings.prompt,
             vpa_evidence_catalog=catalog,
@@ -2711,8 +2727,9 @@ class TwoStageOrchestrator:
                         stage=role,
                         attempt=attempt,
                         messages=current_messages,
-                        status="request_failed",
+                        status=_attempt_failure_status(exc),
                         error_type=exc.failure.kind,
+                        backend_id=role_backend.backend_id,
                     )
                     failed["transport_attempts"] = [
                         dict(item) for item in exc.attempts
@@ -2728,6 +2745,7 @@ class TwoStageOrchestrator:
                         attempt=attempt,
                         messages=current_messages,
                         reply=reply,
+                        backend_id=role_backend.backend_id,
                     )
                 )
                 return reply
@@ -3350,3 +3368,15 @@ class TwoStageOrchestrator:
             "message": str(exc),
             "attempts": [dict(attempt) for attempt in exc.attempts],
         }
+
+
+def _attempt_failure_status(exc: BaseException) -> str:
+    """Keep a typed non-decision distinct from transport/output failures."""
+    original = getattr(exc, "original", None)
+    if (
+        hasattr(exc, "role_reply")
+        or hasattr(exc, "stop")
+        or hasattr(original, "stop")
+    ):
+        return "role_stopped"
+    return "request_failed"

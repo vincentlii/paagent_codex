@@ -52,6 +52,59 @@ def _request(role: str, context: dict) -> AnalysisRoleRequest:
     )
 
 
+def test_retry_without_authorized_pointers_cannot_restart_full_analysis(tmp_path):
+    publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path, job_root=tmp_path/"jobs")
+    with pytest.raises(ValueError, match="repair requires Validator-authorized pointers"):
+        publisher(_request("vpa_evidence", {"task_id": "unscoped-repair"}), 2)
+    assert not (tmp_path/"jobs").exists()
+
+
+@pytest.mark.parametrize("provider", ["openai_codex", "deepseek_codex_responses"])
+def test_repair_keeps_full_validator_feedback_in_frozen_resource_not_prompt(tmp_path, provider):
+    from dataclasses import replace
+    from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
+    from pa_agent.agent_runtime.repair_contract import append_repair_context
+
+    feedback = "Validator finding and original contract: " + "完整规则" * 9000
+    messages = [{"role": "user", "content": append_repair_context(
+        feedback, original_draft='{"field":"before"}',
+        findings=["field"], editable_pointers=["/field"],
+    )}]
+    request = replace(_request("stage1", {"task_id": "repair-test"}), messages=messages)
+    publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path, job_root=tmp_path/"jobs",
+                                  runtime_identity={"provider": provider})
+    published = publisher(request, 2)
+    job = FrozenAgentJobStore(published.parent).open(published.name)
+    initial = json.dumps(job.request["messages"], ensure_ascii=False)
+    assert len(initial.encode("utf-8")) < 8192
+    assert "完整规则" not in initial
+    repair = FrozenEvidenceGateway(job).get_repair_findings()
+    assert repair["validator_feedback"] == feedback
+    assert repair["original_draft"] == '{"field":"before"}'
+    assert repair["editable_pointers"] == ["/field"]
+    assert repair["role_skill"] == job.runtime["skills"]["draft_pointer_repair"]
+    if provider == "deepseek_codex_responses":
+        assert repair["provider_output_schema"] == dict(job.output_schema)
+
+
+def test_published_knowledge_manifest_is_visible_and_mandatory(tmp_path):
+    from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
+    from pa_agent.agent_runtime.codex_worker import CodexCliWorker, CodexWorkerOutputError
+
+    (tmp_path/"market.txt").write_text("Complete mandatory knowledge", encoding="utf-8")
+    publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path, job_root=tmp_path/"jobs")
+    path = publisher(_request("stage1", {"task_id": "manifest-test",
+                                       "allowed_knowledge_ids": ["market.txt"]}), 1)
+    job = FrozenAgentJobStore(path.parent).open(path.name)
+    assert FrozenEvidenceGateway(job).list_allowed_knowledge() == job.knowledge_manifest["modules"]
+    events = tuple({"status": "ok", "operation": operation, "request": {}}
+                   for operation in ("get_job_manifest", "get_market_core", "list_allowed_knowledge"))
+    events += ({"status": "ok", "operation": "get_price_frame",
+                "request": {"older_seq": len(job.bars), "newer_seq": 1}},)
+    with pytest.raises(CodexWorkerOutputError, match="mandatory"):
+        CodexCliWorker._validate_required_evidence_reads(job, events)
+
+
 def test_publisher_replaces_long_direct_prompt_with_bounded_core_context(tmp_path: Path) -> None:
     frame = make_frame()
     prompt_dir = tmp_path / "prompts"
@@ -257,3 +310,73 @@ def test_source_request_digest_is_canonical_for_key_order_and_unicode() -> None:
 
     assert digest == analysis_role_request_digest(reordered, 1)
     assert digest == "aab770c2a9770c0e305339b6e91d9ff7ab8915daf463ad8c5d5155b79f474e92"
+
+
+def test_stage2_continuation_freezes_verified_inheritance_and_delta_baseline(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+    from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
+
+    frame = make_frame()
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    (prompt_dir / "shared.txt").write_text(
+        "Shared Brooks knowledge without role-specific slicing.", encoding="utf-8"
+    )
+    runtime_identity = {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "max",
+        "runtime_version": "runtime-v1",
+    }
+    publisher = CodexJobPublisher(
+        frame=frame,
+        prompt_dir=prompt_dir,
+        job_root=tmp_path / "jobs",
+        runtime_identity=runtime_identity,
+    )
+    common = {
+        "task_id": "task-session",
+        "allowed_knowledge_ids": ["shared.txt"],
+        "higher_timeframe": {
+            "status": "available",
+            "evidence": [{"evidence_id": "HTF.H1", "ts_open": frame.bars[-1].ts_open}],
+        },
+    }
+    stage1_request = _request("stage1", {
+        **common,
+        "role_protocol": {"contract_version": "pa_stage1_agent_protocol_v1"},
+    })
+    stage1_path = publisher(stage1_request, 1)
+    stage2_request = _request("stage2", {
+        **common,
+        "role_protocol": {"contract_version": "pa_stage2_agent_protocol_v1"},
+        "stage1_diagnosis": {},
+        "router_manifest": [],
+        "pa_session_continuation": {
+            "parent_job_digest": stage1_path.name,
+            "thread_id": "thread-pa-0001",
+        },
+    })
+    stage2_path = publisher(stage2_request, 1)
+    stage2_job = FrozenAgentJobStore(stage2_path.parent).open(stage2_path.name)
+
+    continuation = stage2_job.core_context["pa_session_continuation"]
+    assert continuation["protocol_version"] == "pa_session_continuation_v1"
+    assert continuation["parent_job_digest"] == stage1_path.name
+    assert continuation["thread_id"] == "thread-pa-0001"
+    assert continuation["inherited_price_frame"] is True
+    assert continuation["inherited_higher_timeframe"] is True
+    assert continuation["inherited_knowledge_ids"] == ["shared.txt"]
+    operations = [item[0] for item in FrozenEvidenceGateway(stage2_job).mandatory_read_plan()]
+    assert "get_upstream_artifact" in operations
+    assert "get_price_frame" not in operations
+    assert "get_htf_evidence" not in operations
+    assert "read_knowledge_module" not in operations
+
+    mismatched = replace(
+        stage2_request,
+        agent_context={**dict(stage2_request.agent_context or {}), "task_id": "other-task"},
+    )
+    with pytest.raises(ValueError, match="parent job"):
+        publisher(mismatched, 1)

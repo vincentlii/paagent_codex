@@ -517,7 +517,7 @@ def validate_vpa_k_references(
         if bounds is not None:
             allowed.update(range(bounds[0], bounds[1] + 1))
     return [
-        f"{path} references K{seq} outside its cited evidence ranges"
+        f"{path}: references K{seq} outside its cited evidence ranges"
         for seq in sorted(
             {
                 int(match.group(1))

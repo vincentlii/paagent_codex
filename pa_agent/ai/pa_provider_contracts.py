@@ -145,6 +145,13 @@ def _stage1_draft_schema() -> dict[str, Any]:
         "minItems": 1,
         "items": _draft_trace_item(("1.1", *STAGE1_GATE_NODE_IDS)),
     }
+    properties["gate_trace"]["items"]["properties"]["branch"]["description"] = (
+        "branch 是节点的分支标识，不是市场叙述。§1.2 answer=是时，直接使用已经声明的 "
+        "market_hypotheses.primary.cycle_position（或实际选择的 alternatives 中的 cycle_position）"
+        "原始枚举值；不要添加方向、过渡状态或其他修饰词，这些解释写入 reason。"
+        "§2.3 方向分支应与 primary.direction 一致，可直接使用其原始枚举值。"
+        "其他节点按对应决策树协议填写。枚举标识不受中文叙述要求影响。"
+    )
     properties["pa_evidence"] = {
         "type": "object",
         "required": ["spike_analysis"],
@@ -202,6 +209,11 @@ def _stage2_draft_schema(
         "decision_trace": {
             "type": "array",
             "minItems": 1,
+            "description": (
+                "每个 node_id 最多出现一次；reason 必须回答该编号的原决策树问题，不得借用其他编号。"
+                "交易者方程 §10.3 由 Host 物化，不在模型 Draft 中输出，也不要用其他节点代替它。"
+                "只记录当前实际分析路径；不适用的节点不为凑齐列表而重复填写。"
+            ),
             "items": _draft_trace_item(
                 stage2_provider_node_ids(decision_tree_path)
             ),

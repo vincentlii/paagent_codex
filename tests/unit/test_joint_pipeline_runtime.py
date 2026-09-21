@@ -137,7 +137,7 @@ def run_joint(
 
                 calls.append(role)
                 raise ModelCallFailure(
-                    ProviderFailure(kind="invalid_request", message="role stopped"),
+                    ProviderFailure(kind="role_stopped", message="role stopped"),
                     original=CodexWorkerStopped(AnalysisRoleStop.model_validate(stop)),
                 )
 
@@ -157,6 +157,8 @@ def run_joint(
 
         def agent_vpa_call(request, **kwargs):
             check_agent_stop(request.role)
+            from pa_agent.ai.fact_catalog import analysis_snapshot_hash
+            assert request.snapshot_hash == analysis_snapshot_hash(frame or make_frame())
             return AnalysisRoleResult(reply=vpa_call(), backend_id="codex_agent", runtime={})
 
         role_backend.run.side_effect = agent_vpa_call
@@ -212,6 +214,9 @@ def test_review_stop_is_persisted_without_rerun(role, codex):
         ]
     )
     assert record.stage2_decision is None
+    assert record.exception["failure_kind"] == "role_stopped"
+    if codex and role == "vpa_evidence":
+        assert record.call_attempts[-1]["status"] == "role_stopped"
     writer.save_partial.assert_called_once()
     writer.save_full.assert_not_called()
 
@@ -309,6 +314,25 @@ def test_direct_vpa_stop_transport_preserves_root_definitions():
     # Resolves every nested reference, regardless of the fixture's canonical-only fields.
     list(jsonschema.Draft7Validator(schema).iter_errors(_vpa_report()))
     assert "$defs" in VPA_EVIDENCE_SCHEMA  # No global schema mutation.
+
+
+def test_valid_direct_role_stop_has_a_distinct_failure_kind():
+    from types import SimpleNamespace
+    from pa_agent.ai.provider_failures import ModelCallFailure
+    from pa_agent.ai.role_contracts import AnalysisRoleStop, AnalysisRoleStopped
+    from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
+
+    stop = AnalysisRoleStop(
+        role="stage1", status="incomplete", reason="mandatory evidence unavailable",
+    )
+    reply = SimpleNamespace(content=stop.model_dump_json())
+
+    with pytest.raises(ModelCallFailure) as caught:
+        TwoStageOrchestrator._check_direct_stop(reply, "stage1")
+
+    assert caught.value.failure.kind == "role_stopped"
+    assert caught.value.failure.retryable is False
+    assert isinstance(caught.value.original, AnalysisRoleStopped)
 
 
 def test_joint_bad_reference_cannot_become_a_formal_decision():

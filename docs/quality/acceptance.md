@@ -42,7 +42,9 @@
 - 认证支持严格结构输出的 Provider，首次结构成功率目标不低于 99.5%。
 - 1000 组合法格式和措辞扰动中，错误硬拒绝率低于 1%。
 - Provider 返回 400、401、429、5xx、timeout、截断 JSON 时均得到可解释状态。
-- Codex CLI/auth/worker/evidence runtime 故障必须得到可解释 availability 状态；Codex role 每次使用独立 ephemeral 任务。
+- Codex CLI/auth/worker/evidence runtime 故障必须得到可解释 availability 状态。不同 Frozen Snapshot
+  会话隔离率为 100%；同一 Snapshot 只允许通过首稿校验的 PA Stage 1 受控续接 PA Stage 2；VPA、
+  Joint、repair 独立率为 100%。Stage 1 repair 或任一续接身份不一致时不得 resume。
 - SQLite busy、磁盘写入失败、数据断连时不产生幽灵成功记录。
 
 ## 性能

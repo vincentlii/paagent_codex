@@ -20,7 +20,10 @@ Validator → Brooks Router → 独立 VPA → 联合 Stage 2 → 同一 materia
 Trader Equation / Risk → 持久化 → 新鲜度检查 → 简单 Paper 与看板。
 
 Codex 仅调查冻结资源并提交 Draft；Host 拥有数据、时间边界、确定性测量、权限、校验、
-调度与数据库写入。每角色独立 ephemeral 任务，无长期会话、无源码修改、无实时取数。
+调度与数据库写入。不同 Frozen Snapshot 之间会话严格独立；同一 Snapshot 内仅允许
+未经修复的 PA Stage 1 attempt 1 在身份校验通过后续接 PA Stage 2。VPA、研究 Joint 和
+repair 始终使用独立 ephemeral 任务；VPA 只能通过冻结且已验证的结构化 Artifact 进入
+Stage 2，不得进入 PA 会话历史。无长期市场记忆、无源码修改、无实时取数。
 AGENTS 固化权限，Skills 编排分析程序，领域知识仍由 PA Agent 管理；不得复制另一套知识库。
 保留完整核心价格、HTF 和必读知识；工具读取仍消耗上下文，不以短 Prompt 冒充效果改善。
 

@@ -7,9 +7,9 @@ description: Use when the Host explicitly selects joint_stage2_agent_protocol_v1
 
 在同一 Frozen Snapshot 中形成联合 Draft `pa_vpa_stage2_draft_v1`。不是先造 PA 订单再让 VPA 改单，也不是 research-only 仲裁。本 Skill 不授权启用 pipeline。
 
-1. 调用 `get_job_manifest`、`get_market_core`、`get_upstream_artifact`；核对角色协议、Snapshot、validated Stage 1、Brooks Router、PA hypotheses 和已验收 VPA 报告。缺少必要交接返回 incomplete；身份或不可变上游矛盾返回 review_required，不重跑 Stage 1、不另造基线。
-2. `list_allowed_knowledge` 后按 `load_order` 用 `read_knowledge_module` 完整读取全部 `loading_policy=mandatory`。Brooks 是唯一 Setup 框架，VPA 只提供辅助证据。不能用 Skill 替代原知识、案例和反证。
-3. 用 `get_price_frame` 每块最多 100 根读取完整价格窗口，按 K 大到小理解时间顺序；`get_htf_evidence` 读取全部冻结 HTF ID。有冻结经验时 `get_experience_entries` 完整读一次，经验只对照、不覆盖当前事实。
+1. 首先调用一次 `get_role_baseline`，按 resources 顺序完整阅读，核对其中角色协议、Snapshot、validated Stage 1、Brooks Router、PA hypotheses 和已验收 VPA 报告。`mandatory_pa_delta_v1` 只表示 price-only PA 材料可从同 Snapshot Stage 1 会话继承；VPA 会话本身始终隔离，只有本次冻结且已验收的结构化报告进入 Stage 2。缺少必要交接返回 incomplete；身份或不可变上游矛盾返回 review_required，不重跑 Stage 1、不另造基线。
+2. fresh 基线按 manifest 的 `load_order` 阅读全部 `loading_policy=mandatory` 模块；delta 完整阅读未继承模块并使用本会话中 digest 相同的继承模块。Brooks 是唯一 Setup 框架，VPA 只提供辅助证据。不能用 Skill 替代原知识、案例和反证。
+3. fresh 基线阅读完整 price_frame 与全部冻结 HTF；delta 只在 Host 对应继承标记为 true 时使用 Stage 1 已读全量材料。始终按 K 大到小理解时间顺序；有冻结经验时完整阅读 experience_entries，经验只对照、不覆盖当前事实。任一新增必读交付失败即停止。
 4. 在 Router 内比较有意义的方案与等待，最多三项，不强凑数量。逐项说明背景、位置、即时信号或未来触价条件、结构失效点、目标障碍和到 TP1 的空间；不得改变 Stage 1、路由、新增 VPA 专属 Setup 或翻转交易方向。
 5. 阅读完整 accepted VPA report，分别处理背景/位置支持与即时 entry timing 支持。高量不自动等于吸收，低量不自动等于无需求；解释依已选知识、provenance、相对基线和后续已闭盘响应。只引用报告实际可引用的 ID，不直读原始 VPA catalog、不重做 VPA 角色。
 6. 按争议查询精确 PA/HTF evidence 或知识 section，必要时 `measure_price_window` / `project_price_leg` 核对锚点算术。工具不选腿、不推荐目标；测量 digest 不属于 Draft fact_refs。

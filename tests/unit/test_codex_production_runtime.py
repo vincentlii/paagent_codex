@@ -94,3 +94,23 @@ def test_enabled_codex_preflight_rejects_unknown_model_and_invalid_pair(
         errors = validate_codex_production_config(config, prompt_dir=prompt_dir)
 
         assert any("pair is unsupported" in error for error in errors)
+
+
+def test_deepseek_codex_preflight_requires_read_only_model_catalog(
+    tmp_path: Path,
+) -> None:
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    config = CodexProductionConfig.from_environment(
+        state_dir=tmp_path / "state",
+        environment={
+            "PA_AGENT_CODEX_ENABLED": "1",
+            "PA_AGENT_CODEX_MODEL": "deepseek-flash",
+            "PA_AGENT_CODEX_REASONING": "high",
+            "PA_AGENT_CODEX_BINARY": sys.executable,
+        },
+    )
+
+    errors = validate_codex_production_config(config, prompt_dir=prompt_dir)
+
+    assert "PA_AGENT_CODEX_MODEL_CATALOG is required for deepseek-flash" in errors

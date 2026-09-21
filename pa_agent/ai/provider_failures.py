@@ -6,6 +6,7 @@ from typing import Literal
 
 ProviderFailureKind = Literal[
     "cancelled",
+    "role_stopped",
     "invalid_request",
     "authentication",
     "quota",

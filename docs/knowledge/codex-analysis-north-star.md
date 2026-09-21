@@ -32,7 +32,10 @@ AGENTS 固化不可变 authority、no-lookahead、Evidence grounding、阶段协
 
 一个 Frozen Snapshot 是完整分析的唯一事实边界。Evidence-on-demand 在该边界内替换一次性拼接全部 Prompt：Codex 只读当前 Job、role allowlist、call/byte budget 内的事实与知识，并把每次读取写入审计。它不读取未来 K 线、实时行情、Web、数据库、外部 App、Plugin 或未授权文件。
 
-Stage 1、Stage 2、VPA 与研究 Joint 各自使用独立 ephemeral task；下游只接收已验证的结构化 Artifact，不继承聊天历史。按需读取减少的是初始上下文压力，不会放宽 Snapshot cutoff、角色权限、Schema、事实校验或执行安全。
+不同 Frozen Snapshot 使用独立会话。同一 Snapshot 内仅 PA Stage 1 首稿验证通过后允许 PA Stage 2
+受控续接，以保留原版两阶段连续推理并避免重复读取 digest 相同的 PA 基线；Stage 2 权限仍只来自
+已验证 Stage 1 与 Router。VPA、研究 Joint 与 repair 各自使用独立 ephemeral task，只通过冻结的
+结构化 Artifact 交接。按需读取与 delta 基线不会放宽 Snapshot cutoff、角色权限、Schema、事实校验或执行安全。
 
 ## 验证假设，而非追求短 Prompt
 

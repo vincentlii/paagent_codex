@@ -104,6 +104,33 @@ def test_pa_price_frame_is_complete_and_contains_no_volume(tmp_path: Path) -> No
     assert all("volume" not in item for item in rows)
 
 
+def test_price_frame_preserves_catalog_geometry_and_reference_identity():
+    from dataclasses import replace
+    from pa_agent.agent_runtime.frozen_job import AgentJobBudget
+    from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
+    from pa_agent.data.snapshot_bundle import serialize_frame_bars
+    from tests.integration.conftest import make_frame
+
+    frame = make_frame()
+    projection = build_analysis_fact_catalog(frame).view("pa")
+    job = replace(_job(runtime_identity={"investigation_policy": "fixed"}),
+                  fact_projection=projection, bars=tuple(
+                      {key: value for key, value in bar.items()
+                       if key in {"seq", "ts_open", "open", "high", "low", "close", "closed"}}
+                      for bar in serialize_frame_bars(frame)),
+                  budget=AgentJobBudget(max_evidence_bytes=262144))
+    rows = FrozenEvidenceGateway(job).get_price_frame(older_seq=2, newer_seq=1)
+    facts = {item["fact_id"]: item for item in projection["facts"]}
+    for row in rows:
+        bar = facts[row["fact_id"]]
+        assert bar["value"]["seq"] == row["seq"]
+        assert row["geometry"] == {key: value for key, value in bar["value"].items()
+                                   if key not in {"seq", "open", "high", "low", "close", "closed"}}
+        measurements = dict(row["measurements"])
+        indicator_id = measurements.pop("fact_id")
+        assert measurements == facts[indicator_id]["value"]
+
+
 def test_fixed_study_condition_allows_baseline_but_denies_optional_investigation() -> None:
     from dataclasses import replace
     from pa_agent.agent_runtime.frozen_job import AgentJobBudget

@@ -273,6 +273,10 @@ def pending_writer():
 @pytest.fixture
 def assembler():
     mock = MagicMock()
+    # These tests fake prompt content, not the per-run assembler clone seam.
+    # An unconfigured clone returns another MagicMock instead of JSON messages.
+    mock.clone_with_analysis_fact_catalog.return_value = mock
+    mock.clone_with_prompt_settings.return_value = mock
     mock.build_stage1.return_value = [{"role": "system", "content": "test"}]
     mock.build_stage2.return_value = [{"role": "system", "content": "test"}]
     mock.build_stage2_continuation.return_value = [

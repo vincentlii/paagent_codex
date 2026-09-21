@@ -55,10 +55,12 @@ def append_repair_context(
     editable_pointers: Iterable[str],
 ) -> str:
     """Append a machine-readable, size-bounded repair authority block."""
+    finding_list = [str(item) for item in findings]
     payload = {
         "schema_version": 1,
         "original_draft": str(original_draft),
-        "findings": [str(item) for item in findings],
+        "findings": finding_list,
+        "typed_findings": _typed_repair_findings(finding_list, str(feedback)),
         "editable_pointers": sorted({str(item) for item in editable_pointers}),
     }
     encoded = json.dumps(
@@ -88,7 +90,14 @@ def extract_repair_context(messages: Iterable[dict[str, Any]]) -> dict[str, Any]
         draft = payload.get("original_draft")
         pointers = payload.get("editable_pointers")
         findings = payload.get("findings")
-        if not isinstance(draft, str) or not isinstance(pointers, list) or not isinstance(findings, list):
+        typed_findings = payload.get("typed_findings") or []
+        if (
+            not isinstance(draft, str)
+            or not isinstance(pointers, list)
+            or not isinstance(findings, list)
+            or not isinstance(typed_findings, list)
+            or any(not isinstance(item, dict) for item in typed_findings)
+        ):
             raise ValueError("repair context is incomplete")
         try:
             parsed = json.loads(draft)
@@ -103,6 +112,7 @@ def extract_repair_context(messages: Iterable[dict[str, Any]]) -> dict[str, Any]
             "schema_version": 1,
             "original_draft": draft,
             "findings": [str(item) for item in findings],
+            "typed_findings": [dict(item) for item in typed_findings],
             "editable_pointers": normalized,
         }
     return None
@@ -111,6 +121,63 @@ def extract_repair_context(messages: Iterable[dict[str, Any]]) -> dict[str, Any]
 def strip_repair_context(content: str) -> str:
     """Remove the host-only machine block before constructing model core context."""
     return str(content).split(_MARKER, 1)[0].rstrip()
+
+
+_EXPLICIT_PRICE_FINDING_RE = re.compile(
+    r"(?P<path>[A-Za-z_][A-Za-z0-9_.\[\]]*)\s+"
+    r"K(?P<seq>\d+)\.(?P<field>open|high|low|close)\s+states\s+"
+    r"(?P<stated>[-+]?\d+(?:\.\d+)?),\s+but frozen bar value is\s+"
+    r"(?P<actual>[-+]?\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def _typed_repair_findings(
+    findings: Iterable[str],
+    feedback: str,
+) -> list[dict[str, Any]]:
+    """Project deterministic repair facts without changing Validator authority."""
+    typed: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    combined = "\n".join([*(str(item) for item in findings), str(feedback)])
+    for match in _EXPLICIT_PRICE_FINDING_RE.finditer(combined):
+        path = match.group("path")
+        pointer = field_path_to_pointer(path)
+        key = ("explicit_bar_price_mismatch", pointer or path)
+        if key in seen:
+            continue
+        seen.add(key)
+        seq = int(match.group("seq"))
+        typed.append(
+            {
+                "code": key[0],
+                "path": path,
+                "pointer": pointer,
+                "message": match.group(0),
+                "fact_refs": [f"PA.BAR.K{seq}"],
+                "stated_value": float(match.group("stated")),
+                "frozen_value": float(match.group("actual")),
+            }
+        )
+    for finding in findings:
+        text = str(finding)
+        pointer = field_path_to_pointer(text)
+        key = ("validator_finding", pointer or text)
+        if key in seen:
+            continue
+        seen.add(key)
+        typed.append(
+            {
+                "code": key[0],
+                "path": text if pointer else None,
+                "pointer": pointer,
+                "message": text,
+                "fact_refs": [],
+                "stated_value": None,
+                "frozen_value": None,
+            }
+        )
+    return typed
 
 
 def apply_patch_envelope(
@@ -136,7 +203,8 @@ def apply_patch_envelope(
     ]
     if len(fragment_pointers) != len(fragments) or fragment_pointers != changed:
         raise ValueError("repair fragment pointers do not match changed_pointers")
-    result = copy.deepcopy(json.loads(str(repair_context["original_draft"])))
+    original = json.loads(str(repair_context["original_draft"]))
+    result = copy.deepcopy(original)
     for fragment in fragments:
         pointer = str(fragment["pointer"])
         if pointer not in allowed:
@@ -152,6 +220,15 @@ def apply_patch_envelope(
         except json.JSONDecodeError as exc:
             raise ValueError("repair value_json is invalid") from exc
         _assign_pointer(result, pointer, value)
+    # A field/array edit is not permission to select a different decision-tree
+    # question. In particular, renaming duplicates can hide a semantic mismatch.
+    for name in ("gate_trace", "decision_trace"):
+        before = {str(item.get("node_id")) for item in original.get(name, [])
+                  if isinstance(item, dict)}
+        after = {str(item.get("node_id")) for item in result.get(name, [])
+                 if isinstance(item, dict)}
+        if after - before:
+            raise ValueError("bounded repair cannot introduce new trace node identities")
     return result
 
 

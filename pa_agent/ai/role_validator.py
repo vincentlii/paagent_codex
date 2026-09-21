@@ -599,46 +599,29 @@ def validate_vpa_evidence(
         and str(item.get("evidence_id")) in allowed_evidence_ids
     }
     known_ids = set(evidence_items)
-    cited_before_materialization = {
-        str(evidence_id)
-        for section in (
-            (
-                report_obj.get("observations", [])
-                if isinstance(report_obj, dict)
-                else []
-            ),
-            (
-                report_obj.get("hypothesis_assessments", [])
-                if isinstance(report_obj, dict)
-                else []
-            ),
-        )
-        for item in section
-        if isinstance(item, dict)
-        for evidence_id in item.get("evidence_ids", [])
-    }
-    cited_before_materialization.update(
-        str(claim.get(key))
-        for observation in (
-            report_obj.get("observations", [])
-            if isinstance(report_obj, dict)
-            else []
-        )
-        if isinstance(observation, dict)
-        for claim in observation.get("sequence_claims", [])
-        if isinstance(claim, dict)
-        for key in ("earlier_evidence_id", "later_evidence_id")
-        if claim.get(key)
-    )
     pre_schema_errors: list[str] = []
-    unknown_before_materialization = sorted(
-        cited_before_materialization - known_ids
-    )
-    if unknown_before_materialization:
-        pre_schema_errors.append(
-            "unknown evidence IDs: "
-            + ", ".join(unknown_before_materialization)
-        )
+    # Preserve the source location: the repair protocol grants only these
+    # citation paths, never a fresh market interpretation or a guessed ID map.
+    for section in ("observations", "hypothesis_assessments"):
+        items = report_obj.get(section, []) if isinstance(report_obj, dict) else []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            path = f"vpa_report.{section}[{index}]"
+            unknown = sorted({str(value) for value in item.get("evidence_ids", [])} - known_ids)
+            if unknown:
+                pre_schema_errors.append(f"{path}.evidence_ids: unknown evidence IDs: {', '.join(unknown)}")
+            if section != "observations":
+                continue
+            for claim_index, claim in enumerate(item.get("sequence_claims") or []):
+                if not isinstance(claim, dict):
+                    continue
+                for key in ("earlier_evidence_id", "later_evidence_id"):
+                    value = claim.get(key)
+                    if value and str(value) not in known_ids:
+                        pre_schema_errors.append(
+                            f"{path}.sequence_claims[{claim_index}].{key}: unknown evidence IDs: {value}"
+                        )
     raw_assessments = (
         report_obj.get("hypothesis_assessments", [])
         if isinstance(report_obj, dict)
@@ -667,10 +650,32 @@ def validate_vpa_evidence(
             tuple(f"VPA may not output authority field {path}" for path in authority_paths),
             authority_violations=violations,
         )
-    errors = [
-        *pre_schema_errors,
-        *_schema_errors(VPA_EVIDENCE_SCHEMA, outer),
-    ]
+    schema_errors = _schema_errors(VPA_EVIDENCE_SCHEMA, outer)
+    errors = [*pre_schema_errors, *schema_errors]
+    if not schema_errors:
+        # Report independent citation failures together before bounded repair.
+        # Reuse unique-K binding; never infer a replacement for a missing ID.
+        bound_report, _ = materialize_vpa_reference_bindings(report_obj, catalog)
+        narratives = [
+            ("vpa_report.summary", bound_report.get("summary"), None),
+            ("vpa_report.next_confirmation.trigger",
+             bound_report.get("next_confirmation", {}).get("trigger"), None),
+        ]
+        for section, field in (("observations", "interpretation"), ("hypothesis_assessments", "reason")):
+            for index, item in enumerate(bound_report.get(section, [])):
+                ids = set(item.get("evidence_ids", [])) | set(item.get("auto_bound_evidence_ids", []))
+                narratives.append((f"vpa_report.{section}[{index}].{field}", item.get(field), ids))
+        for path, text, ids in narratives:
+            unknown = sorted(set(re.findall(
+                r"(?<![A-Za-z0-9_-])vpa-[A-Za-z0-9][A-Za-z0-9_-]*", str(text or ""),
+            )) - known_ids)
+            if unknown:
+                errors.append(f"{path}: unknown evidence IDs: {', '.join(unknown)}")
+            if ids is not None:
+                errors.extend(validate_vpa_k_references(
+                    text, path=path,
+                    evidence_items=[evidence_items[key] for key in sorted(ids) if key in evidence_items],
+                ))
     if errors:
         return RoleValidationResult(
             None,
