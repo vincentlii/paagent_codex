@@ -70,7 +70,10 @@ class CodexJobPublisher:
         # Version the evidence-read contract explicitly.  This lets the worker
         # enforce semantic parity for vNext jobs without retroactively changing
         # the meaning of already-frozen legacy jobs.
-        context["context_policy"] = "semantic_parity_v1"
+        # New Codex jobs use the bounded packet contract. Historical jobs keep
+        # their frozen semantic_parity_v1 value and remain replayable.
+        from pa_agent.agent_runtime.execution_contract import BOUNDED_CONTEXT_POLICY
+        context["context_policy"] = BOUNDED_CONTEXT_POLICY
         context["investigation_policy"] = self._runtime_identity.get(
             "investigation_policy", "agentic"
         )

@@ -2,8 +2,20 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=8)
+def _encoding(model_hint: str):
+    try:
+        import tiktoken  # type: ignore[import]
+
+        return tiktoken.get_encoding(model_hint)
+    except Exception as exc:
+        logger.warning("tiktoken unavailable (%s); using char/4 fallback", exc)
+        return None
 
 
 def estimate_tokens(messages: list[dict], model_hint: str = "cl100k_base") -> int:
@@ -13,11 +25,8 @@ def estimate_tokens(messages: list[dict], model_hint: str = "cl100k_base") -> in
     Returns an integer >= 0. Falls back to character-count / 4 if tiktoken
     is unavailable.
     """
-    try:
-        import tiktoken  # type: ignore[import]
-        enc = tiktoken.get_encoding(model_hint)
-    except Exception as exc:
-        logger.warning("tiktoken unavailable (%s); using char/4 fallback", exc)
+    enc = _encoding(model_hint)
+    if enc is None:
         total_chars = sum(len(str(m.get("content", ""))) for m in messages)
         return max(1, total_chars // 4)
 

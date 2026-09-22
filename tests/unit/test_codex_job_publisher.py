@@ -155,7 +155,7 @@ def test_publisher_replaces_long_direct_prompt_with_bounded_core_context(tmp_pat
         "Brooks market cycle knowledge".encode("utf-8")
     )
     initial = json.loads(job.request["messages"][1]["content"])["core_context"]
-    assert initial["context_policy"] == "semantic_parity_v1"
+    assert initial["context_policy"] == "bounded_context_v2"
     assert initial["evidence_index"]["htf_evidence_ids"] == ["HTF.H1"]
     assert initial["evidence_index"]["vpa_evidence_ids"] == []
     assert job.fact_projection["snapshot_hash"] == job.manifest.snapshot_hash
