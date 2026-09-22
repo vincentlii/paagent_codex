@@ -225,6 +225,7 @@ class CodexJobPublisher:
                 core_context=context,
                 knowledge_documents=knowledge,
                 knowledge_manifest=knowledge_manifest,
+                role_skill=self._skills["stage1"],
             )
         job = self._builder.build(
             task_id=task_id,

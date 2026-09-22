@@ -30,6 +30,7 @@ def build_stage1_decision_packet(
     core_context: Mapping[str, Any],
     knowledge_documents: Mapping[str, Any],
     knowledge_manifest: Mapping[str, Any],
+    role_skill: str = "",
 ) -> dict[str, Any]:
     """Compile facts without interpreting market structure or choosing a setup."""
     columns = ("seq", "ts_open", "open", "high", "low", "close", "closed")
@@ -77,6 +78,7 @@ def build_stage1_decision_packet(
             "role": "stage1",
         },
         "role_contract": protocol,
+        "role_skill": str(role_skill),
         "price_frame": {
             "columns": list(columns),
             "rows": [[item.get(key) for key in columns] for item in ordered_bars],

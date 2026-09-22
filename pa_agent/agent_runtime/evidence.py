@@ -12,6 +12,7 @@ from typing import Any, Callable, Mapping
 
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJob
 from pa_agent.agent_runtime.execution_contract import ANALYSIS_EXECUTION_POLICY, skill_key
+from pa_agent.agent_runtime.execution_contract import BOUNDED_CONTEXT_POLICY
 from pa_agent.ai.token_counter import estimate_tokens
 
 PRICE_FRAME_CHUNK_SIZE = 50
@@ -63,6 +64,7 @@ class FrozenEvidenceGateway:
             for item in job.bars
         }
         self._calls_used = 0
+        self._optional_calls_used = 0
         self._bytes_used = 0
         self._audit: list[EvidenceAuditEvent] = []
         self._core_context = self._extract_core_context()
@@ -108,6 +110,11 @@ class FrozenEvidenceGateway:
             "get_experience_entries", "get_price_frame", "get_htf_evidence", "get_vpa_evidence",
             *OPTIONAL_INVESTIGATION_OPERATIONS,
         }
+        if (not self._job.repair_findings
+                and self._job.manifest.role == "stage1"
+                and self._core_context.get("context_policy") == BOUNDED_CONTEXT_POLICY):
+            names.discard("get_role_baseline")
+            names.add("get_stage1_decision_packet")
         if self._job.manifest.role in {"stage1", "stage2"}:
             names.discard("get_vpa_evidence")
         else:
@@ -116,6 +123,22 @@ class FrozenEvidenceGateway:
         if not self._job.repair_findings and identity.get("investigation_policy") == "fixed":
             names.difference_update(OPTIONAL_INVESTIGATION_OPERATIONS)
         return sorted(names)
+
+    def get_stage1_decision_packet(self) -> dict[str, Any]:
+        """Return the publisher-frozen packet; never rebuild it at read time."""
+        def resolve() -> dict[str, Any]:
+            if (self._job.manifest.role != "stage1"
+                    or self._core_context.get("context_policy") != BOUNDED_CONTEXT_POLICY):
+                raise EvidenceAccessDenied("Stage 1 decision packet is not authorized")
+            packet = self._core_context.get("stage1_decision_packet")
+            if not isinstance(packet, Mapping):
+                raise EvidenceAccessDenied("frozen Stage 1 decision packet is missing")
+            from pa_agent.agent_runtime.decision_packet import verify_stage1_decision_packet
+            verify_stage1_decision_packet(packet)
+            if packet.get("identity", {}).get("snapshot_hash") != self._job.manifest.snapshot_hash:
+                raise EvidenceAccessDenied("Stage 1 decision packet identity mismatch")
+            return dict(packet)
+        return self._query("get_stage1_decision_packet", {}, resolve)
 
     def baseline_delivery_index(self, resources: list[dict[str, Any]]) -> dict[str, Any]:
         """Index values actually delivered; references in prose/upstream are not reads."""
@@ -625,6 +648,16 @@ class FrozenEvidenceGateway:
                 raise EvidenceAccessDenied(
                     "fixed investigation condition permits mandatory semantic-parity reads only"
                 )
+            if (
+                self._core_context.get("context_policy") == BOUNDED_CONTEXT_POLICY
+                and self._job.manifest.role == "stage1"
+                and operation in OPTIONAL_INVESTIGATION_OPERATIONS
+            ):
+                self._optional_calls_used += 1
+                if self._optional_calls_used > 2:
+                    raise EvidenceAccessDenied(
+                        "bounded Stage 1 permits at most two optional investigation calls"
+                    )
             if self._job.repair_findings and operation not in REPAIR_OPERATIONS:
                 raise EvidenceAccessDenied("repair cannot start a fresh market investigation")
             if operation == "get_vpa_evidence" and self._job.manifest.role in {"stage1", "stage2"}:

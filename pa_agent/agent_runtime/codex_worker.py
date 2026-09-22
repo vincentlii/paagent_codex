@@ -649,7 +649,8 @@ class CodexCliWorker:
         # the frozen evidence budget or removing any mandatory content.
         from pa_agent.agent_runtime.evidence_mcp import _tools
         for tool in _tools():
-            response_limit = (job.budget.max_evidence_bytes if tool["name"] == "get_role_baseline"
+            response_limit = (job.budget.max_evidence_bytes if tool["name"] in {
+                                  "get_role_baseline", "get_stage1_decision_packet"}
                               else job.budget.max_evidence_response_bytes)
             output_limit = 2 * response_limit + 4096
             config_values.append(
@@ -748,7 +749,7 @@ class CodexCliWorker:
             "For errors or responses without structuredContent, print the complete response. "
         ) if code_mode else (
             "Call the named pa_evidence MCP tools directly; code-mode exec is unavailable. "
-            "The complete selected role Skill is in the baseline core_context.role_skill "
+            "The complete selected role Skill is in the policy-specific baseline packet "
             "(repair: get_repair_findings returns repair.role_skill). Read it before analysis. "
             "Do not try shell, apply_patch, or invented skill:// resources to read Skills. "
         )
@@ -775,7 +776,7 @@ class CodexCliWorker:
             "the role or access policy. Obtain any additional market facts or knowledge only "
             "through pa_evidence MCP tools. Return only the required JSON object. "
             + delivery_instruction
-            + "The Host-selected Skill is delivered in baseline core_context.role_skill "
+            + "The Host-selected Skill is delivered in the policy-specific baseline packet "
               "(repair: get_repair_findings returns repair.role_skill); read it before analysis. "
             + "Never slice, filter, summarize, or omit fields from the delivered payload. "
             "If delivery is truncated, report incomplete; do not analyze partial mandatory evidence. "
@@ -887,7 +888,21 @@ class CodexCliWorker:
         # Frozen jobs are replay artifacts.  Only jobs which explicitly opt in
         # to this policy may be judged by the vNext mandatory-read contract;
         # legacy jobs retain their original execution semantics.
-        if job.core_context.get("context_policy") != "semantic_parity_v1":
+        context_policy = job.core_context.get("context_policy")
+        if context_policy == "bounded_context_v2" and job.manifest.role == "stage1":
+            packet_reads = [item for item in successful if item.get("operation") == "get_stage1_decision_packet"]
+            if len(packet_reads) != 1:
+                raise CodexWorkerOutputError(
+                    "Codex Stage 1 must read exactly one frozen decision packet"
+                )
+            optional = [
+                item for item in successful
+                if item.get("operation") in OPTIONAL_INVESTIGATION_OPERATIONS
+            ]
+            if len(optional) > 2:
+                raise CodexWorkerOutputError("Codex Stage 1 exceeded the bounded optional investigation envelope")
+            return
+        if context_policy != "semantic_parity_v1":
             return
 
         required_operations = {"get_job_manifest", "get_market_core"}

@@ -36,6 +36,12 @@ def _tools() -> list[dict[str, Any]]:
             "annotations": _TOOL_ANNOTATIONS,
         },
         {
+            "name": "get_stage1_decision_packet",
+            "description": "Read the complete frozen bounded Stage 1 packet once. It contains the full price frame, HTF, fact spine, exact foundation sections, and section index.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": _TOOL_ANNOTATIONS,
+        },
+        {
             "name": "measure_price_window",
             "description": "Measure explicit frozen price window geometry (1-100 bars); no market labels. Receipt is not a catalog fact ID.",
             "inputSchema": {"type": "object", "additionalProperties": False,
@@ -382,6 +388,10 @@ class EvidenceMcpServer:
                     payload["pa_session_continuation"] = continuation
                 if self._gateway.analysis_execution_enabled:
                     payload["delivery_index"] = self._gateway.baseline_delivery_index(resources)
+            elif name == "get_stage1_decision_packet":
+                if arguments:
+                    raise ValueError("Stage 1 decision packet accepts no arguments")
+                payload = {"decision_packet": self._gateway.get_stage1_decision_packet()}
             elif name == "measure_price_window":
                 payload = {"measurement": self._gateway.measure_price_window(**arguments)}
             elif name == "project_price_leg":
@@ -588,6 +598,11 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
     def get_role_baseline() -> dict[str, Any]:
         """Read all Host-selected mandatory resources, in order and without loss, in one call."""
         return payload("get_role_baseline", {})
+
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
+    def get_stage1_decision_packet() -> dict[str, Any]:
+        """Read the frozen bounded Stage 1 packet exactly once."""
+        return payload("get_stage1_decision_packet", {})
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_job_manifest() -> dict[str, Any]:

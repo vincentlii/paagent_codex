@@ -24,7 +24,7 @@
 
 - `investigation_policy=fixed` 是完整基线研究组：照常完成所有 Skill 必读资源，只依据这些资源判断，跳过可选定向复查、检索和新增测量。`agentic` 才允许基线后的按需调查；无需为实验强行增加调用。两组的知识、角色、Router 与输出权限相同。pointer repair 仍只修复 Host 已圈定的问题。
 
-- 正常角色首先调用一次 `get_role_baseline`。`mandatory_baseline_v1` 按冻结顺序合并交付 identity、
+- 按 `context_policy` 使用角色 Skill 指定的唯一入口。旧 `semantic_parity_v1` 使用 `get_role_baseline`；`bounded_context_v2` Stage 1 使用一次 `get_stage1_decision_packet`。`mandatory_baseline_v1` 按冻结顺序合并交付 identity、
   核心阶段协议、授权上游、knowledge manifest、全部 `loading_policy=mandatory` 原文及该角色完整事实基线；
   没有摘要、删节或新增权限。仅同一 Snapshot 的 PA Stage 2 resume 可收到 `mandatory_pa_delta_v1`：
   Host 已按 digest 证明的 price frame、HTF 与 PA knowledge 保留在当前 PA 会话中，返回只交付新的 Stage 2
@@ -45,7 +45,7 @@
   不把“避免重复”变成禁止查证。把同一工具下互不依赖的所需 ID 放入一次请求；有依赖的调查等待前项结果。
 - 新证据返回后，更新受影响的判断与其依赖结论，保留未被挑战的事实依据；发现影响整体背景的反证时
   重新评估主解释。无需为展示工作量重述完整基线、循环重建同一套推论或输出调查流水账。
-  这不是调查次数、推理长度或置信度门槛；质量和必要查证优先。fixed 组仍不允许可选调查。
+  Skill 中的调查次数与停止条件是硬边界；边界内仍有冲突时降低确定性或 typed stop，不循环调查。fixed 组不允许可选调查。
 - Stage 1 与 fresh Stage 2 合并基线内的 `get_price_frame` 资源覆盖完整 price-only 窗口；resume
   Stage 2 的完整窗口只在 Host 冻结标记 `inherited_price_frame=true` 时由同一 PA 会话继承。此后优先使用精确
   fact/evidence/section ID，不得再用 `get_bars` 重复拉取全部 bars，也不要读取全部 facts 或未标记

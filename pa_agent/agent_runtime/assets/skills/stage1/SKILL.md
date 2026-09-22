@@ -5,16 +5,18 @@ description: Use when a frozen PA Agent job requests Brooks Stage 1 market diagn
 
 # Brooks PA Stage 1 Diagnosis
 
-目标是形成 Stage 1 市场诊断 Provider Draft，不做交易决策。
+目标是形成 Stage 1 市场诊断 Provider Draft，不做交易决策。不得生成 Setup 订单。
 
-1. Stage 1 是当前 Frozen Snapshot 的 PA 会话起点。首先调用一次 `get_role_baseline`，只接受完整的 `mandatory_baseline_v1`，按 resources 顺序完整阅读。用其中 manifest 核对 Job identity、cutoff、role、expiry，用 core_context 读取 PA Agent 选择的当前阶段协议。以下两步的材料已完整包含在这次返回中，不重复调用各资源工具。
-2. 按 manifest 的 `load_order` 阅读全部 `loading_policy=mandatory` 模块原文。它们就是 Windows 成熟 Stage 1 当前实际选择的 Brooks 协议与知识，不得跳过、截断或用 Skill 摘要替代。有 previous_analysis 时阅读 upstream_artifact 中冻结的上次分析，只作待复核上下文，不继承其结论。
-3. 阅读全部 price_frame 分块，覆盖 K1 到最老 K 的 OHLC、几何、事实 ID 与程序测量，不含 volume；这是完整看图基线，不能用少量近端 K 线替代。完整阅读随包交付的全部冻结 HTF evidence。任一必读资源交付失败即停止，不以部分读取替代完整基线。
+1. `LOAD`：只调用一次 `get_stage1_decision_packet`。核对 packet identity、cutoff、role、digest；完整阅读其中 100 根 price-only frame、全部 HTF、PA fact spine、角色协议、原文 foundation sections 与完整知识 section index。交付失败立即 incomplete，身份矛盾立即 review_required。
+2. `DIAGNOSE`：只形成一次初步诊断。有 previous_analysis 时只作待复核上下文，不继承其结论。
+3. `GAP`：最多保留两个会改变 cycle、direction、location、acceptance 或假设排序的未决问题。每个问题必须明确缺少的证据及不同结果会改变哪个结论；其他细节不触发调查。
 4. 先通览完整窗口的时间顺序（K 编号越大越早），按 Brooks 顺序建立初步诊断：市场周期与 transition risk → Always In/方向力度 → 所处位置 → Breakout/acceptance 或 range behavior → pattern keys。形成 primary 与有证据的 alternative 竞争解释；没有实质替代解释时按 Schema 保留空值，不强造两个故事。已有 previous_analysis 是对照，不是起始答案。
 5. 找出能改变上述诊断的具体不确定点，并为每个点确定可区分两种解释的证据及确认/失效条件。先核对已交付的事实、完整知识和 HTF；突破发生不等于获得接受，后续确认只能来自当前截止点前已有闭盘 K 线，未来响应仍是条件。不要把每个字段都当成重新分析完整市场的任务。
-6. 按 Runtime 调查纪律解决这些缺口：直接使用 `fact_id_index` 与 `delivery_index`，把缺失或争议 PA ID 合并到 `get_pa_evidence`；必要时按小区间复核 `get_bars`。HTF 只能从 `evidence_index.htf_evidence_ids` 选择并用 `get_htf_evidence` 复核。新增理论缺口才用 `search_allowed_knowledge` 和 `read_allowed_knowledge`。需要比较自主选择的窗口时用 `measure_price_window`；不让数值工具替你选择腿或分类行情。PA Stage 1 禁止读取或引用 VPA evidence。
-7. 根据调查结果更新受影响的周期、方向力度、位置、acceptance 和假设条件，并检查其依赖关系。若反证推翻整体背景，则重新评估主解释及受影响结论；若只是局部确认，则直接保留其他已证实判断。查证后仍无法区分时如实降低强度或保留 unknown，不反复换措辞制造确定性。
-8. 提交前作整体一致性复核：关键判断是否有当前 Snapshot 的 fact refs 或理论 rule refs；primary/alternative 是否与方向、周期和确认条件相容；是否把未来条件当成事实；是否已处理实际反证。复核发现新实质矛盾时回到对应缺口查证，而非机械限制调查轮数。
-9. 输出 Stage 1 draft。不得生成 Setup 订单、entry、stop、target、position size 或最终交易决定。内部调查与复核不新增输出字段，不重复提交多份诊断。
+6. `INVESTIGATE`：最多一次批量事实调用和一次批量知识调用，总计不超过两次 optional calls。事实缺值用精确 ID 批量 `get_pa_evidence`；理论缺口用 index 中精确 section IDs 批量 `read_allowed_knowledge`。不得重新读取整幅价格帧、列举全部 facts 或开放式搜索。fixed 组跳过此状态。PA Stage 1 禁止读取或引用 VPA evidence。
+7. `RESOLVE`：只更新受新证据影响的判断。冲突仍无法消除时使用 unknown/transitioning、降低强度或保留 alternative；不得重开已完成状态、循环换措辞或为了提高置信度追加调查。
+8. `CHECK`：只做一次整体一致性检查；发现不能在剩余 envelope 内解决的矛盾时降低确定性或停止，不返回调查状态。
+9. `FINAL`：最后一次工具返回后的下一条响应必须是符合 Host Schema 的单个 JSON object 或合法 typed stop。不得生成 Setup、订单、entry、stop、target、position size 或最终交易决定，不输出调查过程。
 
 Gate 由 Host 唯一 materializer 从 Draft 物化，模型不补静态 Gate/trace。完整证据下的低确定性可以 unknown；缺少必读资源或预算耗尽必须按 Runtime AGENTS 返回 incomplete，身份矛盾返回 review_required。不得把执行失败写成市场诊断。
+
+历史 `semantic_parity_v1` Job 的 `loading_policy=mandatory` 仍由其冻结 Skill 与 Worker 原样验收；本 Skill 的有限 packet 协议只适用于 `bounded_context_v2`。
