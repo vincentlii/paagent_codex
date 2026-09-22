@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from pa_agent.agent_runtime.codex_worker import CodexCliWorker, CodexWorkerOutputError
-from pa_agent.agent_runtime.evidence import EvidenceAccessDenied, FrozenEvidenceGateway
+from pa_agent.agent_runtime.evidence import EvidenceBudgetExceeded, FrozenEvidenceGateway
 from pa_agent.agent_runtime.evidence_mcp import EvidenceMcpServer
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from pa_agent.agent_runtime.publisher import CodexJobPublisher
@@ -52,5 +52,5 @@ def test_bounded_stage1_rejects_missing_duplicate_or_excess_optional_reads(tmp_p
     gateway.get_stage1_decision_packet()
     gateway.get_pa_evidence(["PA.WINDOW.K5"])
     gateway.get_pa_evidence(["PA.WINDOW.K8"])
-    with pytest.raises(EvidenceAccessDenied, match="at most two"):
+    with pytest.raises(EvidenceBudgetExceeded, match="call budget"):
         gateway.get_pa_evidence(["PA.WINDOW.K10"])

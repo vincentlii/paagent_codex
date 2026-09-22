@@ -73,11 +73,13 @@ output schema、角色可见 facts/knowledge、Runtime AGENTS/skill 与预算，
 
 生产 publisher 不复制 Direct 路径的完整超长 Prompt。初始输入只包含角色、Snapshot identity 与
 Evidence 索引；完整角色 Context 进入 digest-bound `core_context.json`。但“初始短”不等于允许语义
-变薄：当前显式 `context_policy=semantic_parity_v1` 基线要求 Stage 1/2 先完整读取角色安全的 price frame、全部 HTF Evidence、
-PromptAssembler 代码生成的阶段规则，以及 PA/Router 当前选中的 mandatory 知识切片。Stage 1 的
+变薄：新 Stage 1 使用 `context_policy=bounded_context_v2`，由 Host 在发布时把完整 price-only frame、全部 HTF Evidence、
+PA fact spine、去重后的阶段协议、原文 foundation sections 与完整 section index 冻结为一个 Decision Packet；
+其余知识原文仍可按精确 section ID 读取，最多一次事实批量和一次知识批量调查。Stage 2/VPA/研究角色继续
+`semantic_parity_v1`，完整读取 PA/Router 当前选中的 mandatory 知识切片。Stage 1 的
 `二元决策` 只含 §0–§8，Stage 2 只含全局原则与 §9–§15，避免跨阶段污染；Router 策略文件保持全文。
-知识 manifest 的 `load_order` 保留 Windows 成熟 Prompt 的模块顺序。Worker 根据 Evidence audit 拒绝
-任何跳过或乱序读取 mandatory Context 的 Draft；旧 Job 没有该策略标记时继续按原契约回放。完成基线后，额外事实和章节才按
+知识 manifest 的 `load_order` 保留 Windows 成熟 Prompt 的模块顺序。Worker 根据 context policy 分别拒绝
+缺失/重复 Decision Packet、超出调查 envelope，或跳过/乱序 mandatory Context 的 Draft；旧 Job 继续按原契约回放。完成基线后，额外事实和章节才按
 争议点读取。知识选择权仍属于 PA Agent，Codex 不能遍历仓库或自行引入另一套交易体系。不同 Frozen
 Snapshot 之间绝不续接；同一 Snapshot 内，只有 attempt 1 直接通过原 Validator 的 PA Stage 1 可以由
 PA Stage 2 受控续接。Stage 2 同时必须读取冻结的结构化 Stage 1 handoff 与 Router 结果，聊天历史不构成

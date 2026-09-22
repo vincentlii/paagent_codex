@@ -72,8 +72,13 @@ class CodexJobPublisher:
         # the meaning of already-frozen legacy jobs.
         # New Codex jobs use the bounded packet contract. Historical jobs keep
         # their frozen semantic_parity_v1 value and remain replayable.
-        from pa_agent.agent_runtime.execution_contract import BOUNDED_CONTEXT_POLICY
-        context["context_policy"] = BOUNDED_CONTEXT_POLICY
+        from pa_agent.agent_runtime.execution_contract import (
+            BOUNDED_CONTEXT_POLICY, SEMANTIC_PARITY_CONTEXT_POLICY,
+        )
+        context["context_policy"] = (
+            BOUNDED_CONTEXT_POLICY if request.role == "stage1"
+            else SEMANTIC_PARITY_CONTEXT_POLICY
+        )
         context["investigation_policy"] = self._runtime_identity.get(
             "investigation_policy", "agentic"
         )
@@ -280,6 +285,9 @@ class CodexJobPublisher:
                      if repair_context else {}), ensure_ascii=False, allow_nan=False,
                     separators=(",", ":"), sort_keys=True,
                 ).encode("utf-8")),
+                bounded_packet_bytes=int(
+                    (context.get("stage1_decision_packet") or {}).get("packet_bytes") or 0
+                ),
             ),
             backend_runtime_identity=self._runtime_identity,
             source_request_digest=analysis_role_request_digest(request, attempt),
@@ -421,6 +429,7 @@ class CodexJobPublisher:
         role_evidence_count: int,
         role_evidence_bytes: int,
         repair_context_bytes: int = 0,
+        bounded_packet_bytes: int = 0,
     ) -> AgentJobBudget:
         if self._budget is not None:
             return self._budget
@@ -430,6 +439,14 @@ class CodexJobPublisher:
                 max_evidence_response_bytes=max(32_768, repair_context_bytes),
                 max_evidence_bytes=max(65_536, repair_context_bytes + 32_768),
                 max_wall_seconds=180,
+            )
+        if role == "stage1" and bounded_packet_bytes > 0:
+            response_bytes = max(65_536, int(bounded_packet_bytes) + 8_192)
+            return AgentJobBudget(
+                max_evidence_calls=3,
+                max_evidence_response_bytes=response_bytes,
+                max_evidence_bytes=response_bytes + 2 * 65_536,
+                max_wall_seconds=240,
             )
         if role == "stage2":
             frame_calls = max(1, (int(bar_count) + PRICE_FRAME_CHUNK_SIZE - 1) // PRICE_FRAME_CHUNK_SIZE)

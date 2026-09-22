@@ -52,7 +52,8 @@ def test_new_jobs_bind_matching_transport_and_readonly_tools(tmp_path, model):
         assert settings["features.code_mode_host"] == "false"
         assert "// @exec:" not in command[2]
     names = json.loads(settings["mcp_servers.pa_evidence.enabled_tools"])
-    assert {"get_role_baseline", "get_pa_evidence", "measure_price_window"} <= set(names)
+    assert {"get_stage1_decision_packet", "get_pa_evidence", "measure_price_window"} <= set(names)
+    assert "get_role_baseline" not in names
     assert "get_vpa_evidence" not in names
     assert "get_repair_findings" not in names
     assert FrozenEvidenceGateway(job).get_market_core()["role_skill"] == job.runtime["skills"]["stage1"]
@@ -83,18 +84,11 @@ def test_baseline_navigation_does_not_mistake_index_or_upstream_refs_for_deliver
     job = replace(job, core_context={**job.core_context,
                   "previous_analysis": {"fact_id": "PA.WINDOW.K5"}})
     gateway = FrozenEvidenceGateway(job)
-    baseline = EvidenceMcpServer(gateway, job_digest=job.manifest.job_digest)._call_tool(
-        "get_role_baseline", {})["structuredContent"]
-    navigation = baseline["delivery_index"]
-    assert "PA.BAR.K1" in navigation["delivered_value_ids"]
-    assert "PA.WINDOW.K5" not in navigation["delivered_value_ids"]
-    assert "PA.WINDOW.K5" in navigation["indexed_only_fact_ids"]
-    # Every original OHLC/geometry value remains available; the index is not a summary.
-    rows = [row for item in baseline["resources"] if item["operation"] == "get_price_frame"
-            for row in item["payload"]["price_frame"]]
-    row = next(item for item in rows if item["fact_id"] == "PA.BAR.K1")
-    fact = next(item for item in job.fact_projection["facts"] if item["fact_id"] == "PA.BAR.K1")
-    assert all({**row, **row["geometry"]}[key] == value for key, value in fact["value"].items())
+    packet = EvidenceMcpServer(gateway, job_digest=job.manifest.job_digest)._call_tool(
+        "get_stage1_decision_packet", {})["structuredContent"]["decision_packet"]
+    assert "PA.WINDOW.K5" in packet["available_fact_ids"]
+    assert "PA.WINDOW.K5" in {item["fact_id"] for item in packet["pa_fact_spine"]}
+    assert len(packet["price_frame"]["rows"]) == len(job.bars)
     assert not any(event.operation == "list_fact_ids" for event in gateway.audit_events)
 
 
@@ -106,7 +100,7 @@ def test_repair_tools_remain_bounded_and_fixed_jobs_do_not_offer_optional_invest
                          "get_htf_evidence", "read_allowed_knowledge"}
     fixed = replace(job, runtime={**job.runtime, "backend_runtime_identity": {"investigation_policy": "fixed"}})
     names = FrozenEvidenceGateway(fixed).available_tool_names()
-    assert "get_role_baseline" in names
+    assert "get_stage1_decision_packet" in names
     assert "get_pa_evidence" not in names
     assert "measure_price_window" not in names
 
@@ -145,12 +139,10 @@ def test_real_mcp_sdk_delivers_complete_skill_and_navigation_without_model(tmp_p
     _run_official_sdk(EvidenceMcpServer(FrozenEvidenceGateway(job), job_digest=job.manifest.job_digest))
 
     async def read_baseline():
-        return await instances[0].call_tool("get_role_baseline", {})
+        return await instances[0].call_tool("get_stage1_decision_packet", {})
 
     result = asyncio.run(read_baseline()).model_dump(by_alias=True)
     assert not result["isError"]
-    baseline = result["structuredContent"]
-    assert "PA.WINDOW.K5" in baseline["delivery_index"]["indexed_only_fact_ids"]
-    core = next(item["payload"]["core_context"] for item in baseline["resources"]
-                if item["operation"] == "get_market_core")
-    assert core["role_skill"] == job.runtime["skills"]["stage1"]
+    packet = result["structuredContent"]["decision_packet"]
+    assert "PA.WINDOW.K5" in packet["available_fact_ids"]
+    assert packet["role_skill"] == job.runtime["skills"]["stage1"]

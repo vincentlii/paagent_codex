@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from pa_agent.agent_runtime.decision_packet import (
     STAGE1_PACKET_VERSION,
     build_stage1_decision_packet,
@@ -8,6 +11,10 @@ from pa_agent.agent_runtime.decision_packet import (
 from pa_agent.ai.fact_catalog import build_analysis_fact_catalog
 from pa_agent.data.snapshot_bundle import serialize_frame_bars
 from tests.integration.conftest import make_frame
+from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
+from pa_agent.agent_runtime.publisher import CodexJobPublisher
+from pa_agent.ai.prompt_assembler import stage1_prompt_txt_files
+from tests.unit.test_codex_job_publisher import _request
 
 
 def test_stage1_packet_is_complete_price_only_and_deterministic() -> None:
@@ -38,3 +45,20 @@ def test_stage1_packet_is_complete_price_only_and_deterministic() -> None:
     assert first["knowledge"]["foundation_exact_sections"][0]["text"] == "exact core"
     assert "PA.WINDOW.K5" in {item["fact_id"] for item in first["pa_fact_spine"]}
     verify_stage1_decision_packet(first)
+
+
+def test_real_stage1_knowledge_packet_fits_frozen_single_response_budget(tmp_path) -> None:
+    prompt_dir = Path(__file__).resolve().parents[2] / "prompt_engineering"
+    publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=prompt_dir,
+                                  job_root=tmp_path / "jobs")
+    path = publisher(_request("stage1", {
+        "task_id": "real-packet-budget",
+        "allowed_knowledge_ids": stage1_prompt_txt_files(),
+    }), 1)
+    job = FrozenAgentJobStore(path.parent).open(path.name)
+    packet = job.core_context["stage1_decision_packet"]
+    encoded = json.dumps({"decision_packet": packet}, ensure_ascii=False,
+                         separators=(",", ":"), sort_keys=True).encode("utf-8")
+    assert packet["knowledge"]["foundation_exact_sections"]
+    assert len(encoded) <= job.budget.max_evidence_response_bytes
+    assert job.budget.max_evidence_calls == 3

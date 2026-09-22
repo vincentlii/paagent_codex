@@ -6,7 +6,8 @@ Accepted，2026-09-22。
 
 ## 决策
 
-新发布的 Codex Job 使用 `bounded_context_v2`。历史 Job 中冻结的
+新发布的 Codex Stage 1 Job 使用 `bounded_context_v2`；Stage 2、VPA 与研究角色在各自
+packet 策略通过独立非劣验收前继续使用 `semantic_parity_v1`。历史 Job 中冻结的
 `semantic_parity_v1` 继续按原有完整必读顺序回放，不被新策略重解释。
 
 `bounded_context_v2` 由 Host 生成一个确定性、digest-bound 的角色决策包：完整价格帧与

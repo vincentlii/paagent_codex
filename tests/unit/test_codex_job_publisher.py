@@ -88,6 +88,7 @@ def test_repair_keeps_full_validator_feedback_in_frozen_resource_not_prompt(tmp_
 
 
 def test_published_knowledge_manifest_is_visible_and_mandatory(tmp_path):
+    from dataclasses import replace
     from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
     from pa_agent.agent_runtime.codex_worker import CodexCliWorker, CodexWorkerOutputError
 
@@ -96,6 +97,11 @@ def test_published_knowledge_manifest_is_visible_and_mandatory(tmp_path):
     path = publisher(_request("stage1", {"task_id": "manifest-test",
                                        "allowed_knowledge_ids": ["market.txt"]}), 1)
     job = FrozenAgentJobStore(path.parent).open(path.name)
+    legacy_core = {key: value for key, value in job.core_context.items()
+                   if key != "stage1_decision_packet"}
+    job = replace(job, core_context={**legacy_core, "context_policy": "semantic_parity_v1"},
+                  budget=replace(job.budget, max_evidence_calls=32,
+                                 max_evidence_bytes=1_048_576))
     assert FrozenEvidenceGateway(job).list_allowed_knowledge() == job.knowledge_manifest["modules"]
     events = tuple({"status": "ok", "operation": operation, "request": {}}
                    for operation in ("get_job_manifest", "get_market_core", "list_allowed_knowledge"))
@@ -164,10 +170,8 @@ def test_publisher_replaces_long_direct_prompt_with_bounded_core_context(tmp_pat
     assert max(int(bar["ts_open"]) for bar in job.bars) <= job.manifest.cutoff_ts_open
     assert job.runtime["backend_runtime_identity"] == runtime_identity
     assert len(job.request["source_request_digest"]) == 64
-    assert job.budget.max_evidence_calls >= 8
-    assert job.budget.max_evidence_bytes >= (
-        module_manifest["content_bytes"] + 196_608
-    )
+    assert job.budget.max_evidence_calls == 3
+    assert job.budget.max_evidence_bytes >= job.core_context["stage1_decision_packet"]["packet_bytes"]
 
 
 def test_semantic_parity_bundle_preserves_stage_boundaries(tmp_path: Path) -> None:

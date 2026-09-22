@@ -31,8 +31,10 @@
 18. Frozen Job、dispatch、worker 实际 runtime identity 与成功 result 任一不一致却被接受的次数为 0。
 19. Codex Patch Envelope 修改 Validator allowlist 外 JSON Pointer，或 Host 未以原稿重新验证就接受的次数为 0。
 20. `codex_only` 因创建 Direct/VPA client 而要求 DeepSeek credential 的次数为 0。
-21. Codex Stage 1/2 未读取完整 price-only frame、全部已发布 HTF Evidence、阶段协议或任一
-    `loading_policy=mandatory` 模块却被接受的次数为 0。
+21. `semantic_parity_v1` Codex Stage 1/2 未读取完整 price-only frame、全部已发布 HTF Evidence、
+    阶段协议或任一 `loading_policy=mandatory` 模块却被接受的次数为 0；`bounded_context_v2`
+    Stage 1 未恰好读取一次 digest-bound Decision Packet（内含完整 price frame、全部 HTF、事实脊柱、
+    原文 foundation sections 与完整 section index），或成功 optional 调查超过两次却被接受的次数为 0。
 22. PA Stage 1/2 通过 Frozen Job 或 Evidence 工具读取到 `volume`、`amount` 或 `volume_state` 的次数为 0。
 23. `semantic_parity_v1` Job 未按 knowledge manifest 的 `load_order` 首次读取 mandatory 模块却被接受的次数为 0。
 24. Dashboard、worker status 或长期日志出现 Codex token、账号标识、原始登录输出或 reasoning stream 的次数为 0。
@@ -52,8 +54,10 @@
 - PA-only 无重试 Prompt 的 p95 token 不超过迁移前匹配基线的 60%。
 - 研究 B 臂总 token 不超过同 Snapshot PA-only 的 1.35 倍；生产 Shadow 不调用 Joint。
 - Prompt 压缩不得删除 Background、八态频谱、Always In、Setup、竞争假设、HTF、Gate 或核心 VPA 证据域。
-- 性能优化顺序固定为“先证明 semantic parity，再将模块降级为 on-demand”；未通过 matched replay/盲评
-  的模块不得仅为达到 Token 指标而删除、摘要化或截断。
+- `bounded_context_v2` 不摘要或删除知识：foundation 以原文 section 常驻，其余冻结原文按精确 section ID
+  on-demand。历史 `semantic_parity_v1` 继续原样回放；新策略须通过 matched replay/盲评后方可晋级。
+- 记录 Decision Packet bytes/tokens、optional 调查次数和 `last_evidence_to_final_ms`；不得以放大 timeout
+  代替架构或模型策略优化。
 - 20 个资产并发排队时无丢失、重复、跨资产身份污染或重复数据库记录。
 - GUI 连续 1000 次取消、切换品种与关闭，不发生 `QThread` 生命周期崩溃。
 - Windows 与 Linux CI 必须使用 `uv.lock` 运行全部 `not live` 测试；CI 不得访问真实行情、Provider

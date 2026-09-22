@@ -48,6 +48,12 @@ def test_baseline_preserves_complete_resources_and_individual_audit(tmp_path, ro
     publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path, job_root=tmp_path/"jobs")
     path = publisher(_request(role, context), 1)
     job = FrozenAgentJobStore(path.parent).open(path.name)
+    if role == "stage1":
+        legacy_core = {key: value for key, value in job.core_context.items()
+                       if key != "stage1_decision_packet"}
+        job = replace(job, core_context={**legacy_core, "context_policy": "semantic_parity_v1"},
+                      budget=replace(job.budget, max_evidence_calls=32,
+                                     max_evidence_bytes=1_048_576))
     gateway = FrozenEvidenceGateway(job)
     audit = tmp_path / "audit.json"
     server = EvidenceMcpServer(gateway, job_digest=path.name, audit_output=audit)
@@ -103,6 +109,12 @@ def test_baseline_supplies_exact_fact_index_without_a_discovery_round(tmp_path, 
     publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path, job_root=tmp_path / "jobs")
     path = publisher(_request(role, {"task_id": "fact-navigation"}), 1)
     job = FrozenAgentJobStore(path.parent).open(path.name)
+    if role == "stage1":
+        legacy_core = {key: value for key, value in job.core_context.items()
+                       if key != "stage1_decision_packet"}
+        job = replace(job, core_context={**legacy_core, "context_policy": "semantic_parity_v1"},
+                      budget=replace(job.budget, max_evidence_calls=32,
+                                     max_evidence_bytes=1_048_576))
     gateway = FrozenEvidenceGateway(job)
     server = EvidenceMcpServer(gateway, job_digest=path.name)
     baseline = server._call_tool("get_role_baseline", {})["structuredContent"]

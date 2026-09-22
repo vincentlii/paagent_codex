@@ -114,7 +114,14 @@ class FrozenEvidenceGateway:
         if (not self._job.repair_findings
                 and self._job.manifest.role == "stage1"
                 and self._core_context.get("context_policy") == BOUNDED_CONTEXT_POLICY):
-            names.discard("get_role_baseline")
+            names.difference_update({
+                "get_role_baseline", "get_job_manifest", "get_market_core",
+                "list_allowed_knowledge", "read_knowledge_module",
+                "get_upstream_artifact", "get_experience_entries",
+                "get_price_frame", "get_htf_evidence", "get_bars",
+                "list_fact_ids", "get_measurements", "get_facts",
+                "search_allowed_knowledge",
+            })
             names.add("get_stage1_decision_packet")
         if self._job.manifest.role in {"stage1", "stage2"}:
             names.discard("get_vpa_evidence")
@@ -235,6 +242,7 @@ class FrozenEvidenceGateway:
             "experience_entries",
             "vpa_catalog_context",
             "pa_session_continuation",
+            "stage1_decision_packet",
         }
         def resolve() -> dict[str, Any]:
             core = {key: value for key, value in self._core_context.items() if key not in excluded}
