@@ -189,7 +189,8 @@ def test_worker_builds_ephemeral_chatgpt_only_read_only_command(tmp_path: Path) 
     for tool in _tools():
         prefix = f"mcp_servers.pa_evidence.tools.{tool['name']}.output_token_limit="
         budget = _job().budget
-        bound = (budget.max_evidence_bytes if tool["name"] == "get_role_baseline"
+        bound = (budget.max_evidence_bytes if tool["name"] in {
+                     "get_role_baseline", "get_stage1_decision_packet"}
                  else budget.max_evidence_response_bytes)
         assert any(item.startswith(prefix) and int(item.split("=")[1]) >= 2 * bound for item in command)
     assert "OPENAI_API_KEY" not in captured["kwargs"]["env"]

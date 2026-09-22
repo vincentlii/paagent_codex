@@ -26,6 +26,9 @@ def call_metrics(usage, runtime, *, wall_ms=None):
         ("evidence_call_count", "count", False),
         ("evidence_denied_count", "count", False),
         ("evidence_latency_ms", "milliseconds", False),
+        ("decision_packet_bytes", "bytes", False),
+        ("decision_packet_tokens", "tokens", True),
+        ("optional_evidence_call_count", "count", False),
     ):
         value = runtime.get(name)
         event_field = {"evidence_response_bytes": "response_bytes",
@@ -45,7 +48,8 @@ def call_metrics(usage, runtime, *, wall_ms=None):
         mcp_calls = 0
     values["evidence_mcp_call_count"] = metric(mcp_calls, "count", "host_mcp_audit")
     timings = runtime.get("timings") or {}
-    for name in ("process_ms", "queue_ms", "worker_wall_ms", "spool_wall_ms"):
+    for name in ("process_ms", "queue_ms", "worker_wall_ms", "spool_wall_ms",
+                 "last_evidence_to_final_ms"):
         values[name] = metric(timings.get(name), "milliseconds", "host_clock")
     values["backend_wall_ms"] = metric(wall_ms, "milliseconds", "host_monotonic")
     values["cost_usd"] = metric(None, "usd", "billing_not_reported")

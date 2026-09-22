@@ -62,6 +62,19 @@ def test_retries_expose_incomplete_usage():
     assert not measured["prior_attempt_usage_known"]
 
 
+def test_bounded_context_metrics_keep_packet_and_post_tool_latency_visible():
+    values = call_metrics(AIUsage(), {
+        "decision_packet_bytes": 12345,
+        "decision_packet_tokens": 3210,
+        "optional_evidence_call_count": 1,
+        "timings": {"last_evidence_to_final_ms": 987.0},
+    })["values"]
+    assert values["decision_packet_bytes"]["value"] == 12345
+    assert values["decision_packet_tokens"]["status"] == "estimated"
+    assert values["optional_evidence_call_count"]["value"] == 1
+    assert values["last_evidence_to_final_ms"]["value"] == 987.0
+
+
 def test_usage_coverage_requires_actual_token_fields_not_just_no_retries():
     assert not summarize_call_metrics([{"metrics": call_metrics(AIUsage(), {})}])["usage_coverage_complete"]
     measured = call_metrics(AIUsage(reported_fields=("prompt_tokens", "completion_tokens", "total_tokens", "cached_prompt_tokens")), {})

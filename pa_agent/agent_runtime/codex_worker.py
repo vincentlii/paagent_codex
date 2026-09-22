@@ -191,6 +191,7 @@ class CodexCliWorker:
                     "Codex process could not be started"
                 ) from exc
             process_ms = (time.monotonic() - process_started) * 1000
+            process_completed_epoch_ms = int(time.time() * 1000)
             if completed.returncode != 0:
                 raise _classify_failed_process(
                     completed.returncode,
@@ -225,6 +226,15 @@ class CodexCliWorker:
                     "Codex resumed thread identity does not match frozen continuation"
                 )
             evidence_events = self._read_evidence_audit(audit_tmp, job)
+            evidence_completed = [
+                int(item.get("completed_at_epoch_ms") or 0)
+                for item in evidence_events
+                if int(item.get("completed_at_epoch_ms") or 0) > 0
+            ]
+            last_evidence_to_final_ms = (
+                max(0.0, float(process_completed_epoch_ms - max(evidence_completed)))
+                if evidence_completed else None
+            )
             parsed = self._unwrap_result(job, parsed)
             self._validate_required_evidence_reads(job, evidence_events)
             if uses_result_envelope(job):
@@ -239,7 +249,8 @@ class CodexCliWorker:
                 "thread_id": thread_id,
                 "usage": asdict(usage),
                 "latency_ms": latency_ms,
-                "timings": {"process_ms": process_ms, "worker_wall_ms": latency_ms},
+                "timings": {"process_ms": process_ms, "worker_wall_ms": latency_ms,
+                            "last_evidence_to_final_ms": last_evidence_to_final_ms},
                 "evidence_events": list(evidence_events),
             }
             _atomic_write_json(final_path, envelope)
@@ -254,7 +265,8 @@ class CodexCliWorker:
                 model=model,
                 reasoning_effort=reasoning_effort,
                 profile_fingerprint=profile_fingerprint,
-                timings={"process_ms": process_ms, "worker_wall_ms": latency_ms},
+                timings={"process_ms": process_ms, "worker_wall_ms": latency_ms,
+                         "last_evidence_to_final_ms": last_evidence_to_final_ms},
             )
         finally:
             output_tmp.unlink(missing_ok=True)

@@ -48,6 +48,7 @@ class EvidenceAuditEvent:
     evidence_ids: tuple[str, ...] = ()
     reason: str | None = None
     measurement: dict[str, Any] | None = None
+    completed_at_epoch_ms: int = 0
 
 
 class FrozenEvidenceGateway:
@@ -693,6 +694,7 @@ class FrozenEvidenceGateway:
                 latency_ms=max(0.0, (time.perf_counter() - started) * 1000),
                 evidence_ids=self._evidence_ids(response),
                 measurement=(dict(response) if isinstance(response, dict) and response.get("measurement_digest") else None),
+                completed_at_epoch_ms=int(time.time() * 1000),
             )
         )
         return response
@@ -714,6 +716,7 @@ class FrozenEvidenceGateway:
                 response_tokens=0,
                 snapshot_hash=self._job.manifest.snapshot_hash,
                 reason=reason,
+                completed_at_epoch_ms=int(time.time() * 1000),
             )
         )
 

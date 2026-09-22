@@ -448,6 +448,12 @@ class CodexAnalysisRoleBackend:
             max(0, int(event.get("response_tokens") or 0))
             for event in result.evidence_events
         )
+        decision_packet = job.core_context.get("stage1_decision_packet") or {}
+        optional_operations = {
+            "list_fact_ids", "get_measurements", "get_pa_evidence", "get_facts",
+            "get_bars", "search_allowed_knowledge", "read_allowed_knowledge",
+            "measure_price_window", "project_price_leg",
+        }
         runtime = {
             "analysis_backend": self.backend_id,
             "role": request.role,
@@ -485,6 +491,20 @@ class CodexAnalysisRoleBackend:
             "evidence_latency_ms": sum(
                 max(0.0, float(event.get("latency_ms") or 0.0))
                 for event in result.evidence_events
+            ),
+            "context_policy": job.core_context.get("context_policy"),
+            "decision_packet_bytes": (
+                int(decision_packet.get("packet_bytes") or 0) if decision_packet else None
+            ),
+            "decision_packet_tokens": (
+                estimate_tokens([{"role": "tool", "content": json.dumps(
+                    decision_packet, ensure_ascii=False, allow_nan=False,
+                    separators=(",", ":"), sort_keys=True,
+                )}]) if decision_packet else None
+            ),
+            "optional_evidence_call_count": sum(
+                1 for event in result.evidence_events
+                if event.get("status") == "ok" and event.get("operation") in optional_operations
             ),
             "evidence_events": [dict(item) for item in result.evidence_events],
             "circuit": self._circuit.snapshot(),
