@@ -156,6 +156,8 @@ def test_publisher_replaces_long_direct_prompt_with_bounded_core_context(tmp_pat
     )
     initial = json.loads(job.request["messages"][1]["content"])["core_context"]
     assert initial["context_policy"] == "bounded_context_v2"
+    assert job.core_context["stage1_decision_packet"]["packet_version"] == "bounded_stage1_packet_v2"
+    assert job.core_context["stage1_decision_packet"]["identity"]["snapshot_hash"] == job.manifest.snapshot_hash
     assert initial["evidence_index"]["htf_evidence_ids"] == ["HTF.H1"]
     assert initial["evidence_index"]["vpa_evidence_ids"] == []
     assert job.fact_projection["snapshot_hash"] == job.manifest.snapshot_hash

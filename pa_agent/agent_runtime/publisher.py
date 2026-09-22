@@ -214,6 +214,18 @@ class CodexJobPublisher:
         ]
         if request.role in {"vpa_evidence", "joint_arbiter"} and role_evidence is not None:
             projection["role_evidence"] = role_evidence
+        if request.role == "stage1" and repair_context is None:
+            from pa_agent.agent_runtime.decision_packet import build_stage1_decision_packet
+
+            context["stage1_decision_packet"] = build_stage1_decision_packet(
+                snapshot_hash=str(request.snapshot_hash).lower(),
+                cutoff_ts_open=int(request.cutoff_ts_open),
+                bars=frozen_bars,
+                facts=projection.get("facts", []),
+                core_context=context,
+                knowledge_documents=knowledge,
+                knowledge_manifest=knowledge_manifest,
+            )
         job = self._builder.build(
             task_id=task_id,
             request_id=f"{task_id}:{request.role}:{int(attempt)}",
