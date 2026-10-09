@@ -690,6 +690,10 @@ class JsonValidator:
                         if issue.get("allowed")
                     }
                     provider_contract_issues = issues
+                if any(issue.get("blocks_materialization") for issue in issues):
+                    # Preserve provider-owned paths before canonical aggregation
+                    # loses the source of a reference (including alternatives).
+                    raise ValueError("Provider Draft cannot be materialized")
                 obj = (
                     materialize_stage1_draft(
                         obj,

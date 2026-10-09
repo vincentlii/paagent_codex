@@ -53,6 +53,7 @@ class CodexJobPublisher:
             runtime_version=assets.runtime_version,
             agents_text=assets.agents_text,
             skill_documents=assets.skill_documents,
+            challenger_text=assets.challenger_text,
         )
 
     def __call__(self, request: AnalysisRoleRequest, attempt: int) -> Path:
@@ -62,6 +63,14 @@ class CodexJobPublisher:
         if not context:
             raise ValueError("Codex publishing requires bounded agent_context")
         self._validate_role_context(request.role, context)
+        if (request.role == "stage2" and int(attempt) == 1
+                and context["role_protocol"].get("provider_contract_digest")):
+            schema_digest = hashlib.sha256(json.dumps(
+                request.schema, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")).hexdigest()
+            if schema_digest != context["role_protocol"]["provider_contract_digest"]:
+                raise ValueError("Stage 2 Provider Contract does not match frozen output schema")
         raw_continuation = context.pop("pa_session_continuation", None)
         if raw_continuation is not None and (
             request.role != "stage2" or int(attempt) != 1
@@ -82,20 +91,58 @@ class CodexJobPublisher:
         context["investigation_policy"] = self._runtime_identity.get(
             "investigation_policy", "agentic"
         )
+        context["stage_subagents"] = self._runtime_identity.get("stage_subagents", "off")
         from pa_agent.agent_runtime.execution_contract import (
-            ANALYSIS_EXECUTION_POLICY, INSTRUCTION_DELIVERY_POLICY, RUNTIME_CONTRACT, skill_key,
+            ANALYSIS_EXECUTION_POLICY, BASELINE_RECEIPT_POLICY, INLINE_MANDATORY_KNOWLEDGE_POLICY,
+            INSTRUCTION_DELIVERY_POLICY, LAYERED_STAGE2_RESEARCH_POLICY, RUNTIME_CONTRACT,
+            STAGE2_HOST_GATED_DRAFT_POLICY, skill_key,
         )
 
         context["runtime_contract_version"] = RUNTIME_CONTRACT
         context["analysis_execution_policy"] = ANALYSIS_EXECUTION_POLICY
         context["instruction_delivery_policy"] = INSTRUCTION_DELIVERY_POLICY
+        if request.role in {"stage2", "vpa_evidence"} and int(attempt) == 1:
+            context["baseline_receipt_policy"] = BASELINE_RECEIPT_POLICY
+        if request.role == "stage2":
+            context["result_policy"] = STAGE2_HOST_GATED_DRAFT_POLICY
+        treatment = self._runtime_identity.get("knowledge_delivery_policy")
+        if treatment not in {None, LAYERED_STAGE2_RESEARCH_POLICY}:
+            raise ValueError("unsupported knowledge delivery treatment")
+        if treatment and (self._runtime_identity.get("investigation_policy") != "agentic"
+                          or self._runtime_identity.get("stage_subagents", "off") != "off"):
+            raise ValueError("layered research requires agentic single-Agent analysis")
+        layered = (treatment == LAYERED_STAGE2_RESEARCH_POLICY
+                   and request.role == "stage2" and int(attempt) == 1)
+        if request.role in {"stage2", "vpa_evidence"} and int(attempt) == 1:
+            context["knowledge_delivery_policy"] = (
+                LAYERED_STAGE2_RESEARCH_POLICY if layered else INLINE_MANDATORY_KNOWLEDGE_POLICY
+            )
         joint = skill_key(request.role, context) == "joint_stage2"
+        if layered and not joint:
+            raise ValueError("layered knowledge is limited to joint Stage 2 research")
         schema_protocol = (request.schema or {}).get("properties", {}).get("protocol_version", {}).get("const")
         if joint != (schema_protocol == "pa_vpa_stage2_draft_v1"):
             raise ValueError("joint Stage 2 protocol and output schema must agree")
         catalog = build_analysis_fact_catalog(self._frame)
         if catalog.snapshot_hash != str(request.snapshot_hash).lower():
             raise ValueError("agent_context frame does not match role snapshot")
+        if joint and int(attempt) == 1:
+            from pa_agent.ai.pa_handoff import compile_pa_handoff
+            from pa_agent.ai.role_contracts import VpaEvidenceReport
+
+            report = VpaEvidenceReport.model_validate(context["vpa_evidence"])
+            if not context.get("vpa_catalog_id") or report.catalog_id != context["vpa_catalog_id"]:
+                raise ValueError("Joint Stage 2 VPA report catalog identity mismatch")
+
+            expected_hypotheses = compile_pa_handoff(
+                context["stage1_diagnosis"], None, self._frame, catalog=catalog,
+            ).model_dump(mode="json")
+            if context["pa_hypotheses"] != expected_hypotheses:
+                raise ValueError("Joint Stage 2 PA hypotheses do not match validated Stage 1 projection")
+            context["pa_handoff_lineage"] = {
+                "verified_stage1_projection": True,
+                "source_digest_scope": "canonical_pa_hypotheses_payload",
+            }
         frozen_bars = serialize_frame_bars(self._frame)
         allowed_ids = tuple(
             dict.fromkeys(str(item) for item in context.pop("allowed_knowledge_ids", ()))
@@ -118,8 +165,15 @@ class CodexJobPublisher:
             prompt_dir=self._prompt_dir,
             knowledge_ids=allowed_ids,
             role=request.role,
+            joint_stage2=joint,
+            layered_stage2_research=layered,
         )
-        repair_context = extract_repair_context(request.messages)
+        if context.get("knowledge_delivery_policy") == INLINE_MANDATORY_KNOWLEDGE_POLICY and any(
+            item.get("loading_policy") != "mandatory"
+            for item in knowledge_manifest.get("modules", [])
+        ):
+            raise ValueError("inline mandatory knowledge requires every selected module to be mandatory")
+        repair_context = extract_repair_context(request.messages, output_schema=request.schema)
         if int(attempt) > 1 and repair_context is None:
             raise ValueError("Codex repair requires Validator-authorized pointers; cannot restart full analysis")
         if repair_context is not None and int(attempt) <= 1:
@@ -171,12 +225,6 @@ class CodexJobPublisher:
                 for item in ((context.get("higher_timeframe") or {}).get("evidence") or [])
                 if isinstance(item, dict) and item.get("evidence_id")
             ),
-            "vpa_evidence_ids": sorted(
-                str(item.get("evidence_id"))
-                for item in ((role_evidence or {}).get("evidence") or [])
-                if isinstance(item, dict) and item.get("evidence_id")
-            ) if isinstance(role_evidence, dict) else [],
-            "vpa_evidence_chunk_size": 25,
             "upstream_artifact_keys": sorted(
                 key
                 for key in (
@@ -191,6 +239,13 @@ class CodexJobPublisher:
             ),
             "experience_entry_count": len(context.get("experience_entries") or []),
         }
+        if request.role in {"vpa_evidence", "joint_arbiter"}:
+            context["evidence_index"]["vpa_evidence_ids"] = sorted(
+                str(item.get("evidence_id"))
+                for item in ((role_evidence or {}).get("evidence") or [])
+                if isinstance(item, dict) and item.get("evidence_id")
+            ) if isinstance(role_evidence, dict) else []
+            context["evidence_index"]["vpa_evidence_chunk_size"] = 25
         initial_context = self._initial_context(context)
         messages = [
             {
@@ -347,6 +402,22 @@ class CodexJobPublisher:
             for item in parent.knowledge_manifest.get("modules", [])
             if isinstance(item, dict) and item.get("knowledge_module_id")
         }
+        if parent.core_context.get("context_policy") == "bounded_context_v2":
+            # Only full, byte-identical sections in the mandatory packet are
+            # guaranteed delivered. An optional section index is not a read.
+            delivered = {
+                str(item.get("section_id")): item.get("text")
+                for item in (parent.core_context.get("stage1_decision_packet") or {})
+                .get("knowledge", {}).get("foundation_exact_sections", [])
+            }
+            parent_modules = {
+                module_id: digest for module_id, digest in parent_modules.items()
+                if isinstance(parent.knowledge_documents.get(module_id), dict)
+                and parent.knowledge_documents[module_id].get("sections")
+                and all(str(section.get("section_id")) in delivered
+                        and delivered[str(section.get("section_id"))] == section.get("text")
+                        for section in parent.knowledge_documents[module_id]["sections"])
+            }
         inherited_knowledge_ids = [
             str(item["knowledge_module_id"])
             for item in knowledge_manifest.get("modules", [])
@@ -411,6 +482,8 @@ class CodexJobPublisher:
             "decision_stance",
             "context_policy",
             "investigation_policy",
+            "stage_subagents",
+            "result_policy",
             "vpa_catalog_id",
             "vpa_data_status",
             "frozen_snapshot",

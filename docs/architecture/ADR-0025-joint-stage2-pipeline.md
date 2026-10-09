@@ -20,7 +20,10 @@ ADR-0009/0024 的旧模式规定继续生效，不追溯改变历史，不授权
 Stage 1 仍 price-only，唯一 Router 读取其已验证字段。VPA 独立分析冻结量价证据，不输出订单、
 方向、Setup 或胜率。联合 Stage 2 在冻结 PA 框架和 Router 范围内选择具体方案与合理等待，
 提出结构 entry/stop/TP1 和自己的未校准主观先验；不是对旧 PA 胜率加减固定 VPA 分数。
-上游框架存在不可化解反证时返回 review_required，不自行改写或自动重跑 Stage 1。
+上游框架存在不可化解的**专业解释**分歧时不能自行改写或自动重跑 Stage 1；
+新执行合同 `stage2_host_gated_draft_v1` 下，完整证据内的市场分歧走有依据的合法等待，
+身份、投影、必读交付等机械故障由 Host fail-closed，不让 Stage 2 模型伪装成市场判断。
+旧冻结 Job 的 `analysis_role_stop_v1` 语义保持原样。
 
 ## 机器契约
 

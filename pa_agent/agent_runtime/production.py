@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from pa_agent.agent_runtime.publisher import CodexJobPublisher
-from pa_agent.agent_runtime.spool_worker import CodexSpoolClient, CodexSpoolConfig
 from pa_agent.agent_runtime.runtime_identity import (
     codex_runtime_identity,
     resolve_executable,
 )
+from pa_agent.agent_runtime.spool_worker import CodexSpoolClient, CodexSpoolConfig
 from pa_agent.ai.codex_analysis_backend import CodexAnalysisRoleBackend, CodexCircuitBreaker
 from pa_agent.operations.analysis_profile import codex_model_effort_supported
 
@@ -40,7 +40,7 @@ class CodexProductionConfig:
         *,
         state_dir: Path,
         environment: Mapping[str, str] | None = None,
-    ) -> "CodexProductionConfig":
+    ) -> CodexProductionConfig:
         env = dict(os.environ if environment is None else environment)
         enabled = str(env.get("PA_AGENT_CODEX_ENABLED", "0")).strip().lower() in {
             "1",
@@ -157,6 +157,7 @@ def build_codex_backend_factory(
             "reasoning_effort",
             "profile_fingerprint",
             "analysis_profile_fingerprint",
+            "service_tier",
         ):
             if key in task_identity:
                 expected_runtime[key] = task_identity[key]
@@ -165,7 +166,10 @@ def build_codex_backend_factory(
             "reasoning_effort",
             "profile_fingerprint",
             "analysis_profile_fingerprint",
+            "service_tier",
         }
+        if task_identity.get("service_tier") not in {None, "fast"}:
+            raise ValueError("unsupported Codex service tier")
         frozen_immutable = {
             key: value
             for key, value in task_identity.items()
@@ -234,19 +238,32 @@ def build_codex_experiment_backend_factory(
         del settings
         arm_identity = dict(identity)
         investigation = getattr(spec, "investigation", None)
+        stage_subagents = getattr(spec, "stage_subagents", "off")
+        from pa_agent.agent_runtime.execution_contract import STAGE_SUBAGENT_POLICIES
+
+        if stage_subagents not in STAGE_SUBAGENT_POLICIES:
+            raise ValueError("invalid study subagent condition")
+        arm_identity["stage_subagents"] = stage_subagents
+        knowledge_delivery = getattr(spec, "knowledge_delivery", "full")
+        if knowledge_delivery != "full":
+            from pa_agent.agent_runtime.execution_contract import LAYERED_STAGE2_RESEARCH_POLICY
+
+            if knowledge_delivery != LAYERED_STAGE2_RESEARCH_POLICY:
+                raise ValueError("invalid study knowledge delivery condition")
+            arm_identity["knowledge_delivery_policy"] = knowledge_delivery
         if investigation is not None:
             if investigation not in {"fixed", "agentic"}:
                 raise ValueError("invalid study investigation condition")
             arm_identity["investigation_policy"] = investigation
-            arm_identity["profile_fingerprint"] = hashlib.sha256(
-                json.dumps(
-                    arm_identity,
-                    ensure_ascii=True,
-                    allow_nan=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ).encode("utf-8")
-            ).hexdigest()
+        arm_identity["profile_fingerprint"] = hashlib.sha256(
+            json.dumps(
+                arm_identity,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
         publisher = CodexJobPublisher(
             frame=frozen.frame,
             prompt_dir=prompt_dir,

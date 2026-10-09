@@ -30,6 +30,39 @@ def test_vps_example_enables_only_the_fixed_xau_analysis_scope_without_secrets()
     ] == [("binance_usdm", "BINANCE", "XAUUSDT", "1h")]
 
 
+def test_codex_joint_example_is_explicit_and_does_not_require_direct_key() -> None:
+    root = Path(__file__).resolve().parents[2]
+    raw = json.loads(
+        (root / "config" / "settings.vps.codex-joint.example.json").read_text("utf-8")
+    )
+    settings = Settings.model_validate(raw)
+
+    assert settings.analysis_pipeline is not None
+    assert settings.analysis_pipeline.pipeline == "pa_vpa_joint"
+    assert settings.provider.api_key == ""
+    assert settings.monitoring.analysis_timeout_seconds == 900
+    assert settings.general.higher_timeframe_enabled is True
+    assert settings.prompt.vpa_enabled is True
+    assert settings.paper_trading.enabled is True
+    assert [(asset.source, asset.symbol, asset.timeframe) for asset in settings.monitoring.assets] == [
+        ("binance_usdm", "XAUUSDT", "1h")
+    ]
+    override = (root / "deploy" / "systemd" / "pa-agent-codex-only.conf").read_text("utf-8")
+    assert "LoadCredential=\n" in override
+    codex_env = (
+        root / "deploy" / "systemd" / "pa-agent-codex-joint.env.example"
+    ).read_text("utf-8")
+    assert "PA_AGENT_CODEX_MODEL=gpt-6-luna" in codex_env
+    assert "PA_AGENT_CODEX_REASONING=xhigh" in codex_env
+    backup_service = (
+        root / "deploy" / "systemd" / "pa-agent-backup.service"
+    ).read_text("utf-8")
+    assert "SupplementaryGroups=pa-agent-codex-spool" in backup_service
+    assert "/var/lib/pa-agent-codex/jobs" in backup_service
+    assert "/var/lib/pa-agent-codex/results/.accepted" in backup_service
+    assert "ReadWritePaths=/var/backups/pa-agent /var/lib/pa-agent/records/audit /var/lib/pa-agent/trade_records" in backup_service
+
+
 def test_vps_environment_and_systemd_assets_are_headless_and_non_live() -> None:
     root = Path(__file__).resolve().parents[2]
     environment = (root / "environment-vps.yml").read_text("utf-8")

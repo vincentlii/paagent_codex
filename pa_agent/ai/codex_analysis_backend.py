@@ -6,9 +6,10 @@ import json
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from pa_agent.agent_runtime.codex_worker import (
@@ -29,8 +30,8 @@ from pa_agent.agent_runtime.repair_contract import (
 )
 from pa_agent.ai.analysis_role_backend import AnalysisRoleRequest, AnalysisRoleResult
 from pa_agent.ai.deepseek_client import AIReply, CancelledError
-from pa_agent.ai.provider_failures import ModelCallFailure, ProviderFailure
 from pa_agent.ai.provider_capabilities import normalize_strict_output_instance
+from pa_agent.ai.provider_failures import ModelCallFailure, ProviderFailure
 from pa_agent.ai.token_counter import estimate_tokens
 
 
@@ -208,7 +209,7 @@ class CodexAnalysisRoleBackend:
     def runtime_identity(self) -> dict[str, Any]:
         return dict(self._runtime_identity)
 
-    def bind_role(self, *, client: Any, settings: Any) -> "CodexAnalysisRoleBackend":
+    def bind_role(self, *, client: Any, settings: Any) -> CodexAnalysisRoleBackend:
         del client, settings
         return self
 
@@ -355,6 +356,10 @@ class CodexAnalysisRoleBackend:
             "investigation_policy": frozen_runtime_identity.get(
                 "investigation_policy", "agentic"
             ),
+            "knowledge_delivery_policy": job.core_context.get(
+                "knowledge_delivery_policy"
+            ),
+            "stage_subagents": frozen_runtime_identity.get("stage_subagents", "off"),
         }
         try:
             result = self._worker.run(
@@ -365,6 +370,20 @@ class CodexAnalysisRoleBackend:
                 parent_job_digest=session_options["parent_job_digest"],
             )
         except CodexWorkerError as exc:
+            if getattr(exc, "observed_usage", None) is not None:
+                from dataclasses import asdict
+                attempt_meta.update(usage=asdict(exc.observed_usage),
+                                    usage_observation=dict(getattr(exc, "usage_observation", {})),
+                                    model=job.manifest.model, reasoning_effort=job.manifest.reasoning_effort,
+                                    latency_ms=(time.monotonic() - started) * 1000)
+                exc.analysis_attempt = dict(attempt_meta)
+            if getattr(exc, "collaboration", None):
+                attempt_meta["collaboration"] = dict(exc.collaboration)
+                attempt_meta["usage"] = dict(exc.collaboration.get("aggregate_usage") or {})
+                attempt_meta["model"] = job.manifest.model
+                attempt_meta["reasoning_effort"] = job.manifest.reasoning_effort
+                attempt_meta["latency_ms"] = (time.monotonic() - started) * 1000
+                exc.analysis_attempt = dict(attempt_meta)
             if on_attempt_error is not None:
                 on_attempt_error(exc)
             failure = _worker_failure(exc)
@@ -377,6 +396,13 @@ class CodexAnalysisRoleBackend:
             self._raise_failure(failure, attempts=(attempt_meta,), original=exc)
 
         self._circuit.record_success()
+        # Freeze observations before normalization/repair can fail. This is a
+        # failure ledger, not a fabricated reply or accepted trading Draft.
+        if result.collaboration:
+            from dataclasses import asdict
+            attempt_meta.update(collaboration=dict(result.collaboration), usage=asdict(result.usage),
+                                model=job.manifest.model, reasoning_effort=job.manifest.reasoning_effort,
+                                latency_ms=result.latency_ms)
         repair_context = extract_repair_context(request.messages)
         content = result.content
         strict_null_pruned_count = 0
@@ -392,6 +418,8 @@ class CodexAnalysisRoleBackend:
                     separators=(",", ":"),
                 )
             except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                if attempt_meta.get("collaboration"):
+                    exc.analysis_attempt = dict(attempt_meta)
                 if on_attempt_error is not None:
                     on_attempt_error(exc)
                 self._raise_failure(
@@ -416,6 +444,8 @@ class CodexAnalysisRoleBackend:
                     separators=(",", ":"),
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                if attempt_meta.get("collaboration"):
+                    exc.analysis_attempt = dict(attempt_meta)
                 if on_attempt_error is not None:
                     on_attempt_error(exc)
                 self._raise_failure(
@@ -471,10 +501,15 @@ class CodexAnalysisRoleBackend:
             "effective_thinking": True,
             "effective_reasoning_effort": job.manifest.reasoning_effort
             or self._runtime_identity.get("reasoning_effort", request.reasoning_effort),
+            "requested_service_tier": frozen_runtime_identity.get("service_tier", "standard"),
             "model": job.manifest.model or self._runtime_identity.get("model"),
             "investigation_policy": frozen_runtime_identity.get(
                 "investigation_policy", "agentic"
             ),
+            "knowledge_delivery_policy": job.core_context.get(
+                "knowledge_delivery_policy"
+            ),
+            "stage_subagents": frozen_runtime_identity.get("stage_subagents", "off"),
             "runtime_version": self._runtime_identity.get("runtime_version"),
             "provider_fallback_used": False,
             "transport_attempts": [attempt_meta],
@@ -507,6 +542,9 @@ class CodexAnalysisRoleBackend:
                 if event.get("status") == "ok" and event.get("operation") in optional_operations
             ),
             "evidence_events": [dict(item) for item in result.evidence_events],
+            "subagent_events": [dict(item) for item in result.subagent_events],
+            "collaboration": dict(result.collaboration),
+            "usage_observation": dict(result.usage_observation),
             "circuit": self._circuit.snapshot(),
             "repair_mode": repair_context is not None,
             "strict_null_pruned_count": strict_null_pruned_count,

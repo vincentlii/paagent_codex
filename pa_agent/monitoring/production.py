@@ -3,22 +3,24 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from pa_agent.ai.analysis_role_backend import DirectAnalysisRoleBackend
 from pa_agent.ai.client_factory import create_ai_client
 from pa_agent.ai.json_validator import JsonValidator
 from pa_agent.ai.prompt_assembler import PromptAssembler
 from pa_agent.ai.router import route_strategy_files
+from pa_agent.config.settings import provider_api_key_configured
 from pa_agent.monitoring.scheduler import AnalysisTask
-from pa_agent.orchestrator.backend_fallback import FullChainFallbackOrchestrator
-from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.operations.analysis_profile import (
     AnalysisProfile,
     profile_fingerprint,
     validate_analysis_profile,
 )
+from pa_agent.orchestrator.backend_fallback import FullChainFallbackOrchestrator
+from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.records.experience_reader import ExperienceReader
 
 
@@ -99,10 +101,12 @@ class ProductionOrchestratorFactory:
     def activate_backend_mode(self, mode: str) -> bool:
         """Return whether newly frozen tasks can use this bounded backend mode."""
         if mode == "deepseek_only":
-            return True
+            return provider_api_key_configured(self._settings)
         if mode not in {"auto", "codex_only"}:
             return False
-        return self._codex_backend_factory is not None
+        return self._codex_backend_factory is not None and (
+            mode == "codex_only" or provider_api_key_configured(self._settings)
+        )
 
     def __call__(self, task: AnalysisTask) -> Any:
         mode = str(
@@ -114,24 +118,44 @@ class ProductionOrchestratorFactory:
         if mode == "deepseek_only":
             return self._build_direct()
 
-        settings = self._profile_settings.model_copy(deep=True)
+        frozen_profile = self._frozen_profile_for_task(task)
+        settings = self._settings_for_profile(frozen_profile)
+        profile_identity = self._profile_identity_for(frozen_profile)
         assert self._codex_backend_factory is not None
         primary = self._build_orchestrator(
             settings=settings,
             client=None,
             analysis_backend=self._codex_backend_factory(task, settings),
-            profile_identity=self._profile_identity,
+            profile_identity=profile_identity,
         )
         if mode == "codex_only":
             return primary
         return FullChainFallbackOrchestrator(
             primary=primary,
-            cold_fallback=self._build_direct(),
+            cold_fallback=self._build_direct(
+                settings=settings.model_copy(deep=True),
+                profile_identity=profile_identity,
+            ),
             pipeline_identity=settings.analysis_pipeline,
         )
 
-    def _build_direct(self, *, client: Any | None = None) -> TwoStageOrchestrator:
-        settings = self._profile_settings.model_copy(deep=True)
+    def _frozen_profile_for_task(self, task: AnalysisTask) -> AnalysisProfile:
+        identity = getattr(task.payload, "analysis_profile_identity", {}) or {}
+        if not identity:
+            return self._analysis_profile
+        values = dict(identity)
+        expected = str(values.pop("profile_fingerprint", "") or "")
+        profile = validate_analysis_profile(values)
+        if expected != profile_fingerprint(profile):
+            raise ValueError("frozen analysis profile fingerprint mismatch")
+        return profile
+
+    def _build_direct(
+        self, *, client: Any | None = None, settings: Any | None = None,
+        profile_identity: Mapping[str, Any] | None = None,
+    ) -> TwoStageOrchestrator:
+        settings = settings or self._profile_settings.model_copy(deep=True)
+        profile_identity = profile_identity or self._profile_identity
         if client is None:
             client = create_ai_client(settings.provider, logger_=self._logger)
         return self._build_orchestrator(
@@ -140,10 +164,10 @@ class ProductionOrchestratorFactory:
             analysis_backend=DirectAnalysisRoleBackend(
                 client=client,
                 settings=settings,
-                profile_identity=self._profile_identity,
+                profile_identity=profile_identity,
                 logger=self._logger,
             ),
-            profile_identity=self._profile_identity,
+            profile_identity=profile_identity,
         )
 
     def _build_orchestrator(

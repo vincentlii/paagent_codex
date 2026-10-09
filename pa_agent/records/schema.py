@@ -64,6 +64,7 @@ class AnalysisRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal[5] = 5
+    monitoring_task_id: str | None = None
     source_schema_version: Optional[int] = None
     meta: RecordMeta
     kline_data: list[dict]              # Same data as sent to AI

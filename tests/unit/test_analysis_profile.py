@@ -48,6 +48,11 @@ def test_deepseek_model_catalog_accepts_only_supported_models(model: str) -> Non
 
 def test_codex_model_effort_pairs_are_allowlisted() -> None:
     assert AnalysisProfile(
+        codex_model="gpt-6-luna", codex_reasoning_effort="max"
+    ).codex_reasoning_effort == "max"
+    with pytest.raises(ValidationError):
+        AnalysisProfile(codex_model="gpt-6-luna", codex_reasoning_effort="ultra")
+    assert AnalysisProfile(
         codex_model="gpt-5.6-terra", codex_reasoning_effort="max"
     ).codex_reasoning_effort == "max"
     with pytest.raises(ValidationError):
@@ -66,6 +71,7 @@ def test_capability_catalog_is_json_safe_and_keeps_labels_separate() -> None:
     assert "DeepSeek V4 Flash" in dumped
     assert "deepseek-v4-flash" in dumped
     codex = {item["id"]: item for item in capabilities["codex_models"]}
+    assert codex["gpt-6-luna"]["efforts"] == ["low", "medium", "high", "xhigh", "max"]
     assert codex["gpt-6-astra"]["efforts"] == [
         "low", "medium", "high", "xhigh", "max", "ultra"
     ]

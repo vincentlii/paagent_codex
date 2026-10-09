@@ -209,7 +209,7 @@ def test_production_factory_does_not_share_mutable_model_state(
     monkeypatch.setattr(production, "TwoStageOrchestrator", create_orchestrator)
 
     factory = production.ProductionOrchestratorFactory(
-        settings=Settings(),
+        settings=Settings(provider={"api_key": "test-key"}),
         pending_writer=object(),
         prompt_dir=tmp_path,
         experience_dir=tmp_path,
@@ -322,7 +322,7 @@ def test_production_factory_honors_backend_frozen_on_task(
         return backend
 
     factory = production.ProductionOrchestratorFactory(
-        settings=Settings(),
+        settings=Settings(provider={"api_key": "secret-token"}),
         pending_writer=object(),
         prompt_dir=tmp_path,
         experience_dir=tmp_path,
@@ -340,7 +340,23 @@ def test_production_factory_honors_backend_frozen_on_task(
     assert factory.activate_backend_mode("auto") is True
 
 
-def test_scheduler_audit_failure_is_visible_in_service_metrics() -> None:
+def test_production_factory_without_direct_key_exposes_only_codex(tmp_path) -> None:
+    from pa_agent.monitoring.production import ProductionOrchestratorFactory
+
+    factory = ProductionOrchestratorFactory(
+        settings=Settings(),
+        pending_writer=object(),
+        prompt_dir=tmp_path,
+        experience_dir=tmp_path,
+        codex_backend_factory=lambda *_args: object(),
+    )
+
+    assert factory.activate_backend_mode("codex_only") is True
+    assert factory.activate_backend_mode("deepseek_only") is False
+    assert factory.activate_backend_mode("auto") is False
+
+
+def test_scheduler_audit_failure_prevents_execution() -> None:
     class _BrokenAudit:
         def record_submission(self, _task, _result):
             return False
@@ -356,15 +372,40 @@ def test_scheduler_audit_failure_is_visible_in_service_metrics() -> None:
                 run_outcome={"status": "completed", "official_path": "pa_only"},
             )
 
+    calls = []
     service = MultiAssetAnalysisService(
-        IndependentAnalysisHandler(lambda _task: _Orchestrator()),
+        IndependentAnalysisHandler(lambda _task: calls.append(1) or _Orchestrator()),
         audit_store=_BrokenAudit(),
     )
-    assert service.submit(_task("XAUUSD")).accepted
+    assert service.submit(_task("XAUUSD")).status == "audit_unavailable"
     assert service.wait_idle(timeout=2.0)
     service.shutdown()
 
-    assert service.snapshot()["audit_failures"] == 2
+    assert service.snapshot()["audit_failures"] == 1
+    assert calls == []
+
+
+def test_completion_audit_failure_blocks_further_tasks() -> None:
+    class _CompletionAuditFailure:
+        def record_submission(self, _task, _result):
+            return True
+
+        def record_completion(self, _completion):
+            return False
+
+    completions = []
+    service = MultiAssetAnalysisService(
+        lambda task, _cancel: task.task_id,
+        audit_store=_CompletionAuditFailure(),
+        on_completion=completions.append,
+    )
+
+    assert service.submit(_task("XAUUSD")).accepted
+    assert service.wait_idle(timeout=2.0)
+    assert completions[0].status == "failed"
+    assert completions[0].error_type == "SchedulerAuditUnavailable"
+    assert service.submit(_task("EURUSD")).status == "audit_unavailable"
+    service.shutdown()
 
 
 def test_handler_classifies_provider_failure_without_calling_it_success() -> None:
@@ -474,7 +515,7 @@ def test_logical_analysis_failure_can_retry_and_success_is_restart_deduped(tmp_p
     ]
 
 
-def test_scheduler_success_lookup_failure_is_fail_open_for_retry(tmp_path, monkeypatch) -> None:
+def test_scheduler_success_lookup_failure_is_fail_closed(tmp_path, monkeypatch) -> None:
     store = SchedulerAuditStore(tmp_path / "monitoring.sqlite3")
 
     def broken_connect():
@@ -482,7 +523,8 @@ def test_scheduler_success_lookup_failure_is_fail_open_for_retry(tmp_path, monke
 
     monkeypatch.setattr(store, "_connect", broken_connect)
 
-    assert store.was_successful("missing-task") is False
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        store.was_successful("missing-task")
 
 
 def test_scheduler_reconciliation_lists_snapshots_oldest_first(tmp_path) -> None:

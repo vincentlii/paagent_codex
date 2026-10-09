@@ -1,6 +1,7 @@
 """Unit tests for Cursor SDK stream event mapping."""
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 
 from pa_agent.ai.cursor_sdk_client import (
@@ -42,6 +43,7 @@ def test_bridge_launches_after_cursor_sdk_patches() -> None:
     _ensure_cursor_sdk_patches()
     from cursor_sdk import CursorClient  # type: ignore
 
+    assert isinstance(subprocess.Popen, type)
     client = CursorClient.launch_bridge(workspace=".")
     try:
         assert client is not None

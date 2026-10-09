@@ -4,8 +4,8 @@ capability: no-go
 verification_scope:
   - local
   - VPS-partial
-最后核验: 2026-09-05
-核验提交: 2128ef3 + working-tree audit
+最后核验: 2026-10-09
+核验提交: working-tree audit（未提交）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -15,9 +15,106 @@ verification_scope:
   - docs/quality/vps_profile_dashboard_audit_20260903.md
   - docs/quality/codex_backend_full_acceptance_audit_20260905.md
   - docs/quality/codex_backend_supplement_implementation_review_20260905.md
+  - docs/quality/stage1_subagent_market_pilot_20260928.md
+  - docs/quality/subagent_complementary_pilot_20260928.md
 ---
 
 # 当前状态
+
+2026-10-09 用户批准全量 A 的有界 VPS Paper 观察发布，并豁免性能目标作为该次
+Paper pilot 的阻断条件；这不代表专业质量、收益或实盘上线晋级。发布配置固定
+单 Agent、`pa_vpa_joint`、`gpt-6-luna/xhigh`、单源 XAUUSDT/1h＋4h，B 分层与
+Stage 内子协作保持研究隔离。看板已补充 Fast 的 requested/applied 控制，冻结
+任务与 cohort 绑定 service tier；不保证 Luna 固定 1.5× 加速，订阅用量可能增加。
+本地非在线回归 1573 项通过（7 项 live 排除），新增备份服务边界定向 6 项通过。
+Linux 备份、恢复、权限、模型可用性及真实完整链仍须在 VPS 验收后才能启动持续
+调度；下方 no-go 是各历史时点结论，不应当作用户本次 Paper 授权被撤销。
+
+2026-10-09 同一新冻结 XAU 快照的新源码 A1/B1/B2/A2 分层知识对照完成 4/4，
+三角色均首稿验收、无 fallback 或下单。匿名质量先评分后揭盲：全量 A 的 PA/VPA
+均分 93.0/92.5，分层 B 89.25/92.5；B Stage 2 平均快 12.5 秒、Token 少约
+3.3%，但全链平均慢 15.1 秒，且预注册 PA 质量门槛未过。只有一张独立行情快照，
+不证明 B 质量下降或 A 稳定占优；旧快照结果方向相反。正式候选继续全量 A，
+B research-only，性能门禁与 VPS/Paper 上线仍 no-go。见
+[分层知识研究](../quality/layered_stage2_knowledge_research_20261008.md)。
+
+2026-10-09 新冻结 XAUUSDT/1h＋4h、本地修正后源码的 Codex 单 Agent 全量
+PA＋VPA 联合链完成三角色首稿验收，Host 273.53 秒、Provider 510,335 Token，
+正式决策等待且不下单。Snapshot 闭盘与事实核对通过；VPA 有 6 条逐句引用
+表述警告、Stage 2 有 1 条无歧义规范化。单次时延低于 300 秒但 Token 门禁未过，
+不能推断 p95 或专业质量稳定。仅清理可重建的 Python/Ruff 缓存，全部研究和原始
+回执保留；见[本地联合链新快照验收](../quality/codex_joint_local_release_audit_20261008.md)。
+本地候选仍为 no-go，未部署 VPS 或启动持续 Paper。
+
+2026-10-09 全量 A／分层 B 最后离线复审：修正新 Stage 2／VPA 合并基线回执
+缺失却可能接受 Draft、普通 Codex 角色人设“裸 JSON”与 `result` 封套冲突，
+并以精确具名窗口的净进展符号核对拦截四臂 A1 已发生的 VPA 方向误报。
+该窄范围事实校验由共享 VPA Validator 执行，也适用于 Direct 的 VPA sidecar；
+Direct PA-only 主链与 VPA-off 行为不变。
+旧四臂回执不改写；B 仍 research-only，正式链仍全量必读。相关本地定向
+回归与 Runtime 资产审计通过，未做修正后付费模型、Linux/VPS 或持续 Paper
+验收；性能／专业质量及上线门禁仍 no-go。见[分层知识研究与复审](../quality/layered_stage2_knowledge_research_20261008.md)。
+
+2026-10-08 补充验收：本地 Codex 单 Agent `pa_vpa_joint` 已在同一冻结 XAU 快照
+完成 Stage 1、VPA 和联合 Stage 2，输出等待且无订单；Host 约 324.5 秒、Provider
+实报约 549.8k Token，未达到 300 秒／250k Token 性能目标。冻结任务的本地重启
+恢复已按“未开始可重放，已开始须核对记录，否则阻断”闭合，真实 Linux/VPS 断电、
+跨库/Paper 对账和持续运行仍未验收。原始模型回执后仅修正两处自然语言误报，
+未来独立快照须重验；详见[本地发布候选补充验收](../quality/codex_joint_local_release_audit_20261008.md)。
+
+2026-10-08 本地发布候选补充：GPT-only 显式联合配置、逐次 pipeline 审计／看板、
+调度审计 fail-closed、Worker 有效租约、含接受标记的备份与校验完成定向离线检查。
+**仍为 no-go**：冻结调度 payload／崩溃回执对账未闭合；本机 CLI 未登录，未做本轮
+真实 `gpt-6-luna/xhigh` PA＋VPA 完整链、盲评或 p95；未部署 Linux/VPS。
+详见[本地发布候选三角色审查](../quality/codex_joint_local_release_audit_20261008.md)。
+旧时间点的子 Agent pilot 与耗时仍为历史证据，不得冒充本轮验收。
+
+2026-09-28 补充：Stage 内子协作按旧 pilot 根因完成精确资源、批量交付、失败/续接用量及 VPA 指标分类修复，210 项定向回归通过。新同快照 `gpt-6-luna/xhigh` 四臂因隔离 CLI 限流完整链 0/4；仅 A1 Stage 1 首稿返回并通过 Host，B 臂无可评分结果。**质量/速度对照未完成、生产子协作关闭、未部署。**详见[修复后 cohort 与三角色门禁](../quality/subagent_complementary_pilot_20260928.md)。下方旧 pilot 数值与当时“尚未修复”描述保留为历史时点，不作为现行状态。
+
+2026-09-28：Stage 1 真实同快照子 Agent pilot 已取得四份原始 Draft；完整 PA＋VPA
+链 3 完成/1 中断缺失。B 平均 Stage 1 为 479.055 秒，A 为 406.453 秒，**慢 17.9%**；
+两次 child 委托仅一次完成并收集，另一次嵌套 HTF 参数拒绝。独立模型盲审 Stage 1
+A/B 为 76.95/78.25 分，但最高分出自未启动成功 child 的 B2，不能归因质量增益。
+当前泛反证政策不晋级，暂停 VPA/Stage 2/组合 child 付费扩展；生产仍关闭、未部署。
+resume usage 会话累计重复计量和常规 VPA auto-binding 指标分类错误已核实，
+只做研究派生说明，runtime 尚未修复。详见[真实试验与三角色报告](../quality/stage1_subagent_market_pilot_20260928.md)。
+该状态取代下方 2026-09-27 的“真实市场未进行”，不改变当时 canary 的证据范围。
+
+2026-09-27：新 `host_stage_challenge_v1` 已实现 Host 独立子进程、限定原值 MCP、
+异步协作、独立预算和审计、取消回收与父子用量/失败接线；AGENTS 和四个 Stage Skill
+已统一。真实 `gpt-6-luna/xhigh` 合成父子 canary 通过（39.515 秒、38,445 total tokens），
+父在子运行期间完成独立读取。该结果仅证明传输协作可用，不是行情性能或质量验收。
+原生非 off 旧 Job 继续拒绝，生产研究开关仍关闭。剩余逐阶段真实快照 A/A/B/B、Linux
+权限/部署与 Paper 晋级未完成。详见[研究计划与三角色复核](../quality/stage_subagent_research_plan.md)。
+
+2026-09-26：子角色方向调整为同一 Frozen Job 内的独立、受限只读取证；
+父角色必读、预算、审计和正式 Draft 均不得由子角色代替。证据 MCP 已在
+服务端拒绝当前角色未列入 allowlist 的工具调用，并审计拒绝；这是权限基础，
+**不是**父子端点隔离或子 Agent 运行验收。Host 托管的独立子进程与专属证据
+入口在该日尚未实现；该状态已由上方 2026-09-27 更新取代。详见[研究计划](../quality/stage_subagent_research_plan.md)。
+
+2026-09-26：本地 `codex-cli 0.155.0-alpha.16.4` 的合成子角色预检发现，
+自定义 challenger 实际继承父角色的代码工具和 `pa_evidence` 可见性；CLI stdout
+也未完整暴露 spawn 事件。Worker 已对非 `off` 的原生子 Agent 研究 Job
+fail-closed。真实市场 A/B 未启动，当前冻结样本已按现行知识重建但未注册旧 pilot。
+Direct、单 Agent Codex 主链及 VPS 保持原状。详见[研究计划与预检结论](../quality/stage_subagent_research_plan.md)。
+
+2026-09-24：两处协议歧义已统一：旧 Shadow/研究 Joint 不得修改 PA-only
+`estimated_win_rate`；显式联合 Stage 2 可在 PA/Router 内基于已验收 VPA 报告
+独立形成未校准先验。共用 Direct 人设原文不变，仅 Codex 联合任务投影其
+price-only/裸 JSON 措辞。Stage 内子 Agent 已完成默认关闭的逐阶段研究接线、
+只读自定义 Agent、Skill 边界、实验单变量条件与脱敏事件元数据；尚未做真实
+CLI 父子权限/事件预检、质量 A/B 或 VPS 部署，因此不能宣称提速/效果通过。
+详见 [研究计划](../quality/stage_subagent_research_plan.md)。
+
+2026-09-24：后续工程实验统一使用 `gpt-6-luna/xhigh`（UI 的 extra high）；
+历史 `max` 运行保持其原始身份，不混为同条件样本。此前因 Stage 2 交接误读
+停止的运行，已由 Host-gated Draft 边界修订；修订后同一冻结 XAU 快照有两次
+完整联合链路落盘（约 17.9/10.9 分钟，均 wait），但不能估计 p95 或证明专业质量。
+VPA K1/K2 主语误绑的 Validator 修复只做了离线复核，尚无修复后付费重验。
+Stage 1/VPA 仍保留全部必读知识、事实与反证；Direct 不变，旧 Job 保持旧交付语义。
+未部署新版或通过性能晋级；当前性能门禁仍 no-go。
+证据和限制见 [真实运行审计](../quality/runtime_chain_audit_20260914.md)。
 
 2026-09-21：性能优化恢复原 Windows Direct 主链的 PA 阶段连续性，但不恢复长期会话。
 不同 Frozen Snapshot 严格独立；同一 Snapshot 内仅 Stage 1 attempt 1 直接通过后可由
@@ -203,6 +300,33 @@ Profile UI 已完成，真实 Codex 分析、权限负向测试和 live canary e
 
 ### Codex 阻断项与变更治理
 
+- 联合 Stage 2 的 `layered_stage2_research_v1` 仅作为隔离研究 B 臂完成本地合同实现；
+  完整 Router 原文仍冻结，正式 Codex/Direct 不变。上一份真实冻结知识的离线投影
+  将 4 个策略模块的 46,182 bytes 原文留作按需读取。随后同快照四臂
+  `gpt-6-luna/xhigh` 盲评显示 B 在单样本专业筛查中较好，但 Stage 2 均值
+  89.3 秒对 A 的 78.2 秒、Provider total tokens 均值约 406k 对 335k；
+  字节减少未转成性能增益，故不晋级正式链。该实验仅有一个独立市场快照，
+  不证明统计非劣、盈利或跨行情泛化。
+  详见[分层知识研究](../quality/layered_stage2_knowledge_research_20261008.md)。
+
+- 2026-09-23 本地 `gpt-6-luna/xhigh` 尚无有效完整链路基线：五次重验的
+  Stage 2 均因交接/证据来源误读而 typed stop。第四次 Stage 1/VPA/Stage 2
+  各约 272/182/129 秒；第五次约 365/222/157 秒，整链约 744 秒。
+  第五次模型可见 JSON 中 Stage 1 与 PA 投影的 primary direction 均明确
+  为 bearish，模型仍误报“投影缺方向”。统一来源契约的 81 项离线检查
+  通过，但自然语言澄清未消除系统性误停。用户已确认新 Codex Stage 2
+  改为 Host 校验机械交接、模型只提交 Draft；旧冻结 Job 和 Direct 保留原
+  传输语义。新版已完成定向离线合同检查，并在同一冻结 XAU 快照取得两轮
+  `gpt-6-luna/xhigh` 完整 PA＋VPA 本地诊断结果：首轮 Stage 1/VPA 首稿/
+  VPA 修复/Stage 2 为 515/150/28/383 秒，总调用约 17.9 分钟；第二轮为
+  304/193/32/122 秒，Host 至持久化约 10.9 分钟。两轮均
+  `completed_with_warnings`、`wait`、无 role stop，且没有订单。两次 VPA
+  首稿的“K2 缺后续闭盘”拒绝经原文与冻结目录核实为 Validator 把最新
+  K1 的叙述误绑定 K2；现仅对明确主语/并列事件硬拒绝，两份原始首稿离线
+  重验均无 hard error，明确错误断言仍拒绝。修复后尚无第三次真实运行；
+  两轮只证明可重复完成，不能证明稳定成功率、交易质量非劣或 p95 300 秒；
+  Provider 报告每轮约 668k/672k 总 tokens，也未达到 250k token 门槛。
+  性能与质量上线门禁仍 no-go。详见 [运行链路审计](../quality/runtime_chain_audit_20260914.md)。
 - 2026-09-05 使用 `uv.lock` desktop+dev 环境完成全仓非 live 回归：`1305 passed, 7 deselected`。
 - working tree 已冻结 Windows 20 条历史故障 manifest，并实现 stdout taxonomy、Codex VPA role 与 matched
   performance 字段；本轮继续加入 Windows PromptAssembler 语义等价协议和 mandatory-read acceptance

@@ -58,6 +58,46 @@ def test_actual_knowledge_is_delivered_without_section_loss(role):
         assert entry["content_bytes"] == len(selected.encode())
 
 
+def test_joint_persona_projection_preserves_direct_source_and_section_ids():
+    module_id = "提示词大纲_人设与思维方式.txt"
+    source = (ROOT / module_id).read_text(encoding="utf-8")
+    direct, _ = build_knowledge_bundle(
+        prompt_dir=ROOT, knowledge_ids=[module_id], role="stage2",
+    )
+    joint, manifest = build_knowledge_bundle(
+        prompt_dir=ROOT, knowledge_ids=[module_id], role="stage2", joint_stage2=True,
+    )
+    direct_sections = direct[module_id]["sections"]
+    joint_sections = joint[module_id]["sections"]
+    direct_text = "".join(section["text"] for section in direct_sections)
+    joint_text = "".join(section["text"] for section in joint_sections)
+    assert source == (ROOT / module_id).read_text(encoding="utf-8")
+    assert "完整裸 JSON" in source
+    assert "完整裸 JSON" not in direct_text
+    assert "`result` 传输封套" in direct_text
+    assert "只依赖 K 线与 EMA20（**不依赖成交量**）" in direct_text
+    assert "Host 已验收的 VPA 报告" in joint_text
+    assert "Codex 联合角色使用 `result` 传输封套" in joint_text
+    assert "机械加减 PA-only 先验" in joint_text
+    assert [section["section_id"] for section in direct_sections] == [
+        section["section_id"] for section in joint_sections
+    ]
+    assert manifest["modules"][0]["source_sha256"] != manifest["modules"][0]["sha256"]
+
+
+def test_stage1_persona_projection_uses_codex_result_envelope_without_changing_brooks_scope():
+    module_id = "提示词大纲_人设与思维方式.txt"
+    source = (ROOT / module_id).read_text(encoding="utf-8")
+    modules, _ = build_knowledge_bundle(
+        prompt_dir=ROOT, knowledge_ids=[module_id], role="stage1",
+    )
+    delivered = "".join(section["text"] for section in modules[module_id]["sections"])
+    assert "完整裸 JSON" in source
+    assert "完整裸 JSON" not in delivered
+    assert "`result` 传输封套" in delivered
+    assert "只依赖 K 线与 EMA20（**不依赖成交量**）" in delivered
+
+
 def test_alias_search_is_frozen_and_does_not_cross_authorized_modules():
     sections = _split_sections("brooks/context", "<!-- knowledge: intro; aliases: 测量移动 | Measured Move -->\nH10 counterexample\n")
     job = replace(_job(), knowledge_documents={"brooks/context": {"sections": sections}})

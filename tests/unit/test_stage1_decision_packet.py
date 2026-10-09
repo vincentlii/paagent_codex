@@ -40,10 +40,25 @@ def test_stage1_packet_is_complete_price_only_and_deterministic() -> None:
     assert first["packet_version"] == STAGE1_PACKET_VERSION
     assert len(first["price_frame"]["rows"]) == len(bars)
     assert first["price_frame"]["columns"] == ["seq", "ts_open", "open", "high", "low", "close", "closed"]
-    assert "embedded_rules" not in first["role_contract"]
+    assert first["role_contract"]["embedded_rules"] == ["large duplicate"]
     assert first["higher_timeframe"]["evidence"] == [{"evidence_id": "HTF.H1"}]
     assert first["knowledge"]["foundation_exact_sections"][0]["text"] == "exact core"
+    assert first["knowledge"]["foundation_exact_sections"][0]["aliases"] == []
+    assert first["knowledge"]["section_index"] == []
     assert "PA.WINDOW.K5" in {item["fact_id"] for item in first["pa_fact_spine"]}
+    measurements = {}
+    for table in first["bar_measurements"]:
+        for row in table["rows"]:
+            values = dict(zip(table["columns"], row, strict=True))
+            fact_id = values.pop("fact_id")
+            measurements[fact_id] = {
+                "fact_id": fact_id, "bar_range": values.pop("bar_range"),
+                "domain": table["domain"], "fact_type": table["fact_type"], "value": values,
+            }
+    for fact in catalog["facts"]:
+        if fact["fact_id"].startswith(("PA.BAR.", "PA.INDICATOR.")):
+            assert measurements[fact["fact_id"]] == fact
+    assert len(json.dumps(first["bar_measurements"])) < len(json.dumps(list(measurements.values())))
     verify_stage1_decision_packet(first)
 
 
@@ -60,5 +75,16 @@ def test_real_stage1_knowledge_packet_fits_frozen_single_response_budget(tmp_pat
     encoded = json.dumps({"decision_packet": packet}, ensure_ascii=False,
                          separators=(",", ":"), sort_keys=True).encode("utf-8")
     assert packet["knowledge"]["foundation_exact_sections"]
+    delivered = {
+        (item["knowledge_module_id"], item["section_id"]): item["text"]
+        for item in packet["knowledge"]["foundation_exact_sections"]
+    }
+    expected = {
+        (module["knowledge_module_id"], section["section_id"]): section["text"]
+        for module in job.knowledge_manifest["modules"]
+        if module["loading_policy"] == "mandatory"
+        for section in job.knowledge_documents[module["knowledge_module_id"]]["sections"]
+    }
+    assert delivered == expected
     assert len(encoded) <= job.budget.max_evidence_response_bytes
     assert job.budget.max_evidence_calls == 3

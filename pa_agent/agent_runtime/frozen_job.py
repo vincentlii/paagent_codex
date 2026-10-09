@@ -170,6 +170,7 @@ class FrozenAgentJobBuilder:
         runtime_version: str,
         agents_text: str,
         skill_documents: Mapping[str, str],
+        challenger_text: str = "",
         clock: Any = time.time,
         job_ttl_seconds: int = 900,
     ) -> None:
@@ -178,6 +179,7 @@ class FrozenAgentJobBuilder:
         self._skill_documents = {
             str(key): str(value) for key, value in skill_documents.items()
         }
+        self._challenger_text = str(challenger_text)
         self._clock = clock
         self._job_ttl_seconds = int(job_ttl_seconds)
         if not self._runtime_version:
@@ -256,6 +258,10 @@ class FrozenAgentJobBuilder:
         )
         if investigation_policy not in {"fixed", "agentic"}:
             raise ValueError("investigation_policy must be fixed or agentic")
+        from pa_agent.agent_runtime.execution_contract import STAGE_SUBAGENT_POLICIES
+
+        if runtime_identity.get("stage_subagents", "off") not in STAGE_SUBAGENT_POLICIES:
+            raise ValueError("unsupported stage subagent policy")
         model = str(runtime_identity.get("model") or "").strip()
         reasoning_effort = str(
             runtime_identity.get("reasoning_effort") or ""
@@ -276,6 +282,13 @@ class FrozenAgentJobBuilder:
             "reasoning_effort": reasoning_effort,
             "profile_fingerprint": profile_fingerprint,
         }
+        if runtime_identity.get("stage_subagents", "off") != "off":
+            if not self._challenger_text:
+                raise ValueError("subagent treatment requires frozen challenger instructions")
+            runtime["challenger_text"] = self._challenger_text
+            from pa_agent.agent_runtime.execution_contract import STAGE_CHALLENGE_PROTOCOL, STAGE_CHALLENGE_LIMITS
+            runtime["stage_challenge_protocol"] = STAGE_CHALLENGE_PROTOCOL
+            runtime["stage_challenge_limits"] = dict(STAGE_CHALLENGE_LIMITS)
         resources = {
             "request.json": request,
             "output_schema.json": dict(output_schema),

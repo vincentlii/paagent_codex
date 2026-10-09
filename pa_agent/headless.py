@@ -201,11 +201,17 @@ def validate_headless_configuration(
             f"{issue.code}: {issue.resource}"
             + (f": {issue.detail}" if issue.detail else "")
         )
-    if not provider_api_key_configured(settings):
+    from pa_agent.operations.runtime_state import RuntimeControlStore
+
+    control = RuntimeControlStore(paths.runtime_control_path).read()
+    if control.error:
+        errors.append(f"runtime control is invalid: {control.error}")
+    direct_required = control.desired_backend != "codex_only"
+    if direct_required and not provider_api_key_configured(settings):
         errors.append("AI provider API key is not configured")
-    if not settings.provider.model.strip():
+    if direct_required and not settings.provider.model.strip():
         errors.append("AI provider model is empty")
-    if not settings.provider.base_url.strip():
+    if direct_required and not settings.provider.base_url.strip():
         errors.append("AI provider base URL is empty")
     assets = [asset for asset in settings.monitoring.assets if asset.enabled]
     if not settings.monitoring.enabled:
@@ -286,6 +292,8 @@ def validate_headless_configuration(
     )
 
     codex_config = CodexProductionConfig.from_environment(state_dir=paths.state_root)
+    if control.desired_backend in {"codex_only", "auto"} and not codex_config.enabled:
+        errors.append("Codex backend is disabled")
     errors.extend(
         validate_codex_production_config(codex_config, prompt_dir=paths.prompt_dir)
     )
@@ -294,19 +302,21 @@ def validate_headless_configuration(
 
 def build_headless_monitor(settings: Settings, paths: RuntimePaths):
     """Wire the production scheduler without importing any Qt component."""
+    from pa_agent.agent_runtime.production import (
+        CodexProductionConfig,
+        build_codex_backend_factory,
+    )
     from pa_agent.data.factory import create_data_source
     from pa_agent.execution.coordinator import PaperExecutionCoordinator
     from pa_agent.monitoring.analysis_runner import IndependentAnalysisHandler
     from pa_agent.monitoring.audit import SchedulerAuditStore
     from pa_agent.monitoring.headless import HeadlessMonitor
     from pa_agent.monitoring.production import ProductionOrchestratorFactory
+    from pa_agent.monitoring.recovery import reconcile_saved_tasks
     from pa_agent.monitoring.service import MultiAssetAnalysisService
     from pa_agent.monitoring.task_factory import analysis_runtime_fingerprint
+    from pa_agent.records.audit_store import AnalysisAuditStore
     from pa_agent.records.pending_writer import PendingWriter
-    from pa_agent.agent_runtime.production import (
-        CodexProductionConfig,
-        build_codex_backend_factory,
-    )
 
     pending_writer = PendingWriter(
         pending_dir=paths.records_pending_dir,
@@ -327,7 +337,25 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
         codex_backend_factory=codex_backend_factory,
     )
     handler = IndependentAnalysisHandler(orchestrator_factory)
-    scheduler_audit = SchedulerAuditStore(paths.monitoring_audit_db_path)
+    scheduler_audit = SchedulerAuditStore(
+        paths.monitoring_audit_db_path, require_frozen_payload=True,
+    )
+    blocked_ids = set(reconcile_saved_tasks(
+        scheduler_audit, paths.records_pending_dir,
+        AnalysisAuditStore(paths.analysis_audit_db_path),
+    ))
+    try:
+        recovery_tasks = tuple(scheduler_audit.load_incomplete_tasks())
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.error("Frozen monitoring recovery is blocked: %s", exc)
+        recovery_tasks = ()
+        blocked_ids.update(
+            row["task_id"] for row in scheduler_audit.list_unresolved_tasks()
+        )
+    blocked_keys = tuple(
+        row["asset_key"] for row in scheduler_audit.list_unresolved_tasks()
+        if row["task_id"] in blocked_ids
+    )
     paper_execution = PaperExecutionCoordinator(
         paths.paper_trading_db_path,
         settings.paper_trading,
@@ -371,6 +399,8 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
             if codex_config.enabled
             else None
         ),
+        recovery_blocked_asset_keys=blocked_keys,
+        recovery_tasks=recovery_tasks,
     )
 
 

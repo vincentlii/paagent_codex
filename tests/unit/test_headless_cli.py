@@ -4,7 +4,9 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
+from pa_agent.agent_runtime.runtime_audit import RuntimeAuditIssue, RuntimeAuditReport
 from pa_agent.config.paths import resolve_runtime_paths
 from pa_agent.config.settings import MonitoringSettings, Settings, save_settings
 from pa_agent.headless import (
@@ -12,7 +14,7 @@ from pa_agent.headless import (
     main,
     validate_headless_configuration,
 )
-from pa_agent.agent_runtime.runtime_audit import RuntimeAuditIssue, RuntimeAuditReport
+from pa_agent.operations.runtime_state import RuntimeControlStore
 
 
 def test_once_timeout_scales_by_bounded_concurrency_waves() -> None:
@@ -138,6 +140,69 @@ def test_headless_check_reports_missing_assets_secret_and_prompts(tmp_path) -> N
     assert any("API key" in error for error in errors)
     assert any("monitoring asset" in error for error in errors)
     assert any("prompt" in error.lower() for error in errors)
+
+
+def test_headless_check_allows_codex_only_without_direct_key(tmp_path, monkeypatch) -> None:
+    root = Path(__file__).resolve().parents[2]
+    settings = Settings()
+    settings.provider.api_key = ""
+    settings.monitoring = MonitoringSettings(
+        enabled=True,
+        assets=[{"source": "binance_usdm", "symbol": "XAUUSDT", "timeframe": "1h"}],
+    )
+    paths = resolve_runtime_paths(
+        project_root=root,
+        environ={"PA_AGENT_HOME": str(tmp_path / "state")},
+    )
+    RuntimeControlStore(paths.runtime_control_path).set_desired_backend(
+        "codex_only", actor="test"
+    )
+    monkeypatch.setenv("PA_AGENT_CODEX_ENABLED", "1")
+    monkeypatch.setattr(
+        "pa_agent.agent_runtime.production.validate_codex_production_config",
+        lambda *_args, **_kwargs: [],
+    )
+
+    errors = validate_headless_configuration(
+        settings,
+        paths,
+        platform_name="linux",
+        source_factory=lambda _asset: SimpleNamespace(
+            supported_timeframes=lambda: ["1h"]
+        ),
+    )
+
+    assert not any("API key" in error for error in errors)
+    assert not errors
+
+
+def test_headless_check_rejects_codex_only_when_worker_disabled(tmp_path, monkeypatch) -> None:
+    root = Path(__file__).resolve().parents[2]
+    settings = Settings()
+    settings.provider.api_key = ""
+    settings.monitoring = MonitoringSettings(
+        enabled=True,
+        assets=[{"source": "binance_usdm", "symbol": "XAUUSDT", "timeframe": "1h"}],
+    )
+    paths = resolve_runtime_paths(
+        project_root=root,
+        environ={"PA_AGENT_HOME": str(tmp_path / "state")},
+    )
+    RuntimeControlStore(paths.runtime_control_path).set_desired_backend(
+        "codex_only", actor="test"
+    )
+    monkeypatch.delenv("PA_AGENT_CODEX_ENABLED", raising=False)
+
+    errors = validate_headless_configuration(
+        settings,
+        paths,
+        platform_name="linux",
+        source_factory=lambda _asset: SimpleNamespace(
+            supported_timeframes=lambda: ["1h"]
+        ),
+    )
+
+    assert any("Codex backend is disabled" in error for error in errors)
 
 
 def test_headless_check_fails_closed_when_packaged_codex_runtime_audit_fails(

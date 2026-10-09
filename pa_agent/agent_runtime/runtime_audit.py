@@ -20,6 +20,7 @@ _RESOURCE_PATHS = {
     "AGENTS.md": None,
     "config.toml": None,
     "rules/pa-agent.rules": None,
+    "pa_challenger.toml": None,
     "skills/stage1/SKILL.md": "stage1",
     "skills/stage2/SKILL.md": "stage2",
     "skills/joint_stage2/SKILL.md": "joint_stage2",
@@ -69,9 +70,14 @@ _REQUIRED_RULES = {
         "sleep_tool = false",
     ),
     "rules/pa-agent.rules": ("decision = \"forbidden\"", "curl", "git", "ssh"),
+    "pa_challenger.toml": (
+        'name = "pa_challenger"', 'sandbox_mode = "read-only"',
+        'web_search = "disabled"', 'protocol_version = "host_stage_challenge_v1"',
+        'read_challenge_resource',
+    ),
     "skills/stage1/SKILL.md": ("禁止读取或引用 VPA", "不得生成 Setup 订单", "loading_policy=mandatory"),
     "skills/stage2/SKILL.md": ("Brooks Router", "不计算或修改 position size", "loading_policy=mandatory"),
-    "skills/joint_stage2/SKILL.md": ("pa_vpa_stage2_draft_v1", "loading_policy=mandatory", "review_required", "vpa_evidence_refs"),
+    "skills/joint_stage2/SKILL.md": ("pa_vpa_stage2_draft_v1", "loading_policy=mandatory", "Host fail-closed", "vpa_evidence_refs"),
     "skills/vpa_evidence/SKILL.md": ("独立的量价证据", "不创建或翻转 Brooks Setup", "loading_policy=mandatory"),
     "skills/joint_arbiter/SKILL.md": ("research-only", "不创建新 Setup", "不影响正式生产记录"),
     "skills/draft_pointer_repair/SKILL.md": (
@@ -145,6 +151,8 @@ def _resource_documents(root: Path | None = None) -> dict[str, str]:
             result[name] = assets.config_text
         elif name == "rules/pa-agent.rules":
             result[name] = assets.rules_text
+        elif name == "pa_challenger.toml":
+            result[name] = assets.challenger_text
         else:
             result[name] = assets.skill_documents[str(role)]
     return result

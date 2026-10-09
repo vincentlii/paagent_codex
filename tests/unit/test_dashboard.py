@@ -13,7 +13,11 @@ from pa_agent.config.paths import resolve_runtime_paths
 from pa_agent.dashboard import DashboardConfig, build_dashboard_payload, create_server
 from pa_agent.dashboard_page import DASHBOARD_HTML
 from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
-from pa_agent.operations.runtime_state import RuntimeControlStore, RuntimeStatusStore
+from pa_agent.operations.runtime_state import (
+    RuntimeControlStore,
+    RuntimeStatusStore,
+    control_state_to_dict,
+)
 
 
 def _paths(tmp_path):
@@ -112,6 +116,91 @@ def test_dashboard_payload_is_credential_free_and_reports_health(tmp_path) -> No
     assert "raw_manifest_path" not in payload["backend_experiments"]
     assert payload["control"]["applied"] is True
     assert "api_key" not in json.dumps(payload).lower()
+
+
+def test_codex_fast_mode_control_is_versioned_and_not_applied_until_runtime_ack(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    store = RuntimeControlStore(paths.runtime_control_path, now_ms=lambda: 9_000)
+    control = store.set_codex_fast_mode(True, expected_generation=0, actor="dashboard")
+    RuntimeStatusStore(paths.runtime_status_path, now_ms=lambda: 10_000).write(
+        {
+            "service_state": "running",
+            "applied_control_generation": 0,
+            "applied_codex_fast_mode": False,
+            "applied_profile": AnalysisProfile().model_dump(mode="json"),
+            "applied_profile_generation": 0,
+            "applied_profile_fingerprint": profile_fingerprint(AnalysisProfile()),
+            "mode": {"analysis_backend": "codex_only"},
+            "scheduler": {"running": 0, "queued": 0},
+            "assets": [],
+        }
+    )
+    payload = build_dashboard_payload(paths, now_ms=10_500)
+
+    assert control.codex_fast_mode is True
+    assert store.read().codex_fast_mode is True
+    assert payload["control"]["codex_fast_mode"] is True
+    assert payload["runtime"]["applied_codex_fast_mode"] is False
+    assert payload["control"]["applied"] is False
+
+
+def test_fast_mode_control_migrates_old_state_but_rejects_incomplete_current_state(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    store = RuntimeControlStore(paths.runtime_control_path)
+    prior = control_state_to_dict(store.read())
+    prior["schema_version"] = 3
+    prior.pop("codex_fast_mode")
+    paths.runtime_control_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.runtime_control_path.write_text(json.dumps(prior), encoding="utf-8")
+    assert store.read().codex_fast_mode is False
+    prior["schema_version"] = 4
+    paths.runtime_control_path.write_text(json.dumps(prior), encoding="utf-8")
+    assert store.read().error is not None
+
+
+def test_dashboard_fast_mode_endpoint_uses_cas_and_waits_for_runtime_ack(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    RuntimeStatusStore(paths.runtime_status_path).write(
+        {
+            "service_state": "paused",
+            "applied_control_generation": 0,
+            "applied_codex_fast_mode": False,
+            "applied_profile": AnalysisProfile().model_dump(mode="json"),
+            "applied_profile_generation": 0,
+            "applied_profile_fingerprint": profile_fingerprint(AnalysisProfile()),
+            "mode": {"analysis_backend": "codex_only"},
+            "scheduler": {"running": 0, "queued": 0},
+            "assets": [],
+        }
+    )
+    server, thread = _running_server(paths)
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        response, payload = _request(
+            connection, "POST", "/api/fast-mode",
+            json.dumps({"expected_generation": 0, "enabled": True}),
+        )
+        assert response.status == 202
+        assert payload["applied"] is False
+        assert RuntimeControlStore(paths.runtime_control_path).read().codex_fast_mode is True
+        assert build_dashboard_payload(paths)["control"]["applied"] is False
+
+        response, payload = _request(
+            connection, "POST", "/api/fast-mode",
+            json.dumps({"expected_generation": 0, "enabled": False}),
+        )
+        assert response.status == 409
+        assert payload["error"] == "generation_conflict"
+        response, payload = _request(
+            connection, "POST", "/api/fast-mode",
+            json.dumps({"expected_generation": 1, "enabled": "true"}),
+        )
+        assert response.status == 400
+        assert payload["error"] == "invalid_fast_mode_request"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_dashboard_payload_projects_catalog_and_truthful_profile_state(tmp_path) -> None:
@@ -241,6 +330,45 @@ def test_dashboard_accepts_only_bounded_backend_control(tmp_path) -> None:
         )
         assert connection.getresponse().status == 400
         assert RuntimeControlStore(paths.runtime_control_path).read().desired_backend == "auto"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_dashboard_rejects_direct_switch_when_headless_has_no_direct_key(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    RuntimeStatusStore(paths.runtime_status_path).write(
+        {
+            "service_state": "paused",
+            "mode": {
+                "analysis_backend": "codex_only",
+                "analysis_pipeline": "pa_vpa_joint",
+                "direct_available": False,
+            },
+            "scheduler": {},
+            "assets": [],
+        }
+    )
+    control = RuntimeControlStore(paths.runtime_control_path).set_desired_backend(
+        "codex_only", actor="test"
+    )
+    payload = build_dashboard_payload(paths)
+    assert payload["runtime"]["mode"]["analysis_pipeline"] == "pa_vpa_joint"
+    assert payload["runtime"]["mode"]["direct_available"] is False
+
+    server, thread = _running_server(paths)
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/control",
+            json.dumps({"action": "set_backend", "backend": "deepseek_only"}),
+        )
+        assert response.status == 409
+        assert body["error"] == "direct_backend_unavailable"
+        assert RuntimeControlStore(paths.runtime_control_path).read().generation == control.generation
     finally:
         server.shutdown()
         server.server_close()
@@ -561,7 +689,8 @@ def test_dashboard_page_has_fixed_scope_profile_controls_and_safe_rendering() ->
         "XAUUSDT",
         "1h",
         "HTF 4h / 60",
-        "VPA Shadow",
+        "PA + VPA Shadow",
+        'id="analysis-pipeline"',
         'id="deepseek-model"',
         'id="deepseek-thinking"',
         'id="deepseek-effort"',
@@ -571,6 +700,8 @@ def test_dashboard_page_has_fixed_scope_profile_controls_and_safe_rendering() ->
         'id="apply-profile"',
         'id="run-once"',
         "Requested / Effective Model",
+        "Pipeline",
+        "run.analysis_pipeline||'unknown'",
         "Total Latency",
         "Repairs",
         "Outcome",

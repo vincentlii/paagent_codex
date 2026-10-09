@@ -22,11 +22,11 @@ Codex Agentic Analysis 是待验证的分析 Backend，不是新的交易系统�
 | --- | --- |
 | PA Agent | 拥有冻结事实、Snapshot、Evidence allowlist、Provider Draft 链、审计与持久化。 |
 | Brooks | 主分析框架，定义市场背景、周期、Setup 与正式 PA 判断。 |
-| VPA | 仅为独立 Shadow evidence；不能建立 Setup、改变方向、胜率或正式交易结果。 |
+| VPA | 独立 Evidence Analyst 不建立 Setup、方向、订单或胜率。旧 Shadow 的正式结果仍为 PA-only；显式 `pa_vpa_joint` 可由联合 Stage 2 在 Brooks/Router 边界内综合已验收 VPA 报告，自行提出未校准主观先验与正式 Draft，但不得机械改写 PA-only 先验。 |
 | Router / Validator / Risk / Trader Equation / execution | 仍由 PA Agent 的既有链拥有；Router 只读已验证 PA 枚举与 pattern keys，其他角色不得旁路或重写。 |
 | Codex | 只能调查同一 Frozen Snapshot 中、当前 role 被授权的 Evidence，并返回 role draft；不得拥有事实、Router、Validator、Risk、Trader Equation、执行、持久化、下单或改代码权限。 |
 
-AGENTS 固化不可变 authority、no-lookahead、Evidence grounding、阶段协议与停止条件。Role Skills 只编码 Stage 1、Stage 2、VPA、研究 Joint 和 pointer repair 的操作程序；Brooks/VPA 领域知识仍由 PA Agent 按 Context/Router 管理，Skills 不得成为第二份领域知识库。
+AGENTS 固化不可变 authority、no-lookahead、Evidence grounding、阶段协议与停止条件。Role Skills 只编码 Stage 1、普通/联合 Stage 2、VPA、旧研究 Joint Arbiter 和 pointer repair 的操作程序；Brooks/VPA 领域知识仍由 PA Agent 按 Context/Router 管理，Skills 不得成为第二份领域知识库。
 
 ## Frozen Evidence 与角色隔离
 
@@ -34,8 +34,9 @@ AGENTS 固化不可变 authority、no-lookahead、Evidence grounding、阶段协
 
 不同 Frozen Snapshot 使用独立会话。同一 Snapshot 内仅 PA Stage 1 首稿验证通过后允许 PA Stage 2
 受控续接，以保留原版两阶段连续推理并避免重复读取 digest 相同的 PA 基线；Stage 2 权限仍只来自
-已验证 Stage 1 与 Router。VPA、研究 Joint 与 repair 各自使用独立 ephemeral task，只通过冻结的
-结构化 Artifact 交接。按需读取与 delta 基线不会放宽 Snapshot cutoff、角色权限、Schema、事实校验或执行安全。
+已验证 Stage 1 与 Router。VPA、旧研究 Joint Arbiter 与 repair 各自使用独立 ephemeral task；
+新版联合 Stage 2 属于 PA Stage 2 的显式变体，只接收已验收 VPA 报告，不续接 VPA 会话或读取原始
+VPA catalog。按需读取与 delta 基线不会放宽 Snapshot cutoff、角色权限、Schema、事实校验或执行安全。
 
 ## 验证假设，而非追求短 Prompt
 
@@ -55,9 +56,15 @@ Prompt 变短本身不是成功。比较必须在冻结输入、独立运行、c
 
 Dashboard 可以在不暴露凭据的前提下提交 allowlisted、版本化 Analysis Profile，以选择发布目录中的 DeepSeek/Codex model、允许的 thinking/reasoning 组合。Profile 只能在 Headless idle boundary 应用；后续 Snapshot 才可使用新 Profile，已冻结 Job 不得续接或重标。
 
-初版资产、VPA Shadow 和 HTF 固定。Dashboard 不能编辑 Prompt、AGENTS、Skills、Knowledge、Validator、Router、Risk、Paper、API key、Base URL、文件路径或 VPA/Joint 权限；它也不能读取生产数据库或改变交易权限。每次 requested/effective Backend、model、reasoning、Profile fingerprint 与 Runtime asset identity 都必须进入 Frozen Job、record 与 cohort。
+初版资产、旧模式 VPA Shadow 和 HTF 固定。Dashboard 不能编辑 Prompt、AGENTS、Skills、Knowledge、Validator、Router、Risk、Paper、API key、Base URL、文件路径或 VPA/Joint 权限；它也不能读取生产数据库或改变交易权限。每次 requested/effective Backend、model、reasoning、Profile fingerprint 与 Runtime asset identity 都必须进入 Frozen Job、record 与 cohort。
 
 ## 当前边界
+
+Stage 内子协作采用研究协议 `host_stage_challenge_v1`：Host 启动独立 Codex 子进程，
+子角色只查同一 Frozen Job 的有限同域资源并给待核意见；父保持完整 mandatory、专业裁决
+和唯一 Draft。它旨在并行处理一个独立争议，不以删知识、分走父必读或自动改规则换速度。
+2026-09-27 本地真实合成传输通过；真实市场增益、Linux 和生产晋级未通过，详见
+[逐阶段研究计划](../quality/stage_subagent_research_plan.md)。Direct 和默认单 Agent 保持不变。
 
 阶段 5 已在现有 two_stage 内接通显式 pa_vpa_joint：price-only Stage 1 / Router → VPA →
 联合 Stage 2 / 原物化器与校验。没有先出 PA baseline 再改单，typed stop 禁止伪装 No Trade。

@@ -44,6 +44,11 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
   fingerprint；三者必须同源，并进入 record/cohort 身份。
 - `AnalysisRoleBackend`：Stage 1、Stage 2、VPA 与研究 Joint 的模型分析 seam；Adapter 只能返回
   Provider Draft 和运行审计，不能拥有 materializer、Router、Validator、Risk 或持久化。
+- `StageChallengeHost`：研究专用 `host_stage_challenge_v1`；父角色读完 mandatory 后，Host
+  为同一 Frozen Job 启动至多一个独立 Codex 子进程，子角色只能从父提供、Host 校验的
+  有限索引中读取同域原值。子意见是待核解释，不是 Draft、交易授权或新事实；父继续独立
+  分析并裁决。父子预算/审计独立，失败和已报告用量保留，不能借子读取抵扣父必读。
+  原生 CLI spawn 不使用；Direct/default off 不受影响。验收范围见 `docs/quality/stage_subagent_research_plan.md`。
 - `FrozenAgentJob`：绑定同一 Snapshot cutoff、role、attempt、contract、knowledge、AGENTS、Skills、
   model 和预算 digest 的不可变 Codex 任务。不同 Snapshot 不得共享会话；同一 Snapshot 内只有
   已通过首稿校验的 PA Stage 1 可受控续接 PA Stage 2。VPA、Joint 与 repair 始终独立。
@@ -146,8 +151,11 @@ Codex 输出仍先进入现有 Provider Draft/materializer/Validator 链。
 - 持续 A/A/B/B 只从已落盘生产 Shadow record 抽样，独立于生产 Headless 调度；
   `completed_with_warnings` 不因 VPA 先验失败而被筛掉。四臂完成后若研究 Paper 暂时失败，
   只重放四条已验证 record，不重新调用模型。
-- PA `estimated_win_rate` 是未校准的 Setup 主观先验，仍参与 Brooks Trader Equation；
-  不得称为历史统计。VPA、固定外部阈值与单次样本不得修改它或新增概率 Gate。
+- 旧 PA-only Stage 2 的 `estimated_win_rate` 是未校准的 PA Setup 主观先验，仍参与 Brooks
+  Trader Equation；不得称为历史统计。独立 VPA、Shadow 与研究 Joint patch 不得修改这个
+  PA-only 字段，也不得用固定外部阈值或单次样本新增概率 Gate。显式 `pa_vpa_joint` 的联合
+  Stage 2 可以在已验证 PA/Router 边界内综合已验收 VPA 报告，形成自己的未校准主观先验；
+  它不是在 PA-only 先验上机械加减 VPA 分数，VPA 独立角色也不输出概率。
 - 教材概率只允许对竞争假设作定性排序。没有同品种、同周期、同数据源、同执行协议的
   calibration 标识时，LLM 不得复制通用频率或由盈亏平衡点反推当前胜率。
 

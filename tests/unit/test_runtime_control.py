@@ -6,8 +6,8 @@ import pytest
 
 from pa_agent.operations.analysis_profile import AnalysisProfile
 from pa_agent.operations.runtime_state import (
-    RuntimeControlState,
     RuntimeControlConflict,
+    RuntimeControlState,
     RuntimeControlStore,
     RuntimeStatusStore,
     control_state_to_dict,
@@ -20,7 +20,8 @@ def test_control_store_persists_pause_and_resume_atomically(tmp_path) -> None:
 
     assert store.read().desired_state == "running"
     assert store.read().desired_backend == "deepseek_only"
-    assert store.read().schema_version == 3
+    assert store.read().schema_version == 4
+    assert store.read().codex_fast_mode is False
     assert store.read().analysis_profile == AnalysisProfile()
     assert store.read().run_once_generation == 0
 
@@ -81,7 +82,8 @@ def test_v1_control_migrates_to_direct_and_invalid_backend_fails_closed(tmp_path
     migrated = store.read()
     assert migrated.desired_backend == "deepseek_only"
     assert migrated.generation == 3
-    assert migrated.schema_version == 3
+    assert migrated.schema_version == 4
+    assert migrated.codex_fast_mode is False
     assert migrated.analysis_profile == AnalysisProfile()
 
     path.write_text(

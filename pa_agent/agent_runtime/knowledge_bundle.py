@@ -18,8 +18,12 @@ def build_knowledge_bundle(
     prompt_dir: Path,
     knowledge_ids: Iterable[str],
     role: str,
+    joint_stage2: bool = False,
+    layered_stage2_research: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load only selected documents and publish searchable immutable sections."""
+    if layered_stage2_research and (role != "stage2" or not joint_stage2):
+        raise ValueError("layered knowledge is limited to joint Stage 2 research")
     modules: dict[str, Any] = {}
     manifest_entries: list[dict[str, Any]] = []
     root = Path(prompt_dir).resolve()
@@ -38,10 +42,26 @@ def build_knowledge_bundle(
             role=role,
             module_id=raw_id,
             text=source_text,
+            joint_stage2=joint_stage2,
         )
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         source_digest = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
         sections = _split_sections(raw_id, text)
+        research_candidate = layered_stage2_research and (
+            raw_id.endswith("交易策略.txt")
+            or raw_id in {"文件13-窄通道与宽通道策略.txt", "文件15-二次入场机会.txt"}
+        )
+        # Keep recognition documents and universal rules complete. For the
+        # research-only strategy candidates, front-load the opening principles
+        # and every explicitly headed exception; the rest remains frozen and
+        # available by exact section ID. No production Job uses this branch.
+        baseline_section_ids = [
+            section["section_id"] for index, section in enumerate(sections)
+            if index < 3 or any(term in section["title"] for term in (
+                "例外", "陷阱", "反证", "风险", "禁止", "失败", "局限",
+            ))
+        ] if research_candidate else []
+        layered = research_candidate and len(baseline_section_ids) < len(sections)
         framework = "vpa" if raw_id.startswith("wyckoff_vpa/") else "brooks"
         modules[raw_id] = {
             "knowledge_module_id": raw_id,
@@ -58,14 +78,19 @@ def build_knowledge_bundle(
                 # Brooks Router.  In the semantic-parity release every selected
                 # module is mandatory; later experiments may demote modules to
                 # on-demand only after non-inferiority is demonstrated.
-                "loading_policy": "mandatory",
+                "loading_policy": "on_demand" if layered else "mandatory",
+                **({"baseline_section_ids": baseline_section_ids} if layered else {}),
                 "load_order": load_order,
                 "context_tags": _context_tags(raw_id),
                 "version": digest[:16],
                 "sha256": digest,
                 "source_sha256": source_digest,
                 "content_bytes": len(text.encode("utf-8")),
-                "selection_profile": f"{role}_semantic_parity_v1",
+                "selection_profile": (
+                    "layered_stage2_research_v1" if layered_stage2_research
+                    else "joint_stage2_semantic_parity_v1" if joint_stage2
+                    else f"{role}_semantic_parity_v1"
+                ),
                 "source_note": raw_id,
                 "section_ids": [item["section_id"] for item in sections],
             }

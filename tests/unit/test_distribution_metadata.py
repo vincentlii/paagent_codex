@@ -18,7 +18,9 @@ def test_prompt_knowledge_is_declared_as_wheel_package_data() -> None:
     assert any(requirement.startswith("setuptools>=77") for requirement in build_requirements)
     assert "prompt_engineering*" in package_find["include"]
     assert set(package_data["prompt_engineering"]) == {"**/*.txt", "**/*.md"}
-    assert set(package_data["pa_agent.agent_runtime"]) == {"assets/**/*.md"}
+    assert set(package_data["pa_agent.agent_runtime"]) == {
+        "assets/**/*.md", "assets/**/*.toml", "assets/**/*.rules"
+    }
     assert (root / "prompt_engineering" / "__init__.py").is_file()
 
 

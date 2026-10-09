@@ -28,6 +28,25 @@ from tests.fixtures.ai_payloads import VALID_STAGE2_NO_ORDER
 from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
 
 
+@pytest.mark.parametrize("hypothesis_path", ["primary", "alternatives"])
+def test_unknown_hypothesis_reference_reports_original_draft_pointer(hypothesis_path) -> None:
+    draft = _stage1_draft()
+    hypothesis = draft["market_hypotheses"][hypothesis_path]
+    path = f"market_hypotheses.{hypothesis_path}"
+    if isinstance(hypothesis, list):
+        hypothesis = hypothesis[0]
+        path += ".0"
+    hypothesis["supporting_fact_refs"] = ["PA.NOT_REAL"]
+    result = JsonValidator().validate(
+        "stage1", json.dumps(draft), kline_frame=make_frame(),
+    )
+    assert isinstance(result, ValidationError)
+    assert f"{path}.supporting_fact_refs.0" in result.invalid_fields
+    assert "pa_evidence.fact_refs" not in result.invalid_fields
+    assert any(issue["pointer"] == "/" + path.replace(".", "/") + "/supporting_fact_refs/0"
+               for issue in result.contract_issues)
+
+
 def test_provider_draft_schema_interface_is_isolated_and_stable() -> None:
     stage1 = schema_for_provider_draft("stage1")
     stage2 = schema_for_provider_draft("stage2")

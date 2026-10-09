@@ -1,6 +1,9 @@
 # PA Agent × Wyckoff VPA 融合架构
 
-本文是当前 PA/VPA 链路的长期事实来源。代码、测试与本文冲突时，先核对实际实现并同步修正文档，不保留旧实现作为兼容叙述。
+本文是旧 `vpa_mode` off/shadow 与研究 Joint 的长期事实来源。显式
+`analysis_pipeline_v1:pa_vpa_joint` 的新版联合 Stage 2 权限及顺序以
+[ADR-0025](architecture/ADR-0025-joint-stage2-pipeline.md) 为准；两条协议不得混写。
+代码、测试与本文冲突时，先核对实际实现并同步修正文档。
 
 ## 1. 目标与边界
 
@@ -13,7 +16,7 @@
 - VPA 不是第二套交易系统、第二个 Strategy Router 或机械 Gate。
 - Brooks Router 始终是唯一策略路由，只读取已验证的 Stage 1 枚举与 pattern keys。
 - 程序不机械识别 Spring、UT/UTAD、SOS/SOW、LPS/LPSY、Absorption 或 Exhaustion。
-- 生产只允许 `off` 与 `shadow`；`soft`/Joint 仅存在于隔离的 A/A/B/B 研究 B 臂。
+- 旧 `vpa_mode` 生产只允许 `off` 与 `shadow`；旧 `soft`/Joint Arbiter 仅存在于隔离的 A/A/B/B 研究 B 臂。显式新版 `pa_vpa_joint` 是不同的 opt-in pipeline，尚须单独验收和晋级。
 - VPA 关闭时，Prompt、测量、Schema 要求和历史 VPA 字段都不得进入原 PA 链路。
 
 ## 2. 职责分配

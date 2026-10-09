@@ -7,11 +7,15 @@ import json
 import math
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Callable, Mapping
 
-from pa_agent.agent_runtime.frozen_job import FrozenAgentJob
-from pa_agent.agent_runtime.execution_contract import ANALYSIS_EXECUTION_POLICY, skill_key
+from pa_agent.agent_runtime.frozen_job import AgentJobBudget, FrozenAgentJob
+from pa_agent.agent_runtime.execution_contract import (
+    ANALYSIS_EXECUTION_POLICY, INLINE_MANDATORY_KNOWLEDGE_POLICY,
+    LAYERED_STAGE2_RESEARCH_POLICY,
+    skill_key, stage2_host_gated_draft,
+)
 from pa_agent.agent_runtime.execution_contract import BOUNDED_CONTEXT_POLICY
 from pa_agent.ai.token_counter import estimate_tokens
 
@@ -25,6 +29,11 @@ REPAIR_OPERATIONS = frozenset({
     "get_repair_findings", "get_facts", "get_pa_evidence", "get_htf_evidence",
     "get_vpa_evidence", "read_allowed_knowledge",
 })
+CHILD_PA_OPERATIONS = frozenset({
+    "get_bars", "get_pa_evidence", "get_htf_evidence", "read_allowed_knowledge",
+    "measure_price_window", "project_price_leg",
+})
+CHILD_VPA_OPERATIONS = frozenset({"get_vpa_evidence", "read_allowed_knowledge"})
 
 
 class EvidenceAccessDenied(RuntimeError):
@@ -49,13 +58,17 @@ class EvidenceAuditEvent:
     reason: str | None = None
     measurement: dict[str, Any] | None = None
     completed_at_epoch_ms: int = 0
+    actor: str = "parent"
+    baseline_assembled: bool = False
 
 
 class FrozenEvidenceGateway:
     """Serve frozen evidence and bounded arithmetic, never classify signals."""
 
-    def __init__(self, job: FrozenAgentJob) -> None:
+    def __init__(self, job: FrozenAgentJob, *, child_budget: AgentJobBudget | None = None) -> None:
         self._job = job
+        self._budget = child_budget or job.budget
+        self._actor = "child" if child_budget is not None else "parent"
         self._facts = {
             str(item["fact_id"]): dict(item)
             for item in job.fact_projection.get("facts", [])
@@ -73,6 +86,12 @@ class FrozenEvidenceGateway:
     @property
     def audit_events(self) -> tuple[EvidenceAuditEvent, ...]:
         return tuple(self._audit)
+
+    def mark_baseline_assembled(self) -> None:
+        """Record final transport assembly without charging a second evidence read."""
+        if not self._audit or self._audit[-1].status != "ok":
+            raise EvidenceAccessDenied("role baseline has no completed resources")
+        self._audit[-1] = replace(self._audit[-1], baseline_assembled=True)
 
     @property
     def frozen_job(self) -> FrozenAgentJob:
@@ -105,6 +124,11 @@ class FrozenEvidenceGateway:
 
     def available_tool_names(self) -> list[str]:
         """Discovery mirrors existing gateway restrictions, not a second authority."""
+        if self._actor == "child":
+            if self._job.repair_findings:
+                return []
+            return sorted(CHILD_VPA_OPERATIONS if self._job.manifest.role == "vpa_evidence"
+                          else CHILD_PA_OPERATIONS if self._job.manifest.role in {"stage1", "stage2"} else ())
         names = set(REPAIR_OPERATIONS) if self._job.repair_findings else {
             "get_role_baseline", "get_job_manifest", "get_market_core",
             "list_allowed_knowledge", "read_knowledge_module", "get_upstream_artifact",
@@ -131,6 +155,13 @@ class FrozenEvidenceGateway:
         if not self._job.repair_findings and identity.get("investigation_policy") == "fixed":
             names.difference_update(OPTIONAL_INVESTIGATION_OPERATIONS)
         return sorted(names)
+
+    def deny_tool_call(self, operation: str, request: dict[str, Any]) -> None:
+        """Account for a transport-level denied call without executing a resolver."""
+        call_index = self._calls_used + 1
+        if call_index <= self._budget.max_evidence_calls:
+            self._calls_used = call_index
+        self._deny(call_index, operation, request, "tool_not_available")
 
     def get_stage1_decision_packet(self) -> dict[str, Any]:
         """Return the publisher-frozen packet; never rebuild it at read time."""
@@ -171,6 +202,210 @@ class FrozenEvidenceGateway:
             "measurement_note": "Existing bar measurements are in price_frame. measure_price_window/project_price_leg compute only explicitly requested frozen anchors; their receipts are not catalog IDs.",
         }
 
+    def stage2_handoff_receipt(self, resources: list[dict[str, Any]]) -> dict[str, Any]:
+        """Locate, and verify the presence of, the actual delivered handoff."""
+        if self._job.manifest.role != "stage2":
+            raise EvidenceAccessDenied("Stage 2 handoff is available only to Stage 2")
+        by_operation = {
+            resource["operation"]: (index, resource["payload"])
+            for index, resource in enumerate(resources)
+        }
+        try:
+            core_index, core_payload = by_operation["get_market_core"]
+            upstream_index, upstream_payload = by_operation["get_upstream_artifact"]
+            core = core_payload["core_context"]
+            upstream = upstream_payload["upstream_artifact"]
+            schema = core["provider_output_schema"]
+            protocol = core["role_protocol"]
+            if not isinstance(schema, dict) or not isinstance(protocol, dict):
+                raise KeyError("provider_output_schema or role_protocol")
+            role_skill = core.get("role_skill")
+            expected_skill = self._job.runtime["skills"][skill_key("stage2", self._core_context)]
+            if not isinstance(role_skill, str) or role_skill != expected_skill:
+                raise KeyError("frozen Stage 2 role skill")
+            if not isinstance(upstream["stage1_diagnosis"], dict):
+                raise KeyError("stage1_diagnosis")
+            if not isinstance(upstream["router_manifest"], (list, dict)):
+                raise KeyError("router_manifest")
+            schema_digest = hashlib.sha256(json.dumps(
+                schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            ).encode("utf-8")).hexdigest()
+            expected_digest = protocol.get("provider_contract_digest")
+            if expected_digest and schema_digest != expected_digest:
+                raise KeyError("provider contract digest mismatch")
+            locations = {
+                "provider_contract": f"resources[{core_index}].payload.core_context.provider_output_schema",
+                "role_protocol": f"resources[{core_index}].payload.core_context.role_protocol",
+                "role_skill": f"resources[{core_index}].payload.core_context.role_skill",
+                "validated_stage1": f"resources[{upstream_index}].payload.upstream_artifact.stage1_diagnosis",
+                "brooks_router": f"resources[{upstream_index}].payload.upstream_artifact.router_manifest",
+            }
+            mandatory_ids = [
+                item["knowledge_module_id"]
+                for item in self._job.knowledge_manifest.get("modules", [])
+                if item.get("loading_policy") == "mandatory"
+            ]
+            inherited_ids = set((self.pa_continuation or {}).get("inherited_knowledge_ids") or [])
+            delivered = {
+                resource["arguments"]["knowledge_id"]: (index, resource["payload"])
+                for index, resource in enumerate(resources)
+                if resource["operation"] == "read_knowledge_module"
+            }
+            if (inherited_ids - set(mandatory_ids)
+                    or set(delivered) - set(mandatory_ids)
+                    or inherited_ids & set(delivered)
+                    or set(mandatory_ids) != inherited_ids | set(delivered)):
+                raise KeyError("mandatory knowledge delivery partition")
+            knowledge_sources = []
+            for module_id in mandatory_ids:
+                if module_id in inherited_ids:
+                    knowledge_sources.append({
+                        "knowledge_module_id": module_id,
+                        "source": "verified_stage1_continuation",
+                    })
+                    continue
+                index, payload = delivered[module_id]
+                expected_sections = self._knowledge_sections(
+                    module_id, self._job.knowledge_documents[module_id],
+                )
+                if (payload.get("knowledge_module_id") != module_id
+                        or payload.get("sections") != expected_sections):
+                    raise KeyError(f"mandatory knowledge content: {module_id}")
+                knowledge_sources.append({
+                    "knowledge_module_id": module_id,
+                    "source": "current_baseline",
+                    "location": f"resources[{index}].payload.sections",
+                })
+            baseline_sections = []
+            if self._core_context.get("knowledge_delivery_policy") == LAYERED_STAGE2_RESEARCH_POLICY:
+                expected_spines = {
+                    item["knowledge_module_id"]: list(item["baseline_section_ids"])
+                    for item in self._job.knowledge_manifest.get("modules", [])
+                    if item.get("loading_policy") == "on_demand"
+                }
+                delivered_spines = {
+                    resource["arguments"]["knowledge_id"]: (index, resource)
+                    for index, resource in enumerate(resources)
+                    if resource["operation"] == "read_allowed_knowledge"
+                }
+                if set(expected_spines) != set(delivered_spines):
+                    raise KeyError("layered baseline section delivery partition")
+                for module_id, section_ids in expected_spines.items():
+                    index, resource = delivered_spines[module_id]
+                    if resource["arguments"].get("section_ids") != section_ids:
+                        raise KeyError(f"layered baseline section order: {module_id}")
+                    expected = {item["section_id"]: item for item in self._knowledge_sections(
+                        module_id, self._job.knowledge_documents[module_id],
+                    )}
+                    if resource["payload"].get("sections") != [expected[key] for key in section_ids]:
+                        raise KeyError(f"layered baseline section content: {module_id}")
+                    baseline_sections.append({
+                        "knowledge_module_id": module_id,
+                        "section_ids": section_ids,
+                        "location": f"resources[{index}].payload.sections",
+                    })
+            continuation = self.pa_continuation or {}
+            price_locations = [
+                f"resources[{index}].payload.price_frame"
+                for index, resource in enumerate(resources)
+                if resource["operation"] == "get_price_frame"
+            ]
+            htf_locations = [
+                f"resources[{index}].payload.facts"
+                for index, resource in enumerate(resources)
+                if resource["operation"] == "get_htf_evidence"
+            ]
+            if ((continuation.get("inherited_price_frame") and price_locations)
+                    or (continuation.get("inherited_higher_timeframe") and htf_locations)
+                    or (not continuation.get("inherited_price_frame") and not price_locations)):
+                raise KeyError("price or HTF delivery partition")
+            expected_htf = (self._core_context.get("higher_timeframe") or {}).get("evidence") or []
+            if expected_htf and not continuation.get("inherited_higher_timeframe") and not htf_locations:
+                raise KeyError("HTF delivery partition")
+            experience_locations = [
+                f"resources[{index}].payload.experience_entries"
+                for index, resource in enumerate(resources)
+                if resource["operation"] == "get_experience_entries"
+            ]
+            expected_experience = self._core_context.get("experience_entries") or []
+            if bool(experience_locations) != bool(expected_experience):
+                raise KeyError("experience delivery partition")
+            if skill_key("stage2", self._core_context) == "joint_stage2":
+                from pa_agent.ai.role_contracts import VpaEvidenceReport
+
+                report = upstream["vpa_evidence"]
+                required = {
+                    "catalog_id", "data_status", "background_relation",
+                    "entry_timing_relation", "observations", "hypothesis_assessments",
+                    "next_confirmation", "summary",
+                }
+                if not isinstance(report, dict) or not required.issubset(report):
+                    raise KeyError("validated VPA report fields")
+                validated_report = VpaEvidenceReport.model_validate(report)
+                if not isinstance(upstream["pa_hypotheses"], dict):
+                    raise KeyError("pa_hypotheses")
+                if (stage2_host_gated_draft(self._job)
+                        and (not core.get("vpa_catalog_id")
+                             or validated_report.catalog_id != core["vpa_catalog_id"])):
+                    raise KeyError("validated VPA report catalog identity")
+                locations["validated_vpa_report"] = (
+                    f"resources[{upstream_index}].payload.upstream_artifact.vpa_evidence"
+                )
+                locations["pa_hypotheses"] = (
+                    f"resources[{upstream_index}].payload.upstream_artifact.pa_hypotheses"
+                )
+                lineage = core.get("pa_handoff_lineage")
+                if lineage is not None and (
+                    not isinstance(lineage, dict)
+                    or lineage.get("verified_stage1_projection") is not True
+                    or lineage.get("source_digest_scope") != "canonical_pa_hypotheses_payload"
+                ):
+                    raise KeyError("PA hypothesis lineage verification")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EvidenceAccessDenied(f"frozen Stage 2 handoff is incomplete: {exc}") from exc
+        receipt = {
+            "protocol_version": "stage2_handoff_receipt_v1",
+            "required_handoff_fields_present": True,
+            "provider_contract_digest": schema_digest,
+            "locations": locations,
+            "mandatory_knowledge_sources": knowledge_sources,
+            "read_plan_complete": True,
+            "resource_count": len(resources),
+            "terminal_resource": {
+                "operation": resources[-1]["operation"],
+                "knowledge_id": resources[-1]["arguments"].get("knowledge_id"),
+            },
+            "market_context_sources": {
+                "price_frame": {
+                    "source": "verified_stage1_continuation"
+                    if continuation.get("inherited_price_frame") else "current_baseline",
+                    "locations": price_locations,
+                },
+                "higher_timeframe": {
+                    "source": "verified_stage1_continuation"
+                    if continuation.get("inherited_higher_timeframe") else "current_baseline",
+                    "locations": htf_locations,
+                },
+            },
+            "experience_entries": {
+                "count": len(expected_experience),
+                "locations": experience_locations,
+            },
+            "note": "Frozen handoff and mandatory knowledge delivery are verified; model comprehension and trade validity have separate checks.",
+        }
+        if skill_key("stage2", self._core_context) == "joint_stage2" and lineage is not None:
+            receipt["pa_hypotheses_lineage"] = lineage
+        if baseline_sections:
+            receipt["layered_research_baseline_sections"] = baseline_sections
+        if skill_key("stage2", self._core_context) == "joint_stage2":
+            receipt["accepted_vpa_report"] = {
+                "catalog_id": validated_report.catalog_id,
+                "citable_evidence_ids": sorted(validated_report.evidence_ids),
+                "citation_scope": "validated_report_only",
+                "raw_catalog_access": False,
+            }
+        return receipt
+
     def list_fact_ids(self, *, prefix: str = "", limit: int = 100) -> list[str]:
         requested_limit = max(1, min(int(limit), 500))
         return self._query(
@@ -198,7 +433,10 @@ class FrozenEvidenceGateway:
         ]
         if role in {"stage2", "vpa_evidence", "joint_arbiter"} or self._core_context.get("previous_analysis"):
             plan.append(("get_upstream_artifact", {}))
-        plan.append(("list_allowed_knowledge", {}))
+        if self._core_context.get("knowledge_delivery_policy") not in {
+            INLINE_MANDATORY_KNOWLEDGE_POLICY, LAYERED_STAGE2_RESEARCH_POLICY,
+        }:
+            plan.append(("list_allowed_knowledge", {}))
         continuation = self.pa_continuation if role == "stage2" else {}
         inherited_knowledge = set(continuation.get("inherited_knowledge_ids") or [])
         modules = self._job.knowledge_manifest.get("modules", [])
@@ -209,6 +447,15 @@ class FrozenEvidenceGateway:
             if module.get("knowledge_module_id") in inherited_knowledge:
                 continue
             plan.append(("read_knowledge_module", {"knowledge_id": module["knowledge_module_id"]}))
+        if role == "stage2" and self._core_context.get("knowledge_delivery_policy") == LAYERED_STAGE2_RESEARCH_POLICY:
+            for module in sorted(
+                (item for item in modules if item.get("loading_policy") == "on_demand"),
+                key=lambda item: int(item.get("load_order") or 0),
+            ):
+                plan.append(("read_allowed_knowledge", {
+                    "knowledge_id": module["knowledge_module_id"],
+                    "section_ids": list(module["baseline_section_ids"]),
+                }))
         if role in {"stage1", "stage2"}:
             if not continuation.get("inherited_price_frame"):
                 for newer in range(1, len(self._bars) + 1, PRICE_FRAME_CHUNK_SIZE):
@@ -246,9 +493,11 @@ class FrozenEvidenceGateway:
         }
         def resolve() -> dict[str, Any]:
             core = {key: value for key, value in self._core_context.items() if key not in excluded}
-            if (self._job.runtime.get("backend_runtime_identity") or {}).get("provider") == "deepseek_codex_responses":
-                # Provider cannot enforce object unions; deliver the unchanged,
-                # digest-bound Draft schema as evidence, never as a giant prompt.
+            if (self._job.runtime.get("backend_runtime_identity") or {}).get("provider") == "deepseek_codex_responses" or (
+                self.analysis_execution_enabled and self._job.manifest.role == "stage2"
+            ):
+                # Stage 2's exact Draft contract is a first-class frozen field.
+                # Codex also enforces its transport schema; Direct is unaffected.
                 core["provider_output_schema"] = dict(self._job.output_schema)
             if self.analysis_execution_enabled or (self._job.runtime.get("backend_runtime_identity") or {}).get("provider") == "deepseek_codex_responses":
                 selected = skill_key(self._job.manifest.role, self._core_context)
@@ -384,22 +633,28 @@ class FrozenEvidenceGateway:
 
     def get_vpa_evidence(self, evidence_ids: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
         ids = tuple(dict.fromkeys(str(item) for item in evidence_ids))
+        return self._query("get_vpa_evidence", {"evidence_ids": list(ids)}, lambda: self._vpa_rows(ids))
 
-        def resolve() -> list[dict[str, Any]]:
-            role_evidence = self._job.fact_projection.get("role_evidence") or {}
-            catalog = role_evidence if isinstance(role_evidence, dict) else {}
-            available = {
-                str(item.get("evidence_id")): dict(item)
-                for item in catalog.get("evidence", [])
-                if isinstance(item, dict) and item.get("evidence_id")
-            }
-            hidden = next((item for item in ids if item not in available), None)
-            if hidden is not None:
-                raise EvidenceAccessDenied(
-                    f"VPA evidence is outside role snapshot: {hidden}"
-                )
-            return [available[item] for item in ids]
+    def _vpa_rows(self, ids: tuple[str, ...]) -> list[dict[str, Any]]:
+        catalog = self._job.fact_projection.get("role_evidence") or {}
+        available = {str(item.get("evidence_id")): dict(item) for item in catalog.get("evidence", [])
+                     if isinstance(item, dict) and item.get("evidence_id")}
+        hidden = next((item for item in ids if item not in available), None)
+        if hidden is not None:
+            raise EvidenceAccessDenied(f"VPA evidence is outside role snapshot: {hidden}")
+        return [available[item] for item in ids]
 
+    def get_vpa_evidence_payload(self, evidence_ids: tuple[str, ...]) -> dict[str, Any]:
+        if self._actor != "child":
+            return {"evidence": self.get_vpa_evidence(evidence_ids)}
+        ids = tuple(dict.fromkeys(evidence_ids))
+        def resolve() -> dict[str, Any]:
+            catalog = self._job.fact_projection.get("role_evidence") or {}
+            # Meaning of volume is indispensable, but the whole catalog is not.
+            # Include this frozen context before byte accounting, not afterward.
+            context = {key: catalog.get(key) for key in
+                       ("catalog_id", "data_status", "provenance", "capabilities")}
+            return {"evidence": self._vpa_rows(ids), "catalog_context": context}
         return self._query("get_vpa_evidence", {"evidence_ids": list(ids)}, resolve)
 
     def get_facts(self, fact_ids: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
@@ -424,6 +679,11 @@ class FrozenEvidenceGateway:
             bars = [dict(self._bars[seq]) for seq in requested]
             if any(int(bar.get("ts_open", 0)) > self._job.manifest.cutoff_ts_open for bar in bars):
                 raise EvidenceAccessDenied("bar range crosses frozen snapshot cutoff")
+            if self._actor == "child":
+                for bar in bars:
+                    fact_id = f"PA.BAR.K{bar['seq']}"
+                    if fact_id in self._facts:
+                        bar["fact_id"] = fact_id
             return bars
 
         return self._query(
@@ -578,6 +838,14 @@ class FrozenEvidenceGateway:
                   "snapshot_identity": self.snapshot_identity,
                   "operation": operation, "request": request, "values": values,
                   "source_bar_refs": [f"K{seq}" for seq in dict.fromkeys(seqs)]}
+        if self._actor == "child":
+            # Deliver anchor values, not just references, within the same hashed
+            # and byte-metered receipt. The parent's measurement API is unchanged.
+            result["source_bars"] = [
+                {**self._bars[seq], **({"fact_id": f"PA.BAR.K{seq}"}
+                 if f"PA.BAR.K{seq}" in self._facts else {})}
+                for seq in dict.fromkeys(seqs)
+            ]
         encoded = json.dumps(result, sort_keys=True, allow_nan=False, separators=(",", ":")).encode()
         result["measurement_digest"] = hashlib.sha256(encoded).hexdigest()
         return result
@@ -639,11 +907,13 @@ class FrozenEvidenceGateway:
     ) -> Any:
         call_index = self._calls_used + 1
         started = time.perf_counter()
-        if call_index > self._job.budget.max_evidence_calls:
+        if call_index > self._budget.max_evidence_calls:
             self._deny(call_index, operation, request, "call_budget_exceeded")
             raise EvidenceBudgetExceeded("evidence call budget exceeded")
         self._calls_used = call_index
         try:
+            if self._actor == "child" and operation not in self.available_tool_names():
+                raise EvidenceAccessDenied("operation is outside delegated evidence scope")
             investigation = str(
                 (self._job.runtime.get("backend_runtime_identity") or {}).get(
                     "investigation_policy", "agentic"
@@ -660,6 +930,7 @@ class FrozenEvidenceGateway:
             if (
                 self._core_context.get("context_policy") == BOUNDED_CONTEXT_POLICY
                 and self._job.manifest.role == "stage1"
+                and self._actor == "parent"
                 and operation in OPTIONAL_INVESTIGATION_OPERATIONS
             ):
                 self._optional_calls_used += 1
@@ -683,10 +954,10 @@ class FrozenEvidenceGateway:
             sort_keys=True,
         )
         response_bytes = len(response_text.encode("utf-8"))
-        if response_bytes > self._job.budget.max_evidence_response_bytes:
+        if response_bytes > self._budget.max_evidence_response_bytes:
             self._deny(call_index, operation, request, "response_budget_exceeded")
             raise EvidenceBudgetExceeded("single evidence response exceeds byte budget")
-        if self._bytes_used + response_bytes > self._job.budget.max_evidence_bytes:
+        if self._bytes_used + response_bytes > self._budget.max_evidence_bytes:
             self._deny(call_index, operation, request, "byte_budget_exceeded")
             raise EvidenceBudgetExceeded("evidence byte budget exceeded")
         self._bytes_used += response_bytes
@@ -703,6 +974,7 @@ class FrozenEvidenceGateway:
                 evidence_ids=self._evidence_ids(response),
                 measurement=(dict(response) if isinstance(response, dict) and response.get("measurement_digest") else None),
                 completed_at_epoch_ms=int(time.time() * 1000),
+                actor=self._actor,
             )
         )
         return response
@@ -725,6 +997,7 @@ class FrozenEvidenceGateway:
                 snapshot_hash=self._job.manifest.snapshot_hash,
                 reason=reason,
                 completed_at_epoch_ms=int(time.time() * 1000),
+                actor=self._actor,
             )
         )
 
@@ -760,6 +1033,13 @@ class FrozenEvidenceGateway:
 
         def visit(value: Any) -> None:
             if isinstance(value, dict):
+                columns = value.get("columns")
+                rows = value.get("rows")
+                if isinstance(columns, list) and "fact_id" in columns and isinstance(rows, list):
+                    index = columns.index("fact_id")
+                    for row in rows:
+                        if isinstance(row, list) and len(row) > index:
+                            found.add(str(row[index]))
                 for key, child in value.items():
                     if key in {"fact_id", "evidence_id", "section_id"}:
                         found.add(str(child))

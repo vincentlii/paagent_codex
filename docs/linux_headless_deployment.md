@@ -77,6 +77,50 @@ PA_AGENT_BASE_URL=https://api.deepseek.com
 
 ### 3.1 可选 Codex Analysis Backend
 
+仅使用 ChatGPT 套餐的联合分析 Paper 候选与下方旧 DeepSeek/Shadow 流程互斥，不能把
+`codex_only` 误写成 `auto`：
+
+- 新配置样例是 `config/settings.vps.codex-joint.example.json`，显式固定
+  `analysis_pipeline_v1:pa_vpa_joint`、单一 XAUUSDT/1h、HTF 4h、VPA 和 Paper。
+  旧 `settings.vps.example.json` 不变；安装器不会覆盖已有 `settings.json`。
+  样例的 900 秒是完整调用的运维等待上限，不是性能合格线；正式质量晋级仍以
+  `config/quality_contract.toml` 的完整运行 p95 300 秒及 250k token p95 为准。
+  2026-10-09 用户仅对**受控持续 Paper 观察**豁免性能阻断，不豁免事实、权限、恢复、
+  数据或 Paper 对账门禁；该试运行不能称为质量晋级或收益证明。
+- 独立 Worker 环境样例是 `deploy/systemd/pa-agent-codex-joint.env.example`，固定
+  `gpt-6-luna/xhigh`。先确认目标 CLI/账号实际支持该组合；不降强度或换模型冒充同一 cohort。
+- 新部署必须先备份原配置与控制状态，保持 `paused`，再将 Codex-only 样例作为本次
+  `settings.json`。通过 `RuntimeControlStore` 设 `desired_backend=codex_only`，并将
+  `AnalysisProfile(codex_model="gpt-6-luna", codex_reasoning_effort="xhigh")`
+  设为目标 profile；确认 generation 已在 Headless idle 边界应用。
+- 安装器只创建 paused 控制状态，不会自动切换 Backend/模型。确认服务已暂停后，以
+  控制文件所有者执行一次原子控制更新；此处不接触 Codex 登录信息或 API key：
+
+  ```bash
+  sudo -u pa-agent-dashboard /opt/miniconda3/envs/pa-agent/bin/python -c '
+  from pathlib import Path
+  from pa_agent.operations.analysis_profile import AnalysisProfile
+  from pa_agent.operations.runtime_state import RuntimeControlStore
+  store = RuntimeControlStore(Path("/var/lib/pa-agent-control/control/control.json"))
+  state = store.read()
+  if state.error or state.desired_state != "paused":
+      raise SystemExit("control must be valid and paused")
+  state = store.set_desired_backend("codex_only", actor="codex_joint_bootstrap")
+  profile = AnalysisProfile.model_validate({**state.analysis_profile.model_dump(mode="json"), "codex_model": "gpt-6-luna", "codex_reasoning_effort": "xhigh"})
+  store.set_analysis_profile(profile, expected_generation=state.generation, actor="codex_joint_bootstrap")
+  '
+  ```
+- 不创建 DeepSeek key 时，需将 `deploy/systemd/pa-agent-codex-only.conf` 作为
+  `pa-agent.service.d/codex-only.conf` 安装并执行 `systemctl daemon-reload`。此 drop-in
+  只清除主服务强制的 Direct `LoadCredential`；Dashboard token 和 Codex 登录凭据仍须独立保护。
+  不要在 Direct/auto 部署使用它。`--check` 会按 desired backend 校验相应凭据与 Worker 配置；
+  无 Direct key 的运行时禁止切换 Direct/auto。
+- 恢复旧版时先暂停并备份当前配置/控制文件，再恢复旧配置、Direct credential 和原
+  `LoadCredential`，等待 idle 生效后才恢复调度。不得把联合 Paper 账本重标为旧 `pa-official`。
+
+这只是发布资产与离线配置契约。持续 Paper 必须先通过目标 VPS 的权限、重启恢复、
+备份与单次 Paper canary。性能不达标时只可按上文限定为受控观察，并保留独立 cohort。
+
 Codex 默认关闭。先按 [OpenAI Codex 认证文档](https://learn.chatgpt.com/docs/auth.md)安装当前
 Codex CLI，再以独立的 `pa-agent-codex` 服务用户完成 headless device auth：
 
@@ -102,7 +146,7 @@ Dashboard。若正式环境支持 Enterprise access token 或 workload identity�
 ```dotenv
 PA_AGENT_CODEX_ENABLED=1
 PA_AGENT_CODEX_MODEL=<CLI实际可用的model-id>
-PA_AGENT_CODEX_REASONING=high
+PA_AGENT_CODEX_REASONING=xhigh
 PA_AGENT_CODEX_BINARY=/usr/local/bin/codex
 PA_AGENT_CODEX_STATE_DIR=/var/lib/pa-agent-codex
 PA_AGENT_CODEX_MAX_WORKERS=1
@@ -277,17 +321,24 @@ sudo systemctl enable --now pa-agent-backup.timer
 sudo systemctl list-timers pa-agent-backup.timer
 ```
 
-备份位于 `/var/backups/pa-agent`，默认保留 14 份，只包含 SQLite online backup、经过敏感字段
-剥离的 `settings.json` 与控制状态；不包含 API key、Feishu/Tushare/PushPlus token、webhook、
-Dashboard token 或 Codex auth。恢复后必须单独重新配置 credential。恢复必须先停止三项运行服务，将目标
-备份复制到临时目录核对 `manifest.json` SHA-256，并对三个数据库运行 `PRAGMA quick_check`；确认后
-再原子替换对应文件并恢复原 ownership。禁止直接覆盖运行中的 SQLite。
+备份位于 `/var/backups/pa-agent`，默认保留 14 份，包含三个 SQLite online backup、原始
+`records/pending`、`experience`、Codex 冻结 Job 与角色接受标记，以及敏感字段剥离后的 `settings.json` 与
+控制状态。备份目录按私有数据保护；不主动复制 API key、Dashboard token 或 Codex auth，
+恢复后需单独重新配置凭据。恢复前必须先停止三项运行服务，并在隔离目录运行
+`python -m pa_agent.operations.backup --verify <备份目录>` 核对 manifest 的 SHA-256，
+再对三个数据库运行 `PRAGMA quick_check`。确认后按 manifest 路径恢复并校验 ownership；
+不得覆盖运行中的 SQLite，也不得把恢复的冻结 Job 当成可自动续跑任务。各 SQLite
+文件分别在线一致，文件树与多个数据库之间尚无全局事务；正式恢复前需在暂停状态
+核对任务、记录和接受标记，不能仅凭 manifest 校验宣称跨存储一致。
 
 `systemd-tmpfiles` 清理超过 7 天的孤立 Job/inbox/results/outbox，接受幂等 marker 单独保留 30 天；
 应用文件日志每日轮转并保留 14 份，systemd journal 仍由宿主机 journald 策略管理。
 
 服务启动前只运行 `--check`。`--probe-data` 不放入自动重启链路，避免交易所短暂断线
-导致 systemd 重启风暴。运行时失败按有界退避重试，同一闭合快照不会重复分析。
+导致 systemd 重启风暴。已接受任务的冻结 payload 与接收回执同事务持久化；重启只
+自动恢复未开始且身份可验证的任务。已开始任务必须先凭唯一完整 record 对账，
+否则保持 in-doubt 并阻断该资产，绝不盲目重跑模型。跨 SQLite／文件／Paper 仍无全局
+事务，不能宣称端到端 exactly-once；持续 Paper 启动前须做目标 VPS 中断与对账验收。
 
 ## 6. Web 控制看板
 
@@ -308,6 +359,9 @@ ssh -L 8765:127.0.0.1:8765 <VPS_USER>@<VPS_HOST>
 - “暂停分析”：不再接收新快照，正在运行的分析安全完成；
 - DeepSeek `Flash/Pro`、Thinking 与 reasoning effort；
 - Codex 发布目录中的 model 与该 model 支持的 reasoning effort；
+- Codex Fast mode 的 desired/applied 开关；仅在安全空闲边界影响新冻结 Job，
+  与 Standard 分属不同 cohort。需在目标账号和 CLI 验证支持；`gpt-6-luna` 不保证
+  固定 1.5× 完成速度，Fast 可能更快消耗套餐额度；看板仍应以实测 latency/usage 判断。
 - `deepseek_only / codex_only / auto` Backend 请求；
 - 只在 paused、idle、Profile/Backend 已 applied 时可用的单次 `Run Once`。
 
@@ -368,6 +422,12 @@ sudo bash deploy/install_vps.sh
 再次运行安装脚本和四步验收。不要删除 `/var/lib/pa-agent`，paper 与审计数据都在那里。
 
 ## 8. 运行边界
+
+备份服务保持输入只读，但 SQLite WAL 读取可能需要创建 `-wal`/`-shm` 辅助文件；
+systemd 仅对 `records/audit` 与 `trade_records` 开放这一文件系统写入边界。
+不能对运行中的数据库使用 `immutable=1` 来绕过权限，否则可能遗漏 WAL 内容。
+发布前必须实际执行备份服务，并在隔离目录核对三份 SQLite 的 `quick_check` 与
+manifest；旧数据、冻结回执与登录凭据不得随版本替换删除。
 
 - Binance USD-M `XAUUSDT` 合约是否可用以启动时公开 metadata 为准；必须核对 tick size、
   quantity step 与 contract multiplier，不能从 symbol 名称猜测。

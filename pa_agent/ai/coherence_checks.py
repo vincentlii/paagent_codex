@@ -204,6 +204,11 @@ _GROUPED_K_REFERENCE_RE = re.compile(
     r"(?<![A-Za-z0-9_])K\s*\d+(?:\s*[/\uff0f\u3001,\uff0c]\s*K\s*\d+)+",
     re.IGNORECASE,
 )
+_NEGATED_BAR_BREAK_RE = re.compile(
+    r"(?:\u5c1a\u672a|\u5e76\u672a|\u672a\u80fd?|\u6ca1\u6709|\u4e0d\u80fd|\bnot\b|\bfailed\s+to\b)"
+    r"[^,\uFF0C;\uFF1B\u3002]{0,8}?(?:\u7a81\u7834|\u8d8a\u8fc7|broke|breaks?|exceeded)",
+    re.IGNORECASE,
+)
 _GROUPED_BAR_PRICE_RANGE_RE = re.compile(
     r"(?P<refs>(?<![A-Za-z0-9_])K\s*\d+"
     r"(?:\s*[/\uff0f\u3001,\uff0c]\s*K\s*\d+)+)"
@@ -1209,6 +1214,8 @@ def _validate_bar_break_claims(
     bars = {int(bar.seq): bar for bar in getattr(frame, "bars", ())}
     errors: list[str] = []
     for match in _BAR_BREAK_RANGE_RE.finditer(text):
+        if _NEGATED_BAR_BREAK_RE.search(match.group(0)):
+            continue
         target_seq = int(match.group(1))
         left = int(match.group(2))
         right = int(match.group(3))

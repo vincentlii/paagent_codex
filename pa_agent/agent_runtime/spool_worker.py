@@ -7,10 +7,11 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from pa_agent.agent_runtime.codex_worker import (
@@ -100,7 +101,10 @@ class CodexSpoolClient:
                     "job_digest": job.manifest.job_digest,
                     "expected_runtime_identity": expected_runtime,
                     "acceptance_key": job.manifest.acceptance_key,
-                    "lease_seconds": self._config.lease_seconds,
+                    "lease_seconds": max(
+                        self._config.lease_seconds,
+                        effective_timeout + self._config.response_grace_seconds + 30.0,
+                    ),
                     "deadline_epoch": time.time() + effective_timeout,
                     "dispatched_at_epoch": time.time(),
                     "persist_session": bool(persist_session),
@@ -228,7 +232,7 @@ class CodexSpoolService:
         return errors
 
     def serve_forever(self) -> None:
-        self._recover_claims(recover_all=True)
+        self._recover_claims()
         next_health_at = 0.0
         with ThreadPoolExecutor(
             max_workers=self._max_workers,
@@ -243,7 +247,7 @@ class CodexSpoolService:
                         5.0,
                         float(self._spool.health_interval_seconds),
                     )
-                self._recover_claims(recover_all=False)
+                self._recover_claims()
                 active = {future for future in active if not future.done()}
                 capacity = self._max_workers - len(active)
                 for dispatch in sorted(self._spool.inbox_root.glob("*.json"))[:capacity]:
@@ -281,16 +285,17 @@ class CodexSpoolService:
             # Health publication must not kill an otherwise recoverable worker.
             return
 
-    def _recover_claims(self, *, recover_all: bool) -> None:
+    def _recover_claims(self) -> None:
         now = time.time()
         for claimed in self._spool.inbox_root.glob("*.running"):
             try:
                 raw = json.loads(claimed.read_text(encoding="utf-8"))
                 lease_seconds = max(1.0, float(raw.get("lease_seconds") or 660.0))
-                deadline_epoch = float(raw.get("deadline_epoch") or float("inf"))
                 lease_active = now < claimed.stat().st_mtime + lease_seconds
-                deadline_active = now < deadline_epoch
-                if not recover_all and lease_active and deadline_active:
+                if lease_active:
+                    continue
+                if (self._spool.result_root / f"{claimed.stem}.json").is_file():
+                    claimed.unlink()
                     continue
                 os.replace(claimed, claimed.with_suffix(".json"))
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -364,6 +369,9 @@ class CodexSpoolService:
                 "latency_ms": result.latency_ms,
                 "timings": {**result.timings, **({"queue_ms": queue_ms} if queue_ms is not None else {})},
                 "evidence_events": list(result.evidence_events),
+                "subagent_events": list(result.subagent_events),
+                "collaboration": dict(result.collaboration),
+                "usage_observation": dict(result.usage_observation),
                 "outbox_path": str(result.outbox_path),
                 "model": result.model,
                 "reasoning_effort": result.reasoning_effort,
@@ -379,6 +387,13 @@ class CodexSpoolService:
                 "error_type": type(exc).__name__,
                 "message": str(exc),
             }
+            if getattr(exc, "collaboration", None):
+                envelope["collaboration"] = dict(exc.collaboration)
+                envelope["acceptance_key"] = job.manifest.acceptance_key
+            if getattr(exc, "observed_usage", None) is not None:
+                envelope["observed_usage"] = asdict(exc.observed_usage)
+                envelope["usage_observation"] = dict(getattr(exc, "usage_observation", {}))
+                envelope["acceptance_key"] = job.manifest.acceptance_key
             if isinstance(exc, CodexWorkerStopped):
                 envelope["role_stop"] = exc.stop.model_dump(mode="json")
                 envelope["acceptance_key"] = job.manifest.acceptance_key
@@ -433,6 +448,12 @@ def _decode_result(
     if raw.get("status") == "ok" and raw.get("acceptance_key") != acceptance_key:
         raise CodexWorkerOutputError("isolated result acceptance identity mismatch")
     if raw.get("status") != "ok":
+        collaboration = dict(raw.get("collaboration") or {})
+        if (collaboration or raw.get("observed_usage")) and (
+                raw.get("acceptance_key") != acceptance_key
+                or (collaboration and collaboration.get("job_digest") != job_digest)
+                or not _runtime_identity_matches(dict(raw.get("runtime_identity") or {}), runtime_identity)):
+            raise CodexWorkerOutputError("isolated collaboration failure identity mismatch")
         if raw.get("error_type") == "CodexWorkerStopped":
             if raw.get("acceptance_key") != acceptance_key or not _runtime_identity_matches(
                 dict(raw.get("runtime_identity") or {}), runtime_identity,
@@ -442,7 +463,12 @@ def _decode_result(
                 stop = AnalysisRoleStop.model_validate(raw.get("role_stop"))
             except ValueError as exc:
                 raise CodexWorkerOutputError("isolated role stop is malformed") from exc
-            raise CodexWorkerStopped(stop)
+            error = CodexWorkerStopped(stop)
+            error.collaboration = collaboration
+            if raw.get("observed_usage") is not None:
+                error.observed_usage = AIUsage(**raw["observed_usage"])
+                error.usage_observation = dict(raw.get("usage_observation") or {})
+            raise error
         error_types = {
             "CodexWorkerAuthenticationError": CodexWorkerAuthenticationError,
             "CodexWorkerRateLimited": CodexWorkerRateLimited,
@@ -451,7 +477,12 @@ def _decode_result(
             "CodexWorkerOutputError": CodexWorkerOutputError,
         }
         error = error_types.get(str(raw.get("error_type")), CodexWorkerOutputError)
-        raise error(str(raw.get("message") or "isolated Codex worker failed"))
+        failure = error(str(raw.get("message") or "isolated Codex worker failed"))
+        failure.collaboration = collaboration
+        if raw.get("observed_usage") is not None:
+            failure.observed_usage = AIUsage(**raw["observed_usage"])
+            failure.usage_observation = dict(raw.get("usage_observation") or {})
+        raise failure
     result_runtime = dict(raw.get("runtime_identity") or {})
     if not _runtime_identity_matches(result_runtime, runtime_identity):
         raise CodexWorkerOutputError("isolated result runtime identity does not match job")
@@ -483,6 +514,9 @@ def _decode_result(
         latency_ms=float(raw.get("latency_ms") or 0.0),
         timings=dict(raw.get("timings") or {}),
         evidence_events=tuple(dict(item) for item in raw.get("evidence_events") or ()),
+        subagent_events=tuple(dict(item) for item in raw.get("subagent_events") or ()),
+        collaboration=dict(raw.get("collaboration") or {}),
+        usage_observation=dict(raw.get("usage_observation") or {}),
         outbox_path=Path(str(raw.get("outbox_path") or "isolated-outbox.json")),
         model=str(raw.get("model") or ""),
         reasoning_effort=str(raw.get("reasoning_effort") or ""),
@@ -504,9 +538,17 @@ def _runtime_identity_matches(
         "reasoning_effort",
         "profile_fingerprint",
         "analysis_profile_fingerprint",
+        "service_tier",
         "investigation_policy",
+        "stage_subagents",
     }
     if expected.get("investigation_policy", "agentic") not in {"fixed", "agentic"}:
+        return False
+    if expected.get("service_tier") not in {None, "fast"}:
+        return False
+    from pa_agent.agent_runtime.execution_contract import STAGE_SUBAGENT_POLICIES
+
+    if expected.get("stage_subagents", "off") not in STAGE_SUBAGENT_POLICIES:
         return False
     actual_immutable = {
         key: value for key, value in actual.items() if key not in selection_keys
@@ -549,6 +591,9 @@ def _service_from_environment() -> CodexSpoolService:
             reasoning_effort=effort,
             codex_binary=binary,
             model_catalog=Path(catalog) if catalog else None,
+            allow_experimental_subagents=(
+                os.environ.get("PA_AGENT_CODEX_SUBAGENT_RESEARCH", "0") == "1"
+            ),
         )
     )
     return CodexSpoolService(

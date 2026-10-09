@@ -11,6 +11,8 @@ import copy
 import json
 import logging
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,7 +45,7 @@ class AuditRebuildResult:
 class AnalysisAuditStore:
     """Index completed or partial analysis records without owning their source data."""
 
-    _SCHEMA_VERSION: ClassVar[int] = 15
+    _SCHEMA_VERSION: ClassVar[int] = 16
     _ENTRY_STATUSES: ClassVar[frozenset[str]] = frozenset(
         {"not_traded", "pending", "filled", "expired", "cancelled"}
     )
@@ -87,6 +89,7 @@ class AnalysisAuditStore:
                     """
                     INSERT INTO analysis_runs (
                         run_id, record_path, timestamp_local_ms, symbol, timeframe,
+                        analysis_pipeline,
                         source_provider, resolved_symbol, instrument_type, bar_count,
                         decision_stance, model_name, run_status, error_type, partial_reason,
                         stage1_cycle_position, stage1_direction, stage1_gate_result,
@@ -105,6 +108,7 @@ class AnalysisAuditStore:
                         validation_audit_json, joint_diff_json, usage_json, indexed_at_ms
                     ) VALUES (
                         :run_id, :record_path, :timestamp_local_ms, :symbol, :timeframe,
+                        :analysis_pipeline,
                         :source_provider, :resolved_symbol, :instrument_type, :bar_count,
                         :decision_stance, :model_name, :run_status, :error_type, :partial_reason,
                         :stage1_cycle_position, :stage1_direction, :stage1_gate_result,
@@ -124,6 +128,7 @@ class AnalysisAuditStore:
                     )
                     ON CONFLICT(run_id) DO UPDATE SET
                         record_path = excluded.record_path,
+                        analysis_pipeline = excluded.analysis_pipeline,
                         source_provider = excluded.source_provider,
                         resolved_symbol = excluded.resolved_symbol,
                         instrument_type = excluded.instrument_type,
@@ -527,12 +532,17 @@ class AnalysisAuditStore:
             logger.warning("Analysis audit query failed: %s", exc)
             return []
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._db_path, timeout=5.0)
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 5000")
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _ensure_schema(self, connection: sqlite3.Connection) -> None:
         connection.execute("""
@@ -542,6 +552,7 @@ class AnalysisAuditStore:
                 timestamp_local_ms INTEGER NOT NULL,
                 symbol TEXT NOT NULL,
                 timeframe TEXT NOT NULL,
+                analysis_pipeline TEXT,
                 source_provider TEXT,
                 resolved_symbol TEXT,
                 instrument_type TEXT,
@@ -771,6 +782,7 @@ class AnalysisAuditStore:
             str(row[1]) for row in connection.execute("PRAGMA table_info(analysis_runs)").fetchall()
         }
         required = {
+            "analysis_pipeline": "TEXT",
             "source_provider": "TEXT",
             "resolved_symbol": "TEXT",
             "instrument_type": "TEXT",
@@ -1141,6 +1153,10 @@ class AnalysisAuditStore:
             "timestamp_local_ms": record.meta.timestamp_local_ms,
             "symbol": record.meta.symbol,
             "timeframe": record.meta.timeframe,
+            "analysis_pipeline": (
+                record.analysis_pipeline.pipeline
+                if record.analysis_pipeline is not None else None
+            ),
             "source_provider": identity.provider if identity is not None else None,
             "resolved_symbol": (
                 identity.resolved_symbol if identity is not None else None

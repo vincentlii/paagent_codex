@@ -35,6 +35,17 @@ def _context() -> dict:
     return context
 
 
+def test_repair_rejects_canonical_only_path_before_dispatch() -> None:
+    from pa_agent.ai.pa_provider_contracts import schema_for_provider_draft
+
+    message = {"role": "user", "content": append_repair_context(
+        "unknown fact", original_draft='{"pa_evidence":{"spike_analysis":null}}',
+        findings=["pa_evidence.fact_refs"], editable_pointers=["/pa_evidence/fact_refs"],
+    )}
+    with pytest.raises(ValueError, match="outside Provider Draft"):
+        extract_repair_context([message], output_schema=schema_for_provider_draft("stage1"))
+
+
 def test_patch_envelope_changes_only_validator_authorized_pointer() -> None:
     repaired = apply_patch_envelope(
         _context(),

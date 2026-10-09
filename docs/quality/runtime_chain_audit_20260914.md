@@ -628,6 +628,94 @@ Stage 1 → Stage 2 的阶段连续性。只保留两项隔离：
 
 ## 三角色自审
 
+### 2026-09-23：运行入口一致性
+
+Stage 2 Codex 专用角色协议不再复用“独立 API 请求”任务说明，明确续接也必须完成当前
+Stage 2 Draft；关闭预测的指引不再要求关注 Host 拥有且 Draft 禁止输出的 terminal /
+next_cycle_prediction。仅修改 build_stage2_agent_protocol，Direct 常量和渲染不变。
+PromptAssembler 60 项检查通过。曾怀疑旁边 QClaw 禁用工具规则进入 Codex，经调用点
+核对否定，不得将其写成根因。指令一致性修正不代表时延改善已经验证。
+
+真实诊断 `single-trace-20260923-012008` 使用 Luna/max、pa_vpa_joint，角色900秒/
+整链2400秒而非生产240秒限制。01:20:23 已交付完整 packet（205,908 bytes，网关
+110ms）；最后成功观察进程时仍未有 Stage 1 结果。01:25:29 exec session 89709
+消失，提权只读 Win32_Process 检查未发现对应实验 Python/Codex 进程。无 output.json、
+CLI 终态或 usage，只有 running marker 与 evidence.tmp。记为执行中断/终态缺失，
+不是模型900秒超时、Provider失败、质量通过或性能成功。原因尚未确定；不自动重跑。
+观察证据保存在该实验目录 observer-interruption.json，保留原始文件不篡改成功状态。
+
+必读知识一致性修复：knowledge manifest 将全部 Host 已选模块标为 mandatory，但 packet
+曾通过两个文件名的独立白名单只交付部分模块，Worker 的 packet 读取检查无法发现缺章。
+已取消第二份文件名选择器，按 manifest.loading_policy 完整交付原文；不改 Host 选择、
+知识内容或 Direct。真实历史 Job 离线重建从 2 模块/72 章节/163,172 UTF-8 bytes 变为
+4 模块/114 章节/205,908 bytes。这是补回遗漏，不宣称输入缩小或时延改善。
+测试逐章节比较 packet 与 mandatory 原文完全一致，并检查预算足够。相同完整原文可由
+原继承校验传给 Stage 2，不重复读取；旧 packet 缺失模块仍不得继承。
+packet/Publisher/bounded-context 共 16 项定向检查通过，未调用真实模型。
+
+同日继续检查发现 Worker 把 generation Schema 按字母序写盘，使 Stage 1 的 bar_analysis
+先于 market_hypotheses。现将 Stage 1 properties 显式排列为假设、结构/局部证据、Gate、
+信号/风险/置信度，写盘保留该顺序；全部字段、required 和原约束保留，不从假设自动生成
+局部判断。原 Host Schema 与 Direct 不变。bounded-context 3 项及 CLI Worker 13 项通过。
+这只验证交付顺序和契约保真，不证明模型按此内部推理或时延下降；仍须真实对照。
+
+最新 `single-trace-20260922-220623` 在 7.86 秒因 usage limit 退出，不能作为性能样本。
+本轮 Runtime AGENTS 改为遵从 Host 指定唯一入口，正确说明 packet 的 role_skill/price_frame
+与 resources 布局不同，不再要求 packet 角色寻找旧 get_market_core/get_price_frame 路径。
+保留身份、必读、顺序、继承、禁止重复整图、PA/VPA 隔离与停止语义；未改知识选择、Direct、
+Provider Schema 或模型配置。旧 Job 保留冻结 agents_text，新 Job 自动获得新的 asset digest。
+Runtime assets 4 项定向检查通过，diff check 通过；不代表真实性能或模型理解已验证。
+
+下一步契约去重的约束：Gate/static trace、Trader Equation、terminal 已经由唯一
+materializer 生成，不能作为尚未实施的新优化。market_hypotheses、Gate 节点判断、逐棒
+增量、信号质量、风险和置信度相关但不等价，不能因为文字相似就删除或自动互相推导。
+必须先核对每个字段的消费者与历史输出，证明确定映射后才允许 Host 生成。
+
+三视角自审：架构上入口说明已一致，契约级重构仍未完成；量化上输入减少并未显著减少
+reasoning，wire 双份不能证明模型双份消费；交易上背景/局部信号/反证不能由程序代判。
+没有启动新付费实验、部署或提交，完整性能验收仍未通过。
+
+### 2026-09-22：生成负担与契约一致性修复（实施中）
+
+真实 `single-trace-20260922-201923` 首稿 607.282 秒，累计输入 90,065、生成
+21,946，其中 reasoning 19,369；修复另耗 136.719 秒且失败。输入减少不能代表
+生成负担或时延改善，最后取证到进程结束包含服务等待和输出，不是纯推理计时。
+
+已落实并定向验证：
+
+- Draft 原生校验覆盖主/替代假设的 supporting/challenging 引用，返回原始数组项
+  JSON Pointer；阻断物化的错误不再流入 canonical 聚合字段再生成错误修复路径。
+  回归实际复现了主假设路径错误，以及替代假设未知引用此前被接受的问题。
+- Codex generation projection 使用单个共享定义约束 PA 引用为冻结真实 ID；
+  原 Host Schema 保留，HTF 不混入 PA 引用权限。真实 CLI 接受该投影仍待验证。
+- Stage 1 packet 恢复原 embedded_rules 与既有 PA.BAR/PA.INDICATOR 测量；
+  不能以删除成熟语义、迫使模型重算来宣称无损压缩。交付紧凑化仍待完成。
+- Stage 1 Skill 明确假设、Gate、逐棒摘要、风险和置信度各自的输出职责。
+  这是减少重复论证的待验证假设，不是已经证明的性能收益。
+
+本轮 33 项 Provider Draft、packet 和 bounded-context 定向检查通过，diff check
+通过。未付费调用、未部署、未提交，性能和质量验收仍未完成。下一步继续检查
+修复入口权限、续接材料真实读取覆盖、其他角色 Skill，以及真实全链指标。
+
+本轮后续进展：
+
+- 几何/指标事实按同类 columns/rows 无损交付，测试逐字段还原为原 catalog，
+  包含 null 与全部精度；审计提取器支持表格中的真实 fact ID。
+- bounded Stage 1 的 manifest 不再冒充全文读取凭证：Stage 2 只继承 packet
+  中完整交付且原文相等的知识模块，其余仍读取。旧 semantic-parity 继承规则保留。
+- Publisher 在发起 repair 前检查 pointer 是否属于 Provider Draft schema；
+  canonical-only 字段被提前拒绝，合法缺失字段仍可按原授权修复。
+- Stage 2、联合 Stage 2、VPA Skill 补充字段职责，保留专业反证及原有阶段权限。
+- 67 项相关定向检查通过；追加 Worker/Backend/交付检查 49 项通过、1 项旧工具
+  列表断言失败（漏列已存在的 packet 工具），同步断言后该文件 4 项通过。
+  修复入口新增检查后 31 项相关回归通过，不把重叠测试数量累加为独立覆盖。
+
+真实冻结 100 棒输入离线重新发布：200 行 PA.BAR/PA.INDICATOR 事实，单响应
+123,491 bytes，估算 48,558 tokens，原 embedded_rules 逐值相等。相比此前删规则
+的 69,154 bytes 明显增大，因此这只是恢复质量基线，不能称为时延优化成功。
+接下来仍需对成熟规则做逐项覆盖与无损去重、检查 generation projection 的真实
+CLI 兼容性，再做关闭240秒保护的真实验收。未发生新付费调用、提交或部署。
+
 同一实现者的三个视角，不是独立专家评审。
 
 | 视角 | 当前判断 |
@@ -635,3 +723,639 @@ Stage 1 → Stage 2 的阶段连续性。只保留两项隔离：
 | 软件架构师 | 修复保持单一 Publisher / Gateway / Validator；反馈与知识继续冻结读取。链路未完整验收，不能晋级。 |
 | 量化工程师 | 累计 token、缓存、局部估算、失败与缺失分开；诊断延长预算和复用 Draft 不可冒充生产性能。 |
 | PA / Wyckoff VPA 交易员 | 补回几何及引用，保留全文与既有规则；仍需检查真实 VPA / 联合结果的证据、反证与阶段连贯性。 |
+
+### 2026-09-23：gpt-6-luna/max 单快照及交付根因
+
+同一冻结 XAU 快照 `single-trace-20260923-124952`，本地诊断限额为单角色
+900 秒、全链 2400 秒；正式生产预算未改。Stage 1 360.297 秒、VPA 349.969 秒，
+两者原 Validator 均通过；Stage 2 204.312 秒后返回 typed incomplete，
+整轮约 914.6 秒，未形成正式决策。三角色 CLI 累计输出 63,380 token，
+其中 reasoning output 57,244；Stage 2 累计输入 498,859 token。
+一次样本不能推断 p95，也不能把 wall time 全部称为纯模型计算。
+
+Stage 2 停止理由声称 `mandatory_pa_delta_v1` 未完整交付 Provider Contract 与
+已验收 VPA 报告。原始 MCP 完成事件约 207 KB 文本，`get_market_core.role_protocol`
+实际含完整 Provider Contract，`get_upstream_artifact.vpa_evidence` 实际含八项
+报告字段；无截断标记。由此排除 Frozen Job 缺件，但不能凭 CLI 事件证明模型
+确实定位、理解了所有内容。Host Gateway 资源处理毫秒级，不能继续把主耗时归因
+于文件或数据库读取。大文本内嵌契约与泛型 resources 定位是可修复的交付风险。
+
+本轮离线修正（仍待真实模型验收）：
+
+- Stage 1 packet 保留全部 114 个必读 section 的原文与 alias，索引仅列未内嵌
+  section；同一冻结 Job 重建后工具交付从 205,928 降至 180,331 bytes，
+  逐 section 正文相等。只是无损重复元数据消除，不足以单独解决 15 分钟时延。
+- Codex Stage 2 的 exact Provider Contract 改由冻结 `provider_output_schema`
+  一级字段交付；Publisher 校验协议 digest 与输出 Schema 完全一致。原 Direct
+  `_stage2_output_contract` 仍保留内嵌契约，不改变 Direct Prompt。旧冻结
+  Job 无新 digest 时保持原交付方式；repair 不被初稿 digest 检查误拒。
+- Stage 2 合并基线附 Host 核验的 `stage2_handoff_receipt`，给出协议、Schema、
+  validated Stage 1、Router 及联合 VPA 报告的精确 resources 路径；报告原文
+  不复制、不删减。Skill 先按路径读取实际值，不再把“长文本中没找到”当缺件。
+  receipt 只证明 Host 交付，不证明模型理解或交易正确。
+
+相关 packet、Publisher、MCP、PromptAssembler 定向检查通过，Ruff F/E9
+通过。尚未做新模型调用、全链质量验收或部署；性能门禁保持 no-go。进一步
+提速不能只靠减小工具往返：VPA 单角已超过 300 秒目标，必须用同快照质量
+非劣比较检验 reasoning effort 或研究更本质的任务/上下文契约设计。固定
+`max` 的正式性能是否可达，目前没有证据支持保证。
+
+按用户要求，先保持 `gpt-6-luna/max`，继续完成角色交付优化。该 trace 的 VPA
+合并基线约 89,875 bytes，Stage 2 约 256,186 bytes；二者先交付章节目录，
+再交付所有已选必读模块的完整原文。新 Stage 2/VPA 冻结任务使用
+`inline_mandatory_knowledge_v1`：只传模块 ID、digest、顺序的简短清单，仍
+按顺序交付每个完整 section 原文和 alias。Gateway 与 Worker 继续逐模块
+校验必读覆盖；旧 Job 保持旧目录协议。对上述旧 payload 做纯离线等价投影，
+VPA 减 3,060 bytes，Stage 2 减 16,672 bytes；这不是实际模型 token 或时延。
+旧 Job 到期后以 `allow_expired` 只读打开，再在内存中投影新交付策略的 Gateway：
+VPA 实际序列化约 86,875 bytes；Stage 2 含新增 Schema 与 handoff receipt
+约 248,382 bytes。没有重写旧 Job，也没有把投影冒充真实新运行。
+定向 Publisher/MCP/Worker 与 VPA 知识原文检查通过。仍需处理更大的
+Stage 2 会话累计上下文与三个角色的推理生成量，不能据此宣布性能达标。
+
+未采用的更激进编码：本快照的 11 条 VPA evidence 原文约 19,260 bytes；
+按 43/52 列无损表格化的离线投影可到约 8,488 bytes，但会让模型按长列序
+重新绑定价格、量、基线和相邻响应。VPA 精确事实关联是交易质量核心；只有
+字节节省、没有模型理解非劣证据，故不改当前 VPA evidence 工具形状。
+Stage 2 已选 14 个知识模块原文共约 167 KB，只有 2 个与 Stage 1 完全同源
+可继承；剩余大头是 Brooks Router 当前授权内容，不能靠 Skill 任意删掉。
+
+同一旧 Frozen Job 的纯离线会话投影：新交付策略下，续接 Stage 2 基线约
+248,382 bytes（另有 Stage 1 packet 约 180 KB 在会话历史），从 validated
+Stage 1/Router 新开 Stage 2 则需补回 price/HTF，基线约 368,687 bytes。
+这些静态字节不等于 CLI 累计 token、时延或专业质量；且新开 Stage 2 会改变
+此前明确采用的同快照 PA 会话设计，因此只可经用户确认后建立实验对照，
+不能暗中切换正式链路。思考强度保持 `gpt-6-luna/max`。
+
+### 一次真实 trace 的瓶颈归因（2026-09-23，离线复核）
+
+直接读取 `single-trace-20260923-124952` 的三个 CLI JSONL：Stage 1 仅有一次
+`get_stage1_decision_packet`，VPA 和 Stage 2 各仅有一次 `get_role_baseline`；
+三者都没有追加检索或测量调用。因此该样本中的长耗时不能再归因于“多次工具
+往返”。对应累计 input/output/reasoning tokens 分别为 Stage 1
+103,374/19,304/16,801，VPA 50,654/13,993/13,062，Stage 2
+498,859/30,083/27,381。Stage 2 的 input 是续接线程整轮累计用量，不能
+解释为一个基线包本身的大小，也不能据此精确分摊服务端缓存与推理时间。
+VPA 的非 reasoning 输出仅约 931 tokens，却产生 13,062 reasoning tokens；
+Stage 2 的非 reasoning 输出约 2,702 tokens，却产生 27,381 reasoning tokens。
+这只能证明 max 档内部生成远大于交付文字，无法从隐藏 reasoning 反推它具体
+重复思考了哪些问题，也不能把“减少 JSON 字数”当作主要提速手段。
+
+旧 Stage 1 packet 中，`knowledge` 约 128,294 序列化字节，是当时约 20 万字节
+包的主要组成；`role_contract` 约 26,156、`bar_measurements` 约 27,950。
+本轮 lossless packet 已缩到约 180 KB，但全部必读知识仍保留。Stage 2 新策略
+投影约 248 KB，其中 Router 已选知识原文约 167 KB；VPA 投影约 87 KB，仍耗时
+约 350 秒。仅削减目录或表格包装不可能把三个角色的实测总时长约 915 秒降到
+整链 p95 300 秒，更不能保证减少错误。需要检验的是模型承担的语义工作量、
+全量知识交付策略及 PA 会话续接带来的累计上下文，而不是继续叠加小幅压缩。
+
+任何分层知识或 fresh Stage 2 方案先作为独立实验候选：冻结原文章节、事实、
+Router、Validator 和输出权限不变；正式路径保持既有全量必读和同快照 PA
+续接，直到同快照专业盲评及运行指标证明非劣。不能把静态字节投影或一次
+成功输出当成质量/性能验收，也不能靠缩短 Skill 说明替代关键交易知识。
+本例 validated Stage 1 同时给出 `spike` 主判断与 `trading_range` 替代判断，
+Router 因过渡与形态键同时授权下跌通道、震荡区间及突破失败等文件；这些
+看似“多余”的策略文件实际上承载竞争解释，不能仅按主周期删去。若研究
+分层交付，索引与按需读取必须同时覆盖主、替代及反证路线。
+
+### Stage 1 / VPA / Stage 2 分角色性能诊断与修复门禁
+
+以该 trace 的 `*-cli.json` evidence audit 与 CLI usage 为准，而不是用总耗时
+反推每个角色：
+
+| 角色 | wall | Gateway 内部读耗时 | 冻结资源响应 | 模型累计 input / reasoning output | 本次结果 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Stage 1 | 360.30 s | 174 ms（1 个底层读） | 205,908 B | 103,374 / 16,801 tokens | 原 Validator 通过 |
+| VPA | 349.97 s | 93 ms（10 个底层读，1 次合并交付） | 83,279 B | 50,654 / 13,062 tokens | 原 Validator 通过 |
+| Stage 2 | 204.31 s | 114 ms（16 个底层读，1 次合并交付） | 247,983 B | 498,859 / 27,381 tokens | typed incomplete，误报上游缺件 |
+
+Gateway 内部耗时并非端到端工具往返；wall 还含 CLI 启动、网络、模型处理和
+输出。上述数值只能排除本地取数耗时为主因，不能测出服务端各段精确耗时。
+Codex [当前公开实现](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/models.rs)
+优先把 MCP `structuredContent` 交给模型，不能因 JSONL
+同时保存 `content` 与 `structured_content` 就断言模型读了两份；要以本机
+固定 CLI 版本和实际 token 观测核实传输优化，而不是盲目删除 MCP 兼容字段。
+
+**Stage 1：**旧 packet 的知识正文约 128 KB，角色协议约 26 KB，测量约
+28 KB；因此主要是完整知识与价格事实的语义负载，而非工具调用次数。已做的
+无损表格化、索引去重和唯一 packet 交付保留全部证据，但静态减少约 12% 不足
+以保证从 360 s 到生产 240 s，更不能单独保证整链 300 s。Codex 专用输出
+措辞现在与 Runtime 封套一致，避免模型在裸 JSON 与 `result` 之间自我冲突；
+Direct 原文不变。后续高杠杆候选是冻结全文仍可读的分层知识交付，但基础规则、
+竞争解释、反证与知识 ID 必须留有可靠的选择/回溯门禁，质量盲评通过前不
+取代正式全量必读。
+
+**VPA：**交付约 83 KB、最终非 reasoning 输出不足 1,000 tokens，仍产生
+13,062 reasoning tokens；压缩目录或缩短 JSON 对 350 s 的帮助有限。VPA
+唯一的专业工作是用同源量价基线判别支持/挑战/信息不足，不能改成机械阈值
+或省略反证。现有 Skill 已限定 Background → Location → Effort/Result →
+Leg/Wave → Acceptance 的顺序、标签最后、一次基线、按真实 evidence ID
+输出。可研究的实质改动是更聚焦的知识选择/交付与确定性比较预处理，必须
+检验是否遗漏关键事件和 provenance 限制；43/52 列大表虽省字节但事实错绑
+风险高，不因离线字节收益直接上线。若上述可证伪候选仍不降时延，须承认
+`max` 模型本身的生成成本是主要剩余因素，而不是继续改 Skill 文案。
+
+**Stage 2：**248 KB 本轮资源之外还继承 Stage 1 的大 packet 与会话历史，
+498,859 是续接线程累计 input 而非单次 248 KB 的 token 化结果；缓存
+225,280 已包含在 input。其失败不是“材料确实缺失”：旧基线已有 Provider
+Contract、validated Stage 1、Router 和 8 个 VPA 报告字段。新增 Host
+`stage2_handoff_receipt` 与第一类冻结 Schema 旨在消除这个具体误读，但真实
+修复效果未验。继续削减 Router 竞争策略会损害可选方案审查。若研究 fresh
+Stage 2，只能与现有续接在同快照、同知识、同 VPA、同 `gpt-6-luna/max` 下
+对照完整性、时间、token 和专业盲评；正式设计维持同快照续接直到证据充分。
+
+因此三角色的下一次付费验收不能只是“又跑一遍”：先确认实验架构候选及
+专业非劣判据；一次完整正式候选运行必须同时记录原 Validator/Router/Risk、
+缺失与事实错误、逐角色 wall/input/reasoning、最终持久化结果。单样本不能
+宣称 p95 达标；质量不过关的快结果仍是失败。
+
+### 2026-09-23 实验档位更正及无效网络样本
+
+用户将后续实验档位从 `gpt-6-luna/max` 更正为 `gpt-6-luna/xhigh`
+（UI 名称 extra high）。既有 max trace 仍按其实际身份保留，不能重命名为
+xhigh 或与后续结果视为同条件样本。Study 的允许组合增加新的 xhigh 条件，
+同时保留已经冻结的 max 注册以供 Replay；正式交易链与 Direct 不因此改动。
+
+`single-trace-20260923-195035` 在受限网络权限下 900 秒内未完成模型调用：
+CLI 报 Windows socket `os error 10013`，随后 HTTPS 连接失败；这不是 PA
+推理耗时样本。扩展网络权限重试 `single-trace-20260923-200619` 时，
+Stage 1 已通过原 Validator，但 CLI wall 813.359 秒且记录一次服务端
+WebSocket 提前关闭与重试；其 `turn.completed` 仅报告 2,440 output、76
+reasoning tokens，不能把这 813 秒归咎于模型深度思考。用户更正档位时该
+max 任务正在 VPA，已停止确切子进程并保留输出，VPA/Stage 2 不算完成。
+随后实验必须重新冻结并验证 xhigh 的真实 effective model/effort、逐角色
+成功状态和连接重试情况，不能把这两次无效/中断运行当作性能改善证据。
+
+### 2026-09-23 xhigh 单 Agent 真实链路与交接语义缺陷
+
+`single-trace-20260923-202538` 使用新的冻结 Job、`gpt-6-luna/xhigh`、
+PA＋VPA 联合链和仅本地诊断的单角色 900 秒/全链 2400 秒限额。Stage 1
+504.047 秒、VPA 145.125 秒，两者返回原链路可验收内容；Stage 2
+300.422 秒后 typed `review_required`，未形成正式决策，总 CLI wall 约
+949.6 秒。三者都只读取一次角色基线，没有额外调查；usage 的 input / cached /
+output / reasoning output 分别是 Stage 1 94,074 / 18,944 / 16,396 /
+13,777，VPA 49,056 / 15,872 / 5,852 / 4,919，Stage 2 442,183 /
+273,408 / 24,596 / 21,718 tokens。Stage 2 的 input 是续接会话累计口径。
+本次无 WebSocket 重试记录；不能将各 wall 秒数精确拆为服务端计算与网络，
+也不能由一例估计 p95。Stage 1 已超过生产单角 240 秒，整链远超 300 秒；
+因此质量和性能均未验收通过。
+
+Stage 2 声称 `stage1_diagnosis` 与 `pa_hypotheses` 字段集及 `source_digest`
+不一致，无法安全决策。离线使用同一快照、同一 Stage 1 和
+`compile_pa_handoff(stage1, None, frame)` 重算，结果与实际冻结交接的
+`pa_hypotheses` **逐字段相等且 digest 相等**。两者本就不是同形对象：后者
+是 Host 编译的派生交易假设投影，`source_digest` 哈希该投影及快照身份，
+不是原 Stage 1 artifact 哈希。此为模型误解交接契约，不是真实数据冲突。
+其停止理由还把 `setup_candidates` 错置到 Stage 1 artifact，提示大上下文中
+的结构归属仍有混淆风险；不能只把这个失败解释为缺一句提示。
+
+修复在新 Codex 联合 Stage 2 发布时由 Host 重算整份投影并比较，不一致
+则发布前拒绝；一致时把有明确 digest 作用域的冻结 lineage 证明送入
+`stage2_handoff_receipt`。Runtime AGENTS 和联合 Stage 2 Skill 说明该派生
+关系，但仍要求真实事实、快照或 Router 冲突触发 `review_required`。
+历史冻结 Job 不追补这个证明，Direct 链路不变。定向 lineage 正反例测试、
+Ruff F/E9 与 diff check 通过；新模型调用尚未进行，修复效果及完整链路仍
+需要真实验收，不得宣称已完成。
+
+### 2026-09-23 第二次 xhigh 重验：Stage 2 delta 交付归属
+
+`single-trace-20260923-204900` 的 Stage 1 CLI wall 516.235 秒、
+94,556 input / 14,947 reasoning tokens，单次 packet 读取。VPA 首稿 wall
+556.391 秒、50,825 input / 9,122 reasoning tokens；首稿把最新 K1 无后续
+响应误延伸到更早的 K3/K4，尽管对应 VPA evidence 明确给出
+`later_closed_bar_count`/`later_closed_bar_range`。原 Validator 拦截并限定
+`observations[2].interpretation`，定向 repair 59.985 秒、2,339 reasoning
+tokens。VPA Skill 已把逐事件后续闭盘核对并入原有第 8 步，不改变 VPA
+证据、知识、标签或权限。
+
+Stage 2 初稿 wall 326.000 秒、452,624 input / 25,982 reasoning tokens，
+再次 typed incomplete，称 14 个 mandatory 模块只有部分原文交付、Role
+Skill 未完整交付。冻结 MCP 回执实际含完整 2,552 字符联合 Stage 2 Skill；
+14 个 mandatory 模块中 12 个在本轮 `read_knowledge_module` resources 完整
+交付，另 2 个由同快照 Stage 1 会话验证继承。原交接回执只有上游字段位置，
+未把完整必读集合与 delta 实际交付分区对应；模型误将“本轮资源数 12”判为
+“应交付 14、缺 2”。新增 Host 核验的逐模块来源/位置与 Skill 位置回执，
+校验本轮 section 原文和已继承 ID 的互斥完整覆盖；PA-only 与联合 Stage 2
+Skill 共用这套语义。定向 7 项 baseline 测试与 Ruff F/E9 通过，尚待模型验收。
+
+此轮 StudyHost 最终因域资源在运行中改变而拒绝样本：分析期间修改了 VPA
+Skill，触发正确的 domain fingerprint guard。即使三个 CLI 的原始耗时与失败
+可以作工程诊断，本轮不算有效稳定基线，也不能假称产生正式决策。下一次
+付费验收前必须冻结所有域资源及代码，直到 Host 完成指纹检查；不得在试验
+运行中改 Skill。这个治理失误与 Stage 2 的真实 typed stop 分别记录。
+
+### 2026-09-23 Stage 2 统一交付回执离线验收
+
+从 `mandatory_read_plan` 到 `get_role_baseline` 的数据流审查确认：同一 PA
+会话续接时，`mandatory_modules` 仍列完整必读集合，但本轮只交付未继承的
+原文；价格窗口与 HTF 也可能只由已验证 Stage 1 历史提供。`get_market_core`
+有意排除 `experience_entries`，所以经验条目必须从冻结 Job 的 core context
+核对，不能从已过滤的工具 core 判断其是否存在。
+
+Stage 2 的 Host 回执现统一标出 Role Skill、Provider Contract、上游与 Router
+位置、每项 mandatory 知识的继承/本轮完整原文及精确位置、price/HTF 来源、
+冻结经验条目数量与路径。Publisher 仍先验证 PA 假设投影与同快照 Stage 1
+逐字段相等；Gateway 核对模块覆盖互斥、完整 section 原文和角色 Skill，
+Worker 保留原必读/顺序审计。回执只证明交付，不替代模型理解或 Validator。
+PA-only 与联合 Stage 2 Skill 均按这份回执读取；VPA 仍独立。
+
+定向 Publisher、bounded baseline、role baseline 共 26 项检查通过，Ruff F/E9
+通过。使用上轮实际冻结 Stage 2 Job `a6f4f29e…223ae5a` 进行**无模型调用**的
+只读 Gateway 回放，回执报告 14 项必读知识＝2 项已验证继承＋12 项本轮交付，
+Role Skill 路径为 `resources[1].payload.core_context.role_skill`，价格与 HTF
+均标为同快照 Stage 1 继承，经验条目为 0；无工具错误。此结果证明交付分类
+契约在真实失败 Job 上自洽，不能证明模型新一轮必然理解或交易质量合格。
+下一次真实 xhigh 全链验收必须在域资源冻结后进行，并记录首稿、repair、
+有效 Host 结果、逐角色耗时与 token；不得把回放当作正式完整基线。
+
+### 2026-09-23 第三次 xhigh 重验：模型误判完整交付为截断
+
+冻结资源后运行 `single-trace-20260923-214002`，Stage 1 首稿 328.047 秒、
+95,037 input / 17,513 output / 15,150 reasoning tokens；VPA 首稿
+236.859 秒、51,092 input / 8,598 output / 7,620 reasoning tokens，均无
+repair。Stage 2 约 159 秒后 typed `incomplete`，仍未形成完整链路结果；
+其 CLI 记录 446,796 累计 input、203,776 cached input、25,698 output、
+22,994 reasoning tokens。其停止理由把最后一个知识模块的结束误判为整份
+交付截断，尽管本轮资源已完整送达。因此这仍是失败样本，不能宣称性能或
+质量达标；Stage 1 与 VPA 合计已约 565 秒。
+
+为区别真实传输截断与模型误读，离线核对了该轮 CLI `get_role_baseline`
+事件及同一 PA 会话 rollout 的模型可见 `custom_tool_call_output`：MCP
+调用状态为 completed、`truncated=false`；模型可见输出可完整解析为 JSON，
+含全部 14 项 resources、最后一项知识模块及其后的 snapshot identity。
+也未观察到上下文窗口被打满的证据。故本轮 `incomplete` 不能归因为
+MCP 丢包或知识缺件；主要是 Stage 2 在长上下文中反复承担 Host 已完成的
+交付审计，而没有进入交易判断。累计 input 不等于单次上下文长度，也不能
+把 wall 时间完全归因于模型推理。
+
+架构修正是把交付完整性归 Host：只有全部 `mandatory_read_plan` 操作成功、
+交接字段与完整知识分区通过 Gateway 校验后，才在长 resources **之后**
+返回 `stage2_handoff_receipt`，其中明确 `read_plan_complete`、资源数量和
+最后一项资源。AGENTS 与 Stage 2 Skills 要求模型读取实际内容、核对真正的
+事实或身份矛盾，但不重复推测资源是否还应继续。新回执在失败轮原 Frozen
+Job `4437ac6e…764ed8375` 上只读回放：14 项资源、末项为
+`read_knowledge_module`、回执位于 resources 之后、无工具错误。
+19 项相关单测、Ruff F/E9 和 diff check 通过。这个离线验证只证明交付契约，
+**尚未证明模型下一次会正确完成 Stage 2**；需保持资源冻结后做一次定向
+真实验收，并与 Stage 1/VPA 的时延门禁分别评价。
+
+### 2026-09-23 第四次 xhigh 重验与证据来源契约审查
+
+冻结资源的 `single-trace-20260923-220340` 再次未完成：Stage 1 首稿
+272.343 秒（95,451 input / 14,590 output / 12,201 reasoning tokens），
+VPA 首稿 181.641 秒（50,846 / 9,622 / 8,620），两者各只进行一次合并
+基线读取、无 repair。Stage 2 128.703 秒（428,176 累计 input / 21,151
+output / 18,519 reasoning）后 typed `incomplete`，未形成交易决策，三角色
+CLI wall 合计约 582.7 秒。Stage 1/VPA 的 MCP 内部处理仅约 0.128/0.102
+秒，取证结束到结果约 261/170 秒；瓶颈主要在模型处理长上下文与生成大量
+推理，而非工具循环。样本不足以估计 p95，但已明确未过生产时间门禁。
+
+Stage 2 这次不再误判知识截断，而误将 `evidence_index.vpa_evidence_ids=[]`
+视为已验收 VPA 报告不能引用 `vpa-*` ID。该索引的真实语义是本角色可直接
+读取的**原始 VPA catalog**；PA Stage 2 按权限不能读原始 catalog，只接收
+已验收的 VPA 报告。离线将该轮报告解析为 `VpaEvidenceReport`，报告列出的
+6 个引用 ID 全在同一冻结 catalog 中，catalog ID 也相等；Host 的原联合
+Validator 仍以报告 ID 集合约束 `joint_analysis.vpa_evidence_refs`。所以这不是
+真实 VPA 引用越权，而是把原始读取权与报告引用权混同。
+
+同一审查还发现 `mandatory_pa_delta_v1` 的 `delivery_index` 只统计本轮新
+resources，错误地把 213 个 PA fact 全列为“仅索引”，尽管同会话 Stage 1
+packet 的表格及 spine 已完整交付这 213 项的值。新执行契约现不在 PA
+续接 delta 附带这个当前调用专属索引，而以回执和同会话 Stage 1 packet
+界定继承；fresh 基线与 VPA 仍保留适用的 delivery index。PA 角色的初始
+`evidence_index` 不再显示原始 VPA ID 字段；联合 Stage 2 回执从冻结报告
+精确列出可引用 ID、报告 catalog ID，并声明 raw catalog access 为 false。
+Stage 2 的冻结 Provider Schema 与回执对所有新分析 Job 交付，不依赖协议
+digest 字段是否存在；存在时仍校验 digest。Runtime AGENTS、联合 Skill 与
+Worker 初始指令使用同一权限/继承/截断语义，没有开放新工具或更改原 Validator。
+
+失败轮 Frozen Job 只读回放显示 6 个报告引用 ID、回执在完整 resources
+之后、delta 无当前调用专属 delivery index、工具无错；相关 51 项单测、
+Ruff F/E9 与 diff check 通过。旧 Job 的冻结 core 仍有旧空索引，不能把
+回放当作新发布 Job；这些离线结果不证明模型下一次一定正确完成 Stage 2。
+在进一步付费验收前，应先保证上述权限与引用语义、Skill 路径、停止边界
+在新冻结 Job 中一致，再以完整 Draft、原 Validator/Router/Risk、持久化
+结果及逐角色时延作为验收，不再只看 CLI 退出码。
+
+### 2026-09-23 第五次 xhigh：停止权限仍让模型复审 Host 不变量
+
+`single-trace-20260923-223647` 在统一来源契约、81 项相关离线检查后保持
+冻结运行。Stage 1 365.469 秒、96,010 input / 14,605 output / 12,266
+reasoning tokens；VPA 222.046 秒、50,844 / 11,089 / 10,069；两者
+首稿各一次基线、无修复，原 Validator 通过。Stage 2 156.782 秒、440,403
+累计 input / 20,299 output / 17,687 reasoning 后再次 typed
+`review_required`，整链约 744 秒且无正式决策。Stage 1 与上次 272 秒的
+reasoning 量接近，远端生成/等待速率波动可见；不能将差额归因于 Gateway。
+
+这次停止理由声称 Stage 1 bearish，而 `pa_hypotheses` 投影缺少方向，无法
+确认二者关系。直接解析原 CLI MCP 结果和**模型可见**的会话
+`custom_tool_call_output`（约 136,739 字符、完整 JSON）均显示：
+`stage1_diagnosis.direction`、`stage1_diagnosis.market_hypotheses.primary.direction`
+和 `pa_hypotheses.primary.direction` 全是 `bearish`；Host 冻结的
+`pa_hypotheses_lineage.verified_stage1_projection=true` 及末尾 Snapshot
+identity 都在。模型声称“缺方向”是可证伪的事实错误，而不是 Host 缺件。
+此前同类停止已分别误报投影关系、知识/Skill、长基线截断和 VPA 引用权限；
+每次只加一个提示无法根治。
+
+根因应审查为**权限归属**：Host/Publisher/Gateway/Worker 已验证可机械
+证明的交付、身份、投影、知识继承及报告引用，Stage 2 Skill/传输 Schema
+却仍允许模型把这些不变量当作自己的审计任务，以 `incomplete` 或
+`review_required` 提前退出而不作交易判断。后续不能继续为每个假警报
+叠加 receipt 字段。候选架构是新 Codex Stage 2 在 Host 预检和成功基线
+交付后只提交交易 Draft；真实工具/身份/契约故障由 Host fail closed，
+市场不确定使用合法等待/No Trade，仍由原 Validator/Router/Risk 裁决。
+此改变涉及停止权限，待用户确认后实施；若选择保留模型停止，则必须设计
+可核验的停止证据与误报处理，而非再写自然语言提醒。Direct 不改变。
+
+### 实验前分角色与交接审查门禁（2026-09-23）
+
+以下以最近冻结 Job、原始 CLI/audit 和当前代码为准，不把待实施方向写成已优化效果。
+
+| 环节 | 已定位的主耗时或失败机制 | 实验前必须闭合的契约 | 不允许的捷径 |
+| --- | --- | --- | --- |
+| Stage 1 | 一次 packet 的实际证据响应 180,509 UTF-8 bytes（canonical `packet_bytes` 为 254,357，口径不同）；最近两次约 272/365 秒、约 12.2k reasoning tokens；Gateway 约 0.13 秒 | 核对 Provider Schema 与协议内重复内容、packet 内全部章节和事实值、Skill 的主/替代假设与 Gate 职责；仅去除能证明语义等价的包装/重复，建立输出质量与时延对照 | 删 Brooks 反证、只看近端 K 线、让程序选方向/周期 |
+| VPA | 一次基线读取、Gateway 约 0.10 秒；最近两次约 182/222 秒、约 8.6k/10.1k reasoning tokens；没有当前 PA Entry Attempt | 检查所选 5 模块原文、全部冻结量价证据、相对基线与每个事件的后续闭盘；明确背景支持与即时入场不足的不同语义，减少重复叙述但不减少独立反证 | 预设吸收/停止事件、用机械阈值替代 Wyckoff 判断、为了快而删 catalog |
+| Stage 2 | 同会话续接累计 input 约 428k–440k tokens，最近两次约 129/157 秒且均为错误 typed stop；本轮资源约 191 KB，另有 Stage 1 历史 | Host 确定身份、投影、继承、报告引用和 Schema；模型只比较 Router 内候选/等待、结构锚点与 VPA 作用。停止权限变更先取得确认，不能把假停止改写为 No Trade | 再叠 receipt 文案、放宽 Validator/Risk、忽略真实上游矛盾 |
+| 交接 | Stage 1 与派生 PA hypotheses 是不同形状；VPA 原始读取权与报告引用权不同；delta 与会话继承不同 | 新 Job 要逐项证明 Snapshot/cutoff、parent thread、Stage 1 校验、Router、PA 投影、VPA report/catalog、知识/HTF/价格继承、输出 Schema 和最终持久化；失败分类不混同市场不确定 | 凭模型声称“缺件”判定传输失败；用旧 Job 的离线回放冒充新发布 Job 验收 |
+
+性能目标是 `config/quality_contract.toml` 的整链 p95 不超过 300 秒，
+单次 p95 不超过 150 秒。当前串行链中，单是 Stage 1＋VPA 在第四轮就约
+454 秒，第五轮约 588 秒；即使 Stage 2 瞬时完成也不能达整链目标。
+去重目录、减少 MCP 往返与更短 Skill 文案都不足以解释或消除这个量级的
+差距。对 `gpt-6-luna/xhigh` 必须分别验证模型生成量、远端吞吐波动和全量
+专业任务的不可压缩部分；在不降低知识/判断质量之前不能宣称软件改动必能
+达到 300 秒。新一轮付费实验必须等停止权限与交接契约定案、静态/离线
+正反例检查通过，并在整个运行期间冻结代码和域资源。
+
+补充核对第五轮持久化的角色调用指标：Stage 1 的实际证据工具响应为
+180,509 UTF-8 bytes，`decision_packet_bytes=254,357` 是为 digest 使用
+`ensure_ascii=True` 序列化的**规范编码大小**，不能当作模型接收的线缆大小；
+两种口径不可混用。VPA 实际证据响应为 76,973 bytes。两角色最终结构化
+结果约 8,822 / 3,474 UTF-8 bytes；从最后证据交付到 CLI 结束分别为
+353.598 / 204.743 秒。因此首轮工具选择与 Gateway 不足以解释耗时，
+也不能靠缩短最终 JSON 文案声称解决主要瓶颈。Stage 2 typed stop 在
+`CodexWorker._unwrap_result` 抛出前虽已解析 CLI usage，但未形成成功的
+`CodexWorkerResult`，持久化指标把该角色 usage 记为 unknown；进行下一次
+性能验收前必须明确失败轮的使用量与时间证据来源，不得用不完整总量比较模型。
+
+### 2026-09-24 新 Stage 2 Host-gated Draft 合同：仅离线验收
+
+用户确认交接完整性、身份、投影、知识继承和资源故障由 Host 裁决。新发布的
+Codex Stage 2 Job 冻结 `result_policy=stage2_host_gated_draft_v1`：CLI 输出
+Schema 只允许 `{"result": <Stage 2 Draft>}`；模型停止对象被 Worker 明确
+拒绝。旧冻结 Job 未带此 policy，仍按旧 typed-stop Schema 回放；Stage 1、
+VPA 的停止语义不变。真正工具/预算失败仍由 Gateway/Worker fail-closed；
+证据完整时市场不确定只能经原 Schema 合法等待或 No Trade，不得伪造交易。
+
+Host 在联合 Job 发布前复算 PA hypotheses 投影，并核对已验收 VPA 报告的
+catalog ID 与同 Snapshot 冻结目录身份；Gateway 在完整必读读取后再次
+检查报告目录身份、知识/价格/HTF 交付分区和 Provider Contract。Runtime
+AGENTS 与 PA-only/Joint Stage 2 Skill 同步为相同权限边界；Brooks Router、
+Validator、Risk 和 Direct Provider 路径没有为此改写。定向 Worker、发布、
+Evidence、同会话续接、Joint 编排回归通过，Ruff F/E9 通过。这只证明离线
+契约与现有测试覆盖，不证明模型必定给出高质量 Draft 或时延达标。
+
+后续实验身份经用户再次确认固定为 `gpt-6-luna/xhigh`；历史 max Job 只作
+历史条件对照，不改名、不混入同条件质量/时延估计。Stage 1/VPA 暂不删除完整必读知识、价格窗口、量价目录或反证。第五轮的
+真实工具响应约 180.5/77.0 KB，最终结构化结果约 8.8/3.5 KB，而最后
+证据后模型仍耗时约 354/205 秒；从这组证据无法把主要瓶颈归于结果文字、
+MCP 往返或 Gateway。下一次付费实验前须锁定本版源码/资源 digest、确认
+固定思考强度，并完成本地正反例与 Direct 不变性检查；单次成功不能证明
+p95≤300 秒或交易效果非劣。
+
+第五轮已验收的 Stage 1/VPA 仍有非阻断专业文字警告，需要区分真实表达缺陷
+与规则误报。Stage 1 的“本轮新低”没有明确比较窗口，VPA 的“回看区间新低”
+及多 evidence selector 共用一段比较说明也欠精确；两个角色 Skill 现统一要求
+写清冻结比较区间、具体前棒/ID 与各自因果基线，不删除原事实或反证。另两条
+警告不应被当成已证实的市场错误：Stage 1 写的是“收盘**未**贴近本棒低点”，
+程序 `PA.BAR.K4` 的 `close_position=0.295` / `middle_half` 与此相容；
+VPA 的“观察后续收盘是否……”是未来条件，但当前有限词法规则未识别该措辞。
+这些是 warning 而非硬拒绝；本次不为迎合词法规则改动 Direct 共用 Validator，
+也不把新增 Skill 文字当作质量改善的实验证据。
+
+### 2026-09-24 首次新版完整链路 xhigh 本地基线
+
+`single-trace-20260924-005508` 使用同一历史 XAU Frozen input（evidence digest
+`84fc93d0ab4aa54c5a9068af619269721a5d253b2f1c6b3dad425c99b1f8bc7d`）、
+`gpt-6-luna/xhigh`、`pa_vpa_joint` 和新的 Host-gated Stage 2 Draft 合同。
+运行前 Host 重验 100 根 K 线、完整知识与 VPA catalog；本版 domain fingerprint 为
+`be5b456c19b220d5fd936581684e26581aef3efcd0db6ad7d25023aabf57a749`。
+本地诊断仅对本轮放宽为每角色 900 秒、整链 2400 秒；没有启用 240 秒保护，
+没有修改生产默认预算，也没有 VPS 部署或下单。
+
+| 角色/尝试 | CLI wall | Provider 报告 input / output / reasoning tokens | 最后证据交付至结束 | 校验 |
+| --- | ---: | ---: | ---: | --- |
+| Stage 1 #1 | 515.141 s | 96,794 / 19,439 / 17,040 | 488.593 s | 原 Validator 通过 |
+| VPA #1 | 150.203 s | 51,515 / 7,723 / 6,614 | 138.626 s | 旧 Validator 将 K1 的后续闭盘叙述误绑定 K2，触发修复 |
+| VPA 定点修复 #2 | 27.797 s | 25,963 / 1,068 / 778 | 17.616 s | 原 Validator 通过 |
+| Joint Stage 2 #1 | 383.172 s | 438,828 / 26,926 / 22,584 | 372.958 s | Draft 与原 Validator 通过；等待决策未触发下单 Risk |
+
+四次模型调用 wall 合计 1,076.313 秒，约 17.94 分钟；实际串行 Host 全程还含少量
+发布与校验时间。各基线只有一次 MCP 调用、没有可选调查，Gateway 单次约
+0.09–0.11 秒且无 denied。Stage 1/VPA/Stage 2 的实际证据响应约为
+180.7/77.2/160.1 KB，不能拿 CLI `result_bytes` 的重复序列化大小替代。
+Stage 2 续接报告 264,192 cached input tokens，438,828 input 为 CLI 报告口径，
+不等于 438,828 个彼此不同的新内容；最后证据后仍耗 373 秒。
+该轮 Stage 2 stderr 有一次 `stream disconnected ... max_output_tokens` 的远端
+sampling retry；目前不能量化其单独增加了多少时延。
+
+最终 `run_outcome=completed_with_warnings`，`role_stop=null`，Stage 2 终点是
+`wait` / `不下单`，没有执行订单。Stage 1 的空头 Spike 转换风险、VPA 的
+“背景支持但即时入场证据不足”和 Stage 2 等待结构信号相互一致。初稿的
+K1/K2 硬拒绝后经原文与冻结事实复核属于 Validator 主语误绑定，不是已证实
+的模型事实错误；Validator 对明确错误和引用约束仍不可省。修复稿还有两条多 evidence selector 共用比较句的
+专业文字 warning，但核对 K4–K1 原始 catalog 后未发现其量价方向或因果关系
+相反。Stage 1 与 Stage 2 各有一项无歧义字段标准化，不是分析失败。
+
+这证明**一轮**新合同可以完整运行并持久化，不证明稳定成功率、交易质量非劣或
+生产 p95≤300 秒。Stage 1 单独 515 秒，Stage 1＋VPA 首稿已约 665 秒；
+当前瓶颈是大任务下的模型处理/生成与续接上下文，不是 Gateway、MCP 往返或
+最终 JSON 体积。不能为达到 300 秒而删 Brooks/VPA 必读知识、取消反证或
+放宽 Validator。后续性能研究应把模型输出/推理量、续接上下文与服务端
+波动分开测量；在没有质量盲评与多快照数据前，保留上线 no-go。
+
+额外核对 CLI 事件的 MCP `result`：官方 SDK 同时记录 `content` 文本与
+`structured_content` 对象，Stage 1 两者分别约 255.6/187.4 KB，解码后是
+同一 packet。CLI 事件 JSON 的体积因此不能直接当作模型实际读入两份的
+证据；Stage 1 的 96,794 reported input tokens 也无法单独确定内部选用了
+哪一种表示。现阶段不据此修改 MCP 返回格式或旧 Frozen Job 回放语义；
+若研究单份无损交付，须先确认模型可见内容、官方 SDK 行为与新旧 Job 兼容，
+再用同快照验证质量及 token/时延。
+
+### 2026-09-24 同快照第二次 xhigh 完整复验与 VPA 校验根因
+
+用户确认后，以相同冻结 XAU 输入、`gpt-6-luna/xhigh`、代码/知识 domain
+fingerprint、900/2400 秒诊断超时重新完整运行
+`single-trace-20260924-012711`。没有重新部署、改变生产预算或下单。
+
+| 角色/尝试 | CLI wall | Provider 报告 input / output / reasoning tokens | 最后证据交付至结束 | 校验 |
+| --- | ---: | ---: | ---: | --- |
+| Stage 1 #1 | 303.531 s | 96,806 / 16,235 / 13,754 | 291.906 s | 通过 |
+| VPA #1 | 193.281 s | 52,371 / 10,266 / 9,104 | 182.519 s | 同类 K1/K2 主语误绑定触发修复 |
+| VPA 定点修复 #2 | 32.266 s | 25,882 / 1,327 / 953 | 22.982 s | 通过 |
+| Joint Stage 2 #1 | 122.312 s | 447,086 / 22,464 / 18,130 | 112.289 s | Draft 与原交易 Validator 通过 |
+
+四次 CLI wall 合计 651.390 秒；Host 从分析到持久化约 654.172 秒（10.90 分钟），
+首轮相应约 17.9 分钟。两轮均 `completed_with_warnings`、无 role stop，Stage 1
+均为偏空 Spike 转换、VPA 均为背景支持但当前入场证据不足，Stage 2 均为
+`wait` / `不下单`。第二轮 Stage 1 Router 额外选择交易区间知识，Stage 2
+证据响应 216,202 bytes（首轮 160,098）；两轮虽同源同配置，却不是逐 token
+相同负载。不能从 Stage 2 的 383→122 秒差额断言某一软件改动提速，也不能
+据此估计 p95。第二轮四次 MCP 总处理时间仅约 0.439 秒、无可选调查和 denied；
+主要时延仍在模型收到证据后的处理/生成，而非 Gateway 或往返。
+两轮 `investigation=agentic` 都没有调用可选调查工具，因此只验收了受约束
+Codex 角色的完整基线推理，不是“主动调查优于 Direct”的证据。
+
+两轮 VPA 原始首稿都明确把“没有更晚已收盘棒”指向最新 K1，K2 仅作为前棒
+或相对活动比较对象；冻结目录记载 K1 后续闭盘数为 0、K2 为 1。旧规则在
+整句出现否定短语后遍历句中所有 `K#`，因此错误拒绝 K2。现在
+`role_validator.py` 只对明确主语及明确并列事件做此项 hard error；明确的
+`K2之后没有更晚已收盘棒` 仍拒绝。两份**原始首稿**离线重新校验均不再有
+hard error，相关 48 项回归和 Ruff F/E9 通过。此修复发生在第二轮结束之后，
+尚未做第三次付费全链路，不能把“离线可通过”冒充新的真实运行结果。
+
+第二轮 VPA 的因果基线表述与目录数值相符：`vpa-w040` 当前相对基线
+`above`、与先前窗口 `equal`，`vpa-w010` 当前相对基线及较先前窗口均为
+`above`；剩余 `professional_prose_warning` 至少含词法误报，不能当成确定
+事实错误，也不能据此宣称专业质量已通过盲评。`run_outcome` 的旧字段
+`requested/effective_vpa_mode=off` 是关闭旧 Shadow/Soft 模式；本次实际链路
+由版本化 `analysis_pipeline.pipeline=pa_vpa_joint` 指定，正式 Stage 2 中有
+已验收 VPA report 的联合论证与引用。两轮证明新链路可重复完成，但 10.9–17.9
+分钟均远超整链 p95≤300 秒，Provider 报告总 tokens 约 668k/672k 也高于
+`quality_contract.toml` 的整链 p95≤250k 门槛。两个样本不能估计 p95，
+但均已超过对应单次阈值，仍不满足性能上线门禁。
+
+### Stage 内 subagent 研究方案（仅设计，未启用）
+
+本节是 2026-09-24 之前的设计记录；当前版本化实现、无 MCP 子角色边界和逐阶段三角色验收，以 [Stage 内子 Agent 研究与验收计划](stage_subagent_research_plan.md) 为准。下文历史设想中“child 独立 MCP 审计”尚未实施，不应当作现有能力。
+
+**研究问题。** 在保留完整 Brooks/VPA 必读原文、原 Validator/Router/Risk、
+`gpt-6-luna/xhigh`、同一 Frozen Snapshot 与 PA/VPA 隔离的条件下，让一个
+受限子角色并行核对单一争议，是否能减少父角色的关键路径推理时间，同时不增加
+重大事实/交易错误？当前两轮成功是 single-Agent 对照，不是 subagent 效果
+证据。一次子角色调用若要复制大量基线、等待后再综合，可能更慢、更贵；不得
+把“可并行”当作“必提速”。阶段间仍按原 Stage 1→Validator→Router→VPA
+独立报告→Joint Stage 2→Validator/Risk 串行交接，不拆成三个互相取代的 Agent。
+
+1. **能力与权限预检。** 当前 Worker、发布配置和 runtime audit 显式关闭
+   `features.multi_agent`、`multi_agent_v2`、`agents.enabled`；实验不能只改
+   AGENTS/Skill 文案。先在锁定 Codex CLI 版本上离线验证 native child 的
+   工具继承、进程/会话身份、超时、输出收集与审计路径，以及父角色委托后
+   能否继续处理其他工作；若实际串行等待 child，就没有并行提速前提。只有 Host 能给每个
+   child 限定同一 Job digest/cutoff、角色 Evidence allowlist、只读 MCP、
+   无 shell/Web/文件写入/额外知识库，才准许真实模型试验；否则停止 native
+   subagent 路线，另行研究 Host 管理的隔离只读并行任务，不把后者冒称前者。
+   初始深度 1、每 Stage 最多 1 个 child，父/子总并发与 token、时间预算均
+   有界；跨 Snapshot 禁共享会话或记忆。Direct、旧冻结 Job 和生产默认保持
+   关闭，按新 Job 显式实验标志与 digest 隔离。
+2. **Stage 1 单点处理。** 父角色完整读取 price-only、HTF、Router 前 PA
+   必读知识和全部 100 根 K 线，仍负责主/替代假设、Brooks Gate 与最终 Draft。
+   child 在父角色读完基线后只核对其指出的一项“主假设与最强反证”的已冻结事实、leg/acceptance
+   关系，返回证据 ID、支持/挑战、未解决条件，不选方向、Setup 或交易。父角色
+   委托后继续独立归纳其他问题，而不因 child 已读跳过自己的 mandatory read；
+   child 结果是可质疑的分析，
+   不是 Host 测量或 validated Stage 1。
+3. **VPA 单点处理。** 在独立 VPA Job 内，child 只核对一个 effort/result
+   或事件—后续闭盘序列，逐项使用各棒因果基线及 `later_closed_bar_count`，
+   明示反证和未知。它不得看到 PA 原始会话、创建 PA Setup、交易方向或订单。
+   父 VPA 仍负责完整报告、primary/alternative 关系及“背景支持”与“入场
+   时机不足”区分；最终由现有 VPA Validator 验收。
+4. **Stage 2 单点处理。** 只在 Router 已有真实候选且入场位置、失效位
+   或目标障碍存在具体争议时，child 独立挑战该候选的信号链与价格空间；纯
+   等待案例默认不生成 child。它只读 validated Stage 1、Router 许可知识及
+   已验收 VPA report 的授权引用，不能读 raw VPA catalog、改上下游或产出
+   订单 Draft。父角色独占候选/等待比较与最终 Draft；交接完整性、身份、
+   投影、资源故障仍由 Host fail-closed，不能让 child 的文字复审这些不变量。
+5. **固定交付与失败语义。** child 只能返回小型结构化
+   `question / evidence_refs / support / challenge / unknown / source_digest`；
+   不携带 order、胜率、role stop 或阶段最终结论。Host 分别审计父/子工具
+   调用，child 读取不计入父角色 mandatory-read 完成。身份、权限、预算或
+   子任务交付失败记为实验失败/覆盖缺失，不得伪装成市场 No Trade，也不能
+   静默回退为“成功的单 Agent 样本”。专业分歧由父角色在冻结证据内裁决，
+   原 Validator 和单一 materializer 不变。
+6. **顺序实验。** 先仅对 Stage 1 作一个 child 的离线契约与小规模同快照
+   A/A→A/B 试验；通过后分别试 VPA，再在含真实候选的快照试 Stage 2，
+   最后才试同周期组合。对照与处理均用 `gpt-6-luna/xhigh`、相同
+   `fixed/agentic` 调查政策、知识/Schema/冻结输入、预算与 Router 版本；
+   预登记顺序和失败，不用重跑洗掉超时或错误。盲评主/替代解释、事实引用、
+   VPA 因果比较、入场/等待、三价结构和重大错误；分层包含趋势、区间、
+   突破接受不明、VPA 冲突以及等待/候选，不只重复本次一个 XAU 快照。
+7. **验收门槛。** 同时报每角色和整链的持久化 wall/关键路径、p50/p95、
+   推理/输入/输出/缓存 token、总成本、optional evidence、修复/停止率、
+   Schema 合规、交易结果和盲评。小样本 pilot 只决定是否扩样，不能声称
+   p95 或收益提升。先预注册可接受的额外成本与最小有意义时延降幅；重大
+   事实、越权、no-lookahead 或交易安全错误为否决项。只有在多快照质量非劣、
+   完整链路有稳定实质提速，且达到 `quality_contract.toml` 的整链 p95
+   门禁后，才讨论生产启用；若只增加 token/解释而不改善决策或时延，弃用。
+
+三角色审查各有否决权：软件架构师核权限、身份、失败语义及关键路径；量化工程师
+核预注册、快照配对、无前视、覆盖和成本统计；交易员盲核 Brooks Context、
+VPA 反证、Setup/等待与结构失效位，不以文笔长度替代交易判断。
+
+本方案不更改当前生产默认、不实施子角色，也不提前降低思考强度。即使研究
+成功，Stage 内 child 只是受约束的证据挑战者，不改变 PA Agent 的事实、
+Brooks 主框架、VPA 辅助层、Router/Validator/Risk 或最终交易权限。
+
+### 2026-09-24 清理、逐阶段三角色审查与子角色研究补充
+
+**清理边界。** 先核对当前 branch、36 个既有未提交文件、目录引用、进程与
+reparse point；只移除工作树根目录 15 个未跟踪的 `.pytest_*` 临时测试目录。
+源码、完整知识、Skill、运行原始记录和现有未提交实现均保留。`decision_packet`
+的完整 mandatory section、`evidence` 的 Stage 2 交接回执、Worker 的 Host-gated
+Draft 与相应测试仍在当前正式路径上；没有证据证明这些代码或整篇知识是死代码。
+Stage 2 Skill 有两处“不计算仓位/Trader Equation”的措辞重复，但删去一处
+只会改变 Skill digest，不会解决模型主耗时，因此本轮不改冻结分析规则。
+
+| 阶段 | 架构师：链路与权限 | 量化工程师：性能与可复算 | PA/VPA 交易员：质量与下一步 |
+| --- | --- | --- | --- |
+| Stage 1 | packet 一次交付完整 price-only、HTF、Host 选中 mandatory 原文；Router 仍只用 validated 输出。不能再按文件名暗删模块。 | 两轮首稿 515/304 秒，基线交付后分别 489/292 秒；MCP 非瓶颈。对事实引用、比较区间作有界离线核验，知识压缩须 matched replay 证明非劣。 | 主假设、最强反证、突破接受与位置判断不能换成机械指标。只针对明确争议减少重复推论，保留完整 Brooks 背景。 |
+| 独立 VPA | 只收 PA 已验证假设与冻结 VPA catalog，不接管 Setup/Router；模块由 PA 枚举选择。 | 两轮首稿 150/193 秒；旧 K1/K2 主语误绑导致两次额外 repair，已离线修正、尚未经新付费整链复验。按单个事件核对 later-closed-bar 和比较对象，区分词法 warning 与事实错误。 | 背景支持与即时入场支持分开；高量/低量、吸收/衰竭须有同源基线和后续响应，不能凭标签补造信号。 |
+| 联合 Stage 2 | Host 负责交接身份、知识继承、PA 投影、VPA 报告 catalog；模型仅交 Draft，Validator/Risk 独立。 | 两轮首稿 383/122 秒且同快照负载不同；CLI 报告累计输入 439k/447k，含缓存与续接，不等于本轮新增知识。先在相同冻结输入比较 fresh 与 resume 的完整成本/质量，不能仅据一次波动改默认。 | 在 Router 边界内比较候选与等待，结构 stop、TP1 障碍、VPA 反证不可省。两次 wait 不代表能评价可交易候选质量。 |
+
+逐层核对：Stage 1 知识由 `stage1_prompt_txt_files` 定义且 `decision_packet.py`
+保留全部已选 mandatory section 与反证；`stage1/SKILL.md` 保持主/替代假设、
+K 序号、已发生/未来确认、引用域和两次可选调查边界；`evidence.py`/Worker
+校验一次 packet 与身份。当前可研究的是有损输出重复和事实错绑，而非删除
+Brooks 原文。VPA 知识由 `vpa_context_profile.py` 仅依已验证 PA 枚举/pattern
+选取，`knowledge_bundle.py` 将选中全文设为 mandatory；
+`vpa_evidence/SKILL.md` 要求逐事件的因果基线、后续闭盘、独立反证与 volume
+provenance；`role_validator.py` 的已定位误拒修复需要在后续真实样本中证实
+repair 率变化，不应为提速放松事实和 catalog 校验。Stage 2 知识仍由
+`stage2_prompt_txt_files` 与 Brooks Router 控制；`joint_stage2/SKILL.md`
+明确 PA 候选、结构三价、已验收 VPA 支持/挑战与合法等待；Publisher、Gateway、
+Worker 和唯一 materializer 分别掌管冻结/交付/传输/决定性数学。优先研究
+续接上下文的实际成本以及候选案例，而不是删掉有权限区别的普通/联合 Skill。
+
+**规范冲突待单独修订，不当作本轮性能补丁。** 根 `AGENTS.md` 与
+`CONTEXT.md` 的“VPA 不得修改 estimated_win_rate”针对旧 Shadow/研究补丁；
+ADR-0025 与联合 Skill 允许新版联合 Stage 2 在 PA/Router 内自行提出未校准的
+联合主观先验。应给前两处加清晰协议作用域，保留旧禁令，不让 VPA 独立角色
+产出概率。公共必读的 `提示词大纲_人设与思维方式.txt` 同时含 price-only 与
+裸 JSON 语句；联合 Stage 2 则需要已验收 VPA 报告和 Runtime `result` 封套。
+原文已有 Host 协议优先说明，目前只能判为潜在误读/认知负担，不能说它造成
+这两次耗时或错误。若角色化分层，须保留 Brooks 专业原文，并先做 Direct/Codex
+同快照 replay 与规则逐条等价检查；不在本轮改 Direct 共用知识。
+
+**子角色方案的追加预注册要求。** 前一节是候选设计，不是已实现功能；当前
+Worker 明确关闭 multi-agent。研究先锁定 CLI/模型版本，验证真实父子并行、
+同一 Frozen Job 身份、只读 MCP allowlist、工具审计、无 shell/Web/文件写入、
+超时与回收。子角色使用新版本化小 Skill/Schema，仅回答一个明确事实矛盾或最强
+反证，不复用 Stage 1/VPA/Stage 2 的最终 Draft Skill；父角色独立完成所有
+mandatory read、最终判断与原 Validator。无真实争议、只有合法等待或仅需
+确定性算术时不 spawn；可预先定义触发问题和停止条件，不为展示 Agent 能力
+强行派生。VPA child 仍与 PA 会话隔离；Stage 2 child 只见被允许的 validated
+VPA 报告，不见 raw VPA catalog。初始深度 1、每 Stage 最多 1 child，仅实验 Job
+显式开启，Direct、旧 Job 与生产默认不变。
+
+先仅试 Stage 1，再 VPA、最后有真实候选的 Stage 2；每项使用同快照同模型
+`gpt-6-luna/xhigh` 与完整知识的 A/A 后 A/B。预登记触发率及 no-spawn 情况，
+按 intention-to-treat 纳入 child 超时、无交付和权限拒绝，不只报告成功样本。
+记录父子实际重叠区间、串行 Host 关键路径、角色和整链 wall、实际/缓存/推理
+token、成本、repair、停止及重大错误；父子耗时不相加冒充整链。质量盲评
+主/替代假设、VPA 因果、候选/等待和结构三价，重大越权、事实漂移、前视或
+坏单为否决。child 失败不得伪装成市场 No Trade；若父角色独立继续，处理组
+仍记 child 失败。阶段一加 VPA 的首稿已分别约 665/497 秒，单个 child 不能
+预设突破整链 300 秒门槛；只能在多快照、完整成本、质量非劣且关键路径确有
+实质缩短时继续扩样，否则停用这一研究方向。此方案不承诺既定提速：预期收益
+是对明确争议的并行反证核对与可能减少漏证；主要风险是重复上下文、额外 token、
+协调等待和权限面扩大。

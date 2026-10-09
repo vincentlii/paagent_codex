@@ -37,6 +37,7 @@ def test_runtime_audit_verifies_authority_frontmatter_and_prohibited_tools() -> 
     assert report.resource_names == (
         "AGENTS.md",
         "config.toml",
+        "pa_challenger.toml",
         "rules/pa-agent.rules",
         "skills/draft_pointer_repair/SKILL.md",
         "skills/joint_arbiter/SKILL.md",

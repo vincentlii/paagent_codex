@@ -13,6 +13,7 @@ DeepSeekModel = Literal["deepseek-v4-flash", "deepseek-v4-pro"]
 DeepSeekEffort = Literal["low", "medium", "high", "max"]
 CodexModel = Literal[
     "gpt-6-astra",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -24,6 +25,7 @@ CodexEffort = Literal["low", "medium", "high", "xhigh", "max", "ultra"]
 
 _CODEX_EFFORTS: Mapping[str, tuple[str, ...]] = {
     "gpt-6-astra": ("low", "medium", "high", "xhigh", "max", "ultra"),
+    "gpt-6-luna": ("low", "medium", "high", "xhigh", "max"),
     "gpt-5.6-sol": ("low", "medium", "high", "xhigh", "max", "ultra"),
     "gpt-5.6-terra": ("low", "medium", "high", "xhigh", "max", "ultra"),
     "gpt-5.6-luna": ("low", "medium", "high", "xhigh", "max"),
@@ -116,6 +118,7 @@ def analysis_capabilities() -> dict[str, list[dict[str, object]]]:
     )
     labels = {
         "gpt-6-astra": "GPT-6 Astra",
+        "gpt-6-luna": "GPT-6 Luna",
         "gpt-5.6-sol": "GPT-5.6 Sol",
         "gpt-5.6-terra": "GPT-5.6 Terra",
         "gpt-5.6-luna": "GPT-5.6 Luna",

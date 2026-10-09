@@ -14,7 +14,10 @@ from pa_agent.agent_runtime.evidence import (
     EvidenceBudgetExceeded,
     FrozenEvidenceGateway,
 )
-from pa_agent.agent_runtime.execution_contract import RUNTIME_CONTRACT
+from pa_agent.agent_runtime.execution_contract import (
+    ANALYSIS_EXECUTION_POLICY, RUNTIME_CONTRACT,
+    SEMANTIC_PARITY_CONTEXT_POLICY, STAGE2_HOST_GATED_DRAFT_POLICY,
+)
 from pa_agent.agent_runtime.frozen_job import AgentJobBudget
 from tests.unit.test_frozen_agent_job import _job
 
@@ -120,6 +123,39 @@ def test_transport_schema_preserves_nested_vpa_references():
     jsonschema.validate({"result": stop}, schema)
 
 
+def test_new_stage2_transport_is_draft_only_without_changing_legacy_stop():
+    import jsonschema
+
+    base = _job(core_context={"runtime_contract_version": RUNTIME_CONTRACT})
+    legacy = replace(base, manifest=replace(base.manifest, role="stage2"))
+    stopped = {"protocol_version": "analysis_role_stop_v1", "status": "review_required",
+               "role": "stage2", "reason": "claimed upstream conflict", "evidence_refs": []}
+    jsonschema.validate({"result": stopped}, CodexCliWorker._transport_schema(legacy))
+    with pytest.raises(CodexWorkerStopped):
+        CodexCliWorker._unwrap_result(legacy, {"result": stopped})
+
+    gated = replace(legacy, core_context={
+        **legacy.core_context,
+        "analysis_execution_policy": ANALYSIS_EXECUTION_POLICY,
+        "context_policy": SEMANTIC_PARITY_CONTEXT_POLICY,
+        "result_policy": STAGE2_HOST_GATED_DRAFT_POLICY,
+    })
+    schema = CodexCliWorker._transport_schema(gated)
+    jsonschema.Draft7Validator.check_schema(schema)
+    jsonschema.validate({"result": {"cycle": "range"}}, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"result": stopped}, schema)
+    with pytest.raises(CodexWorkerOutputError, match="cannot return a model role stop"):
+        CodexCliWorker._unwrap_result(gated, {"result": stopped})
+    assert CodexCliWorker._unwrap_result(gated, {"result": {"cycle": "range"}}) == {"cycle": "range"}
+    with pytest.raises(CodexWorkerOutputError, match="skipped required frozen context reads"):
+        CodexCliWorker._validate_required_evidence_reads(gated, ())
+    with pytest.raises(CodexWorkerOutputError, match="evidence budget exceeded"):
+        CodexCliWorker._validate_required_evidence_reads(gated, ({
+            "status": "denied", "reason": "budget_exceeded", "operation": "get_market_core",
+        },))
+
+
 def test_repair_cannot_reopen_investigation_and_only_installs_repair_skill(tmp_path):
     job = replace(measurement_job(), repair_findings={"allowed_pointers": ["/reason"]},
                   runtime={"agents_text": "runtime", "skills": {"stage1": "old skill",
@@ -134,23 +170,42 @@ def test_repair_cannot_reopen_investigation_and_only_installs_repair_skill(tmp_p
 def test_joint_skill_selected_only_by_matching_frozen_protocol_and_schema(tmp_path):
     from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
     from pa_agent.agent_runtime.publisher import CodexJobPublisher
+    from pa_agent.ai.pa_handoff import compile_pa_handoff
     from pa_agent.ai.pa_provider_contracts import schema_for_joint_stage2_draft
     from tests.integration.conftest import make_frame
     from tests.unit.test_codex_job_publisher import _request
 
     prompts = tmp_path / "prompts"
     prompts.mkdir()
+    hypotheses = compile_pa_handoff({}, None, make_frame()).model_dump(mode="json")
     request = _request("stage2", {"task_id": "task-1",
         "role_protocol": {"contract_version": "joint_stage2_agent_protocol_v1"},
-        "pa_hypotheses": {}, "vpa_evidence": {}})
+        "pa_hypotheses": hypotheses,
+        "vpa_catalog_id": "frozen-vpa",
+        "vpa_evidence": {
+            "catalog_id": "frozen-vpa", "data_status": "unavailable",
+            "summary": "No usable volume evidence.", "observations": [],
+            "hypothesis_assessments": [], "background_relation": "insufficient_data",
+            "entry_timing_relation": "insufficient_data",
+            "next_confirmation": {
+                "state": "not_applicable", "trigger": None, "requires_closed_bar": False,
+            },
+        }})
     publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=prompts, job_root=tmp_path / "jobs")
     with pytest.raises(ValueError, match="must agree"):
         publisher(request, 1)
     published = publisher(replace(request, schema=schema_for_joint_stage2_draft()), 1)
     job = FrozenAgentJobStore(published.parent).open(published.name)
     assert job.manifest.role == "stage2"
+    assert job.core_context["result_policy"] == STAGE2_HOST_GATED_DRAFT_POLICY
     assert set(job.runtime["skills"]) == {"joint_stage2"}
+    import jsonschema
+
+    transport = CodexCliWorker._transport_schema(job)
+    jsonschema.Draft7Validator.check_schema(transport)
+    assert "anyOf" not in transport["properties"]["result"]
     assert "pa-vpa-stage2-decision" in CodexCliWorker._initial_prompt(job)
+    assert "only the Stage 2 Draft" in CodexCliWorker._initial_prompt(job)
     assert FrozenEvidenceGateway(job).get_market_core()["role_skill"] == job.runtime["skills"]["joint_stage2"]
     assert all("volume" not in bar for bar in job.bars)
     assert job.fact_projection["role_evidence"] is None
@@ -170,7 +225,7 @@ def test_mcp_measurement_dispatch_is_read_only_and_records_replay_receipt(tmp_pa
     receipt = result["structuredContent"]["measurement"]
     assert audit["events"][0]["measurement"] == receipt
     assert receipt == FrozenEvidenceGateway(job).measure_price_window(**receipt["request"])
-    assert all(t["annotations"]["readOnlyHint"] for t in _tools())
+    assert all(t["annotations"]["readOnlyHint"] for t in _tools() if t["name"] != "start_stage_challenge")
 
 
 def test_stop_survives_isolated_spool_without_becoming_availability():

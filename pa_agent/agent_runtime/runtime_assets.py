@@ -27,6 +27,7 @@ class CodexRuntimeAssets:
     skill_documents: Mapping[str, str]
     config_text: str
     rules_text: str
+    challenger_text: str
 
 
 def load_codex_runtime_assets() -> CodexRuntimeAssets:
@@ -34,6 +35,7 @@ def load_codex_runtime_assets() -> CodexRuntimeAssets:
     agents_text = root.joinpath("AGENTS.md").read_text(encoding="utf-8")
     config_text = root.joinpath("config.toml").read_text(encoding="utf-8")
     rules_text = root.joinpath("rules/pa-agent.rules").read_text(encoding="utf-8")
+    challenger_text = root.joinpath("pa_challenger.toml").read_text(encoding="utf-8")
     skills = {
         role: root.joinpath(path).read_text(encoding="utf-8")
         for role, path in _SKILL_PATHS.items()
@@ -42,6 +44,7 @@ def load_codex_runtime_assets() -> CodexRuntimeAssets:
         "AGENTS.md": agents_text,
         "config.toml": config_text,
         "rules/pa-agent.rules": rules_text,
+        "pa_challenger.toml": challenger_text,
         **{path: skills[role] for role, path in _SKILL_PATHS.items()},
     }
     encoded = json.dumps(
@@ -58,4 +61,5 @@ def load_codex_runtime_assets() -> CodexRuntimeAssets:
         skill_documents=MappingProxyType(skills),
         config_text=config_text,
         rules_text=rules_text,
+        challenger_text=challenger_text,
     )

@@ -138,11 +138,11 @@ def _pa_joint_diff(
 
 
 def _usage_from_call_attempts(calls: list[dict[str, Any]]) -> dict[str, int]:
-    """Derive cost totals from the response-bearing call ledger."""
+    """Sum observed counters, including charged failures; metrics retain coverage."""
     response_calls = [
         call
         for call in calls
-        if isinstance(call, dict) and call.get("response_hash")
+        if isinstance(call, dict) and (call.get("response_hash") or call.get("usage_observed_without_response"))
     ]
     return {
         "prompt_tokens": sum(max(0, int(call.get("prompt_tokens") or 0)) for call in response_calls),
@@ -239,6 +239,7 @@ def _call_attempt_entry(
     validation_category: str | None = None,
     error_type: str | None = None,
     backend_id: str = "direct",
+    failure_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a content-free, reproducible ledger entry for one provider call."""
     usage = getattr(reply, "usage", None)
@@ -258,9 +259,18 @@ def _call_attempt_entry(
     )
     if not isinstance(model_call_meta, dict):
         model_call_meta = {}
+    observed_failure = (reply is None and backend_id == "codex_agent"
+                        and isinstance(failure_metadata, dict) and bool(failure_metadata.get("collaboration")))
+    if observed_failure:
+        from pa_agent.ai.deepseek_client import AIUsage
+        model_call_meta = failure_metadata
+        usage = AIUsage(**dict(model_call_meta.get("usage") or {}))
+        latency_ms = model_call_meta.get("latency_ms")
     from pa_agent.ai.analysis_metrics import call_metrics
     metrics = model_call_meta.get("metrics") or call_metrics(usage, model_call_meta)
-    return {
+    if observed_failure:
+        metrics["usage_scope"] = "observed_failure_including_child"
+    call = {
         "arm": arm,
         "stage": stage,
         "attempt": max(1, int(attempt)),
@@ -315,6 +325,7 @@ def _call_attempt_entry(
         "session_mode": _audit_text(model_call_meta.get("session_mode")),
         "parent_job_digest": _audit_text(model_call_meta.get("parent_job_digest")),
         "investigation_policy": _audit_text(model_call_meta.get("investigation_policy")),
+        "knowledge_delivery_policy": _audit_text(model_call_meta.get("knowledge_delivery_policy")),
         "evidence_events": copy.deepcopy(model_call_meta.get("evidence_events") or []),
         "metrics": copy.deepcopy(metrics),
         "codex_thread_id": _audit_text(model_call_meta.get("thread_id")),
@@ -341,6 +352,14 @@ def _call_attempt_entry(
         ),
         "created_at_ms": int(datetime.now().timestamp() * 1000),
     }
+    if call["analysis_backend"] == "codex_agent":
+        if observed_failure:
+            call["usage_observed_without_response"] = True
+        call["stage_subagents"] = _audit_text(model_call_meta.get("stage_subagents", "off"))
+        call["subagent_events"] = copy.deepcopy(model_call_meta.get("subagent_events") or [])
+        if model_call_meta.get("collaboration"):
+            call["collaboration"] = copy.deepcopy(model_call_meta["collaboration"])
+    return call
 
 
 def _apply_validation_to_call_attempts(
@@ -362,6 +381,8 @@ def _apply_validation_to_call_attempts(
     for event in validation_events:
         index = int(event.get("attempt") or 0) - 1
         if 0 <= index < len(response_calls):
+            if event.get("category") == "evidence_materialization":
+                continue  # A Host binding is neither a model repair nor a warning.
             if event.get("category") == "normalization":
                 response_calls[index]["normalization_applied"] = True
                 continue
@@ -582,6 +603,7 @@ def _build_empty_record(
     *,
     htf_context: dict[str, Any] | None = None,
     prompt_dir: Path | None = None,
+    monitoring_task_id: str | None = None,
 ) -> AnalysisRecord:
     """Build a partial AnalysisRecord with meta populated from the frame."""
     ts_ms = now_local_ms()
@@ -687,6 +709,7 @@ def _build_empty_record(
 
     return AnalysisRecord(
         meta=meta,
+        monitoring_task_id=monitoring_task_id,
         kline_data=kline_data,
         htf_text=render_higher_timeframe_context(htf_context),
         htf_context=serialize_higher_timeframe_context(htf_context),
@@ -1161,6 +1184,8 @@ class TwoStageOrchestrator:
                         status=_attempt_failure_status(exc),
                         error_type=exc.failure.kind,
                         backend_id=backend.backend_id,
+                        failure_metadata=next((item for item in reversed(exc.attempts)
+                                               if item.get("collaboration")), None),
                     )
                 )
                 raise
@@ -1257,6 +1282,7 @@ class TwoStageOrchestrator:
         htf_context: dict[str, Any] | None = None,
         frozen_vpa_catalog: dict[str, Any] | None = None,
         backend_fallback_context: dict[str, Any] | None = None,
+        monitoring_task_id: str | None = None,
     ) -> AnalysisRecord:
         """Run the two-stage analysis pipeline and return an AnalysisRecord.
 
@@ -1325,6 +1351,7 @@ class TwoStageOrchestrator:
                 htf_context=htf_context,
                 frozen_vpa_catalog=frozen_vpa_catalog,
                 backend_fallback_context=backend_fallback_context,
+                monitoring_task_id=monitoring_task_id,
             )
 
         # ── Step 1: Build partial record ──────────────────────────────────────
@@ -1333,6 +1360,7 @@ class TwoStageOrchestrator:
             self._settings,
             htf_context=htf_context,
             prompt_dir=self._runtime_prompt_dir(),
+            monitoring_task_id=monitoring_task_id,
         )
         backend_runtime_identity = getattr(
             self._analysis_backend, "runtime_identity", {}
@@ -1379,6 +1407,7 @@ class TwoStageOrchestrator:
             status: str = "received",
             validation_category: str | None = None,
             error_type: str | None = None,
+            failure_metadata: dict[str, Any] | None = None,
         ) -> None:
             attempt = 1 + sum(
                 1
@@ -1396,6 +1425,7 @@ class TwoStageOrchestrator:
                     validation_category=validation_category,
                     error_type=error_type,
                     backend_id=self._analysis_backend.backend_id,
+                    failure_metadata=failure_metadata,
                 )
             )
 
@@ -1554,6 +1584,7 @@ class TwoStageOrchestrator:
                     "stage1",
                     messages_s1,
                     reply=getattr(exc, "role_reply", None),
+                    failure_metadata=getattr(exc, "analysis_attempt", None),
                     status=_attempt_failure_status(exc),
                     error_type=type(exc).__name__,
                 ),
@@ -1665,6 +1696,7 @@ class TwoStageOrchestrator:
                     "stage1",
                     msgs,
                     reply=getattr(exc, "role_reply", None),
+                    failure_metadata=getattr(exc, "analysis_attempt", None),
                     status=_attempt_failure_status(exc),
                     error_type=type(exc).__name__,
                 ),
@@ -1981,6 +2013,7 @@ class TwoStageOrchestrator:
             stage2_agent_context["role_protocol"]["joint_guidance"] = joint_guidance
             stage2_agent_context["pa_hypotheses"] = copy.deepcopy(record.pa_hypotheses)
             stage2_agent_context["vpa_evidence"] = joint_report.model_dump(mode="json")
+            stage2_agent_context["vpa_catalog_id"] = joint_catalog["catalog_id"]
             messages_s2.append({"role": "user", "content": joint_guidance + "\n" + json.dumps({
                 "vpa_report": joint_report.model_dump(mode="json"),
             }, ensure_ascii=False)})
@@ -2032,6 +2065,7 @@ class TwoStageOrchestrator:
                     "stage2",
                     messages_s2,
                     reply=getattr(exc, "role_reply", None),
+                    failure_metadata=getattr(exc, "analysis_attempt", None),
                     status=_attempt_failure_status(exc),
                     error_type=type(exc).__name__,
                 ),
@@ -2177,6 +2211,7 @@ class TwoStageOrchestrator:
                     "stage2",
                     msgs,
                     reply=getattr(exc, "role_reply", None),
+                    failure_metadata=getattr(exc, "analysis_attempt", None),
                     status=_attempt_failure_status(exc),
                     error_type=type(exc).__name__,
                 ),
@@ -2435,6 +2470,7 @@ class TwoStageOrchestrator:
         htf_context: dict[str, Any] | None,
         frozen_vpa_catalog: dict[str, Any] | None,
         backend_fallback_context: dict[str, Any] | None,
+        monitoring_task_id: str | None,
     ) -> AnalysisRecord:
         """Run PA, independent VPA evidence, and a bounded joint arbiter."""
         from pa_agent.ai.json_validator import JsonValidator
@@ -2450,6 +2486,7 @@ class TwoStageOrchestrator:
             self._settings,
             htf_context=htf_context,
             prompt_dir=self._runtime_prompt_dir(),
+            monitoring_task_id=monitoring_task_id,
         )
         if backend_fallback_context:
             preflight_record = preflight_record.model_copy(

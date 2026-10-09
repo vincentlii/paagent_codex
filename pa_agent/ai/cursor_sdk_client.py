@@ -13,8 +13,9 @@ import secrets
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from pa_agent.ai.cursor_connector import resolve_cursor_sdk_model_id
 from pa_agent.ai.deepseek_client import AIReply, AIUsage, CancelledError
@@ -129,8 +130,15 @@ def _patch_cursor_sdk_subprocess_popen() -> None:
                 return _orig_popen(_sanitize_cursor_bridge_argv(list(argv)), *args, **kwargs)
         return _orig_popen(argv, *args, **kwargs)
 
-    subprocess.Popen = _popen  # type: ignore[misc, assignment]
-    bridge_mod.subprocess.Popen = _popen  # type: ignore[attr-defined]
+    class _BridgeSubprocess:
+        Popen = staticmethod(_popen)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(subprocess, name)
+
+    # The bridge imports the shared subprocess module. Replace only its local
+    # binding; mutating subprocess.Popen globally breaks unrelated SDKs.
+    bridge_mod.subprocess = _BridgeSubprocess()
     _PATCHED_CURSOR_SDK_POPEN = True
 
 
@@ -173,7 +181,7 @@ def _patch_cursor_sdk_bridge_windows() -> None:
         if process.stderr is None:
             raise CursorSDKError("Bridge process stderr is unavailable")
 
-        q: "queue.Queue[str | None]" = queue.Queue()
+        q: queue.Queue[str | None] = queue.Queue()
 
         def _reader() -> None:
             try:
@@ -339,7 +347,12 @@ class CursorSdkClient:
 
         _ensure_cursor_sdk_patches()
         try:
-            from cursor_sdk import Agent, AgentOptions, CursorClient, LocalAgentOptions  # type: ignore
+            from cursor_sdk import (  # type: ignore
+                Agent,
+                AgentOptions,
+                CursorClient,
+                LocalAgentOptions,
+            )
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 "cursor-sdk 未安装或导入失败。请先安装依赖：pip install cursor-sdk"

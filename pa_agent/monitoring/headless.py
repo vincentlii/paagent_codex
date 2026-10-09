@@ -10,8 +10,9 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass
 from typing import Any
 
+from pa_agent.config.analysis_pipeline import pipeline_from_legacy
 from pa_agent.config.paths import RuntimePaths
-from pa_agent.config.settings import MonitoringAssetSettings, Settings
+from pa_agent.config.settings import MonitoringAssetSettings, Settings, provider_api_key_configured
 from pa_agent.config.vpa import vpa_is_enabled
 from pa_agent.data.factory import (
     resolved_identity_for_source,
@@ -26,12 +27,12 @@ from pa_agent.data.snapshot_bundle import build_snapshot_bundle
 from pa_agent.data.volume_context import merge_bar_history, snapshot_fetch_count
 from pa_agent.monitoring.scheduler import AnalysisTask, JobCompletion
 from pa_agent.monitoring.task_factory import create_frozen_analysis_task, frame_snapshot_hash
-from pa_agent.operations.projection import build_review_projection
 from pa_agent.operations.analysis_profile import (
     AnalysisProfile,
     profile_fingerprint,
     validate_analysis_profile,
 )
+from pa_agent.operations.projection import build_review_projection
 from pa_agent.operations.runtime_state import RuntimeControlStore, RuntimeStatusStore
 from pa_agent.records.analysis_history import (
     compute_incremental_bar_delta,
@@ -92,6 +93,8 @@ class HeadlessMonitor:
         backend_runtime_identity: Mapping[str, Any] | None = None,
         profile_applier: Callable[[AnalysisProfile], bool] | None = None,
         codex_worker_status_path: Any | None = None,
+        recovery_blocked_asset_keys: tuple[str, ...] = (),
+        recovery_tasks: tuple[AnalysisTask, ...] = (),
     ) -> None:
         self._settings = settings
         self._paths = paths
@@ -108,6 +111,7 @@ class HeadlessMonitor:
         self._review_projection_at_ms = 0
         self._applied_control_generation = 0
         self._applied_backend = "deepseek_only"
+        self._applied_codex_fast_mode = False
         self._applied_profile = AnalysisProfile()
         self._applied_profile_fingerprint = profile_fingerprint(self._applied_profile)
         self._applied_profile_generation = 0
@@ -130,6 +134,7 @@ class HeadlessMonitor:
         self._backend_runtime_identity = dict(backend_runtime_identity or {})
         self._profile_applier = profile_applier or (lambda _profile: True)
         self._codex_worker_status_path = codex_worker_status_path
+        self._recovery_blocked_assets = set(recovery_blocked_asset_keys)
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._closed = False
@@ -149,6 +154,31 @@ class HeadlessMonitor:
             thread_name_prefix="pa-market-data",
         )
         self._service = service_factory(self.handle_completion)
+        self._resume_accepted_tasks(recovery_tasks)
+
+    def _resume_accepted_tasks(self, tasks: tuple[AnalysisTask, ...]) -> None:
+        recover = getattr(self._service, "recover_unstarted", None)
+        for task in tasks:
+            matches = [
+                state for state in self._states
+                if state.config.source == task.source
+                and state.config.symbol.upper() == task.symbol
+                and state.config.timeframe == task.timeframe
+                and state.config.exchange.upper() in {task.venue, "AUTO"}
+            ]
+            if task.payload.analysis_backend_mode != "codex_only" or len(matches) != 1 or not callable(recover):
+                self._recovery_blocked_assets.add(task.asset_key)
+                continue
+            state = matches[0]
+            state.observed_task_id = task.task_id
+            state.in_flight_task_id = task.task_id
+            state.attempts = 1
+            self._task_to_state[task.task_id] = state
+            result = recover(task)
+            if not result.accepted:
+                self._task_to_state.pop(task.task_id, None)
+                state.in_flight_task_id = None
+                self._recovery_blocked_assets.add(task.asset_key)
 
     @property
     def stopped(self) -> bool:
@@ -271,6 +301,7 @@ class HeadlessMonitor:
             getattr(control, "desired_backend", "deepseek_only")
             or "deepseek_only"
         )
+        desired_fast_mode = bool(getattr(control, "codex_fast_mode", False))
         error = getattr(control, "error", None)
         if error:
             return True, str(error)
@@ -285,7 +316,8 @@ class HeadlessMonitor:
             != self._applied_profile_fingerprint
         )
         backend_pending = desired_backend != self._applied_backend
-        identity_pending = profile_pending or backend_pending
+        fast_mode_pending = desired_fast_mode != self._applied_codex_fast_mode
+        identity_pending = profile_pending or backend_pending or fast_mode_pending
         profile_applied = False
         backend_applied = False
 
@@ -300,6 +332,7 @@ class HeadlessMonitor:
                 control,
                 desired_backend=desired_backend,
                 desired_profile=desired_profile,
+                desired_fast_mode=desired_fast_mode,
             ):
                 return True, (
                     "analysis_profile_pending"
@@ -335,6 +368,9 @@ class HeadlessMonitor:
                 self._applied_backend = desired_backend
                 backend_applied = True
                 self._clear_prepared_tasks()
+            if fast_mode_pending:
+                self._applied_codex_fast_mode = desired_fast_mode
+                self._clear_prepared_tasks()
         self._applied_control_generation = int(getattr(control, "generation", 0))
         run_once_generation = int(getattr(control, "run_once_generation", 0) or 0)
         if run_once_generation > self._consumed_run_once_generation:
@@ -352,6 +388,7 @@ class HeadlessMonitor:
                 control,
                 desired_backend=desired_backend,
                 desired_profile=desired_profile,
+                desired_fast_mode=desired_fast_mode,
             ):
                 return True, "run_once_pending"
             self._run_once_in_flight_generation = run_once_generation
@@ -416,6 +453,7 @@ class HeadlessMonitor:
         *,
         desired_backend: str,
         desired_profile: AnalysisProfile | None,
+        desired_fast_mode: bool,
     ) -> bool:
         latest = self._control_store.read()
         if int(getattr(latest, "generation", 0)) != int(
@@ -426,6 +464,8 @@ class HeadlessMonitor:
             getattr(latest, "desired_backend", "deepseek_only")
             or "deepseek_only"
         ) != desired_backend:
+            return False
+        if bool(getattr(latest, "codex_fast_mode", False)) != desired_fast_mode:
             return False
         if desired_profile is not None:
             latest_profile = self._desired_profile(latest)
@@ -465,6 +505,8 @@ class HeadlessMonitor:
             == self._applied_backend
         )
         if not backend_matches:
+            return False
+        if bool(getattr(control, "codex_fast_mode", False)) != self._applied_codex_fast_mode:
             return False
         desired_profile = self._desired_profile(control)
         if desired_profile is None:
@@ -510,6 +552,7 @@ class HeadlessMonitor:
                 int(float(self._settings.monitoring.poll_interval_seconds) * 2 + 15),
             ),
             "applied_control_generation": self._applied_control_generation,
+            "applied_codex_fast_mode": self._applied_codex_fast_mode,
             "applied_profile": self._applied_profile.model_dump(mode="json"),
             "applied_profile_fingerprint": self._applied_profile_fingerprint,
             "applied_profile_generation": self._applied_profile_generation,
@@ -517,11 +560,18 @@ class HeadlessMonitor:
             "consumed_run_once_generation": self._consumed_run_once_generation,
             "mode": {
                 "vpa": self._applied_profile.vpa_mode,
+                "analysis_pipeline": (
+                    self._settings.analysis_pipeline.pipeline
+                    if self._settings.analysis_pipeline is not None
+                    else pipeline_from_legacy(self._settings.prompt).pipeline
+                ),
+                "direct_available": provider_api_key_configured(self._settings),
                 "paper_trading": bool(self._settings.paper_trading.enabled),
                 "decision_stance": self._settings.general.decision_stance,
                 "analysis_backend": self._applied_backend,
             },
             "scheduler": self._service.snapshot(),
+            "recovery_blocked_assets": sorted(self._recovery_blocked_assets),
             "assets": assets,
             "control_error": control_error,
         }
@@ -821,6 +871,7 @@ class HeadlessMonitor:
                     "model": self._applied_profile.codex_model,
                     "reasoning_effort": self._applied_profile.codex_reasoning_effort,
                     "profile_fingerprint": self._applied_profile_fingerprint,
+                    **({"service_tier": "fast"} if self._applied_codex_fast_mode else {}),
                 }
                 if self._applied_backend != "deepseek_only"
                 else None
@@ -881,6 +932,8 @@ class HeadlessMonitor:
         allow_startup_snapshot: bool = False,
     ) -> str:
         now = self._monotonic()
+        if task.asset_key in self._recovery_blocked_assets:
+            return "recovery_blocked"
         latest_closed_bar_ts = self._latest_closed_bar_ts(task)
         with self._lock:
             if state.in_flight_task_id is not None:
@@ -911,13 +964,13 @@ class HeadlessMonitor:
             try:
                 persisted_success = self._scheduler_audit.was_successful(task.task_id)
             except Exception as exc:
-                persisted_success = False
                 logger.warning(
                     "Persistent monitoring dedupe is unavailable for %s %s: %s",
                     state.config.symbol,
                     state.config.timeframe,
                     exc,
                 )
+                return "audit_unavailable"
             if persisted_success:
                 state.successful_task_id = task.task_id
                 state.last_analysis_status = "completed"

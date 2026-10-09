@@ -1,17 +1,50 @@
 ---
 lifecycle: active
 capability: research-only
-verification_scope: not-verified
-最后核验: 2026-09-02
-核验提交: 2bc71ae
+verification_scope: local
+最后核验: 2026-10-09
+核验提交: working-tree knowledge-delivery audit（未提交；仅本文标注范围）
 权威来源:
   - docs/architecture/ADR-0005-offline-pa-vpa-aabb.md
   - docs/architecture/ADR-0021-continuous-paired-joint-research.md
   - docs/quality/acceptance.md
   - docs/architecture/ADR-0024-codex-analysis-backend.md
+  - docs/quality/stage1_subagent_market_pilot_20260928.md
+  - docs/quality/subagent_complementary_pilot_20260928.md
 ---
 
 # 研究与评价
+
+2026-10-09 分层知识交付对照在新冻结 XAU 快照、新代码上按 A1/B1/B2/A2
+预注册并完成 4/4；盲评先封存再解盲。全量 A PA/VPA 为 93.0/92.5，
+分层 B 为 89.25/92.5；B Stage 2 快 12.5 秒而全链慢 15.1 秒，PA
+质量门槛未过。旧快照的结果方向相反，两轮各仅一张独立行情，均为本地
+`research-only`；正式候选仍全量 A，不证明盈利或 p95。详见
+[分层知识四臂研究](../quality/layered_stage2_knowledge_research_20261008.md)。
+
+2026-09-28 补充：互补分工修复后的新四臂完整链 0/4，隔离 CLI 限流导致 B1/B2 无 Stage 1 Draft；A1 仅局部 Stage 1 可诊断，不能计算子 Agent 政策速度差、盲评非劣或 p95。四臂失败保留 ITT，额度恢复后必须新登记，旧 cohort 不重跑混合。详见[修复后真实 cohort](../quality/subagent_complementary_pilot_20260928.md)。下方是修复前旧 pilot 和当时未修复状态的历史记录。
+
+2026-09-28 Stage 1 子协作 pilot：一个独立真实冻结 Snapshot，四份 Stage 1 Draft，
+完整链 3 成功/1 缺失；B 政策平均比 A 慢 17.9%，只有 B1 成功收集 child。
+四份局部 Stage 1 可独立评分，缺失整链必须 unscorable，不用局部 Draft 补造 receipt。
+盲态评分先冻结再解盲；+1.3 分的政策均值差不能证明 child 质量增益或统计非劣。
+预登记速度/完整性门禁不满足，暂停 VPA/Stage 2/组合付费扩展和生产晋级。
+详见[三角色评价与证据](../quality/stage1_subagent_market_pilot_20260928.md)。
+
+本轮同时确认 PA resume CLI usage 的会话累计口径：派生增量只扣同线程已验证父计数，
+不扣独立 child；失败/未报告仍 unknown，原账本不改。程序普通 VPA auto-binding 的
+normalization 标志与既有规则冲突，保留并披露，不据该标志夸大首稿失败。
+以上是局部模型/执行诊断，不是 closed_trade/Paper 收益，也不能用于 p95、校准或生产晋级。
+
+Codex Stage 内单问题子 Agent 另按 [逐阶段研究计划](../quality/stage_subagent_research_plan.md)
+做 `off` 对照和 Stage 1、VPA、Stage 2 分别试验；模型固定
+`gpt-6-luna/xhigh`，双方均使用 agentic 调查，只改变子协作政策。当前实现为
+Host 独立子进程和有限只读入口，2026-09-27 本地真实合成传输已通过，生产默认关闭。
+Host 的 start/collect、失败、父子实际读取与独立用量证明实际暴露；无派生为合法政策样本，
+失败/未收集/start 拒绝保留 ITT，但不是干净 per-protocol。合成 canary 不是市场质量/时延增益。
+以下旧 PA/VPA A/A/B/B 限制针对 Shadow 与研究 Joint patch；显式
+`pa_vpa_joint` 的联合 Stage 2 按 ADR-0025 独立形成未校准主观先验，
+不是修改 PA-only 胜率。
 
 新版 `analysis_study_v1` 的本地实现与限制见 [阶段 7 报告](../quality/phase7_research_acceptance.md)。
 它区分 Backend、联合和调查三个问题；fixed/agentic 已接入 Frozen Job/Gateway/Worker，
@@ -150,6 +183,8 @@ closed-OHLC counterfactual ledger，始终返回 `ready_for_promotion=false`；�
   它是 operational smoke，不是模型对照实验。
 
 ## 当前不能得出的结论
+
+- [联合 Stage 2 分层知识研究](../quality/layered_stage2_knowledge_research_20261008.md)已完成一个冻结快照的预注册四臂盲评：B 臂通过探索性专业质量筛查，但 Stage 2 和全链均值更慢，Provider 总 Token 更多；不晋级正式链。一个独立快照不能证明分层知识的统计非劣、泛化或交易增益。正式单 Agent 链保持全量必读。
 
 - 不能声称 VPA 或 Joint 已提高胜率、盈利、EV 或出入场精度。
 - 不能声称真实 VPS、systemd 权限、Provider/行情和长时间 Paper 已验证。

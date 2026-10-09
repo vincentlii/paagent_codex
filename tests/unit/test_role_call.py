@@ -27,6 +27,18 @@ class _Reply:
     reasoning_content: str = ""
 
 
+def test_host_reference_binding_is_audited_without_model_normalization_or_repair():
+    result = run_structured_role(
+        role="vpa_evidence", messages=[{"role": "user", "content": "Return JSON."}],
+        call_api=lambda messages: _Reply('{"ok":true}'),
+        validate=lambda raw: RoleValidationResult(
+            {"ok": True}, reference_bindings=({"path": "observation.auto_bound_evidence_ids",
+                                             "after": ["vpa-e002"]},)),
+    )
+    assert result.ok and len(result.replies) == 1
+    assert [event["category"] for event in result.validation_events] == ["evidence_materialization"]
+
+
 def test_role_repair_replays_invalid_draft_without_demanding_verbatim_prose() -> None:
     replies = iter(
         (

@@ -426,6 +426,32 @@ def provider_draft_semantic_issues(
         return []
 
     issues: list[dict[str, Any]] = []
+    if stage == "stage1":
+        hypotheses = draft.get("market_hypotheses")
+        if isinstance(hypotheses, dict):
+            sources = [("market_hypotheses.primary", hypotheses.get("primary"))]
+            alternatives = hypotheses.get("alternatives")
+            if isinstance(alternatives, list):
+                sources.extend((f"market_hypotheses.alternatives.{index}", value)
+                               for index, value in enumerate(alternatives))
+            for path, hypothesis in sources:
+                if not isinstance(hypothesis, dict):
+                    continue
+                for name in ("supporting_fact_refs", "challenging_fact_refs"):
+                    refs = hypothesis.get(name)
+                    if not isinstance(refs, list):
+                        continue
+                    for index, ref in enumerate(refs):
+                        if not isinstance(ref, str):
+                            continue  # The schema owns type errors.
+                        try:
+                            catalog.resolve_references([ref], role=role)
+                        except KeyError:
+                            issues.append(_draft_issue(
+                                f"{path}.{name}.{index}", kind="unknown_evidence",
+                                message=f"unknown or hidden Evidence ID: {ref}",
+                                blocks_materialization=True,
+                            ))
     seen: set[str] = set()
     valid_ids = (
         {"1.1", *STAGE1_GATE_NODE_IDS}

@@ -8,6 +8,7 @@ from pa_agent.ai.factual_grounding import (
     validate_vpa_capability_narrative,
     validate_vpa_comparator_narrative,
     validate_vpa_k_references,
+    validate_vpa_window_transition_narrative,
 )
 
 
@@ -73,6 +74,10 @@ def test_cross_window_extreme_requires_a_bounded_reference() -> None:
 def test_future_confirmation_accepts_an_explicit_closed_bar_anchor() -> None:
     assert validate_future_confirmation_narrative(
         "等待下一根已收盘 K 线接受并收于 K1 高点上方，否则视为未确认。",
+        path="vpa_report.next_confirmation.trigger",
+    ) == []
+    assert validate_future_confirmation_narrative(
+        "观察K1之后的下一根闭盘棒：若收盘越过K1高点，再评估是否被接受。",
         path="vpa_report.next_confirmation.trigger",
     ) == []
 
@@ -177,6 +182,43 @@ def test_contextual_window_rejects_only_an_explicit_direction_restatement() -> N
     )
 
     assert any("current window direction claim" in item for item in errors)
+
+
+def test_explicit_window_transition_checks_each_frozen_comparison() -> None:
+    evidence = [
+        {
+            "evidence_id": "vpa-w020", "bar_range": "K40-K1",
+            "facts": {
+                "current_window": "K20-K1", "prior_window": "K40-K21",
+                "current_progress_direction": "positive",
+                "prior_progress_direction": "negative",
+            },
+        },
+        {
+            "evidence_id": "vpa-w040", "bar_range": "K80-K1",
+            "facts": {
+                "current_window": "K40-K1", "prior_window": "K80-K41",
+                "current_progress_direction": "negative",
+                "prior_progress_direction": "positive",
+            },
+        },
+    ]
+    path = "vpa_report.observations[0].interpretation"
+    wrong = "K40-K1相对K80-K41、以及K20-K1相对K40-K21，均呈现方向由负转正的窗口差异。"
+    errors = validate_vpa_window_transition_narrative(wrong, evidence_items=evidence, path=path)
+    assert any("window transition claim for vpa-w040" in item for item in errors)
+    assert not any("vpa-w020" in item for item in errors)
+
+    valid = "K40-K1相对K80-K41净进展由正转负；K20-K1相对K40-K21净进展由负转正。"
+    assert validate_vpa_window_transition_narrative(valid, evidence_items=evidence, path=path) == []
+    negated = "K40-K1相对K80-K41净进展并非由负转正，仍需观察。"
+    assert validate_vpa_window_transition_narrative(negated, evidence_items=evidence, path=path) == []
+    tentative = "K40-K1相对K80-K41净进展可能由负转正，仍需观察。"
+    assert validate_vpa_window_transition_narrative(tentative, evidence_items=evidence, path=path) == []
+    ambiguous = "K40-K1相对K80-K41、K20-K1相对K40-K21，方向出现变化。"
+    assert validate_vpa_window_transition_narrative(ambiguous, evidence_items=evidence, path=path) == []
+    different_metric = "K40-K1相对K80-K41，某项指标由负转正。"
+    assert validate_vpa_window_transition_narrative(different_metric, evidence_items=evidence, path=path) == []
 
 
 def test_capability_guard_distinguishes_claim_from_disclaimer() -> None:

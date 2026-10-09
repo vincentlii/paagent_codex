@@ -65,6 +65,7 @@ def run_joint(
     retry=False,
     codex=False,
     frame=None,
+    worker_failure_role=None,
 ):
     from unittest.mock import MagicMock
     from pa_agent.config.settings import Settings, ValidationSettings
@@ -128,7 +129,25 @@ def run_joint(
         backend.backend_id = "codex_agent"
         backend.identity.return_value = {"backend": "codex_agent"}
         role_backend = MagicMock()
+        role_backend.backend_id = "codex_agent"
         backend.bind_role.return_value = role_backend
+
+        def check_worker_failure(role, kwargs):
+            if worker_failure_role != role:
+                return
+            from pa_agent.ai.provider_failures import ModelCallFailure, ProviderFailure
+            from pa_agent.agent_runtime.codex_worker import CodexWorkerOutputError
+            error = CodexWorkerOutputError("parent failed after child")
+            metadata = {"analysis_backend": "codex_agent", "stage": role, "job_digest": "f" * 64,
+                        "stage_subagents": "single_challenge_v1", "attempt": 1,
+                        "collaboration": {"status": "completed", "job_digest": "f" * 64},
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 7, "total_tokens": 17,
+                                  "reported_fields": []}, "latency_ms": 25.0}
+            error.analysis_attempt = metadata
+            if kwargs.get("on_attempt_error"):
+                kwargs["on_attempt_error"](error)
+            raise ModelCallFailure(ProviderFailure(kind="invalid_request", message=str(error)),
+                                   original=error, attempts=(metadata,))
 
         def check_agent_stop(role):
             if stop_role == role:
@@ -142,6 +161,7 @@ def run_joint(
                 )
 
         def agent_call(request, **kwargs):
+            check_worker_failure(request.role, kwargs)
             check_agent_stop(request.role)
             assert request.snapshot_hash
             if request.role == "stage2":
@@ -156,6 +176,7 @@ def run_joint(
         backend.run.side_effect = agent_call
 
         def agent_vpa_call(request, **kwargs):
+            check_worker_failure(request.role, kwargs)
             check_agent_stop(request.role)
             from pa_agent.ai.fact_catalog import analysis_snapshot_hash
             assert request.snapshot_hash == analysis_snapshot_hash(frame or make_frame())
@@ -174,6 +195,21 @@ def run_joint(
     )
     record = orchestrator.submit(frame or make_frame(), CancelToken(), lambda event: None)
     return record, calls, writer
+
+
+@pytest.mark.parametrize("role", ["stage1", "vpa_evidence", "stage2"])
+def test_failed_parent_retains_child_usage_and_identity_without_fabricating_response(role):
+    record, _, writer = run_joint(codex=True, worker_failure_role=role)
+    failed = next(c for c in record.call_attempts if c["stage"] == role)
+    assert failed["response_hash"] is None
+    assert failed["usage_observed_without_response"]
+    assert failed["stage_subagents"] == "single_challenge_v1"
+    assert failed["job_digest"] == "f" * 64
+    assert failed["collaboration"]["status"] == "completed"
+    assert failed["total_tokens"] == 17
+    assert failed["metrics"]["values"]["total_tokens"]["status"] == "unknown"
+    assert record.usage_total["total_tokens"] == sum(c["total_tokens"] for c in record.call_attempts)
+    writer.save_partial.assert_called_once()
 
 
 def test_joint_pipeline_calls_vpa_before_only_stage2():

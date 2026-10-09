@@ -36,6 +36,7 @@ _RUNTIME_FIELDS = (
     "updated_at_ms",
     "heartbeat_stale_after_seconds",
     "applied_control_generation",
+    "applied_codex_fast_mode",
     "applied_profile_generation",
     "applied_profile_fingerprint",
     "run_once_consumed_generation",
@@ -63,13 +64,18 @@ _SCHEDULER_FIELDS = (
     "error",
     "max_concurrency",
 )
-_MODE_FIELDS = ("vpa", "paper_trading", "decision_stance", "analysis_backend")
+_MODE_FIELDS = (
+    "vpa", "analysis_pipeline", "direct_available", "paper_trading",
+    "decision_stance", "analysis_backend",
+)
 _RECENT_RUN_FIELDS = (
     "run_id",
     "timestamp_local_ms",
     "symbol",
     "timeframe",
+    "analysis_pipeline",
     "run_status",
+    "error_type",
     "stage1_cycle_position",
     "stage1_direction",
     "stage1_gate_result",
@@ -102,8 +108,11 @@ _PAPER_ACCOUNT_FIELDS = (
     "account_id",
     "equity",
     "orders",
+    "pending",
     "open",
     "closed",
+    "cancelled",
+    "ambiguous",
     "realized_pnl",
 )
 _PAPER_RESEARCH_FIELDS = ("complete_aabb_snapshots",)
@@ -124,6 +133,7 @@ _CODEX_FIELDS = (
 )
 _ANALYSIS_SUMMARY_FIELDS = (
     "backend",
+    "analysis_pipeline",
     "run_count",
     "operational_success_rate",
     "first_pass_rate",
@@ -307,6 +317,7 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
             or "deepseek_only"
         )
         == control.desired_backend
+        and runtime_view.get("applied_codex_fast_mode", False) == control.codex_fast_mode
         and not profile_view["pending"]
     )
     return {
@@ -388,6 +399,7 @@ def _run_once_ready(
         == control.analysis_profile.model_dump(mode="json")
         and str((runtime.get("mode") or {}).get("analysis_backend") or "")
         == control.desired_backend
+        and runtime.get("applied_codex_fast_mode", False) == control.codex_fast_mode
         and running == 0
         and queued == 0
         and not bool(scheduler.get("closed"))
@@ -468,7 +480,7 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
             if not self._authorized():
                 return
             path = urlsplit(self.path).path
-            if path not in {"/api/control", "/api/profile", "/api/run-once"}:
+            if path not in {"/api/control", "/api/profile", "/api/run-once", "/api/fast-mode"}:
                 self._json(404, {"error": "not_found"})
                 return
             if self.headers.get("X-PA-Agent-Control") != "1":
@@ -496,6 +508,9 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
             if path == "/api/profile":
                 self._profile(body)
                 return
+            if path == "/api/fast-mode":
+                self._fast_mode(body)
+                return
             if path == "/api/run-once":
                 self._run_once(body)
                 return
@@ -507,6 +522,14 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 backend = body.get("backend")
                 if backend not in {"deepseek_only", "auto", "codex_only"}:
                     self._json(400, {"error": "unsupported_backend"})
+                    return
+                runtime = RuntimeStatusStore(paths.runtime_status_path).read()
+                if (
+                    backend in {"deepseek_only", "auto"}
+                    and isinstance(runtime, dict)
+                    and (runtime.get("mode") or {}).get("direct_available") is False
+                ):
+                    self._json(409, {"error": "direct_backend_unavailable"})
                     return
                 state = control_store.set_desired_backend(
                     backend,
@@ -568,6 +591,30 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 202,
                 {"ok": True, "applied": False, "control": control_state_to_dict(state)},
             )
+
+        def _fast_mode(self, body: dict[str, Any]) -> None:
+            if set(body) != {"expected_generation", "enabled"}:
+                self._json(400, {"error": "invalid_fast_mode_request"})
+                return
+            expected, enabled = body["expected_generation"], body["enabled"]
+            if isinstance(expected, bool) or not isinstance(expected, int) or not isinstance(enabled, bool):
+                self._json(400, {"error": "invalid_fast_mode_request"})
+                return
+            runtime = RuntimeStatusStore(paths.runtime_status_path).read()
+            if runtime is None or _health(runtime, now_ms=int(time.time() * 1000))["state"] not in {"running", "paused"}:
+                self._json(503, {"error": "runtime_state_unavailable"})
+                return
+            try:
+                state = control_store.set_codex_fast_mode(
+                    enabled, expected_generation=expected, actor="dashboard"
+                )
+            except RuntimeControlConflict:
+                self._json(409, {"error": "generation_conflict"})
+                return
+            except OSError:
+                self._json(503, {"error": "control_state_unavailable"})
+                return
+            self._json(202, {"ok": True, "applied": False, "control": control_state_to_dict(state)})
 
         def _run_once(self, body: dict[str, Any]) -> None:
             if set(body) != {"expected_generation"}:

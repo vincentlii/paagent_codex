@@ -3,6 +3,20 @@ import json
 import pytest
 
 
+def test_subagent_audit_fields_do_not_change_direct_call_records():
+    from pa_agent.orchestrator.two_stage import _call_attempt_entry
+
+    kwargs = {"arm": "A", "stage": "stage1", "attempt": 1, "messages": []}
+    direct = _call_attempt_entry(**kwargs)
+    assert direct["analysis_backend"] == "direct"
+    assert "stage_subagents" not in direct
+    assert "subagent_events" not in direct
+
+    codex = _call_attempt_entry(**kwargs, backend_id="codex_agent")
+    assert codex["stage_subagents"] == "off"
+    assert codex["subagent_events"] == []
+
+
 def condition(**changes):
     return {
         "backend": "codex_agent",
@@ -72,16 +86,113 @@ def test_protocol_rejects_confounding_model_change():
         study.StudyPlan.model_validate(config(b=condition(model="other", investigation="agentic")))
 
 
-def test_phase7_codex_arm_is_pinned_to_luna_max():
+def test_codex_arm_accepts_luna_xhigh_and_preserves_frozen_max():
     from pa_agent.experiments import study_protocol as study
 
-    with pytest.raises(ValueError, match="gpt-5.6-luna"):
+    assert study.StudyPlan.model_validate(config(
+        a=condition(model="gpt-6-luna"),
+        b=condition(model="gpt-6-luna", investigation="agentic"),
+    )).a.model == "gpt-6-luna"
+    assert study.StudyPlan.model_validate(config(
+        a=condition(model="gpt-6-luna", reasoning="xhigh"),
+        b=condition(model="gpt-6-luna", reasoning="xhigh", investigation="agentic"),
+    )).a.reasoning == "xhigh"
+    with pytest.raises(ValueError, match="approved Luna model/effort pair"):
         study.StudyPlan.model_validate(
             config(
                 a=condition(reasoning="high"),
                 b=condition(reasoning="high", investigation="agentic"),
             )
         )
+
+
+def test_stage_subagent_contrast_is_isolated_and_off_for_direct():
+    from pa_agent.experiments import study_protocol as study
+
+    a = condition(model="gpt-6-luna", reasoning="xhigh", pipeline="pa_vpa_joint", investigation="agentic")
+    b = {**a, "stage_subagents": "single_challenge_v1"}
+    plan = study.StudyPlan.model_validate(config(contrast="stage_subagents", a=a, b=b))
+    assert plan.a.stage_subagents == "off"
+    assert plan.b.stage_subagents == "single_challenge_v1"
+    with pytest.raises(ValueError):
+        study.StudyPlan.model_validate(config(contrast="stage_subagents",
+            a={**a, "investigation": "fixed"}, b={**b, "investigation": "fixed"}))
+    for policy in ("stage1_challenge_v1", "vpa_challenge_v1", "stage2_challenge_v1"):
+        scoped = study.StudyPlan.model_validate(config(
+            contrast="stage_subagents", a=a,
+            b={**a, "stage_subagents": policy},
+        ))
+        assert scoped.b.stage_subagents == policy
+    with pytest.raises(ValueError, match="stage_subagents"):
+        study.StudyPlan.model_validate(config(
+            contrast="stage_subagents", a=a,
+            b={**b, "reasoning": "max"},
+        ))
+    with pytest.raises(ValueError, match="stage_subagents"):
+        study.StudyPlan.model_validate(config(
+            contrast="stage_subagents",
+            a={**a, "backend": "deepseek_direct", "investigation": "fixed"}, b=b,
+        ))
+
+
+def test_layered_knowledge_is_only_a_joint_codex_research_contrast():
+    from pa_agent.experiments import study_protocol as study
+
+    a = condition(model="gpt-6-luna", reasoning="xhigh",
+                  pipeline="pa_vpa_joint", investigation="agentic")
+    b = {**a, "knowledge_delivery": "layered_stage2_research_v1"}
+    plan = study.StudyPlan.model_validate(config(contrast="knowledge_delivery", a=a, b=b))
+    assert plan.a.knowledge_delivery == "full"
+    assert plan.b.knowledge_delivery == "layered_stage2_research_v1"
+    for invalid_a, invalid_b in (
+        ({**a, "pipeline": "pa_only"}, {**b, "pipeline": "pa_only"}),
+        ({**a, "investigation": "fixed"}, {**b, "investigation": "fixed"}),
+        (a, {**b, "stage_subagents": "stage2_challenge_v1"}),
+        (a, {**b, "reasoning": "max"}),
+    ):
+        with pytest.raises(ValueError, match="knowledge_delivery"):
+            study.StudyPlan.model_validate(config(
+                contrast="knowledge_delivery", a=invalid_a, b=invalid_b,
+            ))
+
+
+def test_layered_study_checks_initial_stage2_policy_not_pointer_repair(tmp_path):
+    from pa_agent.experiments import study_protocol as study
+
+    a = condition(model="gpt-6-luna", reasoning="xhigh",
+                  pipeline="pa_vpa_joint", investigation="agentic")
+    b = {**a, "knowledge_delivery": "layered_stage2_research_v1"}
+    study.register_study(tmp_path, config(contrast="knowledge_delivery", a=a, b=b), [sample()])
+
+    def execute(request):
+        result = execution(request)
+        calls = result["output"]["call_attempts"]
+        initial = next(call for call in calls if call["stage"] == "stage2")
+        initial["knowledge_delivery_policy"] = (
+            "layered_stage2_research_v1" if request["condition"]["knowledge_delivery"]
+            == "layered_stage2_research_v1" else "inline_mandatory_knowledge_v1"
+        )
+        calls.append({**initial, "attempt": 2, "knowledge_delivery_policy": None})
+        return result
+
+    study.run_study(tmp_path, execute)
+    assert study.summarize_study(tmp_path)["coverage"]["completed"] == 4
+
+    missing_control = tmp_path / "missing-control-policy"
+    study.register_study(missing_control, config(
+        contrast="knowledge_delivery", a=a, b=b,
+    ), [sample()])
+
+    def missing_full_policy(request):
+        result = execute(request)
+        if request["condition"]["knowledge_delivery"] == "full":
+            next(call for call in result["output"]["call_attempts"]
+                 if call["stage"] == "stage2" and call["attempt"] == 1)[
+                     "knowledge_delivery_policy"] = None
+        return result
+
+    study.run_study(missing_control, missing_full_policy)
+    assert study.summarize_study(missing_control)["coverage"]["completed"] == 2
 
 
 def test_preregistration_survives_missing_arm_and_blocks_rerun(tmp_path):
@@ -298,3 +409,18 @@ def test_reusing_runtime_cannot_pass_by_minting_new_client_tokens(tmp_path):
 
     study.run_study(tmp_path, reused)
     assert study.summarize_study(tmp_path)["coverage"]["completed"] == 1
+
+
+def test_child_failure_or_rejected_start_remains_itt_but_not_clean_per_protocol():
+    from pa_agent.experiments.study_protocol import collaboration_coverage
+    from pa_agent.agent_runtime.execution_contract import STAGE_CHALLENGE_PROTOCOL
+    def call(status, rejections=0):
+        return {"stage": "stage1", "attempt": 1, "job_digest": "test", "collaboration": {
+            "protocol": STAGE_CHALLENGE_PROTOCOL, "job_digest": "test", "status": status,
+            "collected": True, "start_rejections": rejections}}
+    for status in ("failed", "cancelled", "running"):
+        assert not collaboration_coverage([call(status)], "stage1_challenge_v1")["per_protocol"]
+    assert collaboration_coverage([call("not_requested")], "stage1_challenge_v1")["per_protocol"]
+    assert collaboration_coverage([call("completed")], "stage1_challenge_v1")["per_protocol"]
+    coverage = collaboration_coverage([call("completed", 1)], "stage1_challenge_v1")
+    assert coverage["start_rejected"] == 1 and not coverage["per_protocol"]

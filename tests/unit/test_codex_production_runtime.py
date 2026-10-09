@@ -61,6 +61,22 @@ def test_enabled_codex_factory_uses_state_only_runtime_roots(tmp_path: Path) -> 
         == load_codex_runtime_assets().asset_digest
     )
 
+    fast_backend = factory(
+        SimpleNamespace(
+            payload=SimpleNamespace(
+                frame=make_frame(),
+                analysis_backend_mode="codex_only",
+                analysis_backend_identity={
+                    **config.public_runtime_identity(),
+                    "service_tier": "fast",
+                },
+            )
+        ),
+        object(),
+    )
+    assert fast_backend._runtime_identity["service_tier"] == "fast"
+    assert fast_backend._publish_job._runtime_identity["service_tier"] == "fast"
+
 
 def test_enabled_codex_preflight_fails_closed_without_model_or_binary(tmp_path: Path) -> None:
     config = CodexProductionConfig.from_environment(

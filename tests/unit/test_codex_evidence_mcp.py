@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
+from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
 from tests.unit.test_frozen_agent_job import _job
 
 
@@ -143,6 +144,13 @@ def test_stdio_mcp_serves_only_budgeted_frozen_evidence(tmp_path: Path) -> None:
                 },
             },
         )
+        unavailable = _request(
+            process,
+            {
+                "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                "params": {"name": "get_vpa_evidence", "arguments": {"evidence_ids": []}},
+            },
+        )
     finally:
         if process.stdin is not None:
             process.stdin.close()
@@ -150,36 +158,49 @@ def test_stdio_mcp_serves_only_budgeted_frozen_evidence(tmp_path: Path) -> None:
 
     assert "tools" in initialized["result"]["capabilities"]
     for tool in listed["result"]["tools"]:
-        assert tool["annotations"]["readOnlyHint"] is True
+        assert tool["annotations"]["readOnlyHint"] is (tool["name"] != "start_stage_challenge")
         assert tool["annotations"]["destructiveHint"] is False
         assert tool["annotations"]["openWorldHint"] is False
-    assert {item["name"] for item in listed["result"]["tools"]} == {
-        "get_role_baseline",
-        "get_job_manifest",
-        "get_market_core",
-        "list_fact_ids",
-        "get_facts",
-        "get_bars",
-        "get_measurements",
-        "get_price_frame",
-        "get_pa_evidence",
-        "get_htf_evidence",
-        "get_vpa_evidence",
-        "list_allowed_knowledge",
-        "search_allowed_knowledge",
-        "read_allowed_knowledge",
-        "read_knowledge_module",
-        "get_upstream_artifact",
-        "get_experience_entries",
-        "get_repair_findings",
-        "measure_price_window",
-        "project_price_leg",
+    from jsonschema import ValidationError, validate
+    challenge_schema = next(tool["inputSchema"] for tool in listed["result"]["tools"]
+                            if tool["name"] == "start_stage_challenge")
+    validate({"question": "Check boundary", "resources": [{"operation": "get_htf_evidence",
+             "arguments": {"fact_ids": ["HTF.H1"]}}]}, challenge_schema)
+    with pytest.raises(ValidationError):
+        validate({"question": "Check boundary", "resources": [{"operation": "get_htf_evidence",
+                 "arguments": {"evidence_ids": ["HTF.H1"]}}]}, challenge_schema)
+    # The SDK registers a static schema for Stage 1 -> Stage 2 rebinding;
+    # dispatch authorization is enforced by the server, not tools/list.
+    assert set(FrozenEvidenceGateway(_job()).available_tool_names()) <= {
+        item["name"] for item in listed["result"]["tools"]
     }
     assert called["result"]["isError"] is False
     assert called["result"]["structuredContent"]["facts"][0]["fact_id"] == "PA.BAR.K1"
+    assert "error" in unavailable or unavailable["result"]["isError"] is True
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     assert audit["job_digest"] == published.name
     assert audit["events"][0]["operation"] == "get_facts"
+    assert (audit["events"][1]["operation"], audit["events"][1]["status"]) == (
+        "get_vpa_evidence", "denied",
+    )
+
+
+def test_mcp_rejects_unlisted_tool_even_when_gateway_has_method(tmp_path: Path) -> None:
+    from pa_agent.agent_runtime.evidence_mcp import EvidenceMcpServer
+
+    job = _job(role="stage1")
+    audit = tmp_path / "audit.json"
+    server = EvidenceMcpServer(
+        FrozenEvidenceGateway(job), job_digest=job.manifest.job_digest,
+        audit_output=audit,
+    )
+    denied = server._call_tool("get_vpa_evidence", {"evidence_ids": []})
+    assert denied["isError"] is True
+    assert "not available" in denied["content"][0]["text"]
+    events = json.loads(audit.read_text(encoding="utf-8"))["events"]
+    assert [(event["operation"], event["status"]) for event in events] == [
+        ("get_vpa_evidence", "denied"),
+    ]
 
 
 def test_stdio_mcp_returns_tool_error_for_role_boundary(tmp_path: Path) -> None:

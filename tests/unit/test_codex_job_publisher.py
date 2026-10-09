@@ -165,7 +165,7 @@ def test_publisher_replaces_long_direct_prompt_with_bounded_core_context(tmp_pat
     assert job.core_context["stage1_decision_packet"]["packet_version"] == "bounded_stage1_packet_v2"
     assert job.core_context["stage1_decision_packet"]["identity"]["snapshot_hash"] == job.manifest.snapshot_hash
     assert initial["evidence_index"]["htf_evidence_ids"] == ["HTF.H1"]
-    assert initial["evidence_index"]["vpa_evidence_ids"] == []
+    assert "vpa_evidence_ids" not in initial["evidence_index"]
     assert job.fact_projection["snapshot_hash"] == job.manifest.snapshot_hash
     assert max(int(bar["ts_open"]) for bar in job.bars) <= job.manifest.cutoff_ts_open
     assert job.runtime["backend_runtime_identity"] == runtime_identity
@@ -373,6 +373,12 @@ def test_stage2_continuation_freezes_verified_inheritance_and_delta_baseline(
     assert continuation["thread_id"] == "thread-pa-0001"
     assert continuation["inherited_price_frame"] is True
     assert continuation["inherited_higher_timeframe"] is True
+    # Inheritance is justified by full text delivery, not manifest availability.
+    stage1_job = FrozenAgentJobStore(stage1_path.parent).open(stage1_path.name)
+    sections = stage1_job.core_context["stage1_decision_packet"]["knowledge"]["foundation_exact_sections"]
+    assert "".join(item["text"] for item in sections if item["knowledge_module_id"] == "shared.txt") == (
+        "Shared Brooks knowledge without role-specific slicing."
+    )
     assert continuation["inherited_knowledge_ids"] == ["shared.txt"]
     operations = [item[0] for item in FrozenEvidenceGateway(stage2_job).mandatory_read_plan()]
     assert "get_upstream_artifact" in operations

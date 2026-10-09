@@ -7,6 +7,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from pa_agent.config.analysis_pipeline import AnalysisPipelineIdentity
+from pa_agent.operations.projection import read_recent_runs
 from pa_agent.records.audit_store import AnalysisAuditStore
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
 
@@ -247,6 +249,24 @@ def test_concurrent_asset_records_are_indexed_once(tmp_path) -> None:
     with sqlite3.connect(db_path) as connection:
         count = connection.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0]
     assert count == 20
+
+
+def test_pipeline_identity_is_indexed_without_relabeling_legacy_records(tmp_path) -> None:
+    db_path = tmp_path / "audit.sqlite3"
+    store = AnalysisAuditStore(db_path)
+    legacy = _record(run_id="legacy")
+    joint = _record(run_id="joint").model_copy(
+        update={"analysis_pipeline": AnalysisPipelineIdentity(pipeline="pa_vpa_joint")}
+    )
+
+    assert store.record_analysis(legacy, record_path=tmp_path / "legacy.json").ok
+    assert store.record_analysis(joint, record_path=tmp_path / "joint.json").ok
+    rows = {row["run_id"]: row for row in read_recent_runs(db_path)}
+
+    assert rows["legacy"]["analysis_pipeline"] is None
+    assert rows["joint"]["analysis_pipeline"] == "pa_vpa_joint"
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 16
 
 
 def test_audit_store_indexes_official_run_and_manual_outcome(tmp_path: Path) -> None:

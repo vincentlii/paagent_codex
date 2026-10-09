@@ -270,7 +270,7 @@ def test_vpa_sequence_claim_ids_are_materialized_into_parent_observation() -> No
     assert any(
         item["path"] == "vpa_report.observations[0].auto_bound_evidence_ids"
         and item["after"] == ["vpa-e002"]
-        for item in result.normalizations
+        for item in result.reference_bindings
     )
 
 
@@ -317,6 +317,44 @@ def test_vpa_rejects_false_absence_of_already_closed_follow_through_bars() -> No
         "K7 already has 6 later closed bars" in item
         for item in result.hard_errors
     )
+
+
+def test_vpa_no_later_bar_claim_is_bound_to_its_subject_not_other_mentions() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    observation = payload["vpa_report"]["observations"][0]
+    observation["evidence_ids"] = ["vpa-e002", "vpa-e001"]
+    observation["interpretation"] = (
+        "K1收盘转上，相对K2活动下降，但K1没有后续已收盘棒。"
+        "K1再度上行，其活动低于K2但仍高于自身基线，且没有更晚的收盘棒可供确认。"
+    )
+
+    result = validate_vpa_evidence(
+        json.dumps(payload, ensure_ascii=False),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert result.ok
+
+
+def test_vpa_rejects_explicit_false_no_later_bar_claim_after_comparison() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    payload = _vpa_payload(catalog, hypotheses)
+    observation = payload["vpa_report"]["observations"][0]
+    observation["evidence_ids"] = ["vpa-e002", "vpa-e001"]
+    observation["interpretation"] = "K1反弹，但K2之后没有更晚的已收盘棒。"
+
+    result = validate_vpa_evidence(
+        json.dumps(payload, ensure_ascii=False),
+        catalog=catalog,
+        pa_hypotheses=hypotheses,
+    )
+
+    assert not result.ok
+    assert any("K2 already has 1 later closed bars" in item for item in result.hard_errors)
 
 
 def test_vpa_allows_unconfirmed_result_after_existing_closed_bars() -> None:
@@ -506,8 +544,10 @@ def test_vpa_role_rejects_unclosed_confirmation_and_unavailable_k_reference() ->
     assert any(
         item["path"] == "vpa_report.observations[0].auto_bound_evidence_ids"
         and item["after"] == ["vpa-e002"]
-        for item in uncited_result.normalizations
+        for item in uncited_result.reference_bindings
     )
+    assert not any("auto_bound_evidence_ids" in item["path"]
+                   for item in uncited_result.normalizations)
 
     unavailable = _vpa_payload(catalog, hypotheses)
     unavailable["vpa_report"]["observations"][0]["interpretation"] = (
@@ -619,6 +659,26 @@ def test_vpa_audits_explicit_sequence_direction_prose_contradiction() -> None:
         pa_hypotheses=hypotheses,
     )
     assert contextual.ok
+
+
+def test_vpa_rejects_exact_window_sign_transition_that_conflicts_with_frozen_facts() -> None:
+    hypotheses = _hypotheses()
+    catalog = build_vpa_evidence_catalog(make_frame())
+    windows = {item["evidence_id"]: item for item in catalog["evidence"]}
+    windows["vpa-w005"]["facts"].update(
+        current_progress_direction="negative", prior_progress_direction="positive",
+    )
+    payload = _vpa_payload(catalog, hypotheses)
+    observation = payload["vpa_report"]["observations"][0]
+    observation["evidence_ids"] = ["vpa-w005"]
+    observation["interpretation"] = (
+        "K5-K1相对K10-K6，呈现方向由负转正的窗口差异。"
+    )
+    result = validate_vpa_evidence(
+        json.dumps(payload, ensure_ascii=False), catalog=catalog, pa_hypotheses=hypotheses,
+    )
+    assert not result.ok
+    assert any("window transition claim for vpa-w005" in item for item in result.hard_errors)
 
 
 def test_vpa_not_applicable_confirmation_has_no_future_trigger() -> None:

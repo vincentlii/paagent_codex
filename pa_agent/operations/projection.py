@@ -16,7 +16,9 @@ RECENT_RUN_FIELDS = (
     "timestamp_local_ms",
     "symbol",
     "timeframe",
+    "analysis_pipeline",
     "run_status",
+    "error_type",
     "stage1_cycle_position",
     "stage1_direction",
     "stage1_gate_result",
@@ -237,12 +239,15 @@ def _nearest_rank(values: list[float], percentile: float) -> float | None:
 
 def summarize_recent_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Summarize operational quality and cost without claiming trading edge."""
-    grouped: dict[str, list[dict[str, Any]]] = {}
+    grouped: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
     for run in runs:
         backend = str(run.get("analysis_backend") or "unknown")
-        grouped.setdefault(backend, []).append(run)
+        pipeline = run.get("analysis_pipeline")
+        grouped.setdefault((backend, str(pipeline) if pipeline else None), []).append(run)
     summaries: list[dict[str, Any]] = []
-    for backend, items in sorted(grouped.items()):
+    for (backend, pipeline), items in sorted(
+        grouped.items(), key=lambda entry: (entry[0][0], entry[0][1] or "")
+    ):
         latencies = [
             float(item["total_latency_ms"])
             for item in items
@@ -274,6 +279,7 @@ def summarize_recent_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         summaries.append(
             {
                 "backend": backend,
+                "analysis_pipeline": pipeline,
                 "run_count": len(items),
                 "operational_success_rate": completed / len(items),
                 "first_pass_rate": (len(items) - repaired) / len(items),

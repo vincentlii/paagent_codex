@@ -179,4 +179,88 @@ VPA 输出 neutral/insufficient 是合法结果。VPA role 失败时正式 PA �
 
 ## 复发路径
 
+检查 packet 完整性时，将 foundation_exact_sections 与 manifest 中每个 mandatory 模块的
+全部原文逐章节比较，不能仅看 packet 工具调用成功。不得在 packet 内另设文件名白名单
+绕过 Host 知识选择；manifest availability 也不能冒充 Stage 2 的完整阅读继承凭证。
+packet 的 `section_index` 只列未内嵌原文的可查 section；必读 section 的 ID、标题、
+alias、digest 与原文都在 `foundation_exact_sections`，索引为空不等于知识缺失。
+Stage 2 的 `stage2_handoff_receipt` 给出 Provider Contract、validated Stage 1、Router
+和联合 VPA 报告的实际资源路径；先按路径核对值，不能凭模型的“未找到”措辞
+断言 Frozen Job 缺件。回执证明 Host 交付，不证明模型确实理解了长内容。
+新 Stage 2/VPA 基线用 `mandatory_modules` 的 ID、digest、顺序核对后续完整
+模块原文；省略重复的 `list_allowed_knowledge` 不表示未加载知识。旧冻结 Job
+仍要求原目录操作。检查 Worker 审计时按 Job 冻结的交付策略判断，不能把两版
+基线的调用数量直接当作知识覆盖差异。
+新 Stage 2 回执的 `mandatory_knowledge_sources` 将完整必读集合逐项分为本轮
+原文交付与同快照 PA 会话继承；`market_context_sources` 对价格/HTF 做同样区分，
+`experience_entries` 给出冻结数量及本轮路径。`pa_hypotheses_lineage` 证明它是
+validated Stage 1 的 Host 派生投影，不是同形副本，其 `source_digest` 不等于
+Stage 1 artifact 摘要并非冲突。模型声称缺件时先核对回执实际路径与值，再查
+是否发生上下文理解错误。任何真实模型验收运行期间不得修改 Prompt、知识、
+AGENTS 或 Skill；StudyHost 的域指纹漂移会使整轮研究样本无效。
+若 Stage 2 再称长基线“被截断”，先分别查 MCP `truncated`、模型会话中
+实际可见的工具 JSON 是否可解析并含末项资源与 `snapshot_identity`，以及
+末尾 `stage2_handoff_receipt.read_plan_complete`/`terminal_resource`。
+不能仅凭模型措辞或较少的本轮资源数推断传输失败；也不能仅凭 Host 回执
+断言模型已读懂知识或形成了正确交易判断。
+联合 Stage 2 的 `evidence_index.vpa_evidence_ids` 若出现在旧冻结 Job 中且为空，
+只说明该 PA 角色无权直接读取原始 VPA catalog，不说明已验收报告的引用无效。
+新 Job 在 `stage2_handoff_receipt.accepted_vpa_report.citable_evidence_ids`
+单列报告可引用集合，最终仍由 Host 对照冻结 catalog；PA 角色不获得原始
+VPA 读取工具。PA 续接 delta 不提供只统计本轮 resources 的 `delivery_index`，
+因为 Stage 1 packet 已读值须从同一会话继承，不能错标成“仅索引”。
+
+Codex 性能排障先核对 Frozen Job 的实际入口和 agents_text：packet 的 role_skill/price_frame
+不在旧 resources 的 get_market_core/get_price_frame 路径中。读取协议说明不能要求模型寻找
+另一种交付布局；修正规则只证明入口一致，不证明模型时延下降。累计输入、推理用量、工具
+处理时间与 Provider 等待分开看；额度失败不作为性能样本。当前证据与契约去重边界见
+[运行链路审计](../quality/runtime_chain_audit_20260914.md)。
+
+VPA 后续闭盘 hard error 要核对否定句的**主语**，不能把同句所有 `K#` 当成
+“没有更晚收线”的对象。2026-09-24 两次真实首稿都说最新 K1 无后续闭盘，
+K2 仅是相对活动比较或前棒；旧 Validator 因逐个扫描同句 K 标签误拒并多耗
+一次模型修复。新规则只硬拒明确主语或明确并列事件；遇到不明确的自然语言
+仍须回到冻结目录和原文检查，不得因离线重验通过就宣称新的真实运行已完成。
+版本化 `analysis_pipeline=pa_vpa_joint` 的实际链路需查 `analysis_pipeline`、
+VPA report 和 Stage 2 `joint_analysis`；旧 `requested/effective_vpa_mode=off`
+只表示未启用旧 Shadow/Soft 分支，不能单凭该字段判定未使用 VPA。
+
 将症状对应到 [问题历史](problem-history.md) 的 `PH-*`，重点查看根因、错误修法和复发检查。若发现新机制，按 [维护手册](maintenance.md) 提炼；不要把单次错误直接写成项目规则。
+
+## 冻结任务重启与本地 CLI/MCP 解释器
+
+Codex Headless 接受任务时，冻结 payload 与调度回执同事务落库；`started_at_ms`
+必须先于模型调用持久化。重启时，未开始且 digest/身份正确的任务可自动排队；
+已开始任务只能用唯一、完整、已审计的原始 JSON record 对账，不能因为缺少调度
+完成回执就重跑模型。未证实完成时标记 in-doubt，阻断同资产并人工核对；取消
+已开始任务也按此处理。跨 SQLite、记录文件与 Paper 的整体一致性仍需停机核验。
+
+`Codex execution unavailable` 不能直接归因于账号或额度。先用隔离 `CODEX_HOME`
+检查 `codex login status`；若普通最小 CLI 调用成功而 required `pa_evidence`
+无法初始化，从隔离工作目录用 **Host 同一 Python 解释器**检查 `pa_agent` 实际
+导入位置和 `import mcp`。MCP 子进程现由 Host 显式绑定同一 `pa_agent` 包根目录；
+但解释器仍须安装 `pyproject.toml` 指定的依赖。2026-10-08 本机系统 Anaconda
+Python 曾导入旧 editable 项目且缺少 `mcp`，项目 `.venv` 正常；两个失败回执均
+未取得模型 Draft，用量保持 unknown，不应反复启动完整市场链试探。
+
+冻结证据中的 PA 指标 hash 涉及底层浮点值：同一 K 线文件跨 Python 3.11/3.13
+可能产生不同 hash。研究/验收须用同一发布解释器冻结、重载和执行，先做无模型
+`input_from_evidence` 预检；hash 不符时禁止改写原证据或跳过校验。
+
+## Stage 内协作排障
+
+先读[研究计划](../quality/stage_subagent_research_plan.md)。`pa_challenger.toml` 是 Host 规格，
+不安装为 native CLI agent。新 Job 必须冻结 `host_stage_challenge_v1` 和预算，Worker 必须显式
+开启研究；原生 spawn 继续关闭。`check_host_stage_challenge.py` 默认仅预检，`--execute`
+才消耗真实模型额度。合成 canary 与行情 A/B 的结果分开。
+
+调查失败先查 `collaboration.status/start_rejections/failure_code`、scope digest、actor、
+delivered_value_ids 与 evidence_events。child 只会读索引中的资源，不能把未交付原值的目录 ID
+当依据；测量回执额外携带源 bar，VPA 回执额外携带成交量来源/解释上限，均在字节预算内。
+父 mandatory 必须单独验收，child 读取不能抵扣。PA Stage 2 续接时复用绑定文件路径，但换为
+新 Job 和新 capability；Stage 1 旧 token 不能跨阶段使用。
+
+父进程失败也查 `*.challenge.json` sidecar 和失败 record 的 call_attempts。没有合法正文时
+response_hash 必须为空，已观察父子计数不能丢；`usage_observed_without_response` 区分这类
+消耗，metrics coverage 保留 unknown。总耗时看父 Stage wall，不能把重叠 child wall 相加。
+该工具权限设计不等于 OS 对恶意同用户进程的隔离，Linux 仍需独立用户及 service cgroup 验收。

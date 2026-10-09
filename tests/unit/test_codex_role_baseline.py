@@ -7,6 +7,7 @@ import pytest
 from pa_agent.agent_runtime.codex_worker import CodexCliWorker
 from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
 from pa_agent.agent_runtime.evidence_mcp import EvidenceMcpServer
+from pa_agent.agent_runtime.execution_contract import INLINE_MANDATORY_KNOWLEDGE_POLICY
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from pa_agent.agent_runtime.publisher import CodexJobPublisher
 from tests.integration.conftest import make_frame
@@ -65,7 +66,8 @@ def test_baseline_preserves_complete_resources_and_individual_audit(tmp_path, ro
     expected = [("get_job_manifest", {}), ("get_market_core", {})]
     if role != "stage1":
         expected.append(("get_upstream_artifact", {}))
-    expected.append(("list_allowed_knowledge", {}))
+    if job.core_context.get("knowledge_delivery_policy") != INLINE_MANDATORY_KNOWLEDGE_POLICY:
+        expected.append(("list_allowed_knowledge", {}))
     expected.append(("read_knowledge_module", {"knowledge_id": "market.txt"}))
     if role in {"stage1", "stage2"}:
         for newer in range(1, len(job.bars) + 1, 50):

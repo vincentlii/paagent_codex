@@ -6,16 +6,19 @@ import json
 import os
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pa_agent.operations.analysis_profile import (
     AnalysisProfile,
-    profile_fingerprint as analysis_profile_fingerprint,
     validate_analysis_profile,
+)
+from pa_agent.operations.analysis_profile import (
+    profile_fingerprint as analysis_profile_fingerprint,
 )
 
 DesiredState = Literal["running", "paused"]
@@ -32,9 +35,10 @@ _FORBIDDEN_STATUS_KEYS = (
 
 @dataclass(frozen=True)
 class RuntimeControlState:
-    schema_version: int = 3
+    schema_version: int = 4
     desired_state: DesiredState = "running"
     desired_backend: AnalysisBackendMode = "deepseek_only"
+    codex_fast_mode: bool = False
     analysis_profile: AnalysisProfile = AnalysisProfile()
     profile_fingerprint: str = ""
     profile_generation: int = 0
@@ -128,7 +132,7 @@ class RuntimeControlStore:
             if not isinstance(raw, dict):
                 raise TypeError("control state must be an object")
             schema_version = int(raw.get("schema_version", 1))
-            if schema_version not in {1, 2, 3}:
+            if schema_version not in {1, 2, 3, 4}:
                 raise ValueError("unsupported control schema")
             desired = str(raw["desired_state"])
             if desired not in {"running", "paused"}:
@@ -136,7 +140,7 @@ class RuntimeControlStore:
             desired_backend = str(raw.get("desired_backend") or "deepseek_only")
             if desired_backend not in {"deepseek_only", "auto", "codex_only"}:
                 raise ValueError("invalid desired_backend")
-            if schema_version == 3:
+            if schema_version >= 3:
                 required_profile_fields = {
                     "analysis_profile",
                     "profile_fingerprint",
@@ -159,6 +163,9 @@ class RuntimeControlStore:
                 profile_generation = 0
                 profile_updated_at_ms = 0
                 profile_actor = "migration"
+            codex_fast_mode = raw["codex_fast_mode"] if schema_version == 4 else False
+            if not isinstance(codex_fast_mode, bool):
+                raise ValueError("codex_fast_mode must be a boolean")
             generation = int(raw.get("generation", 0))
             run_once_generation = int(raw.get("run_once_generation", 0))
             updated_at_ms = int(raw.get("updated_at_ms", 0))
@@ -171,9 +178,10 @@ class RuntimeControlStore:
             ):
                 raise ValueError("negative control metadata")
             return RuntimeControlState(
-                schema_version=3,
+                schema_version=4,
                 desired_state=desired,  # type: ignore[arg-type]
                 desired_backend=desired_backend,  # type: ignore[arg-type]
+                codex_fast_mode=codex_fast_mode,
                 analysis_profile=profile,
                 profile_fingerprint=fingerprint,
                 profile_generation=profile_generation,
@@ -200,6 +208,7 @@ class RuntimeControlStore:
             state = RuntimeControlState(
                 desired_state=desired_state,
                 desired_backend=current.desired_backend,
+                codex_fast_mode=current.codex_fast_mode,
                 analysis_profile=current.analysis_profile,
                 profile_fingerprint=current.profile_fingerprint,
                 profile_generation=current.profile_generation,
@@ -226,6 +235,7 @@ class RuntimeControlStore:
             state = RuntimeControlState(
                 desired_state=current.desired_state,
                 desired_backend=desired_backend,
+                codex_fast_mode=current.codex_fast_mode,
                 analysis_profile=current.analysis_profile,
                 profile_fingerprint=current.profile_fingerprint,
                 profile_generation=current.profile_generation,
@@ -254,6 +264,7 @@ class RuntimeControlStore:
             state = RuntimeControlState(
                 desired_state=current.desired_state,
                 desired_backend=current.desired_backend,
+                codex_fast_mode=current.codex_fast_mode,
                 analysis_profile=validated,
                 profile_fingerprint=analysis_profile_fingerprint(validated),
                 profile_generation=current.profile_generation + 1,
@@ -280,12 +291,43 @@ class RuntimeControlStore:
             state = RuntimeControlState(
                 desired_state=current.desired_state,
                 desired_backend=current.desired_backend,
+                codex_fast_mode=current.codex_fast_mode,
                 analysis_profile=current.analysis_profile,
                 profile_fingerprint=current.profile_fingerprint,
                 profile_generation=current.profile_generation,
                 profile_updated_at_ms=current.profile_updated_at_ms,
                 profile_actor=current.profile_actor,
                 run_once_generation=current.run_once_generation + 1,
+                generation=current.generation + 1,
+                updated_at_ms=int(self._now_ms()),
+                actor=(str(actor).strip() or "unknown")[:64],
+            )
+            _atomic_write_json(self._path, control_state_to_dict(state))
+            return state
+
+    def set_codex_fast_mode(
+        self,
+        enabled: bool,
+        *,
+        expected_generation: int,
+        actor: str,
+    ) -> RuntimeControlState:
+        if not isinstance(enabled, bool):
+            raise ValueError("codex_fast_mode must be a boolean")
+        with self._lock, _exclusive_control_lock(self._path):
+            current = self.read()
+            if current.error or current.generation != int(expected_generation):
+                raise RuntimeControlConflict("control generation changed")
+            state = RuntimeControlState(
+                desired_state=current.desired_state,
+                desired_backend=current.desired_backend,
+                codex_fast_mode=enabled,
+                analysis_profile=current.analysis_profile,
+                profile_fingerprint=current.profile_fingerprint,
+                profile_generation=current.profile_generation,
+                profile_updated_at_ms=current.profile_updated_at_ms,
+                profile_actor=current.profile_actor,
+                run_once_generation=current.run_once_generation,
                 generation=current.generation + 1,
                 updated_at_ms=int(self._now_ms()),
                 actor=(str(actor).strip() or "unknown")[:64],

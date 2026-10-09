@@ -27,6 +27,8 @@ def test_recent_run_projection_is_read_only_and_tolerates_older_schema(tmp_path)
 
     assert rows[0]["run_id"] == "run-1"
     assert rows[0]["vpa_effect"] is None
+    assert rows[0]["analysis_pipeline"] is None
+    assert rows[0]["error_type"] is None
     with sqlite3.connect(db_path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 42
 
@@ -87,6 +89,21 @@ def test_recent_run_projection_summarizes_real_call_audit_fields(tmp_path) -> No
     assert summary["first_pass_rate"] == 0.0
     assert summary["latency_p50_ms"] == 2000.0
     assert summary["latency_p95_ms"] == 2000.0
+
+
+def test_operational_summary_never_mixes_pipeline_authorities() -> None:
+    rows = [
+        {"analysis_backend": "codex_agent", "analysis_pipeline": None,
+         "run_status": "completed", "total_latency_ms": 900.0},
+        {"analysis_backend": "codex_agent", "analysis_pipeline": "pa_vpa_joint",
+         "run_status": "completed", "total_latency_ms": 1800.0},
+    ]
+
+    summaries = summarize_recent_runs(rows)
+
+    assert len(summaries) == 2
+    assert {(item["analysis_pipeline"], item["latency_p95_ms"])
+            for item in summaries} == {(None, 900.0), ("pa_vpa_joint", 1800.0)}
 
 
 def test_backend_experiment_projection_is_read_only_and_protocol_scoped(tmp_path) -> None:

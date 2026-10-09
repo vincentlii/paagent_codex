@@ -502,7 +502,9 @@ def stage2_prompt_txt_files(
     ]
 
 
-def select_agent_knowledge_text(*, role: str, module_id: str, text: str) -> str:
+def select_agent_knowledge_text(
+    *, role: str, module_id: str, text: str, joint_stage2: bool = False,
+) -> str:
     """Apply the same role boundaries used by the mature Direct prompt.
 
     Codex knowledge retrieval must not broaden Stage 1 into the execution half
@@ -510,6 +512,38 @@ def select_agent_knowledge_text(*, role: str, module_id: str, text: str) -> str:
     Stage 2 task.  Custom prompt packs without the stable headings retain their
     complete document, matching PromptAssembler's compatibility behavior.
     """
+    if role in {"stage1", "stage2"} and module_id == "提示词大纲_人设与思维方式.txt":
+        # Keep the Direct source intact. Every Codex role follows the frozen
+        # output schema; only the joint Stage 2 role may use accepted VPA.
+        if joint_stage2 and role == "stage2":
+            replacements = {
+                "只依赖 K 线与 EMA20（**不依赖成交量**）":
+                    "以 K 线与 EMA20 的 Brooks 判断为主；仅联合 Stage 2 可参考 Host 已验收的 VPA 报告",
+                "识别与决策不以成交量为必要条件；无成交量或不可比时**忽略**一切成交量条款。":
+                    "Brooks Setup 不以成交量为必要条件；联合 Stage 2 只参考已验收 VPA 报告，量不可用或不可比时不补造 VPA 结论。",
+                "`estimated_win_rate` 必须针对当前 PA Setup、位置、触发、失效位与目标独立估计":
+                    "联合 `estimated_win_rate` 必须在已验证 PA/Router 边界内，针对当前 Setup、位置、触发、失效位、目标与已验收 VPA 报告独立估计，不能机械加减 PA-only 先验",
+            }
+            for before, after in replacements.items():
+                if before not in text:
+                    raise ValueError(f"joint Stage 2 persona is missing required wording: {before}")
+                text = text.replace(before, after, 1)
+        text = text.replace(
+            "本 Agent **只输出单次分析 JSON**",
+            "本 Agent **只输出当前角色的单次分析结果**", 1,
+        )
+        output_instruction = (
+            "必须按 Host 冻结输出 Schema 在 assistant 正文 `content` 输出单个 JSON object；"
+            "Codex 联合角色使用 `result` 传输封套，封套内仍是原 Stage 2 Draft"
+            if joint_stage2 and role == "stage2" else
+            "必须按 Host 冻结输出 Schema 在 assistant 正文 `content` 输出单个 JSON object；"
+            "若 Host 指定 `result` 传输封套，封套内为当前角色合法结果"
+        )
+        text = text.replace(
+            "必须在 assistant 正文 `content` 输出完整裸 JSON",
+            output_instruction, 1,
+        )
+        return text
     if role == "stage1" and module_id == "二元决策.txt":
         marker = f"\n{_DECISION_TREE_STAGE2_HEADING}"
         index = text.find(marker)
@@ -1052,8 +1086,13 @@ class PromptAssembler:
                 _stage1_output_reminder_for_mode(
                     analysis_mode,
                     decision_tree_path=self.decision_tree_path,
+                ).replace(
+                    "只输出裸 JSON。", "按 Host 输出模式提交当前 Draft，不输出额外文字。"
                 ),
-                _stage1_tail_reminder(),
+                _stage1_tail_reminder().replace(
+                    "正文只写 Stage 1 Draft v2 裸 JSON。",
+                    "按 Host 输出模式提交 Stage 1 Draft v2。",
+                ),
             ],
         }
 
@@ -1648,6 +1687,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
         joint_stage2: bool = False,
     ) -> dict[str, Any]:
         """Publish mature code-generated Stage 2 rules beside routed knowledge."""
+        from pa_agent.ai.pa_provider_contracts import provider_draft_schema_digest
         from pa_agent.ai.decision_continuity import (
             build_continuity_context,
             render_continuity_prompt_block,
@@ -1681,22 +1721,39 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
                 "oldest_available_bar": f"K{len(frame.bars)}",
                 "unclosed_bar_allowed": False,
             },
+            # Codex receives this exact schema as a first-class frozen field
+            # from get_market_core. Direct keeps its original inline contract.
+            "provider_contract_digest": provider_draft_schema_digest(
+                "stage2", decision_tree_path=self.decision_tree_path,
+                joint_stage2=joint_stage2,
+            ),
             "embedded_rules": [
                 _LANGUAGE_ZH_RULE,
                 _PA_TERMINOLOGY_ZH,
-                _STAGE2_API_TASK_RULE,
+                (
+                    "当前任务是 Stage 2 决策；即使续接 Stage 1 会话，也必须完成本轮完整 Draft。"
+                    "不得输出会话总结、菜单式追问、Markdown 摘要或保存文件提示。"
+                    "仅提交当前 Provider Contract 指定的 JSON；外层封套以 Host 输出模式为准。"
+                ),
                 build_decision_stance_guidance(normalize_stance(decision_stance)),
                 continuity,
                 self._render_transition_guidance(stage1_json),
                 breakout_tick_hint or "",
                 previous_prediction,
-                _stage2_output_contract(decision_tree_path=self.decision_tree_path, joint_stage2=joint_stage2),
+                _STAGE2_OUTPUT_CONTRACT.replace(
+                    "只输出裸 JSON。", "按 Host 输出模式提交当前 Draft，不输出额外文字。"
+                ).replace(
+                    "紧随其后的自动生成 Provider Contract", "core_context.provider_output_schema"
+                ),
                 (
                     _NEXT_BAR_PREDICTION_INSTRUCTION
                     if enable_next_bar_prediction
-                    else _NEXT_BAR_DISABLED_NOTE
+                    else "下根K线预测已关闭：不输出 next_bar_prediction；完成本轮 decision、decision_trace 和 decision_intent。"
                 ),
-                _stage2_tail_reminder(),
+                _stage2_tail_reminder().replace(
+                    "正文只写 Stage 2 Draft v2 裸 JSON。",
+                    "按 Host 输出模式提交 Stage 2 Draft v2。",
+                ),
             ],
         }
 

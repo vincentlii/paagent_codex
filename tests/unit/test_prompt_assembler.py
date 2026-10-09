@@ -48,6 +48,43 @@ def _make_frame(n: int = 5) -> KlineFrame:
     )
 
 
+def test_codex_stage2_task_guidance_matches_continuation_and_disabled_prediction(assembler):
+    protocol = assembler.build_stage2_agent_protocol(
+        frame=_make_frame(), stage1_json={}, decision_stance="conservative",
+        previous_record=None, enable_next_bar_prediction=False,
+    )
+    rules = protocol["embedded_rules"]
+    assert "续接 Stage 1" in rules[2]
+    assert "独立 API 请求" not in rules[2]
+    disabled = next(rule for rule in rules if "下根K线预测已关闭" in rule)
+    assert "不输出 next_bar_prediction" in disabled
+    assert "terminal" not in disabled
+    assert "next_cycle_prediction" not in disabled
+    assert "PA_PROVIDER_DRAFT_CONTRACT_BEGIN" not in "\n".join(rules)
+    assert "core_context.provider_output_schema" in "\n".join(rules)
+    assert "只输出裸 JSON" not in "\n".join(rules)
+    from pa_agent.ai.pa_provider_contracts import provider_draft_schema_digest
+    assert protocol["provider_contract_digest"] == provider_draft_schema_digest(
+        "stage2", decision_tree_path=assembler.decision_tree_path,
+    )
+    # Direct rendering keeps its original, separately owned task rules.
+    from pa_agent.ai.prompt_assembler import _STAGE2_API_TASK_RULE, _NEXT_BAR_DISABLED_NOTE
+    assert "独立 API 请求" in _STAGE2_API_TASK_RULE
+    assert "next_cycle_prediction" in _NEXT_BAR_DISABLED_NOTE
+
+
+def test_codex_stage1_output_mode_does_not_conflict_with_runtime_envelope(assembler):
+    protocol = assembler.build_stage1_agent_protocol(_make_frame(), analysis_mode="original")
+    rules = "\n".join(protocol["embedded_rules"])
+    assert "按 Host 输出模式提交当前 Draft" in rules
+    assert "按 Host 输出模式提交 Stage 1 Draft v2" in rules
+    assert "只输出裸 JSON" not in rules
+    assert "正文只写 Stage 1 Draft v2 裸 JSON" not in rules
+    assert "PA_PROVIDER_DRAFT_CONTRACT_BEGIN" in rules
+    from pa_agent.ai.prompt_assembler import _STAGE1_OUTPUT_REMINDER
+    assert "只输出裸 JSON" in _STAGE1_OUTPUT_REMINDER  # Direct remains unchanged.
+
+
 def _required_schema_keys(schema: dict) -> set[str]:
     """Collect required keys reachable only through required object fields."""
     keys: set[str] = set()

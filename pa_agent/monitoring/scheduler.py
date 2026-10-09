@@ -23,6 +23,7 @@ SubmissionStatus = Literal[
     "duplicate",
     "queue_full",
     "asset_queue_full",
+    "audit_unavailable",
     "scheduler_closed",
 ]
 CompletionStatus = Literal["completed", "failed", "cancelled"]
@@ -224,6 +225,7 @@ class MultiAssetAnalysisScheduler:
         dedupe_history: int = 10_000,
         on_completion: Callable[[JobCompletion], None] | None = None,
         remember_completion: Callable[[JobCompletion], bool] | None = None,
+        before_accept: Callable[[AnalysisTask], bool] | None = None,
     ) -> None:
         if not callable(handler):
             raise TypeError("handler must be callable")
@@ -242,6 +244,7 @@ class MultiAssetAnalysisScheduler:
         self._dedupe_history = int(dedupe_history)
         self._on_completion = on_completion
         self._remember_completion = remember_completion
+        self._before_accept = before_accept
         self._executor = ThreadPoolExecutor(
             max_workers=self._max_concurrency,
             thread_name_prefix="pa-asset-analysis",
@@ -273,11 +276,22 @@ class MultiAssetAnalysisScheduler:
             if self._unfinished_count_locked() >= self._max_pending_jobs:
                 self._metrics["rejected"] += 1
                 return self._submission(task, "queue_full")
-            queue = self._queues.setdefault(task.asset_key, deque())
-            if len(queue) >= self._max_pending_per_asset:
+            queue = self._queues.get(task.asset_key)
+            if queue is not None and len(queue) >= self._max_pending_per_asset:
                 self._metrics["rejected"] += 1
                 return self._submission(task, "asset_queue_full")
-            queue.append(_QueuedTask(task=task, submitted_at=time.monotonic()))
+            if self._before_accept is not None:
+                try:
+                    persisted = bool(self._before_accept(task))
+                except Exception:
+                    logger.exception("Scheduler pre-dispatch audit failed")
+                    persisted = False
+                if not persisted:
+                    self._metrics["rejected"] += 1
+                    return self._submission(task, "audit_unavailable")
+            self._queues.setdefault(task.asset_key, deque()).append(
+                _QueuedTask(task=task, submitted_at=time.monotonic())
+            )
             self._active_task_ids.add(task.task_id)
             self._metrics["accepted"] += 1
             self._schedule_next_locked(task.asset_key)

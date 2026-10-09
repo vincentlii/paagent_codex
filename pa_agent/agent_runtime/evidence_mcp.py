@@ -8,13 +8,18 @@ import os
 import threading
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field, WithJsonSchema
 from uuid import uuid4
 
+from pa_agent.agent_runtime.execution_contract import INLINE_MANDATORY_KNOWLEDGE_POLICY
 from pa_agent.agent_runtime.evidence import (
     EvidenceAccessDenied,
     EvidenceBudgetExceeded,
     FrozenEvidenceGateway,
+    CHILD_PA_OPERATIONS,
+    CHILD_VPA_OPERATIONS,
 )
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 
@@ -28,7 +33,24 @@ _TOOL_ANNOTATIONS = {
 
 
 def _tools() -> list[dict[str, Any]]:
-    return [
+    catalog = [
+        {
+            "name": "start_stage_challenge",
+            "description": "After completing parent mandatory reads, asynchronously delegate one focused question with up to 8 exact frozen read requests. At most once per stage; continue your independent analysis while it runs.",
+            "inputSchema": {"type": "object", "additionalProperties": False,
+                            "properties": {"question": {"type": "string", "minLength": 1, "maxLength": 2000},
+                                           "resources": {"type": "array", "minItems": 1, "maxItems": 8,
+                                                         "items": {"type": "object"}}},
+                            "required": ["question", "resources"]},
+            "annotations": {**_TOOL_ANNOTATIONS, "readOnlyHint": False, "idempotentHint": False},
+        },
+        {
+            "name": "get_stage_challenge",
+            "description": "Collect the one child opinion/status; failed investigation is not a market No Trade. Wait at most 10 seconds per call.",
+            "inputSchema": {"type": "object", "additionalProperties": False,
+                            "properties": {"wait_seconds": {"type": "integer", "minimum": 0, "maximum": 10}}},
+            "annotations": _TOOL_ANNOTATIONS,
+        },
         {
             "name": "get_role_baseline",
             "description": "Read the complete Host-selected mandatory baseline in frozen order, without summarizing or dropping resources. Not for repair jobs.",
@@ -144,7 +166,7 @@ def _tools() -> list[dict[str, Any]]:
         },
         {
             "name": "get_pa_evidence",
-            "description": "Read exact PA.* IDs from the supplied fact_id_index, preferably batching missing/disputed records. baseline delivery_index distinguishes delivered values from indexed-only facts.",
+            "description": "Read exact PA.* IDs from fact_id_index, batching missing/disputed records. A baseline delivery_index, when present, covers this call only; same-session Stage 1 values remain inherited by Stage 2.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"fact_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 100}},
@@ -243,6 +265,23 @@ def _tools() -> list[dict[str, Any]]:
             "annotations": _TOOL_ANNOTATIONS,
         },
     ]
+    # Discovery, SDK publication and Host validation share the same operation
+    # schemas. Job/role-specific permissions remain the Gateway's responsibility.
+    resource_schema = {"oneOf": [
+        {"type": "object", "additionalProperties": False,
+         "properties": {"operation": {"const": tool["name"]},
+                        "arguments": tool["inputSchema"]},
+         "required": ["operation", "arguments"]}
+        for tool in catalog if tool["name"] in CHILD_PA_OPERATIONS | CHILD_VPA_OPERATIONS
+    ]}
+    catalog[0]["inputSchema"]["properties"]["resources"]["items"] = resource_schema
+    return catalog
+
+
+ChallengeResource = Annotated[dict[str, Any], WithJsonSchema(
+    _tools()[0]["inputSchema"]["properties"]["resources"]["items"])]
+ChallengeResources = Annotated[list[ChallengeResource], Field(min_length=1, max_length=8)]
+ChallengeQuestion = Annotated[str, Field(min_length=1, max_length=2000)]
 
 
 class EvidenceMcpServer:
@@ -254,8 +293,10 @@ class EvidenceMcpServer:
         audit_output: Path | None = None,
         binding_file: Path | None = None,
         job_root: Path | None = None,
+        challenge_binding: Path | None = None,
     ) -> None:
         self._gateway = gateway
+        self._challenge_binding = challenge_binding
         self._job = gateway.frozen_job
         self._job_digest = job_digest
         self._audit_output = audit_output
@@ -302,7 +343,10 @@ class EvidenceMcpServer:
             elif method == "ping":
                 result = {}
             elif method == "tools/list":
-                result = {"tools": _tools()}
+                with self._call_lock:
+                    self._refresh_binding()
+                    available = set(self._gateway.available_tool_names())
+                    result = {"tools": [tool for tool in _tools() if tool["name"] in available]}
             elif method == "tools/call":
                 params = message.get("params") or {}
                 result = self._call_tool(
@@ -321,7 +365,34 @@ class EvidenceMcpServer:
         with self._call_lock:
             self._refresh_binding()
             self._mcp_calls += 1
+            if name in {"start_stage_challenge", "get_stage_challenge"}:
+                return self._challenge_tool(name, arguments)
+            if name not in self._gateway.available_tool_names():
+                self._gateway.deny_tool_call(name, arguments)
+                self._publish_audit()
+                return {
+                    "content": [{"type": "text", "text": f"tool not available for this frozen role: {name}"}],
+                    "isError": True,
+                }
             return self._dispatch_tool(name, arguments)
+
+    def _challenge_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        from pa_agent.agent_runtime.stage_challenge import CHALLENGE_PROTOCOL, challenge_rpc
+        try:
+            if self._challenge_binding is None:
+                raise ValueError("collaboration is disabled")
+            binding = json.loads(self._challenge_binding.read_text(encoding="utf-8"))
+            if (binding.get("protocol") != CHALLENGE_PROTOCOL
+                    or binding.get("job_digest") != self._job_digest):
+                raise ValueError("challenge binding identity mismatch")
+            payload = challenge_rpc(binding["endpoint"], binding["token"], {
+                **arguments, "action": "start" if name == "start_stage_challenge" else "collect",
+            })
+        except (OSError, ValueError, KeyError) as exc:
+            return {"content": [{"type": "text", "text": str(exc) if isinstance(exc, ValueError)
+                                  else "challenge binding unavailable"}], "isError": True}
+        return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}],
+                "structuredContent": payload, "isError": False}
 
     def _refresh_binding(self) -> None:
         """Rebind a resumed PA session before serving any Stage 2 evidence."""
@@ -378,16 +449,51 @@ class EvidenceMcpServer:
                     resources.append({"operation": operation, "arguments": resource_arguments,
                                       "payload": result["structuredContent"]})
                 continuation = self._gateway.pa_continuation
+                from pa_agent.agent_runtime.execution_contract import LAYERED_STAGE2_RESEARCH_POLICY
+
+                layered = self._job.core_context.get("knowledge_delivery_policy") == LAYERED_STAGE2_RESEARCH_POLICY
                 payload = {
                     "baseline_version": (
+                        LAYERED_STAGE2_RESEARCH_POLICY if layered else
                         "mandatory_pa_delta_v1" if continuation else "mandatory_baseline_v1"
                     ),
-                    "resources": resources,
                 }
+                if self._job.core_context.get("knowledge_delivery_policy") in {
+                    INLINE_MANDATORY_KNOWLEDGE_POLICY, LAYERED_STAGE2_RESEARCH_POLICY,
+                }:
+                    payload["mandatory_modules"] = [
+                        {
+                            "knowledge_module_id": item["knowledge_module_id"],
+                            "sha256": item["sha256"],
+                            "load_order": item["load_order"],
+                        }
+                        for item in self._job.knowledge_manifest.get("modules", [])
+                        if item.get("loading_policy") == "mandatory"
+                    ]
+                if layered:
+                    payload["on_demand_sections"] = [
+                        {
+                            "knowledge_module_id": item["knowledge_module_id"],
+                            "load_order": item["load_order"],
+                            "sections": [
+                                {key: section[key] for key in ("section_id", "title", "aliases")}
+                                for section in self._job.knowledge_documents[item["knowledge_module_id"]]["sections"]
+                                if section["section_id"] not in item["baseline_section_ids"]
+                            ],
+                        }
+                        for item in self._job.knowledge_manifest.get("modules", [])
+                        if item.get("loading_policy") == "on_demand"
+                    ]
+                payload["resources"] = resources
                 if continuation:
                     payload["pa_session_continuation"] = continuation
-                if self._gateway.analysis_execution_enabled:
+                if self._gateway.analysis_execution_enabled and not continuation:
                     payload["delivery_index"] = self._gateway.baseline_delivery_index(resources)
+                if (self._gateway.analysis_execution_enabled
+                        and self._job.manifest.role == "stage2"):
+                    # Finish the long baseline with Host-verified delivery proof.
+                    # The model should not infer truncation from the final module.
+                    payload["stage2_handoff_receipt"] = self._gateway.stage2_handoff_receipt(resources)
             elif name == "get_stage1_decision_packet":
                 if arguments:
                     raise ValueError("Stage 1 decision packet accepts no arguments")
@@ -446,11 +552,9 @@ class EvidenceMcpServer:
                     )
                 }
             elif name == "get_vpa_evidence":
-                payload = {
-                    "evidence": self._gateway.get_vpa_evidence(
-                        tuple(str(item) for item in arguments["evidence_ids"])
-                    )
-                }
+                payload = self._gateway.get_vpa_evidence_payload(
+                    tuple(str(item) for item in arguments["evidence_ids"])
+                )
             elif name == "list_allowed_knowledge":
                 payload = {"modules": self._gateway.list_allowed_knowledge()}
             elif name == "search_allowed_knowledge":
@@ -489,8 +593,10 @@ class EvidenceMcpServer:
                 "isError": True,
             }
         payload.setdefault("snapshot_identity", self._gateway.snapshot_identity)
-        self._publish_audit()
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        if name == "get_role_baseline":
+            self._gateway.mark_baseline_assembled()
+        self._publish_audit()
         return {
             "content": [{"type": "text", "text": encoded}],
             "structuredContent": payload,
@@ -541,6 +647,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--job-digest")
     parser.add_argument("--audit-output", type=Path)
     parser.add_argument("--binding-file", type=Path)
+    parser.add_argument("--challenge-binding", type=Path)
     return parser
 
 
@@ -593,6 +700,17 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
             # their public stop guidance; unexpected exceptions stay SDK-masked.
             raise ToolError(str(message))
         return dict(result.get("structuredContent") or {})
+
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(
+        **{**_TOOL_ANNOTATIONS, "readOnlyHint": False, "idempotentHint": False}))
+    def start_stage_challenge(question: ChallengeQuestion, resources: ChallengeResources) -> dict[str, Any]:
+        """Asynchronously delegate one scoped evidence question after parent mandatory reads."""
+        return payload("start_stage_challenge", {"question": question, "resources": resources})
+
+    @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
+    def get_stage_challenge(wait_seconds: int = 0) -> dict[str, Any]:
+        """Collect child status/opinion, with at most 10 seconds bounded wait."""
+        return payload("get_stage_challenge", {"wait_seconds": wait_seconds})
 
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_role_baseline() -> dict[str, Any]:
@@ -665,7 +783,8 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
     @mcp.tool(structured_output=True, annotations=ToolAnnotations(**_TOOL_ANNOTATIONS))
     def get_pa_evidence(fact_ids: list[str]) -> dict[str, Any]:
         """Read missing/disputed PA IDs from fact_id_index, batching independent records.
-        baseline delivery_index distinguishes delivered values from indexed-only facts.
+        A baseline delivery_index, when present, describes this call only;
+        Stage 2 may inherit already-read values from its verified Stage 1 session.
         """
         return payload("get_pa_evidence", {"fact_ids": fact_ids})
 
@@ -743,6 +862,7 @@ def main(argv: list[str] | None = None) -> int:
         audit_output=audit_output,
         binding_file=args.binding_file,
         job_root=job_root,
+        challenge_binding=args.challenge_binding,
     )
     _run_official_sdk(server)
     return 0

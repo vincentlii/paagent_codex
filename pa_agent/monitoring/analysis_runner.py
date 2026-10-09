@@ -72,6 +72,7 @@ class IndependentAnalysisHandler:
             previous_record=payload.previous_record,
             incremental_new_bar_count=payload.incremental_new_bar_count,
             htf_context=dict(payload.htf_context),
+            monitoring_task_id=task.task_id,
         )
         outcome = getattr(record, "run_outcome", None)
         outcome = outcome if isinstance(outcome, dict) else {}

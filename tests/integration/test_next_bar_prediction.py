@@ -11,19 +11,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.router import route_strategy_files
 from pa_agent.config.settings import Settings
 from pa_agent.data.base import KlineFrame
 from pa_agent.gui.future_trend_panel import FutureTrendPanel
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
+from tests.fixtures.validators import schema_test_validator
 
 from .conftest import (
     VALID_STAGE1,
     VALID_STAGE2,
-    make_reply,
     make_frame,
+    make_reply,
 )
 
 _PREDICTION_BULLISH = {
@@ -69,6 +69,7 @@ def pending_writer():
 @pytest.fixture
 def assembler():
     mock = MagicMock()
+    mock.clone_with_analysis_fact_catalog.return_value = mock
     mock.build_stage1.return_value = [{"role": "system", "content": "test stage1"}]
     mock.build_stage2.return_value = [{"role": "system", "content": "test stage2"}]
     mock.build_stage2_continuation.return_value = [
@@ -249,8 +250,9 @@ def test_demo_mode_replays_legacy_record(
     frame, pending_writer, assembler, exp_reader
 ):
     """Legacy record without prediction must not crash FutureTrendPanel (R10.1)."""
-    from PyQt6.QtWidgets import QApplication
     import sys
+
+    from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication(sys.argv)
     panel = FutureTrendPanel()

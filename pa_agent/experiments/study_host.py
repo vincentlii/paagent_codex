@@ -18,7 +18,7 @@ from pa_agent.ai.json_validator import JsonValidator
 from pa_agent.ai.prompt_assembler import PromptAssembler
 from pa_agent.ai.router import route_strategy_files
 from pa_agent.config.analysis_pipeline import AnalysisPipelineIdentity
-from pa_agent.experiments.study_protocol import Condition
+from pa_agent.experiments.study_protocol import Condition, SUPPORTED_CODEX_STUDY_PAIRS
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.records.experience_reader import ExperienceReader
 from pa_agent.records.pending_writer import PendingWriter
@@ -104,8 +104,8 @@ class StudyHostExecutor:
             )
             runtime_identity = client
         else:
-            if condition.model != "gpt-5.6-luna" or condition.reasoning != "max":
-                raise ValueError("phase 7 Codex execution requires gpt-5.6-luna/max")
+            if (condition.model, condition.reasoning) not in SUPPORTED_CODEX_STUDY_PAIRS:
+                raise ValueError("Codex study execution requires an approved Luna model/effort pair")
             if not callable(self._codex_backend_factory):
                 raise RuntimeError("Codex study backend factory is unavailable")
             spec = SimpleNamespace(**condition.model_dump())
@@ -117,6 +117,10 @@ class StudyHostExecutor:
                 observed_runtime.get("model") != condition.model
                 or observed_runtime.get("reasoning_effort") != condition.reasoning
                 or observed_runtime.get("investigation_policy") != condition.investigation
+                or observed_runtime.get("stage_subagents", "off") != condition.stage_subagents
+                or observed_runtime.get("knowledge_delivery_policy") != (
+                    condition.knowledge_delivery if condition.knowledge_delivery != "full" else None
+                )
             ):
                 raise ValueError("Codex study runtime did not deliver the registered condition")
             client = None

@@ -31,8 +31,8 @@ description: Use when modifying, debugging, optimizing, reviewing, validating, o
 - 程序拥有 OHLCV、时间、指标、provenance、窗口测量、引用、Schema、订单数学、成本和执行安全。
 - LLM 拥有市场背景、周期、方向、Setup、位置价值、量价解释、竞争假设和时机判断。
 - PA defines. VPA informs. LLM arbitrates.
-- Brooks Router 是唯一策略路由；VPA 不创建交易、不修改 `estimated_win_rate`、不成为隐性 Gate。
-- `off` 必须保持原 PA 链路；生产 `shadow` 的正式结果仍是 PA-only；Joint 只属于隔离研究。
+- Brooks Router 是唯一策略路由；独立 VPA、旧 Shadow 和研究 Joint Arbiter 不创建交易、不修改 PA-only `estimated_win_rate`、不成为隐性 Gate。显式新版联合 Stage 2 可在已验收 VPA 报告与 Router 边界内独立提出未校准主观先验，不机械修改 PA-only 先验。
+- 旧 `vpa_mode=off` 必须保持原 PA 链路；旧 `shadow` 的正式结果仍是 PA-only，旧 Joint Arbiter 只属于隔离研究。显式 `analysis_pipeline_v1:pa_vpa_joint` 是 opt-in 新链路，不受旧 Joint 禁令否定；生产启用仍须独立验收与晋级。
 
 ## Validation Scale
 

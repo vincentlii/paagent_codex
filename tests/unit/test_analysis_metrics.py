@@ -1,9 +1,10 @@
+from types import SimpleNamespace
+
 import pytest
 
+from pa_agent.agent_runtime.codex_worker import CodexCliWorker
 from pa_agent.ai.analysis_metrics import call_metrics, metric, summarize_call_metrics
 from pa_agent.ai.deepseek_client import AIUsage, _reported_usage_fields
-from pa_agent.agent_runtime.codex_worker import CodexCliWorker
-from types import SimpleNamespace
 
 
 def test_missing_usage_is_unknown_but_reported_zero_is_actual():
@@ -81,16 +82,16 @@ def test_usage_coverage_requires_actual_token_fields_not_just_no_retries():
     assert summarize_call_metrics([{"metrics": measured}])["usage_coverage_complete"]
 
 
-def test_codex_multiple_turns_sum_usage_but_missing_fields_remain_unknown():
+def test_codex_multiple_turns_use_session_cumulative_usage_without_inventing_missing_fields():
     _, usage = CodexCliWorker._parse_events(
         '{"type":"turn.completed","usage":{"input_tokens":8,"output_tokens":2,"cached_input_tokens":1}}\n'
         '{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}'
     )
-    assert usage.total_tokens == 25
+    assert usage.total_tokens == 15
     assert "cached_prompt_tokens" not in usage.reported_fields
 
 
 def test_required_mcp_bootstrap_failure_is_availability_not_model_output():
-    from pa_agent.agent_runtime.codex_worker import _classify_failed_process, CodexWorkerUnavailable
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerUnavailable, _classify_failed_process
     failure = _classify_failed_process(1, "", "Failed to create session: required MCP servers failed to initialize: pa_evidence")
     assert isinstance(failure, CodexWorkerUnavailable)

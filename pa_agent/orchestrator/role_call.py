@@ -113,6 +113,10 @@ def run_structured_role(
                     "normalization": dict(item),
                 }
             )
+        for item in result.reference_bindings:
+            events.append({"attempt": attempt, "category": "evidence_materialization",
+                           "code": "vpa_reference_binding", "severity": "info", "owner": role,
+                           "retry_policy": "none", "role": role, "binding": dict(item)})
         for warning in group_warning_messages(
             ("professional_prose_warning", item) for item in result.warnings
         ):

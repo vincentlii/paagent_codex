@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 STAGE1_PACKET_VERSION = "bounded_stage1_packet_v2"
-_FOUNDATION_MODULE_STEMS = frozenset({"市场诊断框架"})
 _SPINE_IDS = frozenset({
     *(f"PA.WINDOW.K{size}" for size in (5, 8, 10, 20, 40)),
     *(f"PA.COMPARE.K1.PRIOR{size}" for size in (5, 10, 20)),
@@ -19,6 +17,24 @@ _SPINE_IDS = frozenset({
 def _canonical_bytes(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=True, allow_nan=False,
                       separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def _measurement_tables(facts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Lossless tabular encoding: share repeated keys, never round or summarize."""
+    groups: dict[tuple[str, str, tuple[str, ...]], dict[str, Any]] = {}
+    for fact in facts:
+        if not str(fact.get("fact_id", "")).startswith(("PA.BAR.", "PA.INDICATOR.")):
+            continue
+        value = fact["value"]
+        columns = tuple(value)
+        key = (fact["domain"], fact["fact_type"], columns)
+        table = groups.setdefault(key, {
+            "domain": fact["domain"], "fact_type": fact["fact_type"],
+            "columns": ["fact_id", "bar_range", *columns], "rows": [],
+        })
+        table["rows"].append([fact["fact_id"], fact["bar_range"],
+                              *(value[column] for column in columns)])
+    return list(groups.values())
 
 
 def build_stage1_decision_packet(
@@ -50,24 +66,33 @@ def build_stage1_decision_packet(
         for section in sections:
             if not isinstance(section, Mapping):
                 continue
-            section_index.append({
-                "knowledge_module_id": module_id,
-                "section_id": section.get("section_id"),
-                "title": section.get("title"),
-                "sha256": section.get("sha256"),
-                "aliases": list(section.get("aliases") or []),
-            })
-            if Path(module_id).stem in _FOUNDATION_MODULE_STEMS:
+            mandatory = module.get("loading_policy", "mandatory") == "mandatory"
+            # An embedded section already carries its ID, title, digest and
+            # exact text. Index only sections whose text is not in this packet.
+            if not mandatory:
+                section_index.append({
+                    "knowledge_module_id": module_id,
+                    "section_id": section.get("section_id"),
+                    "title": section.get("title"),
+                    "sha256": section.get("sha256"),
+                    "aliases": list(section.get("aliases") or []),
+                })
+            # The Host manifest owns knowledge selection. A second filename
+            # allowlist here silently omitted mandatory signal/counterexample
+            # modules while the Skill still required their complete delivery.
+            if mandatory:
                 foundation.append({
                     "knowledge_module_id": module_id,
                     "section_id": section.get("section_id"),
                     "title": section.get("title"),
                     "sha256": section.get("sha256"),
+                    "aliases": list(section.get("aliases") or []),
                     "text": section.get("text"),
                 })
 
     protocol = dict(core_context.get("role_protocol") or {})
-    protocol.pop("embedded_rules", None)
+    # These include executable Windows semantics, not just duplicate prose.
+    # Keep them until an explicit rule-by-rule projection proves equivalence.
     protocol.pop("semantic_parity_policy", None)
     htf = core_context.get("higher_timeframe") or {}
     packet: dict[str, Any] = {
@@ -85,6 +110,7 @@ def build_stage1_decision_packet(
             "ordering": "K1 newest closed; increasing seq is older",
         },
         "pa_fact_spine": spine,
+        "bar_measurements": _measurement_tables(fact_rows),
         "available_fact_ids": sorted(fact_by_id),
         "higher_timeframe": htf,
         "previous_analysis": core_context.get("previous_analysis"),

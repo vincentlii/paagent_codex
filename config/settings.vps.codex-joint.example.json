@@ -1,0 +1,46 @@
+{
+  "analysis_pipeline": {
+    "protocol_version": "analysis_pipeline_v1",
+    "pipeline": "pa_vpa_joint"
+  },
+  "general": {
+    "analysis_bar_count": 100,
+    "higher_timeframe_enabled": true,
+    "higher_timeframe_override": "4h",
+    "higher_timeframe_bar_count": 60,
+    "counterfactual_horizon_bars": 20
+  },
+  "prompt": {
+    "vpa_mode": "shadow",
+    "vpa_enabled": true,
+    "experience_max_entries": 0
+  },
+  "monitoring": {
+    "enabled": true,
+    "max_concurrency": 1,
+    "max_data_concurrency": 1,
+    "max_pending_jobs": 12,
+    "max_pending_per_asset": 1,
+    "poll_interval_seconds": 15,
+    "run_on_startup": false,
+    "analysis_timeout_seconds": 900,
+    "assets": [
+      {
+        "enabled": true,
+        "source": "binance_usdm",
+        "exchange": "BINANCE",
+        "symbol": "XAUUSDT",
+        "timeframe": "1h"
+      }
+    ]
+  },
+  "paper_trading": {
+    "enabled": true,
+    "initial_equity": 10000,
+    "risk_fraction": 0.005,
+    "max_portfolio_risk_fraction": 0.02,
+    "max_leverage": 3,
+    "fee_bps": 5,
+    "slippage_bps": 2
+  }
+}

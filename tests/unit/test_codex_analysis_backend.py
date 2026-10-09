@@ -53,6 +53,32 @@ def _result(*, thread_id: str = "thread-1") -> CodexWorkerResult:
     )
 
 
+@pytest.mark.parametrize("after_worker", [False, True])
+def test_child_observations_reach_failure_callback_before_and_after_normalization(tmp_path, after_worker):
+    from dataclasses import replace
+    runtime = {"model": "gpt-6-luna", "reasoning_effort": "xhigh"}
+    published = FrozenAgentJobStore(tmp_path).publish(_job(runtime_identity=runtime))
+    audit = {"job_digest": published.name, "status": "completed",
+             "aggregate_usage": {"total_tokens": 17, "reported_fields": []}}
+    worker = MagicMock()
+    if after_worker:
+        worker.run.return_value = replace(_result(), content="invalid-json", collaboration=audit,
+                                          usage=AIUsage(total_tokens=17))
+    else:
+        error = CodexWorkerOutputError("bad parent output")
+        error.collaboration = audit
+        worker.run.side_effect = error
+    backend = CodexAnalysisRoleBackend(worker=worker, publish_job=lambda *args: published,
+                                       runtime_identity=runtime)
+    failures = []
+    with pytest.raises(ModelCallFailure) as failure:
+        backend.run(_request(), on_reasoning_token=None, on_content_token=None,
+                    cancel_token=None, on_attempt_error=failures.append)
+    assert failures[0].analysis_attempt["collaboration"] == audit
+    assert failures[0].analysis_attempt["usage"]["total_tokens"] == 17
+    assert failure.value.attempts[0]["collaboration"] == audit
+
+
 def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: Path) -> None:
     runtime_identity = {
         "model": "gpt-5.6-terra",
@@ -60,7 +86,9 @@ def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: P
         "runtime_version": "runtime-v1",
     }
     published = FrozenAgentJobStore(tmp_path).publish(
-        _job(runtime_identity=runtime_identity)
+        _job(runtime_identity=runtime_identity, core_context={
+            "knowledge_delivery_policy": "inline_mandatory_knowledge_v1",
+        })
     )
     worker = MagicMock()
     worker.run.return_value = _result()
@@ -93,6 +121,7 @@ def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: P
     assert result.runtime["model"] == "gpt-5.6-terra"
     assert result.runtime["effective_reasoning_effort"] == "xhigh"
     assert result.runtime["runtime_version"] == "runtime-v1"
+    assert result.runtime["knowledge_delivery_policy"] == "inline_mandatory_knowledge_v1"
     assert result.runtime["thread_id"] == "thread-1"
     assert result.reply._pa_model_call_meta["analysis_backend"] == "codex_agent"
     assert streamed == ['{"cycle":"trading_range"}']
@@ -113,6 +142,7 @@ def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: P
     assert ledger["initial_context_bytes"] == result.runtime["initial_context_bytes"]
     assert ledger["model"] == "gpt-5.6-terra"
     assert ledger["runtime_version"] == "runtime-v1"
+    assert ledger["knowledge_delivery_policy"] == "inline_mandatory_knowledge_v1"
 
 
 def test_backend_accepts_publisher_bounded_messages_for_original_role_request(

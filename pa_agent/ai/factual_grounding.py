@@ -149,6 +149,12 @@ _LOCAL_CLOSE_POSITION_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
 _NEGATED_WINDOW_EXTREME_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "high": (
         re.compile(
+            r"(?:\u672a\u80fd?|\u6ca1\u6709|\u5e76\u672a|\u5c1a\u672a|\u65e0\u6cd5|\u4e0d\u80fd)"
+            r"[^,\uFF0C;\uFF1B\u3002]{0,8}?(?:\u8d8a\u8fc7|\u7a81\u7834|\u8d85\u8fc7|\u4e0a\u7834)"
+            r"[^,\uFF0C;\uFF1B\u3002]{0,40}?\u9ad8\u70b9",
+            re.IGNORECASE,
+        ),
+        re.compile(
             r"(?:\u672a\u80fd?|\u6ca1\u6709|\u5e76\u672a|\u5c1a\u672a|\u65e0\u6cd5|\u4e0d\u80fd|\u4e0d\u518d)"
             r".{0,8}?(?:\u521b(?:\u51fa)?\u65b0\u9ad8|\u5237\u65b0\u9ad8\u70b9|\u65b0\u9ad8)",
             re.IGNORECASE,
@@ -161,6 +167,12 @@ _NEGATED_WINDOW_EXTREME_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         ),
     ),
     "low": (
+        re.compile(
+            r"(?:\u672a\u80fd?|\u6ca1\u6709|\u5e76\u672a|\u5c1a\u672a|\u65e0\u6cd5|\u4e0d\u80fd)"
+            r"[^,\uFF0C;\uFF1B\u3002]{0,8}?(?:\u8dcc\u7834|\u4e0b\u7834|\u4f4e\u4e8e|\u5237\u65b0)"
+            r"[^,\uFF0C;\uFF1B\u3002]{0,40}?\u4f4e\u70b9",
+            re.IGNORECASE,
+        ),
         re.compile(
             r"(?:\u672a\u80fd?|\u6ca1\u6709|\u5e76\u672a|\u5c1a\u672a|\u65e0\u6cd5|\u4e0d\u80fd|\u4e0d\u518d)"
             r".{0,8}?(?:\u521b(?:\u51fa)?\u65b0\u4f4e|\u5237\u65b0\u4f4e\u70b9|\u65b0\u4f4e)",
@@ -204,7 +216,7 @@ _EXPLICIT_VOLUME_COMPARATOR_RE = re.compile(
 )
 _FUTURE_CLOSED_BAR_RE = re.compile(
     r"\b(?:next|future)\s+(?:fully\s+)?closed\s+(?:bar|candle)\b|"
-    r"(?:下一根|未来).{0,8}?(?:已收盘|收盘后|闭合)(?:的)?"
+    r"(?:下一根|未来).{0,8}?(?:已收盘|收盘后|闭合|闭盘)(?:的)?"
     r"(?:\s*K\s*线|棒|bar)?",
     re.IGNORECASE,
 )
@@ -645,6 +657,67 @@ def contains_retry_deliberation(text: object) -> bool:
     if _STRONG_REPAIR_DELIBERATION_RE.search(value):
         return True
     return len(_REPAIR_DELIBERATION_MARKER_RE.findall(value)) >= 2
+
+
+def validate_vpa_window_transition_narrative(
+    text: object,
+    *,
+    evidence_items: Iterable[dict[str, Any]],
+    path: str,
+) -> list[str]:
+    """Check only explicit, window-bound net-progress sign transitions.
+
+    Broader comparator prose remains a warning: this narrow form states both
+    exact windows and an unnegated prior-to-current sign for each comparison.
+    It does not judge the Wyckoff meaning of the transition.
+    """
+    items = [item for item in evidence_items if isinstance(item, dict)]
+    pairs = re.compile(
+        r"(?P<current>K\d+\s*-\s*K\d+)\s*相对\s*"
+        r"(?P<prior>K\d+\s*-\s*K\d+)", re.IGNORECASE,
+    )
+    transitions = re.compile(
+        r"(?:由|从)\s*(?P<prior>正|负)(?:向)?\s*"
+        r"(?:转为?|变为|到)\s*(?P<current>正|负)(?:向)?",
+    )
+    errors: list[str] = []
+    for clause in re.split(r"[。；;.!?！？\n]+", str(text or "")):
+        claims = list(transitions.finditer(clause))
+        windows = list(pairs.finditer(clause))
+        if len(claims) != 1 or not windows:
+            continue
+        claim = claims[0]
+        if not re.search(r"方向|净进展", clause[max(0, claim.start() - 12):claim.start()]):
+            continue
+        if re.search(
+            r"(?:并非|不是|并不|不能|不应|未|没有|可能|或许|疑似|不排除|若).{0,6}$",
+            clause[:claim.start()],
+        ):
+            continue
+        if len(windows) > 1 and not re.search(r"[均都皆]", clause[windows[-1].end():claim.start()]):
+            continue
+        claimed = (
+            "positive" if claim.group("prior") == "正" else "negative",
+            "positive" if claim.group("current") == "正" else "negative",
+        )
+        for window_pair in windows:
+            current = re.sub(r"\s+", "", window_pair.group("current")).upper()
+            prior = re.sub(r"\s+", "", window_pair.group("prior")).upper()
+            for item in items:
+                facts = item.get("facts") if isinstance(item.get("facts"), dict) else {}
+                if (str(facts.get("current_window") or "").upper() != current
+                        or str(facts.get("prior_window") or "").upper() != prior):
+                    continue
+                actual = (
+                    str(facts.get("prior_progress_direction") or ""),
+                    str(facts.get("current_progress_direction") or ""),
+                )
+                if all(value in {"positive", "negative"} for value in actual) and claimed != actual:
+                    errors.append(
+                        f"{path} window transition claim for {item.get('evidence_id')} "
+                        "conflicts with program relation"
+                    )
+    return list(dict.fromkeys(errors))
 
 
 def classify_vpa_comparator_narrative(

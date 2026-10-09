@@ -708,6 +708,18 @@ def test_negated_aggregate_extreme_language_is_not_a_positive_extreme_claim() ->
     assert not any("unbounded" in error for error in errors)
 
 
+def test_unbroken_bounded_window_high_is_not_read_as_a_breakout() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    stage1["key_signals"][0] = (
+        "K1尚未收盘越过K8-K1的既有窗口高点，仍需等待确认"
+        "（PA.WINDOW.K8）。"
+    )
+
+    errors = validate_stage1_coherence(stage1, kline_frame=make_mixed_frame())
+
+    assert not any("key_signals[0]" in error for error in errors)
+
+
 def test_negated_bar_extreme_cannot_contradict_program_comparison() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["pa_evidence"]["fact_refs"].append("PA.COMPARE.K1.PRIOR5")

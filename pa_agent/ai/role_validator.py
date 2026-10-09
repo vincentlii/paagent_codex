@@ -21,6 +21,7 @@ from pa_agent.ai.factual_grounding import (
     validate_k_reference_bounds,
     validate_vpa_capability_narrative,
     validate_vpa_k_references,
+    validate_vpa_window_transition_narrative,
 )
 from pa_agent.ai.json_validator import (
     JsonValidator,
@@ -154,6 +155,7 @@ class RoleValidationResult:
     warnings: tuple[str, ...] = ()
     normalizations: tuple[dict[str, Any], ...] = ()
     authority_violations: tuple[str, ...] = ()
+    reference_bindings: tuple[dict[str, Any], ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -231,6 +233,27 @@ _NO_LATER_CLOSED_BAR_PATTERNS = (
     re.compile(r"\bno\s+(?:later|subsequent|next)\s+(?:closed\s+)?bars?\b", re.I),
 )
 
+_EXPLICIT_NO_LATER_CLOSED_BAR_TARGETS = (
+    re.compile(
+        r"(?P<label>K\d+)(?:之后|以后|后|至今)?\s*"
+        r"(?:尚无|没有|无)(?:任何)?(?:下一根|后续|更晚)[^。；;]*?"
+        r"(?:已收盘|收盘)[^。；;]*?(?:K线|棒)",
+        re.I,
+    ),
+    re.compile(
+        r"(?P<label>K\d+)\s+(?:has|had)\s+no\s+"
+        r"(?:later|subsequent|next)\s+(?:closed\s+)?bars?\b",
+        re.I,
+    ),
+)
+_COORDINATED_NO_LATER_CLOSED_BAR_TARGETS = re.compile(
+    r"(?P<first>K\d+)\s*(?:与|和|及)\s*(?P<second>K\d+)"
+    r"[^。；;]*?(?:之后|此后)(?:尚无|没有|无)(?:任何)?"
+    r"(?:下一根|后续|更晚)[^。；;]*?(?:已收盘|收盘)[^。；;]*?"
+    r"(?:K线|棒)",
+    re.I,
+)
+
 
 def _validate_vpa_closed_bar_chronology_narrative(
     text: object,
@@ -251,7 +274,14 @@ def _validate_vpa_closed_bar_chronology_narrative(
     for clause in re.split(r"[。；;.!?！？]", value):
         if not any(pattern.search(clause) for pattern in _NO_LATER_CLOSED_BAR_PATTERNS):
             continue
-        for bar_label in dict.fromkeys(re.findall(r"K\d+", clause, re.I)):
+        targets = [
+            match.group("label")
+            for pattern in _EXPLICIT_NO_LATER_CLOSED_BAR_TARGETS
+            for match in pattern.finditer(clause)
+        ]
+        for match in _COORDINATED_NO_LATER_CLOSED_BAR_TARGETS.finditer(clause):
+            targets.extend((match.group("first"), match.group("second")))
+        for bar_label in dict.fromkeys(targets):
             canonical_label = bar_label.upper()
             item = by_bar.get(canonical_label)
             facts = item.get("facts") if isinstance(item, dict) else None
@@ -389,6 +419,9 @@ def _validate_vpa_report_grounding(
         # otherwise valid VPA report.
         warnings.extend(comparator_errors)
         warnings.extend(comparator_warnings)
+        errors.extend(validate_vpa_window_transition_narrative(
+            text, evidence_items=cited, path=path,
+        ))
         if require_comparator_reconciliation:
             warnings.extend(
                 collect_unreconciled_vpa_comparator_warnings(
@@ -727,7 +760,6 @@ def validate_vpa_evidence(
         report_obj,
         catalog,
     )
-    normalizations.extend(binding_audit)
     applicability_warnings: list[str] = []
     if (
         not pa_hypotheses.candidate_ids
@@ -799,6 +831,7 @@ def validate_vpa_evidence(
                 for item in exc.errors()
             ),
             normalizations=tuple(normalizations),
+            reference_bindings=tuple(binding_audit),
         )
 
     unknown_ids = sorted(report.evidence_ids - known_ids)
@@ -926,6 +959,7 @@ def validate_vpa_evidence(
         tuple(errors),
         tuple(warnings),
         tuple(normalizations),
+        reference_bindings=tuple(binding_audit),
     )
 
 

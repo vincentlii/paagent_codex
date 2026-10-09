@@ -1,34 +1,38 @@
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 import pa_agent.agent_runtime.spool_worker as spool_module
-from pa_agent.agent_runtime.codex_worker import CodexWorkerResult
-from pa_agent.agent_runtime.codex_worker import CodexWorkerUnavailable
+from pa_agent.agent_runtime.codex_worker import (
+    CodexWorkerOutputError,
+    CodexWorkerResult,
+    CodexWorkerUnavailable,
+)
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from pa_agent.agent_runtime.spool_worker import (
     CodexSpoolClient,
     CodexSpoolConfig,
     CodexSpoolService,
 )
-from pa_agent.ai.deepseek_client import AIUsage
 from pa_agent.ai.codex_analysis_backend import (
     CodexAnalysisRoleBackend,
     FullChainFallbackRequired,
 )
+from pa_agent.ai.deepseek_client import AIUsage
 from tests.unit.test_codex_analysis_backend import _request
 from tests.unit.test_frozen_agent_job import _job
 
 
 @pytest.mark.parametrize("investigation", ["fixed", "agentic"])
 def test_role_stop_accepts_job_selection_but_rejects_runtime_drift(investigation):
-    from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped, CodexWorkerOutputError
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerOutputError, CodexWorkerStopped
     from pa_agent.ai.role_contracts import AnalysisRoleStop
 
     actual = {"runtime_asset_digest": "a" * 64, "model": "gpt-5.6-luna", "reasoning_effort": "max"}
@@ -99,8 +103,10 @@ def test_worker_health_projection_contains_no_auth_material(tmp_path: Path) -> N
     assert "access_token" not in status
 
 
+@pytest.mark.parametrize("fails", [False, True])
 def test_spool_bridge_exchanges_only_job_identity_and_bounded_result(
     tmp_path: Path,
+    fails: bool,
 ) -> None:
     jobs = tmp_path / "jobs"
     inbox = tmp_path / "inbox"
@@ -125,6 +131,11 @@ def test_spool_bridge_exchanges_only_job_identity_and_bounded_result(
         evidence_events=(),
         outbox_path=tmp_path / "isolated" / "outbox.json",
     )
+    if fails:
+        failure = CodexWorkerOutputError("parent failed after child work")
+        failure.collaboration = {"job_digest": published.name, "status": "completed",
+                                 "aggregate_usage": {"total_tokens": 17, "reported_fields": []}}
+        worker.run.side_effect = failure
     config = CodexSpoolConfig(
         job_root=jobs,
         inbox_root=inbox,
@@ -140,7 +151,12 @@ def test_spool_bridge_exchanges_only_job_identity_and_bounded_result(
         runtime_identity_provider=lambda: runtime_identity,
     )
     captured: list[CodexWorkerResult] = []
-    thread = threading.Thread(target=lambda: captured.append(client.run(published)))
+    def invoke():
+        try:
+            captured.append(client.run(published))
+        except CodexWorkerOutputError as exc:
+            captured.append(exc)
+    thread = threading.Thread(target=invoke)
     thread.start()
     deadline = time.monotonic() + 2
     dispatches: list[Path] = []
@@ -157,7 +173,11 @@ def test_spool_bridge_exchanges_only_job_identity_and_bounded_result(
     thread.join(timeout=2)
 
     assert not thread.is_alive()
-    assert captured[0].content == '{"cycle":"trading_range"}'
+    if fails:
+        assert isinstance(captured[0], CodexWorkerOutputError)
+        assert captured[0].collaboration == failure.collaboration
+    else:
+        assert captured[0].content == '{"cycle":"trading_range"}'
     worker.run.assert_called_once()
     called_path = worker.run.call_args.args[0]
     called_timeout = worker.run.call_args.kwargs["timeout_seconds"]
@@ -239,7 +259,7 @@ def test_spool_io_oserror_is_classified_as_availability(
         client.run(published)
 
 
-def test_recovery_requeues_expired_dispatch_even_while_lease_is_active(
+def test_recovery_does_not_steal_claim_while_lease_is_active(
     tmp_path: Path,
 ) -> None:
     inbox = tmp_path / "inbox"
@@ -265,10 +285,35 @@ def test_recovery_requeues_expired_dispatch_even_while_lease_is_active(
         worker=MagicMock(),
     )
 
-    service._recover_claims(recover_all=False)
+    service._recover_claims()
+
+    assert claimed.is_file()
+    assert not (inbox / "request-1.json").exists()
+
+
+def test_recovery_requeues_only_after_claim_lease_expires(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    claimed = inbox / "request-2.running"
+    claimed.write_text(
+        json.dumps({"request_id": "request-2", "lease_seconds": 1}),
+        encoding="utf-8",
+    )
+    expired = time.time() - 3
+    os.utime(claimed, (expired, expired))
+    service = CodexSpoolService(
+        spool=CodexSpoolConfig(
+            job_root=tmp_path / "jobs",
+            inbox_root=inbox,
+            result_root=tmp_path / "results",
+        ),
+        worker=MagicMock(),
+    )
+
+    service._recover_claims()
 
     assert not claimed.exists()
-    assert (inbox / "request-1.json").is_file()
+    assert (inbox / "request-2.json").is_file()
 
 
 def test_worker_runtime_unavailable_reaches_auto_full_chain_fallback(

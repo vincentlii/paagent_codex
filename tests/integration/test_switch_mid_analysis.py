@@ -23,9 +23,7 @@ from pa_agent.app_context import AppContext
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
 from tests.fixtures.ai_payloads import VALID_STAGE1, VALID_STAGE2
 
 
@@ -145,11 +143,12 @@ class TestSwitchMidAnalysis:
         mock_client.stream_chat.side_effect = chat_dispatch
 
         # Wire up the orchestrator components
-        from tests.fixtures.validators import schema_test_validator
         from pa_agent.ai.router import route_strategy_files
+        from tests.fixtures.validators import schema_test_validator
 
         app_ctx.client = mock_client
         app_ctx.assembler = MagicMock()
+        app_ctx.assembler.clone_with_analysis_fact_catalog.return_value = app_ctx.assembler
         app_ctx.assembler.build_stage1.return_value = [{"role": "system", "content": "s1"}]
         app_ctx.assembler.build_stage2.return_value = [{"role": "system", "content": "s2"}]
         app_ctx.router = route_strategy_files
@@ -211,10 +210,10 @@ class TestSwitchMidAnalysis:
         self, qtbot, app_ctx, pending_writer
     ):
         """save_partial must be called with reason='user_switched' on symbol switch."""
-        from pa_agent.gui.main_window import MainWindow, _AnalysisWorker
-        from tests.fixtures.validators import schema_test_validator
         from pa_agent.ai.router import route_strategy_files
+        from pa_agent.gui.main_window import MainWindow, _AnalysisWorker
         from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
+        from tests.fixtures.validators import schema_test_validator
 
         stage2_started = __import__("threading").Event()
         call_count = [0]
@@ -236,6 +235,7 @@ class TestSwitchMidAnalysis:
 
         app_ctx.client = mock_client
         app_ctx.assembler = MagicMock()
+        app_ctx.assembler.clone_with_analysis_fact_catalog.return_value = app_ctx.assembler
         app_ctx.assembler.build_stage1.return_value = [{"role": "system", "content": "s1"}]
         app_ctx.assembler.build_stage2.return_value = [{"role": "system", "content": "s2"}]
         app_ctx.router = route_strategy_files
@@ -325,10 +325,10 @@ class TestSwitchMidAnalysis:
         self, qtbot, app_ctx, pending_writer
     ):
         """cancel_token.is_set() must become True within 100ms of triggering switch."""
-        from pa_agent.gui.main_window import MainWindow, _AnalysisWorker
-        from tests.fixtures.validators import schema_test_validator
         from pa_agent.ai.router import route_strategy_files
+        from pa_agent.gui.main_window import MainWindow, _AnalysisWorker
         from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
+        from tests.fixtures.validators import schema_test_validator
 
         stage2_started = __import__("threading").Event()
         call_count = [0]
@@ -350,6 +350,7 @@ class TestSwitchMidAnalysis:
 
         app_ctx.client = mock_client
         app_ctx.assembler = MagicMock()
+        app_ctx.assembler.clone_with_analysis_fact_catalog.return_value = app_ctx.assembler
         app_ctx.assembler.build_stage1.return_value = [{"role": "system", "content": "s1"}]
         app_ctx.assembler.build_stage2.return_value = [{"role": "system", "content": "s2"}]
         app_ctx.router = route_strategy_files

@@ -73,7 +73,9 @@ def append_repair_context(
     return f"{feedback.rstrip()}\n\n{_MARKER}{encoded}"
 
 
-def extract_repair_context(messages: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
+def extract_repair_context(
+    messages: Iterable[dict[str, Any]], *, output_schema: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     for message in reversed(list(messages)):
         if str(message.get("role") or "") != "user":
             continue
@@ -108,6 +110,19 @@ def extract_repair_context(messages: Iterable[dict[str, Any]]) -> dict[str, Any]
         normalized = sorted({str(item) for item in pointers})
         if not normalized or any(not item.startswith("/") for item in normalized):
             raise ValueError("repair context has no authorized JSON Pointer")
+        if output_schema:
+            for pointer in normalized:
+                schema = output_schema
+                for part in _parts(pointer):
+                    if schema.get("type") == "array":
+                        if not part.isdigit():
+                            raise ValueError("repair pointer is not a Draft array index")
+                        schema = schema.get("items", {})
+                    else:
+                        properties = schema.get("properties", {})
+                        if part not in properties and schema.get("additionalProperties") is False:
+                            raise ValueError("repair pointer is outside Provider Draft schema")
+                        schema = properties.get(part, {})
         return {
             "schema_version": 1,
             "original_draft": draft,

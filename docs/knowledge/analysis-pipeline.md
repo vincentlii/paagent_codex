@@ -2,8 +2,8 @@
 lifecycle: active
 capability: no-go
 verification_scope: not-verified
-最后核验: 2026-09-01
-核验提交: 965f2df
+最后核验: 2026-10-09
+核验提交: working-tree audit（未提交）
 权威来源:
   - CONTEXT.md
   - pa_agent/orchestrator/two_stage.py
@@ -13,6 +13,12 @@ verification_scope: not-verified
 ---
 
 # 分析链路
+
+本页以下 PA-only Stage 2、Shadow 与旧研究 Joint 的表格描述旧 `vpa_mode`
+链路；显式 `analysis_pipeline_v1:pa_vpa_joint` 另按
+[ADR-0025](../architecture/ADR-0025-joint-stage2-pipeline.md) 运行。
+联合 Stage 2 只接收已验收 VPA Report 而非原始 catalog，在 Brooks Router
+内独立形成未校准联合先验；不得据下文“Stage 2 不读取 VPA”删除新版链路。
 
 本页描述当前链路的输入、操作、判断权、输出和失败边界。字段级行为以源码、Provider Contract 和 [CONTEXT.md](../../CONTEXT.md) 为准。
 
@@ -84,6 +90,12 @@ PA fact spine、去重后的阶段协议、原文 foundation sections 与完整 
 Snapshot 之间绝不续接；同一 Snapshot 内，只有 attempt 1 直接通过原 Validator 的 PA Stage 1 可以由
 PA Stage 2 受控续接。Stage 2 同时必须读取冻结的结构化 Stage 1 handoff 与 Router 结果，聊天历史不构成
 权限或事实来源。VPA、Joint 与 repair 始终独立；Stage 1 经 repair 后，Stage 2 从已验证 Artifact 新开任务。
+
+新发布的 Stage 2／VPA 首稿以 `baseline_receipt_v1` 要求合并必读基线最终组装成功的 Host 审计标记；
+逐项资源读取成功但最终回执／分层索引组装失败，或绕过 `get_role_baseline` 逐项调用工具，均不得接受 Draft。
+这是交付完成标记，不代表模型已充分理解每个章节；历史 Frozen Job 没有该标记，仍按冻结时协议回放。
+原 Direct 人设文件不改，Codex 在知识投影时把普通 Stage 1／Stage 2 的“裸 JSON”措辞改为
+服从冻结输出 Schema／`result` 封套；仅显式联合 Stage 2 投影 VPA 权限，Stage 1 与普通 Stage 2 仍 price-only。
 
 PA Stage 1/2 的 `bars.json` 在 Job 构建时删除 `volume/amount/volume_state`；完整价格帧只组合 OHLC 与
 确定性 indicator/geometry measurements。VPA 原始量价证据保留在独立角色目录中，防止 Brooks 主分析

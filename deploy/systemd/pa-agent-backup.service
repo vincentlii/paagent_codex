@@ -5,8 +5,10 @@ Description=PA Agent consistent state backup
 Type=oneshot
 User=pa-agent
 Group=pa-agent
+SupplementaryGroups=pa-agent-codex-spool
 Environment=PA_AGENT_HOME=/var/lib/pa-agent
 Environment=PA_AGENT_OPERATION_DIR=/var/lib/pa-agent-control
+Environment=PA_AGENT_CODEX_STATE_DIR=/var/lib/pa-agent-codex
 ExecStart=/opt/miniconda3/envs/pa-agent/bin/python -m pa_agent.operations.backup --output-root /var/backups/pa-agent --keep 14
 UMask=0077
 NoNewPrivileges=true
@@ -14,7 +16,8 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
-ReadOnlyPaths=/var/lib/pa-agent /var/lib/pa-agent-control/control
-ReadWritePaths=/var/backups/pa-agent
+ReadOnlyPaths=/var/lib/pa-agent /var/lib/pa-agent-control/control /var/lib/pa-agent-codex/jobs /var/lib/pa-agent-codex/results/.accepted
+# Read-only SQLite connections may still need WAL/SHM sidecars in these directories.
+ReadWritePaths=/var/backups/pa-agent /var/lib/pa-agent/records/audit /var/lib/pa-agent/trade_records
 CapabilityBoundingSet=
 AmbientCapabilities=

@@ -18,6 +18,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+SUPPORTED_CODEX_STUDY_PAIRS = frozenset({
+    ("gpt-5.6-luna", "max"),
+    ("gpt-6-luna", "max"),  # Preserve already-frozen study registrations.
+    ("gpt-6-luna", "xhigh"),
+})
+
 
 def digest(value: Any) -> str:
     return hashlib.sha256(
@@ -34,12 +40,17 @@ class Condition(BaseModel):
     reasoning: str = Field(min_length=1)
     pipeline: Literal["pa_only", "pa_shadow", "pa_vpa_joint"]
     investigation: Literal["fixed", "agentic"]
+    knowledge_delivery: Literal["full", "layered_stage2_research_v1"] = "full"
+    stage_subagents: Literal[
+        "off", "stage1_challenge_v1", "vpa_challenge_v1",
+        "stage2_challenge_v1", "single_challenge_v1",
+    ] = "off"
 
 
 class StudyPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     protocol_version: Literal["analysis_study_v1"] = "analysis_study_v1"
-    contrast: Literal["backend", "joint", "investigation"]
+    contrast: Literal["backend", "joint", "investigation", "stage_subagents", "knowledge_delivery"]
     a: Condition
     b: Condition
     domain_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -59,6 +70,31 @@ class StudyPlan(BaseModel):
                 and a["investigation"] == "fixed"
                 and b["investigation"] == "agentic"
             )
+        elif self.contrast == "stage_subagents":
+            valid = (
+                differing == {"stage_subagents"}
+                and a["backend"] == "codex_agent"
+                and a["stage_subagents"] == "off"
+                and b["stage_subagents"] != "off"
+                and a["model"] == "gpt-6-luna"
+                and a["reasoning"] == "xhigh"
+                and a["investigation"] == "agentic"
+                and (b["stage_subagents"] != "vpa_challenge_v1"
+                     or a["pipeline"] in {"pa_shadow", "pa_vpa_joint"})
+                and (b["stage_subagents"] != "single_challenge_v1"
+                     or a["pipeline"] == "pa_vpa_joint")
+            )
+        elif self.contrast == "knowledge_delivery":
+            valid = (
+                differing == {"knowledge_delivery"}
+                and a["backend"] == "codex_agent"
+                and a["pipeline"] == "pa_vpa_joint"
+                and a["investigation"] == "agentic"
+                and a["model"] == "gpt-6-luna"
+                and a["reasoning"] == "xhigh"
+                and a["knowledge_delivery"] == "full"
+                and b["knowledge_delivery"] == "layered_stage2_research_v1"
+            )
         elif self.contrast == "joint":
             valid = (
                 differing == {"pipeline"}
@@ -73,16 +109,28 @@ class StudyPlan(BaseModel):
             )
         if not valid:
             raise ValueError(f"{self.contrast} contrast has confounded or reversed conditions")
-        if any(
-            c.backend == "deepseek_direct" and c.investigation != "fixed" for c in (self.a, self.b)
+        if self.contrast != "stage_subagents" and any(
+            c.stage_subagents != "off" for c in (self.a, self.b)
         ):
-            raise ValueError("Direct is a fixed-context backend")
+            raise ValueError("other contrasts require subagents off")
+        if self.contrast != "knowledge_delivery" and any(
+            c.knowledge_delivery != "full" for c in (self.a, self.b)
+        ):
+            raise ValueError("other contrasts require full knowledge delivery")
+        if any(
+            c.backend == "deepseek_direct" and (
+                c.investigation != "fixed" or c.stage_subagents != "off"
+                or c.knowledge_delivery != "full"
+            )
+            for c in (self.a, self.b)
+        ):
+            raise ValueError("Direct requires fixed context and no subagents")
         for condition in (self.a, self.b):
             if condition.backend == "codex_agent" and (
-                condition.model != "gpt-5.6-luna" or condition.reasoning != "max"
-            ):
+                condition.model, condition.reasoning
+            ) not in SUPPORTED_CODEX_STUDY_PAIRS:
                 raise ValueError(
-                    "phase 7 Codex arms require gpt-5.6-luna with max reasoning"
+                    "Codex study arm requires an approved Luna model/effort pair"
                 )
         return self
 
@@ -226,7 +274,7 @@ def run_study(root: Path, execute_arm, *, on_completed=None) -> None:
                 raise ValueError("independent client token required")
             clients.add(token)
             if (
-                observed != assignment["condition"]
+                observed != Condition.model_validate(assignment["condition"]).model_dump()
                 or result["evidence_digest"] != assignment["evidence_digest"]
             ):
                 raise ValueError("received treatment or frozen evidence drift")
@@ -275,6 +323,34 @@ def run_study(root: Path, execute_arm, *, on_completed=None) -> None:
                 for c in record.call_attempts
             ):
                 raise ValueError("Codex investigation treatment was not delivered")
+            if backend == "codex_agent" and any(
+                c.get("stage_subagents", "off") != observed["stage_subagents"]
+                for c in record.call_attempts
+            ):
+                raise ValueError("Codex subagent policy was not delivered")
+            if backend == "codex_agent":
+                stage2_policies = [
+                    c.get("knowledge_delivery_policy")
+                    for c in record.call_attempts
+                    if c.get("stage") == "stage2" and c.get("attempt") == 1
+                ]
+                expected_policy = (
+                    "layered_stage2_research_v1"
+                    if observed["knowledge_delivery"] != "full"
+                    else "inline_mandatory_knowledge_v1"
+                )
+                allowed = (
+                    {expected_policy, None}
+                    if registered["plan"]["contrast"] != "knowledge_delivery"
+                    and observed["knowledge_delivery"] == "full"
+                    else {expected_policy}
+                )
+                if not stage2_policies or any(value not in allowed for value in stage2_policies):
+                    raise ValueError("Codex knowledge delivery treatment was not delivered")
+            if registered["plan"]["contrast"] == "stage_subagents":
+                receipt["collaboration_coverage"] = collaboration_coverage(
+                    record.call_attempts, observed["stage_subagents"],
+                )
             # JSON validation rejects NaN and nonserializable provider objects.
             digest(result)
             receipt.update(status="completed", result=result)
@@ -313,7 +389,9 @@ def summarize_study(root: Path) -> dict:
         if status not in {"completed", "failed", "missing"}:
             raise ValueError("invalid receipt status")
         counts[status] += 1
-        cases.append({**assignment, "status": status})
+        cases.append({**assignment, "status": status,
+                      **({"collaboration_coverage": receipt.get("collaboration_coverage")}
+                         if registered["plan"]["contrast"] == "stage_subagents" and receipt else {})})
     return {
         "protocol_version": "analysis_study_v1",
         "contrast": registered["plan"]["contrast"],
@@ -324,6 +402,30 @@ def summarize_study(root: Path) -> dict:
         "ready_for_promotion": False,
         "calibrated_probability": False,
     }
+
+
+def collaboration_coverage(calls: list[dict], policy: str) -> dict:
+    """Policy ITT keeps valid parent results; child failures remain visible, not clean PP."""
+    from pa_agent.agent_runtime.execution_contract import STAGE_CHALLENGE_PROTOCOL, STAGE_SUBAGENT_ROLES
+    counts = {"applicable": 0, "not_requested": 0, "completed_collected": 0, "incomplete": 0,
+              "start_rejected": 0}
+    for call in calls:
+        if call.get("stage") not in STAGE_SUBAGENT_ROLES[policy] or call.get("attempt") != 1:
+            continue
+        audit = call.get("collaboration") or {}
+        if audit.get("protocol") != STAGE_CHALLENGE_PROTOCOL or audit.get("job_digest") != call.get("job_digest"):
+            raise ValueError("Host-managed collaboration audit is missing or mismatched")
+        counts["applicable"] += 1
+        if audit.get("start_rejections", 0):
+            counts["start_rejected"] += 1
+            counts["incomplete"] += 1
+        elif audit.get("status") == "not_requested":
+            counts["not_requested"] += 1
+        elif audit.get("status") == "completed" and audit.get("collected"):
+            counts["completed_collected"] += 1
+        else:
+            counts["incomplete"] += 1
+    return {**counts, "per_protocol": counts["incomplete"] == 0}
 
 
 def paired_episode_summary(rows: list[dict], value_key: str) -> dict:

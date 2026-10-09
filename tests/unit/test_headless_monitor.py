@@ -14,6 +14,7 @@ from pa_agent.monitoring.analysis_runner import AnalysisRunResult
 from pa_agent.monitoring.headless import HeadlessMonitor
 from pa_agent.monitoring.scheduler import JobCompletion, SubmissionResult
 from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
+from pa_agent.operations.runtime_state import RuntimeControlStore
 
 
 class _Source:
@@ -227,6 +228,7 @@ def _monitor(
     audit=None,
     paper_execution=None,
     profile_applier=None,
+    recovery_blocked_asset_keys=(),
 ):
     source = source or _Source()
     audit = audit or _Audit()
@@ -252,8 +254,23 @@ def _monitor(
         wall_time_ms=clock.now_ms,
         paper_execution=paper_execution,
         profile_applier=profile_applier,
+        recovery_blocked_asset_keys=recovery_blocked_asset_keys,
     )
     return monitor, source, audit, holder["service"], clock
+
+
+def test_unreconciled_started_task_blocks_new_snapshot_for_same_asset(tmp_path):
+    key = "tradingview|OANDA|XAUUSD|1h"
+    monitor, _source, _audit, service, _clock = _monitor(
+        tmp_path, recovery_blocked_asset_keys=(key,),
+    )
+    try:
+        result = monitor.poll_once()
+        assert result.accepted == 0
+        assert service.submitted == []
+        assert key in monitor.runtime_snapshot(paused=True)["recovery_blocked_assets"]
+    finally:
+        monitor.shutdown()
 
 
 def _completion(
@@ -510,7 +527,7 @@ def test_restart_uses_persistent_success_dedupe(tmp_path) -> None:
     assert second_service.submitted == []
 
 
-def test_audit_read_failure_does_not_stop_current_analysis(tmp_path) -> None:
+def test_audit_read_failure_blocks_new_analysis(tmp_path) -> None:
     monitor, _source, _audit, service, _clock = _monitor(
         tmp_path,
         audit=_Audit(fail_reads=True),
@@ -518,8 +535,9 @@ def test_audit_read_failure_does_not_stop_current_analysis(tmp_path) -> None:
 
     result = monitor.poll_once()
 
-    assert result.accepted == 1
-    assert len(service.submitted) == 1
+    assert result.accepted == 0
+    assert service.submitted == []
+    monitor.shutdown()
 
 
 def test_shutdown_disconnects_sources_and_closes_service(tmp_path) -> None:
@@ -730,6 +748,27 @@ def test_backend_control_applies_only_after_scheduler_is_idle(tmp_path) -> None:
     assert applied == ["auto"]
     assert monitor._applied_control_generation == 4
     assert monitor.runtime_snapshot(paused=False)["mode"]["analysis_backend"] == "auto"
+
+
+def test_fast_control_waits_for_idle_and_freezes_tier_into_new_codex_task(tmp_path) -> None:
+    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+    monitor._backend_switcher = lambda mode: mode == "codex_only"
+    store = RuntimeControlStore(monitor._paths.runtime_control_path)
+    backend = store.set_desired_backend("codex_only", actor="test")
+    control = store.set_codex_fast_mode(True, expected_generation=backend.generation, actor="test")
+    service.wait_idle = lambda _timeout=None: False
+    paused, _error = monitor._apply_control(control, verify_latest=True)
+    assert paused is True
+    assert monitor.runtime_snapshot(paused=True)["applied_codex_fast_mode"] is False
+
+    service.wait_idle = lambda _timeout=None: True
+    paused, error = monitor._apply_control(control, verify_latest=True)
+    assert (paused, error) == (False, None)
+    assert monitor.runtime_snapshot(paused=False)["applied_codex_fast_mode"] is True
+    result = monitor.poll_once()
+    assert result.accepted == 1
+    assert service.submitted[0].payload.analysis_backend_identity["service_tier"] == "fast"
+    monitor.shutdown()
 
 
 def test_pending_profile_blocks_while_scheduler_is_active(tmp_path) -> None:

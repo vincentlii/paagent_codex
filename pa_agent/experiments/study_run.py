@@ -38,12 +38,15 @@ def main(argv=None):
                           "assigned": len(registration["assignments"])}))
         return 0
     factory = None
-    if any(c.backend == "codex_agent" for c in (plan.a, plan.b)):
+    codex_conditions = [c for c in (plan.a, plan.b) if c.backend == "codex_agent"]
+    if codex_conditions:
+        codex_condition = codex_conditions[0]
         from pa_agent.agent_runtime.production import build_codex_experiment_backend_factory
         factory, _ = build_codex_experiment_backend_factory(
             state_dir=root / "runtime", prompt_dir=args.prompt_dir,
             environment={**os.environ, "PA_AGENT_CODEX_ENABLED": "1",
-                         "PA_AGENT_CODEX_MODEL": "gpt-5.6-luna", "PA_AGENT_CODEX_REASONING": "max"},
+                         "PA_AGENT_CODEX_MODEL": codex_condition.model,
+                         "PA_AGENT_CODEX_REASONING": codex_condition.reasoning},
         )
     execute = StudyHostExecutor(
         settings=settings, prompt_dir=args.prompt_dir, experience_dir=root / "experience",
