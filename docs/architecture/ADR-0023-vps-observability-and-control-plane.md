@@ -7,6 +7,18 @@ Accepted
 > `desired_backend` 的窄范围分析 Backend 切换由 ADR-0024 增补；本文禁止在线修改
 > Prompt、策略、Risk、资产和进程权限的其他控制边界继续有效。
 
+### 2026-10-10：白名单运行选择增补
+
+用户授权在既有 `AnalysisProfile` 中增加 XAUUSDT/BTCUSDT/ETHUSDT 品种选择、
+全局分析并发 1/2/3 和 conservative/balanced/aggressive 倾向。仅适用于 Binance
+USD-M、1h/4h 的 V1 Headless 范围；默认仍单黄金、并发 1、balanced。
+这替代初版禁止任何资产选择的限制，不允许任意交易所/品种/周期或风险编辑。
+选择只在 idle boundary 生效：重建已排空的调度服务，保持同品种 FIFO、任务独立
+客户端及冻结身份。停用品种分析不撤销订单，正式 Paper 活跃订单继续观察。
+倾向复用 Stage 2 选择性规则，不改变 Stage 1、Router 或风险底线。旧 Profile
+默认字段的指纹保持兼容，已有冻结任务不重标。证据与发布边界见
+[V1 运行升级](../quality/v1_operations_upgrade_20261010.md)。
+
 ## 决策
 
 VPS Dashboard 是独立进程和独立 Unix 用户，不导入分析编排器，不持有 LLM 或交易所
@@ -59,6 +71,6 @@ Bot 与 Dashboard 仅通过 `pa-agent-control` 下两个单向权限目录交换
 
 ## 非目标
 
-- 不在线修改 Prompt、策略权限、风险参数或资产列表。
+- 不在线修改 Prompt、策略权限、风险参数或任意资产列表；仅允许上述白名单选择。
 - 不从 Dashboard 发起一次行情分析或真实订单。
 - 不把 loopback HTTP 服务直接暴露公网。

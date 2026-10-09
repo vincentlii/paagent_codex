@@ -722,6 +722,9 @@ def compute_vpa_measurements(
             else {}
         ),
     }
+    market_context = _metadata_value(frame, "market_context", {})
+    if isinstance(market_context, Mapping) and market_context:
+        provenance["market_context"] = dict(market_context)
     samples = _seasonality_samples(frame)
     seasonality_boundary_valid, seasonality_reason = _seasonality_boundary(frame)
     try:

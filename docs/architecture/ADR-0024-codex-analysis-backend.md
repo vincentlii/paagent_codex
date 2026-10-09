@@ -119,6 +119,16 @@ VPA/Joint 权限。
 
 ### 8. Audit and experiment
 
+2026-10-10 用户授权的运行增补不改变上述 authority：Profile 可选择 Binance
+XAU/BTC/ETH、并发 1/2/3 和三档 Stage 2 倾向，详见 ADR-0023 同日增补。
+Codex memories 继续由发布配置和命令行强制关闭；模型不选择其他历史会话。
+空闲 Worker 每小时有界调用官方 `codex delete <UUID> --force` 清理超过 14 天、
+专属 PA workspace 已不存在且无待执行 dispatch 的会话；保留认证、正式审计与
+恢复任务。不直接删除 JSONL 或修改 Codex SQLite，不在角色执行中清理 workspace。
+黄金产品/参考时段只作为最新确认收盘边界上的冻结来源事实；单市场成交量不能
+代表全球黄金参与者，公共假日日历未知则明确未知，不生成交易 Gate。
+本地验证与未发布状态见 [运行升级](../quality/v1_operations_upgrade_20261010.md)。
+
 AnalysisRecord v5 保持唯一原始记录；Codex runtime 元数据进入现有 `role_runtime`、`call_attempts`
 和 `experiment_context`。SQLite 只增加可重建的 agent run/tool-call 投影。
 

@@ -126,4 +126,6 @@ def compact_snapshot_context(frame: Any) -> dict[str, Any]:
     }
     if isinstance(metadata.get("instrument_spec"), Mapping):
         context["instrument_spec"] = dict(metadata["instrument_spec"])
+    if isinstance(metadata.get("market_context"), Mapping):
+        context["market_context"] = dict(metadata["market_context"])
     return context

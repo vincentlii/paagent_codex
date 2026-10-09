@@ -15,6 +15,12 @@ verification_scope: not-verified
 
 本页是组件与决策入口，不定义字段级契约。当前行为以所链接的源码、[CONTEXT.md](../../CONTEXT.md) 和 [ADR](../architecture/) 为准。
 
+2026-10-10 本地运行增补复用既有 Profile、Headless、调度和 Paper Coordinator：
+白名单品种/并发/倾向只在 idle 应用，退订分析与持仓观察分离；会话保留由空闲
+spool Worker 管理，不进入模型执行链。黄金背景由 Host 冻结并进入原 Publisher/
+VPA provenance，不增加策略模块或 Gate。见 [运行升级](../quality/v1_operations_upgrade_20261010.md)
+和 [ADR-0023](../architecture/ADR-0023-vps-observability-and-control-plane.md) 的同日增补。
+
 ## 总览
 
 ```mermaid

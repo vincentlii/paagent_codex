@@ -15,11 +15,25 @@ from tests.integration.conftest import make_frame
 from tests.unit.test_codex_job_publisher import _request
 
 
-def _bounded_job(tmp_path):
-    publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path,
+def _bounded_job(tmp_path, *, market_context=None):
+    frame = make_frame()
+    if market_context is not None:
+        frame = replace(frame, data_metadata={**frame.data_metadata, "market_context": market_context})
+    publisher = CodexJobPublisher(frame=frame, prompt_dir=tmp_path,
                                   job_root=tmp_path / "jobs")
     path = publisher(_request("stage1", {"task_id": "bounded-v2"}), 1)
     return FrozenAgentJobStore(path.parent).open(path.name)
+
+
+def test_market_context_reaches_actual_stage1_packet_not_only_saved_core(tmp_path):
+    context = {"instrument_label": "Binance 黄金永续合约", "reference_session": "weekend",
+               "holiday_calendar_status": "unavailable"}
+    job = _bounded_job(tmp_path, market_context=context)
+    result = EvidenceMcpServer(FrozenEvidenceGateway(job), job_digest=job.manifest.job_digest)._call_tool(
+        "get_stage1_decision_packet", {})
+    packet = result["structuredContent"]["decision_packet"]
+    assert packet["market_context"] == context
+    assert "market_context" not in _bounded_job(tmp_path / "legacy").core_context["stage1_decision_packet"]
 
 
 def test_generation_reference_choices_are_frozen_pa_ids_without_changing_host_schema(tmp_path):

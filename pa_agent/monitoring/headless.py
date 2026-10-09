@@ -7,13 +7,15 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pa_agent.config.analysis_pipeline import pipeline_from_legacy
 from pa_agent.config.paths import RuntimePaths
 from pa_agent.config.settings import MonitoringAssetSettings, Settings, provider_api_key_configured
 from pa_agent.config.vpa import vpa_is_enabled
+from pa_agent.data.bar_close_wait import timeframe_to_seconds
+from pa_agent.data.market_context import market_context_for_snapshot
 from pa_agent.data.factory import (
     resolved_identity_for_source,
     volume_metadata_for_source,
@@ -29,6 +31,7 @@ from pa_agent.monitoring.scheduler import AnalysisTask, JobCompletion
 from pa_agent.monitoring.task_factory import create_frozen_analysis_task, frame_snapshot_hash
 from pa_agent.operations.analysis_profile import (
     AnalysisProfile,
+    MARKET_SYMBOLS,
     profile_fingerprint,
     validate_analysis_profile,
 )
@@ -100,6 +103,8 @@ class HeadlessMonitor:
         self._paths = paths
         self._scheduler_audit = scheduler_audit
         self._source_factory = source_factory
+        self._service_factory = service_factory
+        self._scheduler_concurrency = settings.monitoring.max_concurrency
         self._analysis_fingerprint = analysis_fingerprint
         self._paper_execution = paper_execution
         self._monotonic = monotonic
@@ -143,10 +148,22 @@ class HeadlessMonitor:
             and getattr(paper_execution, "enabled", False)
         )
         self._states = [
-            _AssetState(config=asset)
+            _AssetState(config=asset.model_copy(deep=True))
             for asset in settings.monitoring.assets
             if asset.enabled
         ]
+        # Dashboard scope controls only the allowlisted VPS markets; generic
+        # monitors retain their configured providers and instruments.
+        self._profile_market_scope = bool(self._states) and all(
+            state.config.source == "binance_usdm" and state.config.exchange == "BINANCE"
+            and state.config.symbol in MARKET_SYMBOLS and state.config.timeframe == "1h"
+            for state in self._states
+        )
+        if self._profile_market_scope:
+            existing = {state.config.symbol for state in self._states}
+            self._states.extend(_AssetState(config=MonitoringAssetSettings(
+                source="binance_usdm", exchange="BINANCE", symbol=symbol, timeframe="1h", enabled=False,
+            )) for symbol in MARKET_SYMBOLS if symbol not in existing)
         self._task_to_state: dict[str, _AssetState] = {}
         self._data_futures: set[Future[Any]] = set()
         self._data_executor = ThreadPoolExecutor(
@@ -200,7 +217,10 @@ class HeadlessMonitor:
                 raise RuntimeError("headless monitor is closed")
         self._retry_paper_reconciliation()
         now = self._monotonic()
-        eligible = [state for state in self._states if now >= state.next_fetch_at]
+        active_markets = self._active_paper_markets()
+        eligible = [state for state in self._states if now >= state.next_fetch_at and (
+            state.config.enabled or self._market_key(state) in active_markets
+        )]
         with self._lock:
             if self._closed:
                 raise RuntimeError("headless monitor is closed")
@@ -223,6 +243,9 @@ class HeadlessMonitor:
                     self._record_fetch_failure(state, exc)
                     continue
                 prepared += 1
+                if task is None:
+                    skipped += 1
+                    continue
                 if max_submissions is not None and accepted >= max_submissions:
                     skipped += 1
                     continue
@@ -341,12 +364,19 @@ class HeadlessMonitor:
                 )
             if profile_pending:
                 assert desired_profile is not None
+                if not self._profile_market_scope and desired_profile.enabled_symbols != ("XAUUSDT",):
+                    return True, "analysis_market_scope_unavailable"
                 try:
                     applied = bool(self._profile_applier(desired_profile))
                 except Exception:
                     logger.exception("Analysis profile application failed")
                     applied = False
                 if not applied:
+                    return True, "analysis_profile_unavailable"
+                try:
+                    self._apply_profile_runtime(desired_profile)
+                except Exception:
+                    logger.exception("Analysis scope application failed")
                     return True, "analysis_profile_unavailable"
                 self._applied_profile = desired_profile
                 self._applied_profile_fingerprint = profile_fingerprint(
@@ -430,6 +460,40 @@ class HeadlessMonitor:
             return False
         with self._lock:
             return not self._data_futures
+
+    def _apply_profile_runtime(self, profile: AnalysisProfile) -> None:
+        """Caller guarantees idle; existing clients and frozen tasks stay intact."""
+        if self._scheduler_concurrency != profile.max_concurrency:
+            previous = self._settings.monitoring.max_concurrency
+            self._settings.monitoring.max_concurrency = profile.max_concurrency
+            try:
+                candidate = self._service_factory(self.handle_completion)
+            except Exception:
+                self._settings.monitoring.max_concurrency = previous
+                raise
+            self._service.shutdown(wait=True)
+            self._service = candidate
+            self._scheduler_concurrency = profile.max_concurrency
+        if self._profile_market_scope:
+            for state in self._states:
+                state.config.enabled = state.config.symbol in profile.enabled_symbols
+            self._settings.monitoring.assets = [state.config.model_copy(deep=True) for state in self._states]
+        self._settings.general.decision_stance = profile.decision_stance
+
+    @staticmethod
+    def _market_key(state: _AssetState) -> tuple[str, str, str, str]:
+        asset = state.config
+        return asset.source, asset.exchange, asset.symbol, asset.timeframe
+
+    def _active_paper_markets(self) -> set[tuple[str, str, str, str]]:
+        getter = getattr(self._paper_execution, "active_market_keys", None)
+        if not callable(getter):
+            return set()
+        try:
+            return set(getter())
+        except Exception:
+            logger.exception("Paper exposure lookup unavailable; retain market observations")
+            return {self._market_key(state) for state in self._states}
 
     def _scheduler_is_healthy_and_idle(self) -> bool:
         if not self._scheduler_is_idle():
@@ -536,6 +600,9 @@ class HeadlessMonitor:
                     "venue": state.config.exchange,
                     "symbol": state.config.symbol,
                     "timeframe": state.config.timeframe,
+                    "analysis_enabled": state.config.enabled,
+                    "market_context": dict(state.prepared_task.payload.frame.data_metadata.get("market_context", {}))
+                        if state.prepared_task is not None else {},
                     "connected": state.connected,
                     "in_flight": state.in_flight_task_id is not None,
                     "last_analysis_status": state.last_analysis_status,
@@ -617,7 +684,7 @@ class HeadlessMonitor:
                 state.observed_task_id is not None
                 and state.successful_task_id == state.observed_task_id
                 and state.in_flight_task_id is None
-                for state in self._states
+                for state in self._states if state.config.enabled
             )
 
     def handle_completion(self, completion: JobCompletion) -> None:
@@ -741,7 +808,7 @@ class HeadlessMonitor:
         idle = bool(self._service.wait_idle(max(0.0, deadline - self._monotonic())))
         self._service.shutdown(wait=idle)
 
-    def _prepare_task(self, state: _AssetState) -> AnalysisTask:
+    def _prepare_task(self, state: _AssetState) -> AnalysisTask | None:
         asset = state.config
         source = self._ensure_source(state)
         now_ms = self._wall_time_ms()
@@ -780,7 +847,7 @@ class HeadlessMonitor:
             symbol=asset.symbol,
         )
         metadata["analysis_as_of_ms"] = now_ms
-        if self._settings.prompt.experience_max_entries > 0:
+        if asset.enabled and self._settings.prompt.experience_max_entries > 0:
             from pa_agent.records.experience_reader import ExperienceReader
 
             metadata["experience_pool"] = ExperienceReader(self._paths.experience_dir).freeze_pool()
@@ -795,6 +862,11 @@ class HeadlessMonitor:
         if frame is None:
             raise ValueError("insufficient closed bars for analysis")
         latest_closed_bar_ts = max(int(bar.ts_open) for bar in frame.bars)
+        duration = timeframe_to_seconds(frame.timeframe)
+        if identity is not None and duration is not None:
+            market_context = market_context_for_snapshot(identity, latest_closed_bar_ts + duration * 1000)
+            if market_context:
+                frame = replace(frame, data_metadata={**frame.data_metadata, "market_context": market_context})
         current_frame_hash = frame_snapshot_hash(frame)
         with self._lock:
             if (
@@ -829,6 +901,11 @@ class HeadlessMonitor:
                         frame.symbol,
                         frame.timeframe,
                     )
+        if not asset.enabled:
+            with self._lock:
+                state.fetch_failures = 0
+                state.next_fetch_at = 0.0
+            return None
         if self._settings.general.higher_timeframe_enabled:
             htf_context = fetch_higher_timeframe_context(
                 source=source,

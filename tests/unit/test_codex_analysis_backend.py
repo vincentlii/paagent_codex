@@ -150,6 +150,9 @@ def test_backend_accepts_publisher_bounded_messages_for_original_role_request(
     tmp_path: Path,
 ) -> None:
     frame = make_frame()
+    from dataclasses import replace
+    frame = replace(frame, data_metadata={**frame.data_metadata,
+        "market_context": {"instrument_label": "Binance 黄金永续合约", "reference_session": "weekend"}})
     prompt_dir = tmp_path / "prompts"
     prompt_dir.mkdir()
     runtime_identity = {
@@ -192,6 +195,8 @@ def test_backend_accepts_publisher_bounded_messages_for_original_role_request(
         on_content_token=None,
         cancel_token=None,
     )
+    job = FrozenAgentJobStore(tmp_path / "jobs").open(worker.run.call_args.args[0].name)
+    assert job.core_context["market_context"] == frame.data_metadata["market_context"]
 
     assert result.backend_id == "codex_agent"
     worker.run.assert_called_once()

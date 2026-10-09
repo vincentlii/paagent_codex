@@ -28,7 +28,7 @@ sudo bash deploy/install_vps.sh
 随后创建专用用户、目录和 systemd unit。它不会启动服务，也不会覆盖已有
 `settings.json`、环境文件或密钥。
 
-## 2. 配置固定单资产 XAU
+## 2. 默认单资产 XAU 与白名单选择
 
 首次安装会从 `config/settings.vps.example.json` 创建：
 
@@ -42,9 +42,10 @@ sudo bash deploy/install_vps.sh
 |---|---|---:|---:|
 | `binance_usdm` | `XAUUSDT` | `1h` | `4h` |
 默认且唯一启用的资产是 `binance_usdm / BINANCE / XAUUSDT / 1h`；HTF 固定为
-`4h`、60 根已收盘 K 线，全局分析并发为 1。不得追加第二个 enabled asset，也不得关闭 HTF 或
-VPA。默认 `vpa_mode=shadow`，正式 paper 账户仍只执行 PA authority；Joint 只允许离线
-A/A/B/B 研究。默认单笔风险为权益的 `0.5%`、组合风险上限 `2%`、最大杠杆 `3x`。
+`4h`、60 根已收盘 K 线，全局分析并发为 1。新版可由看板显式勾选 BTCUSDT/ETHUSDT，
+并选择并发 1/2/3；不自动启用新资产，不关闭 HTF/VPA，不支持任意品种或交易所。
+原默认 `vpa_mode=shadow` 的正式结果仍为 PA-only；当前已获批全量 A 单 Agent
+`pa_vpa_joint` 部署由显式 pipeline 控制，不能由品种选择切换权限。默认单笔风险为权益的 `0.5%`、组合风险上限 `2%`、最大杠杆 `3x`。
 这些是 paper 研究参数，不代表收益承诺。
 
 ## 3. API Key 与模型
@@ -153,6 +154,10 @@ PA_AGENT_CODEX_MAX_WORKERS=1
 # ChatGPT Codex 模型留空；仅 deepseek-flash 工程 Backend 填只含该模型的只读 catalog。
 PA_AGENT_CODEX_MODEL_CATALOG=
 ```
+
+上述为默认单资产示例。看板并发选 2/3 时，同步将非密配置
+`PA_AGENT_CODEX_MAX_WORKERS` 设为至少对应容量，并在 Host/Worker 排空、暂停后重启。
+2026-10-10 用户批准当前 VPS 容量为 3，但仍只启用 XAUUSDT；不代表已实测三模型峰值。
 
 如果只做 ChatGPT Codex/Luna 验收，`/etc/pa-agent/pa-agent-codex-secret.env` 保持安装器创建的
 空文件。只有选择 `deepseek-flash` Codex 工程 Backend 时，才用与 Direct API credential
@@ -334,6 +339,12 @@ sudo systemctl list-timers pa-agent-backup.timer
 `systemd-tmpfiles` 清理超过 7 天的孤立 Job/inbox/results/outbox，接受幂等 marker 单独保留 30 天；
 应用文件日志每日轮转并保留 14 份，systemd journal 仍由宿主机 journald 策略管理。
 
+新版 Worker 只在无 active/inbox/running dispatch 的空闲时段，每小时检查专属 Codex
+会话保留；超过 14 天且 PA workspace 无恢复引用的会话由官方 UUID delete 清理，
+每轮最多 8 个、每个最多 3 秒。旧 workspace 也仅在空闲且过期后清理，不在分析
+启动时扫描删除。memories 保持关闭；auth、正式 records、账本和冻结恢复任务不删。
+首次发布不会为验证清理而删除近期会话。详见 [运行升级](quality/v1_operations_upgrade_20261010.md)。
+
 服务启动前只运行 `--check`。`--probe-data` 不放入自动重启链路，避免交易所短暂断线
 导致 systemd 重启风暴。已接受任务的冻结 payload 与接收回执同事务持久化；重启只
 自动恢复未开始且身份可验证的任务。已开始任务必须先凭唯一完整 record 对账，
@@ -362,6 +373,10 @@ ssh -L 8765:127.0.0.1:8765 <VPS_USER>@<VPS_HOST>
 - “暂停分析”：不再接收新快照，正在运行的分析安全完成；
 - DeepSeek `Flash/Pro`、Thinking 与 reasoning effort；
 - Codex 发布目录中的 model 与该 model 支持的 reasoning effort；
+- Binance XAUUSDT/BTCUSDT/ETHUSDT 勾选及分析并发 1/2/3；同品种串行，不同品种
+  可受控并行。取消勾选只停新分析，已有正式 Paper 活跃订单继续接收行情观察；
+- conservative/balanced/aggressive 三档 Stage 2 选择性；不改变 Stage 1、结构价格、
+  数学或风险底线。默认 balanced；不提供强制交易档位；
 - Codex Fast mode 的 desired/applied 开关；仅在安全空闲边界影响新冻结 Job，
   与 Standard 分属不同 cohort。需在目标账号和 CLI 验证支持；`gpt-6-luna` 不保证
   固定 1.5× 完成速度，Fast 可能更快消耗套餐额度；看板仍应以实测 latency/usage 判断。
@@ -389,7 +404,7 @@ Profile/Backend 的 HTTP `202` 只表示 desired state 已持久化，不表示�
 model/effort/profile fingerprint，不因后续选择而换标。每个 `Run Once` generation 最多接受一个任务，
 任务结束后仍保持 paused。
 
-看板不能改 Prompt、风险参数、资产列表或 Joint 权限；`Run Once` 只能请求固定单资产的一次完整
+看板不能改 Prompt、风险参数、白名单以外的资产或 Joint 权限；`Run Once` 仍最多接收一项当前启用品种的完整
 PA 主链分析，不能绕过 Snapshot、Validator、Router、Risk，也不能真实下单或执行 shell。进程启停与重启仍使用 `systemctl`。这是有意的权限边界，
 避免 Web 控制面改变交易语义。
 
@@ -441,6 +456,9 @@ manifest；旧数据、冻结回执与登录凭据不得随版本替换删除。
 
 - Binance USD-M `XAUUSDT` 合约是否可用以启动时公开 metadata 为准；必须核对 tick size、
   quantity step 与 contract multiplier，不能从 symbol 名称猜测。
+- XAUUSDT 是 Binance 黄金永续而非全球现货黄金交易量。参考时段按最新已确认
+  收盘边界冻结，纽约时区包含 DST；官方 2026-09-15 规则之前保持历史时段未知，
+  未接权威假日日历时不猜测公共假日。不据该背景增加 Gate 或重标旧快照。
 - VPA 不创建 Setup、不翻转 PA 方向、不修改主观胜率；其增量价值需由配对研究验证。
 - 当前只有 paper execution。接入真实交易前必须另做私有 API、幂等订单、持仓同步、
   kill switch、时钟偏差、精度和异常恢复审计。

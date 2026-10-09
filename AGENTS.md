@@ -1,5 +1,7 @@
 # AGENTS
 
+- 修改 V1 会话保留、黄金背景、品种/并发/倾向控制前读 `docs/quality/v1_operations_upgrade_20261010.md`：默认仍为单黄金/并发 1，只有白名单品种可选；新增默认 Profile 字段不得改变旧指纹。停用品种的正式 Paper 活跃订单仍须观察，清理只在 Worker idle 删除超过 14 天的专属会话；不删除 auth、原始记录或恢复任务，不添加位置距离 Gate。本地验收不等于 VPS 已发布。
+
 - V1 Headless、Fast 控制或发布排障先读 `docs/quality/v1_health_audit_20261009.md` 和 `docs/knowledge/current-status.md` 最新条目：全量 A 单 Agent 联合链已获有界 VPS Paper 授权，但历史快速失败尚不能归因 Fast。失败必须保留可信 Worker 分类、实际延迟和未知用量；运行服务停止后才能覆盖安装包，Linux CLI 私有进程组必须清理。下方阶段报告的“未部署／no-go”属于当时证据，不撤销本次有限 Paper 授权。
 
 - 修改或验收联合 Stage 2 分层知识研究前读 `docs/quality/layered_stage2_knowledge_research_20261008.md`：它只属于预注册的 `knowledge_delivery` 研究对照；正式 Codex、Direct、旧 Frozen Job 仍全量必读，离线字节投影不得冒充模型提速或质量非劣。

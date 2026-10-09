@@ -152,7 +152,6 @@ class CodexCliWorker:
         if (self._stage_subagents_enabled(job)
                 and (self._config.codex_home / "agents").exists()):
             raise CodexWorkerOutputError("experimental runtime has unversioned global agents")
-        self._prune_session_workspaces()
         run_id = uuid4().hex
         if persist_session:
             workspace = self._session_workspace(job.manifest.job_digest)
@@ -828,13 +827,14 @@ class CodexCliWorker:
 
     def _prune_session_workspaces(self, *, max_age_seconds: float = 3600.0) -> None:
         root = self._config.runtime_root / "pa-sessions"
-        if not root.is_dir():
+        if not root.is_dir() or root.is_symlink():
             return
         cutoff = time.time() - max(900.0, float(max_age_seconds))
         for path in root.iterdir():
             try:
                 if (
-                    path.is_dir()
+                    path.is_dir() and not path.is_symlink()
+                    and path.resolve().parent == root.resolve()
                     and len(path.name) == 64
                     and all(character in "0123456789abcdef" for character in path.name)
                     and path.stat().st_mtime < cutoff
@@ -842,6 +842,18 @@ class CodexCliWorker:
                     shutil.rmtree(path, ignore_errors=True)
             except OSError:
                 continue
+
+    def prune_idle_sessions(self, inbox_root: Path) -> dict[str, int | bool]:
+        """Spool maintenance only: never prune another active analysis workspace."""
+        from pa_agent.agent_runtime.session_retention import prune_codex_sessions
+
+        if any(inbox_root.glob("*.json")) or any(inbox_root.glob("*.running")):
+            return {"deleted": 0, "errors": 0, "deferred": True}
+        self._prune_session_workspaces(max_age_seconds=14 * 86400)
+        return prune_codex_sessions(
+            self._config.codex_home, self._config.runtime_root, inbox_root,
+            codex_binary=self._config.codex_binary,
+        )
 
     @staticmethod
     def _validate_session_options(

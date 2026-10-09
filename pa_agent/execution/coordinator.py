@@ -86,6 +86,18 @@ class PaperExecutionCoordinator:
         return sum(self._broker(account).expire_pending(now_ms=now_ms)
                    for account in self._pipeline_accounts())
 
+    def active_market_keys(self) -> set[tuple[str, str, str, str]]:
+        """Markets that still require observation even when analysis is disabled."""
+        if not self.enabled:
+            return set()
+        self._broker("pa-official")
+        with self._connect() as connection:
+            return {tuple(row) for row in connection.execute(
+                "SELECT DISTINCT provider, venue, symbol, timeframe FROM paper_orders "
+                "WHERE status IN ('pending', 'open') AND account_id IN "
+                "('pa-official', 'pipeline-pa_only', 'pipeline-pa_shadow', 'pipeline-pa_vpa_joint')"
+            )}
+
     def submit_official(
         self,
         record: object,

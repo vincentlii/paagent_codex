@@ -237,6 +237,7 @@ def test_production_factory_applies_profile_only_to_future_direct_clients(
     settings = Settings()
     settings.provider.api_key = "secret-token"
     settings.provider.base_url = "https://provider.example/v1"
+    settings.general.decision_stance = "conservative"
     providers: list[object] = []
     built: list[SimpleNamespace] = []
 
@@ -266,9 +267,18 @@ def test_production_factory_applies_profile_only_to_future_direct_clients(
         deepseek_model="deepseek-v4-pro",
         deepseek_thinking=False,
         deepseek_reasoning_effort="low",
+        decision_stance="aggressive",
     )
     assert factory.apply_analysis_profile(profile) is True
     factory(_task("EURUSD", 1))
+    from dataclasses import replace
+    from pa_agent.operations.analysis_profile import profile_fingerprint
+    legacy_identity = AnalysisProfile().model_dump(mode="json")
+    legacy_identity.pop("symbols")
+    legacy_identity.pop("decision_stance")
+    legacy_identity["profile_fingerprint"] = profile_fingerprint(legacy_identity)
+    legacy = _task("XAUUSD", 2)
+    factory(replace(legacy, payload=replace(legacy.payload, analysis_profile_identity=legacy_identity)))
 
     assert providers[0].model == "deepseek-v4-flash"
     assert providers[1].model == "deepseek-v4-pro"
@@ -280,6 +290,11 @@ def test_production_factory_applies_profile_only_to_future_direct_clients(
     assert built[1].settings.general.higher_timeframe_enabled is True
     assert built[1].settings.general.higher_timeframe_override == "4h"
     assert built[1].settings.general.higher_timeframe_bar_count == 60
+    assert built[1].settings.general.decision_stance == "aggressive"
+    assert built[0].settings.general.decision_stance == "balanced"
+    assert built[2].settings.general.decision_stance == "conservative"
+    assert providers[2].model == "deepseek-v4-flash"
+    assert built[2].profile_identity == legacy_identity
     assert settings.provider.api_key == "secret-token"
     assert settings.provider.base_url == "https://provider.example/v1"
     assert settings.provider.model == "deepseek-v4-flash"

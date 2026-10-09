@@ -16,6 +16,24 @@ issue_status: monitoring
 
 # 运行与排障
 
+## 白名单运行配置与会话保留
+
+新本地版本的 `AnalysisProfile.symbols` 仅允许 Binance XAUUSDT/BTCUSDT/ETHUSDT；
+`max_concurrency` 仅 1/2/3，`decision_stance` 仅 conservative/balanced/aggressive。
+默认仍单黄金与并发 1；服务 idle 后才 applied，旧 frozen identity 不重标。
+VPS 并发调整须同步核对 `PA_AGENT_CODEX_MAX_WORKERS` 容量；调度设为 3 而 Worker
+仍为 1 不会产生三任务并行。当前单黄金不会因此加速 Stage 1→VPA→联合 Stage 2。
+非该原生 VPS 范围的旧监控保留原数据源，不得把不支持的品种请求误报已应用。
+取消勾选后，检查 `analysis_enabled=false` 与 Paper pending/open：有正式活跃
+订单仍轮询行情，无活跃订单不额外取数。暂停整体分析仍沿原暂停/expiry 语义。
+
+Codex 长期记忆在发布 config 与每次 CLI override 中均关闭；存在磁盘 rollout
+不等于会话被其他任务读取。仅同快照、已验证 Stage 1 首稿 UUID 可续接 Stage 2。
+专属服务会话超过 14 天时，由空闲 Worker 每小时调用官方 delete 清理，每轮最多
+8 个、每个 3 秒；inbox/running/active 或仍存 PA workspace 时保留。错误只记计数，
+不阻断交易分析，不触碰 auth/records/Paper。不得手工删除 Codex SQLite 或整段
+会话目录。VPS 新版发布与实际清理验收尚待完成，见 [升级报告](../quality/v1_operations_upgrade_20261010.md)。
+
 ## V1 Headless / Fast 故障的核验顺序
 
 1. 核对 desired/applied Fast、control/profile generation 与 `control_error`；控制

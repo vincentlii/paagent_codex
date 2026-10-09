@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 
 import pytest
 from pydantic import ValidationError
@@ -86,3 +87,32 @@ def test_profile_fingerprint_is_canonical_sha256() -> None:
 
     assert profile_fingerprint(original) == profile_fingerprint(reordered)
     assert len(profile_fingerprint(original)) == 64
+
+
+def test_new_default_fields_preserve_legacy_frozen_profile_fingerprint() -> None:
+    legacy = AnalysisProfile().model_dump(mode="json")
+    legacy.pop("symbols", None)
+    legacy.pop("decision_stance", None)
+    expected = hashlib.sha256(json.dumps(legacy, ensure_ascii=True, allow_nan=False,
+        separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+    assert profile_fingerprint(legacy) == expected
+    assert profile_fingerprint({**legacy, "symbols": ["XAUUSDT"], "decision_stance": "balanced"}) == expected
+
+
+@pytest.mark.parametrize("concurrency", [2, 3])
+def test_multi_asset_scope_and_stance_are_explicit_allowlisted_and_hashed(concurrency) -> None:
+    profile = AnalysisProfile(symbols=("XAUUSDT", "BTCUSDT", "ETHUSDT"),
+        decision_stance="conservative", max_concurrency=concurrency)
+    assert profile.enabled_symbols == ("XAUUSDT", "BTCUSDT", "ETHUSDT")
+    assert profile_fingerprint(profile) != profile_fingerprint(AnalysisProfile())
+    for values in ({"symbols": []}, {"symbols": ["BTCUSDT", "BTCUSDT"]},
+                   {"symbols": ["SOLUSDT"]}, {"symbols": [{}]},
+                   {"symbol": "XAUUSDT", "symbols": ["BTCUSDT"]},
+                   {"decision_stance": "extreme_aggressive"},
+                   {"max_concurrency": 4}):
+        with pytest.raises(ValidationError):
+            AnalysisProfile.model_validate(values)
+    capabilities = analysis_capabilities()
+    assert [item["id"] for item in capabilities["market_symbols"]] == ["XAUUSDT", "BTCUSDT", "ETHUSDT"]
+    assert [item["id"] for item in capabilities["decision_stances"]] == ["conservative", "balanced", "aggressive"]
+    assert [item["id"] for item in capabilities["concurrency_choices"]] == ["1", "2", "3"]

@@ -4,6 +4,8 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+import pytest
+
 from pa_agent.config.paths import resolve_runtime_paths
 from pa_agent.config.settings import MonitoringSettings, Settings
 from pa_agent.data.base import KlineBar
@@ -257,6 +259,111 @@ def _monitor(
         recovery_blocked_asset_keys=recovery_blocked_asset_keys,
     )
     return monitor, source, audit, holder["service"], clock
+
+
+class _BinanceSource(_PaperSource):
+    def subscribe(self, symbol, timeframe):
+        super().subscribe(symbol, timeframe)
+        self.symbol = symbol
+
+    def current_identity(self, requested_symbol=None):
+        symbol = requested_symbol or self.symbol
+        return ResolvedInstrumentIdentity(provider="binance_usdm", requested_symbol=symbol,
+            resolved_symbol=symbol, venue="BINANCE", volume_kind="real", volume_quality="exchange",
+            instrument_type="tradifi_perpetual" if symbol == "XAUUSDT" else "linear_perpetual")
+
+    def current_instrument_spec(self):
+        from dataclasses import replace
+        return replace(super().current_instrument_spec(), provider="binance_usdm", venue="BINANCE",
+            symbol=self.symbol, instrument_type="linear_perpetual")
+
+
+def _native_monitor(tmp_path, *, paper_execution=None):
+    settings = _settings()
+    settings.monitoring.max_concurrency = 1
+    settings.monitoring.assets = [settings.monitoring.assets[0].model_copy(update={
+        "source": "binance_usdm", "exchange": "BINANCE", "symbol": "XAUUSDT"})]
+    return _monitor(tmp_path, settings=settings, source_factory=lambda _asset: _BinanceSource(),
+        paper_execution=paper_execution)
+
+
+@pytest.mark.parametrize("concurrency", [2, 3])
+def test_profile_changes_native_scope_concurrency_and_stage2_stance_only_at_idle(tmp_path, concurrency):
+    monitor, _, _, old_service, _ = _native_monitor(tmp_path)
+    store = monitor._control_store
+    profile = AnalysisProfile(symbols=("XAUUSDT", "BTCUSDT", "ETHUSDT"),
+        max_concurrency=concurrency, decision_stance="conservative")
+    control = store.set_analysis_profile(profile, expected_generation=store.read().generation, actor="test")
+    try:
+        old_service.wait_idle = lambda _timeout=None: False
+        assert monitor._apply_control(control)[1] == "analysis_profile_pending"
+        assert monitor._settings.monitoring.max_concurrency == 1
+        old_service.wait_idle = lambda _timeout=None: True
+        assert monitor._apply_control(control) == (False, None)
+        assert old_service.closed and monitor._service is not old_service
+        assert monitor._settings.monitoring.max_concurrency == concurrency
+        assert monitor.runtime_snapshot(paused=False)["mode"]["decision_stance"] == "conservative"
+        cycle = monitor.poll_once()
+        assert cycle.accepted == 3
+        tasks = monitor._service.submitted
+        assert {task.symbol for task in tasks} == {"XAUUSDT", "BTCUSDT", "ETHUSDT"}
+        assert len({task.payload.frame.data_metadata["source_identity"]["resolved_symbol"] for task in tasks}) == 3
+        assert all(task.payload.analysis_profile_identity["decision_stance"] == "conservative" for task in tasks)
+        assert tasks[0].payload.frame.data_metadata.get("market_context")
+        # The reference clock is the last confirmed close, not the next poll clock.
+        frozen = {state.config.symbol: state.prepared_task for state in monitor._states}
+        monitor._wall_time_ms = lambda: 1_800_000_000_000 + 7_260_000
+        assert monitor.poll_once().accepted == 0
+        assert all(state.prepared_task is frozen[state.config.symbol] for state in monitor._states)
+        from pa_agent.monitoring.frozen_task_codec import encode_task, decode_task
+        for task in tasks:
+            assert decode_task(*encode_task(task)).task_id == task.task_id
+    finally:
+        monitor.shutdown()
+
+
+def test_scope_and_stance_survive_restart_without_enabling_extra_markets(tmp_path):
+    monitor, _, _, _, _ = _native_monitor(tmp_path)
+    store = monitor._control_store
+    profile = AnalysisProfile(symbols=("BTCUSDT",), decision_stance="aggressive")
+    control = store.set_analysis_profile(profile, expected_generation=0, actor="test")
+    assert monitor._apply_control(control) == (False, None)
+    monitor.shutdown()
+    restored, _, _, service, _ = _native_monitor(tmp_path)
+    try:
+        assert restored._apply_control(restored._control_store.read()) == (False, None)
+        assert restored.poll_once().accepted == 1
+        assert [task.symbol for task in service.submitted] == ["BTCUSDT"]
+        assert restored._settings.general.decision_stance == "aggressive"
+    finally:
+        restored.shutdown()
+
+
+def test_legacy_monitor_rejects_unsupported_dashboard_market_scope_instead_of_misreporting(tmp_path):
+    monitor, _, _, service, _ = _monitor(tmp_path)
+    try:
+        profile = AnalysisProfile(symbols=("BTCUSDT",))
+        control = monitor._control_store.set_analysis_profile(profile, expected_generation=0, actor="test")
+        assert monitor._apply_control(control) == (True, "analysis_market_scope_unavailable")
+        assert monitor.runtime_snapshot(paused=True)["assets"][0]["symbol"] == "XAUUSD"
+        assert not service.closed
+    finally:
+        monitor.shutdown()
+
+
+def test_disabled_market_keeps_observing_existing_paper_orders_without_analysis(tmp_path):
+    paper = _PaperExecution()
+    paper.active_market_keys = lambda: {("binance_usdm", "BINANCE", "BTCUSDT", "1h")}
+    monitor, _, _, service, _ = _native_monitor(tmp_path, paper_execution=paper)
+    try:
+        cycle = monitor.poll_once()
+        assert cycle.accepted == 1
+        assert [task.symbol for task in service.submitted] == ["XAUUSDT"]
+        assert {spec.symbol for spec, _, _ in paper.observed} == {"XAUUSDT", "BTCUSDT"}
+        assets = monitor.runtime_snapshot(paused=False)["assets"]
+        assert next(asset for asset in assets if asset["symbol"] == "BTCUSDT")["analysis_enabled"] is False
+    finally:
+        monitor.shutdown()
 
 
 def test_unreconciled_started_task_blocks_new_snapshot_for_same_asset(tmp_path):

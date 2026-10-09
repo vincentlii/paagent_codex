@@ -222,6 +222,8 @@ def volume_metadata_for_source(
             field=native_volume_fields[normalized],
             basis="exchange_base_asset_volume",
             zero_semantics="observed_zero",
+            market_scope="single_venue_contract",
+            interpretation_boundary="not_global_underlying_market_volume",
         )
     if resolved is not None:
         metadata.update(resolved.to_metadata())

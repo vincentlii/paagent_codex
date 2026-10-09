@@ -30,6 +30,26 @@ from tests.unit.test_codex_analysis_backend import _request
 from tests.unit.test_frozen_agent_job import _job
 
 
+def test_session_maintenance_is_idle_only_and_hourly(tmp_path):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    cleanup = MagicMock(return_value={"deleted": 2, "errors": 0})
+    service = CodexSpoolService(spool=CodexSpoolConfig(job_root=tmp_path / "jobs",
+        inbox_root=inbox, result_root=tmp_path / "results"), worker=MagicMock(),
+        idle_maintenance=cleanup)
+    service._maintain_if_idle(active=True, now=1)
+    assert cleanup.call_count == 0
+    pending = inbox / "a.running"
+    pending.write_text("{}")
+    service._maintain_if_idle(active=False, now=2)
+    assert cleanup.call_count == 0
+    pending.unlink()
+    service._maintain_if_idle(active=False, now=3)
+    service._maintain_if_idle(active=False, now=100)
+    assert cleanup.call_count == 1
+    assert service._maintenance_status["deleted"] == 2
+
+
 @pytest.mark.parametrize("investigation", ["fixed", "agentic"])
 def test_role_stop_accepts_job_selection_but_rejects_runtime_drift(investigation):
     from pa_agent.agent_runtime.codex_worker import CodexWorkerOutputError, CodexWorkerStopped

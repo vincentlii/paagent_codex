@@ -125,6 +125,8 @@ def build_stage1_decision_packet(
             "max_knowledge_batches": 1,
         },
     }
+    if isinstance(core_context.get("market_context"), Mapping):
+        packet["market_context"] = dict(core_context["market_context"])
     packet["packet_digest"] = hashlib.sha256(_canonical_bytes(packet)).hexdigest()
     packet["packet_bytes"] = len(_canonical_bytes(packet))
     return packet

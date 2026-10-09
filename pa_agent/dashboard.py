@@ -53,12 +53,14 @@ _ASSET_FIELDS = (
     "venue",
     "symbol",
     "timeframe",
+    "analysis_enabled",
     "connected",
     "in_flight",
     "last_analysis_status",
     "fetch_failures",
     "latest_closed_bar_ts",
 )
+_MARKET_CONTEXT_FIELDS = ("instrument_label",)
 _SCHEDULER_FIELDS = (
     "running",
     "queued",
@@ -223,11 +225,16 @@ def _safe_runtime_projection(runtime: dict[str, Any] | None) -> dict[str, Any]:
     projected["scheduler"] = _select_fields(
         runtime.get("scheduler"), _SCHEDULER_FIELDS
     )
-    projected["assets"] = [
-        _select_fields(item, _ASSET_FIELDS)
-        for item in runtime.get("assets", [])
-        if isinstance(item, dict)
-    ]
+    projected["assets"] = []
+    for item in runtime.get("assets", []):
+        if not isinstance(item, dict):
+            continue
+        asset = _select_fields(item, _ASSET_FIELDS)
+        if isinstance(item.get("market_context"), dict):
+            asset["market_context"] = _select_fields(
+                item["market_context"], _MARKET_CONTEXT_FIELDS
+            )
+        projected["assets"].append(asset)
     return projected
 
 
@@ -368,21 +375,24 @@ def _run_once_ready(
         or not isinstance(queued, int)
     ):
         return False
-    if len(assets) != 1 or not isinstance(assets[0], dict):
+    if any(not isinstance(asset, dict) for asset in assets):
         return False
-    asset = assets[0]
-    if (
+    enabled_assets = [asset for asset in assets if asset.get("analysis_enabled", True) is not False]
+    enabled_symbols = [str(asset.get("symbol") or "").upper() for asset in enabled_assets]
+    if sorted(enabled_symbols) != sorted(control.analysis_profile.enabled_symbols):
+        return False
+    if any(
         str(asset.get("source") or "").lower() != "binance_usdm"
         or str(asset.get("venue") or "").upper() != "BINANCE"
-        or str(asset.get("symbol") or "").upper() != "XAUUSDT"
         or str(asset.get("timeframe") or "").lower() != "1h"
+        for asset in enabled_assets
     ):
         return False
     max_concurrency = scheduler.get("max_concurrency")
     if (
         isinstance(max_concurrency, bool)
         or not isinstance(max_concurrency, int)
-        or max_concurrency != 1
+        or max_concurrency != control.analysis_profile.max_concurrency
     ):
         return False
     consumed_values = [
@@ -409,7 +419,7 @@ def _run_once_ready(
         and queued == 0
         and not bool(scheduler.get("closed"))
         and not bool(scheduler.get("error"))
-        and not bool(asset.get("in_flight"))
+        and not any(bool(asset.get("in_flight")) for asset in assets)
         and prior_generation_consumed
     )
 

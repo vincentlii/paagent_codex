@@ -39,6 +39,18 @@ def test_official_coordinator_is_idempotent_by_task_id(tmp_path) -> None:
         assert connection.execute("SELECT COUNT(*) FROM paper_orders").fetchone()[0] == 1
 
 
+def test_active_market_observation_scope_survives_coordinator_restart(tmp_path):
+    db = tmp_path / "paper.sqlite3"
+    settings = PaperTradingSettings(enabled=True)
+    coordinator = PaperExecutionCoordinator(db, settings)
+    action = coordinator.submit_official(_record(), _spec(), task_id="active-1")
+    expected = {(_spec().provider, _spec().venue, _spec().symbol, "1h")}
+    assert PaperExecutionCoordinator(db, settings).active_market_keys() == expected
+    with sqlite3.connect(db) as connection:
+        connection.execute("UPDATE paper_orders SET status = 'closed' WHERE order_id = ?", (action.order_id,))
+    assert coordinator.active_market_keys() == set()
+
+
 def test_research_coordinator_uses_four_isolated_accounts_only_after_valid_protocol(
     tmp_path,
 ) -> None:

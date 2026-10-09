@@ -22,6 +22,8 @@ CodexModel = Literal[
     "gpt-5.4-mini",
 ]
 CodexEffort = Literal["low", "medium", "high", "xhigh", "max", "ultra"]
+MarketSymbol = Literal["XAUUSDT", "BTCUSDT", "ETHUSDT"]
+MARKET_SYMBOLS = ("XAUUSDT", "BTCUSDT", "ETHUSDT")
 
 _CODEX_EFFORTS: Mapping[str, tuple[str, ...]] = {
     "gpt-6-astra": ("low", "medium", "high", "xhigh", "max", "ultra"),
@@ -48,7 +50,7 @@ class ModelCapability:
 
 
 class AnalysisProfile(BaseModel):
-    """Only model choices vary; market and evidence scope are fixed in v1."""
+    """Allowlisted operating choices; evidence and trading boundaries stay fixed."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -59,16 +61,39 @@ class AnalysisProfile(BaseModel):
     codex_reasoning_effort: CodexEffort = "high"
     source: Literal["binance_usdm"] = "binance_usdm"
     exchange: Literal["BINANCE"] = "BINANCE"
-    symbol: Literal["XAUUSDT"] = "XAUUSDT"
+    symbol: MarketSymbol = "XAUUSDT"
+    symbols: tuple[MarketSymbol, ...] = ("XAUUSDT",)
+    decision_stance: Literal["conservative", "balanced", "aggressive"] = "balanced"
     timeframe: Literal["1h"] = "1h"
     vpa_mode: Literal["shadow"] = "shadow"
     higher_timeframe_enabled: Literal[True] = True
     higher_timeframe_override: Literal["4h"] = "4h"
     higher_timeframe_bar_count: Literal[60] = 60
-    max_concurrency: Literal[1] = 1
+    max_concurrency: Literal[1, 2, 3] = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def _explicit_scope(cls, value: object) -> object:
+        if isinstance(value, Mapping) and "symbols" in value:
+            symbols = value["symbols"]
+            if isinstance(symbols, (list, tuple)) and symbols and "symbol" not in value:
+                value = {**value, "symbol": symbols[0]}
+        elif isinstance(value, Mapping) and "symbol" in value:
+            value = {**value, "symbols": (value["symbol"],)}
+        return value
+
+    @property
+    def enabled_symbols(self) -> tuple[str, ...]:
+        return self.symbols
 
     @model_validator(mode="after")
     def _supported_codex_pair(self) -> AnalysisProfile:
+        if not self.symbols:
+            raise ValueError("at least one analysis symbol is required")
+        if len(set(self.symbols)) != len(self.symbols):
+            raise ValueError("analysis symbols must be unique")
+        if self.symbol != self.symbols[0]:
+            raise ValueError("primary symbol must match the first analysis symbol")
         if self.codex_reasoning_effort not in _CODEX_EFFORTS[self.codex_model]:
             raise ValueError(
                 f"unsupported Codex model/effort pair: "
@@ -93,8 +118,14 @@ def codex_model_effort_supported(model: str, effort: str) -> bool:
 
 def profile_fingerprint(profile: AnalysisProfile | Mapping[str, object]) -> str:
     validated = validate_analysis_profile(profile)
+    payload = validated.model_dump(mode="json")
+    # Default additions must not invalidate accepted jobs from the previous release.
+    if validated.enabled_symbols == (validated.symbol,):
+        payload.pop("symbols")
+    if validated.decision_stance == "balanced":
+        payload.pop("decision_stance")
     encoded = json.dumps(
-        validated.model_dump(mode="json"),
+        payload,
         ensure_ascii=True,
         allow_nan=False,
         separators=(",", ":"),
@@ -133,4 +164,13 @@ def analysis_capabilities() -> dict[str, list[dict[str, object]]]:
     return {
         "deepseek_models": [item.to_dict() for item in deepseek],
         "codex_models": [item.to_dict() for item in codex],
+        "market_symbols": [
+            {"id": symbol, "label": label}
+            for symbol, label in zip(MARKET_SYMBOLS, ("黄金永续 XAU", "比特币 BTC", "以太坊 ETH"))
+        ],
+        "decision_stances": [
+            {"id": stance, "label": label}
+            for stance, label in (("conservative", "保守"), ("balanced", "平衡"), ("aggressive", "激进"))
+        ],
+        "concurrency_choices": [{"id": str(n), "label": str(n)} for n in (1, 2, 3)],
     }

@@ -539,7 +539,8 @@ def test_dashboard_rejects_direct_switch_when_headless_has_no_direct_key(tmp_pat
         thread.join(timeout=5)
 
 
-def test_profile_endpoint_accepts_strict_profile_and_uses_cas(tmp_path) -> None:
+@pytest.mark.parametrize("concurrency", [2, 3])
+def test_profile_endpoint_accepts_strict_profile_and_uses_cas(tmp_path, concurrency) -> None:
     paths = _paths(tmp_path)
     RuntimeStatusStore(paths.runtime_status_path).write(
         {"service_state": "running", "assets": [], "scheduler": {}}
@@ -547,7 +548,9 @@ def test_profile_endpoint_accepts_strict_profile_and_uses_cas(tmp_path) -> None:
     server, thread = _running_server(paths)
     try:
         connection = http.client.HTTPConnection(*server.server_address, timeout=5)
-        profile = AnalysisProfile(deepseek_model="deepseek-v4-pro").model_dump(mode="json")
+        profile = AnalysisProfile(deepseek_model="deepseek-v4-pro",
+            symbols=("XAUUSDT", "BTCUSDT", "ETHUSDT"), max_concurrency=concurrency,
+            decision_stance="aggressive").model_dump(mode="json")
         response, payload = _request(
             connection,
             "POST",
@@ -556,6 +559,9 @@ def test_profile_endpoint_accepts_strict_profile_and_uses_cas(tmp_path) -> None:
         )
         assert response.status == 202
         assert payload["control"]["analysis_profile"]["deepseek_model"] == "deepseek-v4-pro"
+        assert payload["control"]["analysis_profile"]["symbols"] == ["XAUUSDT", "BTCUSDT", "ETHUSDT"]
+        assert payload["control"]["analysis_profile"]["decision_stance"] == "aggressive"
+        assert payload["control"]["analysis_profile"]["max_concurrency"] == concurrency
 
         response, payload = _request(
             connection,
@@ -696,6 +702,61 @@ def test_run_once_endpoint_accepts_only_a_fully_applied_idle_boundary(tmp_path) 
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.parametrize(("symbols", "concurrency"), [
+    (("XAUUSDT",), 1),
+    (("XAUUSDT",), 3),
+    (("XAUUSDT", "BTCUSDT", "ETHUSDT"), 3),
+    (("BTCUSDT",), 3),
+])
+def test_run_once_accepts_applied_catalog_scope_without_enabling_disabled_markets(
+    tmp_path, symbols, concurrency,
+) -> None:
+    paths = _paths(tmp_path)
+    store = RuntimeControlStore(paths.runtime_control_path)
+    paused = store.set_desired_state("paused", actor="test")
+    control = store.set_analysis_profile(
+        AnalysisProfile(symbols=symbols, max_concurrency=concurrency),
+        expected_generation=paused.generation, actor="test",
+    )
+    _publish_run_once_ready(paths, control)
+    status = RuntimeStatusStore(paths.runtime_status_path).read()
+    status["scheduler"]["max_concurrency"] = concurrency
+    status["assets"] = [
+        {"source": "binance_usdm", "venue": "BINANCE", "symbol": symbol,
+         "timeframe": "1h", "in_flight": False, "analysis_enabled": symbol in symbols}
+        for symbol in ("XAUUSDT", "BTCUSDT", "ETHUSDT")
+    ]
+    RuntimeStatusStore(paths.runtime_status_path).write(status)
+    server, thread = _running_server(paths)
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        response, payload = _request(connection, "POST", "/api/run-once",
+            json.dumps({"expected_generation": control.generation}))
+        assert response.status == 202
+        assert payload["control"]["run_once_generation"] == 1
+        assert payload["control"]["desired_state"] == "paused"
+        assert payload["control"]["analysis_profile"]["symbols"] == list(symbols)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_dashboard_asset_projection_preserves_scope_and_only_safe_market_context(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    RuntimeStatusStore(paths.runtime_status_path).write({
+        "service_state": "running", "scheduler": {},
+        "assets": [{"symbol": "XAUUSDT", "analysis_enabled": True,
+                    "market_context": {"instrument_label": "Binance 黄金永续合约", "internal_note": "private"}},
+                   {"symbol": "BTCUSDT", "analysis_enabled": False, "internal_note": "private"}],
+    })
+    assets = build_dashboard_payload(paths)["runtime"]["assets"]
+    assert assets[0]["analysis_enabled"] is True
+    assert assets[0]["market_context"] == {"instrument_label": "Binance 黄金永续合约"}
+    assert assets[1]["analysis_enabled"] is False
+    assert "private" not in json.dumps(assets)
 
 
 @pytest.mark.parametrize(
@@ -863,6 +924,9 @@ def test_dashboard_page_has_fixed_scope_profile_controls_and_safe_rendering() ->
         'id="profile-diff"',
         'id="apply-profile"',
         'id="run-once"',
+        'id="market-symbols"',
+        'id="decision-stance"',
+        'id="max-concurrency"',
         "Requested / Effective Model",
         "Pipeline",
         "run.analysis_pipeline||'unknown'",

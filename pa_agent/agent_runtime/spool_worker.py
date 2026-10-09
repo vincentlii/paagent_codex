@@ -208,11 +208,15 @@ class CodexSpoolService:
         worker: CodexCliWorker,
         max_workers: int = 2,
         runtime_identity_provider: Callable[[], dict[str, Any]] | None = None,
+        idle_maintenance: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._spool = spool
         self._worker = worker
         self._max_workers = max(1, min(int(max_workers), 4))
         self._runtime_identity_provider = runtime_identity_provider
+        self._idle_maintenance = idle_maintenance
+        self._next_maintenance_at = 0.0
+        self._maintenance_status: dict[str, Any] = {}
 
     def check(self) -> list[str]:
         errors: list[str] = []
@@ -249,6 +253,7 @@ class CodexSpoolService:
                     )
                 self._recover_claims()
                 active = {future for future in active if not future.done()}
+                self._maintain_if_idle(active=bool(active), now=now)
                 capacity = self._max_workers - len(active)
                 for dispatch in sorted(self._spool.inbox_root.glob("*.json"))[:capacity]:
                     claimed = dispatch.with_suffix(".running")
@@ -258,6 +263,17 @@ class CodexSpoolService:
                         continue
                     active.add(executor.submit(self._execute, claimed))
                 time.sleep(self._spool.poll_seconds)
+
+    def _maintain_if_idle(self, *, active: bool, now: float) -> None:
+        if (active or self._idle_maintenance is None or now < self._next_maintenance_at
+                or any(self._spool.inbox_root.glob("*.json"))
+                or any(self._spool.inbox_root.glob("*.running"))):
+            return
+        try:
+            self._maintenance_status = dict(self._idle_maintenance())
+        except (OSError, RuntimeError, ValueError):
+            self._maintenance_status = {"errors": 1}
+        self._next_maintenance_at = now + 3600
 
     def _publish_health(self) -> None:
         """Publish only credential-free worker health for the trusted host."""
@@ -279,6 +295,7 @@ class CodexSpoolService:
                     "runtime_version": runtime.get("runtime_version"),
                     "runtime_asset_digest": runtime.get("runtime_asset_digest"),
                     "codex_binary_digest": runtime.get("codex_binary_digest"),
+                    "session_retention": dict(self._maintenance_status),
                 },
             )
         except (OSError, RuntimeError, TypeError, ValueError):
@@ -599,6 +616,7 @@ def _service_from_environment() -> CodexSpoolService:
     return CodexSpoolService(
         spool=spool,
         worker=worker,
+        idle_maintenance=lambda: worker.prune_idle_sessions(spool.inbox_root),
         max_workers=int(os.environ.get("PA_AGENT_CODEX_MAX_WORKERS", "2")),
         runtime_identity_provider=lambda: codex_runtime_identity(
             model=model,

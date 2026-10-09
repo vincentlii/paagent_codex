@@ -58,7 +58,14 @@ Prompt 变短本身不是成功。比较必须在冻结输入、独立运行、c
 
 Dashboard 可以在不暴露凭据的前提下提交 allowlisted、版本化 Analysis Profile，以选择发布目录中的 DeepSeek/Codex model、允许的 thinking/reasoning 组合。Profile 只能在 Headless idle boundary 应用；后续 Snapshot 才可使用新 Profile，已冻结 Job 不得续接或重标。
 
-初版资产、旧模式 VPA Shadow 和 HTF 固定。Dashboard 不能编辑 Prompt、AGENTS、Skills、Knowledge、Validator、Router、Risk、Paper、API key、Base URL、文件路径或 VPA/Joint 权限；它也不能读取生产数据库或改变交易权限。每次 requested/effective Backend、model、reasoning、Profile fingerprint 与 Runtime asset identity 都必须进入 Frozen Job、record 与 cohort。
+初版资产固定；2026-10-10 用户授权增加 Binance XAU/BTC/ETH 白名单选择、并发
+1/2/3 及三档 Stage 2 倾向，默认单黄金、并发 1。旧模式 VPA Shadow 与 HTF 保持固定。
+Dashboard 不能编辑 Prompt、AGENTS、Skills、Knowledge、Validator、Router、Risk、Paper、API key、Base URL、文件路径或 VPA/Joint 权限；它也不能读取生产数据库或改变交易权限。每次 requested/effective Backend、model、reasoning、Profile fingerprint 与 Runtime asset identity 都必须进入 Frozen Job、record 与 cohort。
+
+会话隔离不依赖“历史文件少”：不同快照只创建新会话，续接只用经过验证的同快照
+UUID，长期记忆始终禁用。14 天保留清理属于空闲 Worker 运维，不进入模型任务，
+不删除认证、正式证据或有效恢复引用。黄金产品与单市场背景是事实限定，不是
+第二套策略规则。实施和验证范围见 [V1 运行升级](../quality/v1_operations_upgrade_20261010.md)。
 
 ## 当前边界
 

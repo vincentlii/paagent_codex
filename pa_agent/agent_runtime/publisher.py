@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -213,6 +214,8 @@ class CodexJobPublisher:
         }
         if "analysis_as_of_ms" in self._frame.data_metadata:
             context["frozen_snapshot"]["analysis_as_of_ms"] = self._frame.data_metadata["analysis_as_of_ms"]
+        if isinstance(self._frame.data_metadata.get("market_context"), Mapping):
+            context["market_context"] = dict(self._frame.data_metadata["market_context"])
         context["evidence_index"] = {
             "fact_count": len(visible_fact_ids),
             "fact_prefixes": sorted({item.split(".", 1)[0] for item in visible_fact_ids}),

@@ -96,6 +96,7 @@ class ProductionOrchestratorFactory:
         settings.general.higher_timeframe_override = profile.higher_timeframe_override
         settings.general.higher_timeframe_bar_count = profile.higher_timeframe_bar_count
         settings.monitoring.max_concurrency = profile.max_concurrency
+        settings.general.decision_stance = profile.decision_stance
         return settings
 
     def activate_backend_mode(self, mode: str) -> bool:
@@ -115,12 +116,16 @@ class ProductionOrchestratorFactory:
         )
         if not self.activate_backend_mode(mode):
             raise RuntimeError(f"analysis backend is not configured: {mode}")
-        if mode == "deepseek_only":
-            return self._build_direct()
-
         frozen_profile = self._frozen_profile_for_task(task)
         settings = self._settings_for_profile(frozen_profile)
-        profile_identity = self._profile_identity_for(frozen_profile)
+        frozen_identity = dict(getattr(task.payload, "analysis_profile_identity", {}) or {})
+        profile_identity = frozen_identity or self._profile_identity_for(frozen_profile)
+        if frozen_identity and "decision_stance" not in frozen_identity:
+            # Old accepted tasks did not expose stance in Profile. Keep their
+            # configured baseline, rather than silently adding a new selection.
+            settings.general.decision_stance = self._settings.general.decision_stance
+        if mode == "deepseek_only":
+            return self._build_direct(settings=settings, profile_identity=profile_identity)
         assert self._codex_backend_factory is not None
         primary = self._build_orchestrator(
             settings=settings,
