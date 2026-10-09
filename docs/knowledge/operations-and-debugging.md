@@ -5,8 +5,8 @@ verification_scope:
   - local
   - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-10-09
-核验提交: 8e41db45790027fb0402f91cd2e9a94bc46e4392
+最后核验: 2026-10-10
+核验提交: b295aa711b66ec0b6d0c15f6d56405e2f0bf2ff5
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -18,7 +18,7 @@ issue_status: monitoring
 
 ## 白名单运行配置与会话保留
 
-新本地版本的 `AnalysisProfile.symbols` 仅允许 Binance XAUUSDT/BTCUSDT/ETHUSDT；
+当前发布版本的 `AnalysisProfile.symbols` 仅允许 Binance XAUUSDT/BTCUSDT/ETHUSDT；
 `max_concurrency` 仅 1/2/3，`decision_stance` 仅 conservative/balanced/aggressive。
 默认仍单黄金与并发 1；服务 idle 后才 applied，旧 frozen identity 不重标。
 VPS 并发调整须同步核对 `PA_AGENT_CODEX_MAX_WORKERS` 容量；调度设为 3 而 Worker
@@ -32,7 +32,8 @@ Codex 长期记忆在发布 config 与每次 CLI override 中均关闭；存在�
 专属服务会话超过 14 天时，由空闲 Worker 每小时调用官方 delete 清理，每轮最多
 8 个、每个 3 秒；inbox/running/active 或仍存 PA workspace 时保留。错误只记计数，
 不阻断交易分析，不触碰 auth/records/Paper。不得手工删除 Codex SQLite 或整段
-会话目录。VPS 新版发布与实际清理验收尚待完成，见 [升级报告](../quality/v1_operations_upgrade_20261010.md)。
+会话目录。VPS 已发布并在空闲时清理 1 个符合条件的专属会话、errors=0；三品种
+负载与长期效果仍待 Paper 观察，见 [升级报告](../quality/v1_operations_upgrade_20261010.md)。
 
 ## V1 Headless / Fast 故障的核验顺序
 

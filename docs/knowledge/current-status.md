@@ -4,8 +4,8 @@ capability: paper-observation-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-09
-核验提交: 8e41db45790027fb0402f91cd2e9a94bc46e4392（运行代码）
+最后核验: 2026-10-10
+核验提交: b295aa711b66ec0b6d0c15f6d56405e2f0bf2ff5（运行代码）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,18 +21,23 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-10 四项运行升级（本地完成，未发布）
+## 2026-10-10 四项运行升级与并发 3（已发布）
 
 用户批准的会话保留、黄金数据背景、三品种受控并行和三档 Stage 2 倾向已在当前
-worktree 实现；323 项受影响范围离线回归通过，关键静态检查和看板 JS 语法检查
-通过。新改动尚未提交、未安装到 VPS，也未额外调用模型或启用 BTC/ETH。
-VPS 仍沿用下节发布版本；不能把本地验收当成线上长期健康或交易效果证据。
+worktree 实现；初次 323 项离线回归及发布前 194 项定向回归通过，关键静态检查
+和看板 JS 语法检查通过。用户随后明确授权并发 3、提交与发布，运行提交 `b295aa7`
+已安装到 VPS；260 个代码/Runtime 文件与 38 个 Prompt 资源核验一致，隔离审计通过。
+三服务 active、退出码与重启计数 0，Paper 恢复运行。没有强制模型重跑或启用 BTC/ETH；
+安装成功不等于长期健康、三任务容量或交易效果已证实。
 
 默认仍单黄金、并发 1；看板可显式选择 Binance XAU/BTC/ETH 与并发 1/2/3，
+本次用户授权的当前 VPS 调度与实际 Worker 容量为 3，仍只启用黄金。控制 generation
+24、Profile generation 3，desired/applied 一致；备份 `pa-agent-20261009T172623Z` 已验证。
 每个品种沿原联合链顺序运行，不同品种有界并行、同品种 FIFO。停用新分析后，
 正式 Paper 活跃订单继续观察。交易倾向只复用已有 Stage 2 选择性，旧冻结
 Profile 指纹与原已知倾向保持兼容。记忆继续关闭；空闲 Worker 每小时有界
 清理超过 14 天的专属会话，不删认证、正式 records、账本或恢复任务。
+本次空闲维护清理 1 个符合条件的专属会话、errors=0；正式记录保留。
 
 黄金产品/单市场证据/纽约 DST 参考时段在最新确认收盘边界冻结；假日日历
 未知不猜测，不成为 Gate。知识与 Skills 原文未删减，没有新增模型分析阶段。

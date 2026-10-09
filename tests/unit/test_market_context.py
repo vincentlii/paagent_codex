@@ -34,4 +34,3 @@ def test_crypto_is_not_given_gold_reference_hours():
     result = market_context_for_snapshot(_identity("BTCUSDT", "linear_perpetual"), 1_800_000_000_000)
     assert result["reference_session"] == "continuous_crypto"
     assert "reference_index_mode" not in result
-
