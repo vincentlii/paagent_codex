@@ -76,6 +76,23 @@ def test_future_confirmation_accepts_an_explicit_closed_bar_anchor() -> None:
         "等待下一根已收盘 K 线接受并收于 K1 高点上方，否则视为未确认。",
         path="vpa_report.next_confirmation.trigger",
     ) == []
+
+
+def test_latest_higher_timeframe_is_not_an_unbounded_price_high() -> None:
+    assert validate_inference_only_narrative(
+        "最新高周期回落提示动能放缓，不能代替小时级确认。",
+        path="stage1.htf_context",
+    ) == []
+    assert validate_inference_only_narrative(
+        "K1 创新高，支持延续。", path="stage1.key_signals",
+    )
+
+
+def test_future_confirmation_accepts_subsequent_closed_price() -> None:
+    assert validate_future_confirmation_narrative(
+        "观察后续已闭盘价相对K1低点的响应：是否在其下方持续接受并延伸。",
+        path="vpa_report.next_confirmation.trigger",
+    ) == []
     assert validate_future_confirmation_narrative(
         "观察K1之后的下一根闭盘棒：若收盘越过K1高点，再评估是否被接受。",
         path="vpa_report.next_confirmation.trigger",

@@ -23,8 +23,15 @@ be removed from the research denominator.
    source or asset state for execution constraints.
 2. Closed paper-market bars are persisted by full
    `provider + venue + instrument_type + symbol + timeframe + ts_open` identity.
-   Re-observation must contain identical OHLCV facts; conflicting facts stop the
-   paper path and are never silently overwritten.
+   Re-observation is versioned by its frozen observation time. The approved
+   2026-10-09 amendment permits audited volume/amount revisions and OHLC revisions
+   only when no account has consumed that price bar in execution replay. Accepted
+   changes retain before/after facts and observation time in
+   `paper_market_bar_revisions`; unchanged observations advance the version's
+   confirmed-through time. Older frozen observations cannot revert newer facts.
+   Consumed price conflicts and conflicting duplicates inside one observation
+   reject the whole observation transaction. No original analysis record, order,
+   realized result, or rejected disposition is rewritten.
 3. Each paper order maintains its own evaluated-through timestamp. An order
    submitted after later bars were observed replays every persisted closed bar
    after its creation timestamp exactly once and in chronological order.
@@ -62,6 +69,8 @@ be removed from the research denominator.
 
 - Late-decision closed-bar replay and restart idempotency tests.
 - Same-timestamp market-fact conflict tests.
+- Audited unconsumed/volume revisions, stale-result restart replay, cross-account
+  consumed-price protection, legacy fill protection, and transactional rollback.
 - Frozen instrument-spec and cross-contract isolation tests.
 - Missing-disposition reconciliation without analysis resubmission tests.
 - Official audit/authority boundary tests.

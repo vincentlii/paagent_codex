@@ -38,6 +38,25 @@ Context、Evidence 和 latency 保持 unknown；首稿通过由 canonical classi
 开仓后的 v3 缺失中间 bar 记录 censored，不凭下一根触价补确定 PnL。
 本轮证据和未闭合项见 [V1 体检报告](../quality/v1_health_audit_20261009.md)。
 
+### 分析成功但 Paper 拒收：闭盘修订
+
+先独立核对 `analysis_runs` / call ledger 与 `paper_decisions`；completed 不能代表
+Paper 接收成功。发生 `conflicting closed bar for paper market identity and timestamp`
+时，以同源 market key＋ts_open 比对账本和原始冻结棒，再按观察时间追踪记录；
+必要时只读查询公开行情，不改旧 Snapshot。2026-10-09 已观察到刚闭盘约 2 秒与
+约 17 秒的 close/volume/amount 不同，后者与后续记录及公开 API 一致。
+时间闭盘不保证 Provider 数值已稳定；不能先归因 Fast 或模型。
+
+按用户授权的 ADR-0012 小范围修订：volume/amount 可审计更新；OHLC 仅在所有账户
+均未消费该棒执行路径时可更新。`paper_market_bar_revisions` 保存 before/after、
+observed-at 与当前版本最后确认时间；已影响执行的价格冲突仍回滚整次观察，
+不改收益、订单、旧拒收回执或原始快照。不使用价格容差，也不加固定等待时间。
+
+Headless 观察传递冻结 as-of；完成／恢复回调使用原记录 as-of，而非模型完成时间。
+旧记录晚到时不得回退已知新版本；相同版本再次观察也更新最后确认时间，重启后
+保护仍生效。首个修订前已有旧行情的，审计只记录实际已知原值，不伪造旧观察时间。
+发布必须先备份；本地实现及验收见上述报告第八节，部署状态以最新状态页为准。
+
 ## 核心顺序
 
 遇到“分析未通过”、PA-only 降级或 VPS 异常时，按以下顺序执行：

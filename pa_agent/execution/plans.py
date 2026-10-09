@@ -29,6 +29,18 @@ def instrument_spec_from_record(record: object) -> InstrumentSpec | None:
     return InstrumentSpec.from_value(context.get("instrument_spec"))
 
 
+def market_observed_at_ms(record: object) -> int | None:
+    """Use the frozen observation time, never the delayed model completion time."""
+    timing = _field(record, "analysis_timing")
+    runtime = _field(record, "role_runtime", {}) or {}
+    value = _field(timing, "analysis_as_of_ms")
+    if value is None:
+        value = _field(runtime, "analysis_as_of_ms")
+    if value is None:
+        value = _field(_field(record, "meta"), "timestamp_local_ms")
+    return int(value) if value is not None else None
+
+
 def closed_bars_from_record(record: object) -> tuple[KlineBar, ...]:
     result: list[KlineBar] = []
     for raw in _field(record, "kline_data", []) or []:

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from pa_agent.data.instrument import InstrumentSpec
-from pa_agent.execution.plans import official_paper_plan, research_arm_plan
+from pa_agent.execution.plans import market_observed_at_ms, official_paper_plan, research_arm_plan
 from pa_agent.experiments.pa_vpa_aabb import AABB_PROTOCOL_VERSION
 
 
@@ -92,6 +92,18 @@ def test_official_plan_uses_only_validated_pa_fields() -> None:
     assert plan.order_type == "limit"
     assert plan.created_bar_ts == 2000
     assert plan.dedupe_key == "task-1"
+
+
+def test_market_observation_time_uses_frozen_time_even_when_zero() -> None:
+    record = _record()
+    record.meta.timestamp_local_ms = 3000
+    record.role_runtime = {"analysis_as_of_ms": 2000}
+    record.analysis_timing = SimpleNamespace(analysis_as_of_ms=0)
+    assert market_observed_at_ms(record) == 0
+    record.analysis_timing = None
+    assert market_observed_at_ms(record) == 2000
+    record.role_runtime = {}
+    assert market_observed_at_ms(record) == 3000
 
 
 def test_official_plan_keeps_tp2_optional() -> None:

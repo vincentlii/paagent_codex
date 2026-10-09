@@ -204,15 +204,23 @@ def test_codex_owns_pa_roles_and_binds_an_independent_shadow_vpa_role(monkeypatc
     )
     codex_backend = MagicMock()
     codex_backend.backend_id = "codex_agent"
+    codex_backend.runtime_identity = {"model": "gpt-6-luna", "reasoning_effort": "xhigh"}
     codex_backend.validation_retry_limit = 1
+    def codex_reply(payload):
+        reply = make_reply(payload)
+        reply._pa_model_call_meta = {
+            "model": "gpt-6-luna", "requested_model": "gpt-6-luna",
+            "effective_model": "gpt-6-luna", "analysis_backend": "codex_agent",
+        }
+        return reply
     codex_backend.run.side_effect = [
         AnalysisRoleResult(
-            reply=make_reply(copy.deepcopy(VALID_STAGE1)),
+            reply=codex_reply(copy.deepcopy(VALID_STAGE1)),
             backend_id="codex_agent",
             runtime={"job_digest": "stage1-job"},
         ),
         AnalysisRoleResult(
-            reply=make_reply(copy.deepcopy(VALID_STAGE2)),
+            reply=codex_reply(copy.deepcopy(VALID_STAGE2)),
             backend_id="codex_agent",
             runtime={"job_digest": "stage2-job"},
         ),
@@ -223,7 +231,7 @@ def test_codex_owns_pa_roles_and_binds_an_independent_shadow_vpa_role(monkeypatc
     vpa_backend.backend_id = "codex_agent"
     vpa_backend.validation_retry_limit = 1
     vpa_backend.run.return_value = AnalysisRoleResult(
-        reply=make_reply(_vpa_report()), backend_id="codex_agent",
+        reply=codex_reply(_vpa_report()), backend_id="codex_agent",
         runtime={"job_digest": "vpa-job"},
     )
     codex_backend.bind_role.side_effect = [codex_backend, vpa_backend]
@@ -252,6 +260,8 @@ def test_codex_owns_pa_roles_and_binds_an_independent_shadow_vpa_role(monkeypatc
     assert record.run_outcome["effective_vpa_mode"] == "shadow"
     assert record.vpa_evidence is not None
     assert record.joint_decision is None
+    assert record.role_runtime["requested_model"] == "gpt-6-luna"
+    assert record.role_runtime["effective_model"] == "gpt-6-luna"
     assert [call.args[0].role for call in codex_backend.run.call_args_list] == [
         "stage1",
         "stage2",

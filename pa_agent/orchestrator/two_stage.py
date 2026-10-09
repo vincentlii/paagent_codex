@@ -60,6 +60,7 @@ from pa_agent.data.base import KlineFrame
 from pa_agent.orchestrator.role_call import StructuredRoleResult, run_structured_role
 from pa_agent.orchestrator.validation_retry import validate_with_retry
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
+from pa_agent.records.projection import analysis_model_identity
 from pa_agent.records.suppressed_writer import SuppressedRecordWriter
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 from pa_agent.util.timefmt import now_local_ms
@@ -973,6 +974,12 @@ class TwoStageOrchestrator:
             "milliseconds", "host_monotonic_excludes_final_write",
         )
         record.role_runtime["metrics"] = metrics
+        record.role_runtime.setdefault("analysis_backend", self._analysis_backend.backend_id)
+        record.role_runtime.setdefault(
+            "analysis_backend_identity",
+            dict(getattr(self._analysis_backend, "runtime_identity", {}) or {}),
+        )
+        record.role_runtime.update(analysis_model_identity(record))
 
     def _apply_pipeline_record(self, record: AnalysisRecord) -> None:
         """Version only explicitly configured runs; never relabel legacy research."""
@@ -1389,15 +1396,10 @@ class TwoStageOrchestrator:
                     "analysis_profile_fingerprint": self._profile_identity.get(
                         "profile_fingerprint"
                     ),
-                    "requested_model": self._profile_identity.get(
-                        "deepseek_model"
-                    ),
-                    "effective_model": self._profile_identity.get(
-                        "deepseek_model"
-                    ),
                 }
             }
         )
+        record.role_runtime.update(analysis_model_identity(record))
         if backend_fallback_context:
             record = record.model_copy(
                 update={

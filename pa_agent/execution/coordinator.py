@@ -16,6 +16,7 @@ from pa_agent.execution.plans import (
     decision_bar_ts,
     decision_path,
     instrument_spec_from_record,
+    market_observed_at_ms,
     official_paper_plan,
     research_arm_plan,
 )
@@ -53,13 +54,19 @@ class PaperExecutionCoordinator:
         spec: InstrumentSpec,
         timeframe: str,
         bars: tuple[Any, ...] | list[Any],
+        *,
+        observed_at_ms: int | None = None,
     ) -> int:
         if not self.enabled:
             return 0
-        count = self._broker("pa-official").observe_market(spec, timeframe, bars)
+        if observed_at_ms is None:
+            observed_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        count = self._broker("pa-official").observe_market(
+            spec, timeframe, bars, observed_at_ms=observed_at_ms
+        )
         # Shared frozen market store; each versioned account advances its own orders.
         for account in self._pipeline_accounts():
-            self._broker(account).observe_market(spec, timeframe, bars)
+            self._broker(account).observe_market(spec, timeframe, bars, observed_at_ms=observed_at_ms)
             self._broker(account).expire_pending(spec, timeframe, now_ms=int(datetime.now(timezone.utc).timestamp() * 1000))
         return count
 
@@ -108,7 +115,10 @@ class PaperExecutionCoordinator:
         broker = self._broker(account_id)
         timeframe = str(getattr(getattr(record, "meta", None), "timeframe", "") or "")
         try:
-            broker.observe_market(spec, timeframe, closed_bars_from_record(record))
+            broker.observe_market(
+                spec, timeframe, closed_bars_from_record(record),
+                observed_at_ms=market_observed_at_ms(record),
+            )
             if pipeline is not None:
                 # Recheck at activation, after any stored-bar replay/IO delay.
                 plan = official_paper_plan(record, spec, dedupe_key=task_id)
@@ -228,7 +238,12 @@ class PaperExecutionCoordinator:
                 actions.append(existing)
                 continue
             broker = self._broker(account_id)
-            broker.observe_market(spec, timeframe, bars)
+            metadata = getattr(frame, "data_metadata", {}) or {}
+            observed_at_ms = metadata.get("analysis_as_of_ms") or getattr(frame, "snapshot_ts_local_ms", None)
+            broker.observe_market(
+                spec, timeframe, bars,
+                observed_at_ms=observed_at_ms or market_observed_at_ms(record),
+            )
             broker.supersede_pending(
                 spec,
                 timeframe,

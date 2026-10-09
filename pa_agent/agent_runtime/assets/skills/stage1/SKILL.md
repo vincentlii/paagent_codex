@@ -18,7 +18,7 @@ Gate 由 Host 唯一 materializer 从 Draft 物化，模型不补静态 Gate/tra
 ## 输出职责
 
 - `market_hypotheses` 承载完整的主/替代解释、支持与反证、确认和失效条件；这是诊断论证的主体。
-  `confirmation_condition` 描述未来哪种闭盘证据会加强该假设；`disconfirmation_condition` 描述什么会削弱/推翻它。两者方向必须相对于该假设本身，不把主要竞争解释的确认条件误填为本假设确认。
+  `confirmation_condition` 描述会加强本假设、区别于竞争解释的未来闭盘证据；`disconfirmation_condition` 描述会削弱/推翻本假设的证据。若两者描述同一种推进，明确各自的比较边界；仍不能区分时保留不确定性，不把竞争解释的确认写成本假设的确认。
 - `gate_trace` 仅回答当前节点的问题，给出该问题的关键依据，不逐节点重复完整诊断；节点问题由冻结决策协议确定。
 - `bar_by_bar_summary` 描述 K5 到 K1 各自对背景的新增影响；`bar_analysis` 汇总当前信号与跟随状态，不另建一套背景解释。
 - 单棒文字若称新高/新低、突破或跟随，写明相较的冻结 K 区间或具体前棒，并与相应 PA.PAIR/PA.WINDOW/PA.COMPARE 事实一致；不要把未界定范围的“本轮新低”当成可复核结论。

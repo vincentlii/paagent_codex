@@ -116,3 +116,22 @@ def test_clock_sweep_needs_no_market_request(tmp_path, monkeypatch):
         assert c.execute(
             "SELECT status, realized_pnl FROM paper_orders WHERE order_id = ?", (action.order_id,)
         ).fetchone() == ("ambiguous", None)
+
+
+def test_delayed_frozen_result_cannot_overwrite_a_later_market_observation(tmp_path, monkeypatch):
+    clock(monkeypatch, T + H + 500)
+    db = tmp_path / "paper.sqlite3"
+    coordinator = PaperExecutionCoordinator(db, PaperTradingSettings(enabled=True))
+    r = record()
+    r.stage2_decision["decision"]["order_type"] = "不下单"
+    bar = _bar(T, open_=2005, high=2008, low=1998, close=2003)
+    # A live observation has already seen the revised close after the frozen as-of.
+    coordinator._broker("pa-official").observe_market(
+        _spec(), "1h", [bar], observed_at_ms=T + H + 100
+    )
+
+    action = coordinator.submit_official(r, _spec(), task_id="delayed-no-trade")
+
+    assert action.status == "no_trade", action.reason
+    with sqlite3.connect(db) as c:
+        assert c.execute("SELECT close FROM paper_market_bars").fetchone()[0] == 2003

@@ -284,14 +284,28 @@ class PaperBroker:
         spec: InstrumentSpec,
         timeframe: str,
         bars: list[KlineBar] | tuple[KlineBar, ...],
+        *,
+        observed_at_ms: int | None = None,
     ) -> int:
-        """Persist and advance one exact market in chronological closed-bar order."""
+        """Advance closed bars; audit revisions without rewriting consumed prices."""
+        if observed_at_ms is None:
+            observed_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         closed = sorted(
             (bar for bar in bars if bar.closed),
             key=lambda bar: int(bar.ts_open),
         )
         if not closed:
             return 0
+        observation_facts: dict[int, tuple[float, ...]] = {}
+        for bar in closed:
+            facts = (
+                float(bar.open), float(bar.high), float(bar.low), float(bar.close),
+                float(bar.volume), float(getattr(bar, "amount", 0.0)),
+            )
+            bar_ts = int(bar.ts_open)
+            if bar_ts in observation_facts and observation_facts[bar_ts] != facts:
+                raise ValueError("conflicting closed bar versions in one market observation")
+            observation_facts[bar_ts] = facts
         with self._connect() as connection:
             self._ensure_schema(connection)
             connection.commit()
@@ -309,21 +323,66 @@ class PaperBroker:
                     "AND symbol = ? AND timeframe = ? AND ts_open = ?",
                     (*market_key, bar_ts),
                 ).fetchone()
-                facts = (
-                    float(bar.open), float(bar.high), float(bar.low), float(bar.close),
-                    float(bar.volume), float(getattr(bar, "amount", 0.0)),
-                )
+                facts = observation_facts[bar_ts]
                 if existing is not None:
-                    if tuple(float(value) for value in existing) != facts:
+                    previous = tuple(float(value) for value in existing)
+                    version = connection.execute(
+                        "SELECT revision_id, confirmed_through_at_ms FROM paper_market_bar_revisions "
+                        "WHERE provider = ? AND venue = ? AND instrument_type = ? "
+                        "AND symbol = ? AND timeframe = ? AND ts_open = ? "
+                        "ORDER BY revision_id DESC LIMIT 1",
+                        (*market_key, bar_ts),
+                    ).fetchone()
+                    # A delayed Frozen record is an old observation, not a new revision.
+                    if version is not None and observed_at_ms < version["confirmed_through_at_ms"]:
+                        continue
+                    if previous == facts:
+                        if version is not None:
+                            connection.execute(
+                                "UPDATE paper_market_bar_revisions SET confirmed_through_at_ms = ? "
+                                "WHERE revision_id = ?",
+                                (observed_at_ms, version["revision_id"]),
+                            )
+                        else:
+                            self._record_bar_revision(
+                                connection, market_key, bar_ts, None, facts,
+                                observed_at_ms, "first_observation",
+                            )
+                        continue
+                    price_changed = previous[:4] != facts[:4]
+                    if price_changed and connection.execute(
+                        "SELECT 1 FROM paper_orders WHERE provider = ? AND venue = ? "
+                        "AND instrument_type = ? AND symbol = ? AND timeframe = ? "
+                        "AND created_bar_ts < ? AND "
+                        "COALESCE(evaluated_through_ts, exit_bar_ts, fill_bar_ts) >= ? LIMIT 1",
+                        (*market_key, bar_ts, bar_ts),
+                    ).fetchone() is not None:
+                        # All accounts share this market; even a pending no-fill replay
+                        # depended on the observed OHLC path. Never revise its result.
                         raise ValueError(
-                            "conflicting closed bar for paper market identity and timestamp"
+                            "conflicting closed bar for paper market identity and timestamp: "
+                            "price already consumed by execution"
                         )
+                    self._record_bar_revision(
+                        connection, market_key, bar_ts, previous, facts, observed_at_ms,
+                        "unconsumed_price_revision" if price_changed else "volume_revision",
+                    )
+                    connection.execute(
+                        "UPDATE paper_market_bars SET open = ?, high = ?, low = ?, close = ?, "
+                        "volume = ?, amount = ? WHERE provider = ? AND venue = ? "
+                        "AND instrument_type = ? AND symbol = ? AND timeframe = ? AND ts_open = ?",
+                        (*facts, *market_key, bar_ts),
+                    )
                     continue
                 connection.execute(
                     "INSERT INTO paper_market_bars(provider, venue, instrument_type, "
                     "symbol, timeframe, ts_open, open, high, low, close, volume, amount) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (*market_key, bar_ts, *facts),
+                )
+                self._record_bar_revision(
+                    connection, market_key, bar_ts, None, facts,
+                    observed_at_ms, "first_observation",
                 )
                 observed += 1
             orders = connection.execute(
@@ -335,6 +394,22 @@ class PaperBroker:
             for order in orders:
                 self._replay_stored_bars(connection, str(order["order_id"]), spec)
             return observed
+
+    @staticmethod
+    def _record_bar_revision(
+        connection: sqlite3.Connection, market_key: tuple[str, ...], bar_ts: int,
+        previous: tuple[float, ...] | None, facts: tuple[float, ...],
+        observed_at_ms: int, reason: str,
+    ) -> None:
+        fields = ("open", "high", "low", "close", "volume", "amount")
+        connection.execute(
+            "INSERT INTO paper_market_bar_revisions(provider, venue, instrument_type, "
+            "symbol, timeframe, ts_open, observed_at_ms, confirmed_through_at_ms, "
+            "before_facts_json, after_facts_json, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (*market_key, bar_ts, observed_at_ms, observed_at_ms,
+             json.dumps(dict(zip(fields, previous))) if previous is not None else None,
+             json.dumps(dict(zip(fields, facts))), reason),
+        )
 
     def account_snapshot(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -867,6 +942,21 @@ class PaperBroker:
                 PRIMARY KEY(provider, venue, instrument_type, symbol, timeframe, ts_open)
             )
         """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS paper_market_bar_revisions(
+                revision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL, venue TEXT NOT NULL,
+                instrument_type TEXT NOT NULL, symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL, ts_open INTEGER NOT NULL,
+                observed_at_ms INTEGER NOT NULL, confirmed_through_at_ms INTEGER NOT NULL,
+                before_facts_json TEXT, after_facts_json TEXT NOT NULL, reason TEXT NOT NULL
+            )
+        """)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_paper_bar_revision_market "
+            "ON paper_market_bar_revisions(provider, venue, instrument_type, symbol, "
+            "timeframe, ts_open, revision_id)"
+        )
         connection.execute("""
             CREATE TABLE IF NOT EXISTS paper_rejections(
                 rejection_id INTEGER PRIMARY KEY AUTOINCREMENT,

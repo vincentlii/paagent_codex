@@ -68,7 +68,7 @@ _WINDOW_HIGH_EXTREME_RE = re.compile(
     r"\bnew\s+high\b|\bhighest\b|"
     r"\b(?:window|range)\s+(?:price\s+)?high\b|"
     r"\bhigh\s+of\s+(?:the\s+)?(?:K\s*\d+\s*[-\u2013\u2014\uFF0D]\s*K?\s*\d+\s+)?(?:window|range)\b|"
-    r"\u65b0\u9ad8|\u521b\u9ad8|\u6700\u9ad8|\u5237\u65b0\u9ad8\u70b9|"
+    r"(?<!\u6700)\u65b0\u9ad8|\u521b\u9ad8|\u6700\u9ad8|\u5237\u65b0\u9ad8\u70b9|"
     r"(?:\u7a97\u53e3|\u533a\u95f4|\u524d\u7a97)(?:\u5185|\u7684)?(?:\u6700\u9ad8\u70b9|\u9ad8\u70b9)",
     re.IGNORECASE,
 )
@@ -76,7 +76,7 @@ _WINDOW_LOW_EXTREME_RE = re.compile(
     r"\bnew\s+low\b|\blowest\b|"
     r"\b(?:window|range)\s+(?:price\s+)?low\b|"
     r"\blow\s+of\s+(?:the\s+)?(?:K\s*\d+\s*[-\u2013\u2014\uFF0D]\s*K?\s*\d+\s+)?(?:window|range)\b|"
-    r"\u65b0\u4f4e|\u521b\u4f4e|\u6700\u4f4e|\u5237\u65b0\u4f4e\u70b9|"
+    r"(?<!\u6700)\u65b0\u4f4e|\u521b\u4f4e|\u6700\u4f4e|\u5237\u65b0\u4f4e\u70b9|"
     r"(?:\u7a97\u53e3|\u533a\u95f4|\u524d\u7a97)(?:\u5185|\u7684)?(?:\u6700\u4f4e\u70b9|\u4f4e\u70b9)",
     re.IGNORECASE,
 )
@@ -216,7 +216,7 @@ _EXPLICIT_VOLUME_COMPARATOR_RE = re.compile(
 )
 _FUTURE_CLOSED_BAR_RE = re.compile(
     r"\b(?:next|future)\s+(?:fully\s+)?closed\s+(?:bar|candle)\b|"
-    r"(?:下一根|未来).{0,8}?(?:已收盘|收盘后|闭合|闭盘)(?:的)?"
+    r"(?:下一根|未来|后续).{0,8}?(?:已收盘|收盘后|闭合|闭盘)(?:的)?"
     r"(?:\s*K\s*线|棒|bar)?",
     re.IGNORECASE,
 )

@@ -5,6 +5,41 @@ import copy
 from typing import Any
 
 
+def analysis_model_identity(record: Any) -> dict[str, str | None]:
+    """Project observed call identity, retaining mixed models and unknown service."""
+    calls = [call for call in record.call_attempts if isinstance(call, dict)]
+    runtime = record.role_runtime or {}
+    backend = runtime.get("analysis_backend_identity") or {}
+    requested = list(dict.fromkeys(
+        str(call["requested_model"]) for call in calls if call.get("requested_model")
+    ))
+    effective = []
+    for call in calls:
+        model = call.get("effective_model")
+        if "effective_model" not in call and call.get("response_hash"):
+            model = call.get("model")  # Legacy successful receipts.
+        if model and str(model) not in effective:
+            effective.append(str(model))
+    codex = runtime.get("analysis_backend") == "codex_agent"
+    backend_model = (
+        backend.get("model") or backend.get("codex_model")
+        if codex else
+        backend.get("deepseek_model")
+    )
+    configured_model = (
+        runtime.get("requested_model") or record.meta.ai_provider.get("model")
+        if not codex else None
+    )
+    requested_model = (
+        " / ".join(requested) if requested else
+        backend_model or configured_model
+    )
+    return {
+        "requested_model": requested_model,
+        "effective_model": " / ".join(effective) if effective else None,
+    }
+
+
 def usage_from_call_attempts(calls: list[dict[str, Any]]) -> dict[str, int]:
     response_calls = [
         call

@@ -122,7 +122,7 @@ class _PaperExecution:
         self.observed = []
         self.submitted = []
 
-    def observe_official(self, spec, timeframe, bars):
+    def observe_official(self, spec, timeframe, bars, *, observed_at_ms=None):
         self.observed.append((spec, timeframe, bars))
 
     def submit_official(self, record, spec, *, task_id):

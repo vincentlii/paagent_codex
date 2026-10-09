@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
 from pa_agent.records.codec import load_record
-from pa_agent.records.projection import pa_joint_comparison, usage_from_call_attempts
+from pa_agent.records.projection import analysis_model_identity, pa_joint_comparison, usage_from_call_attempts
 from pa_agent.records.schema import AnalysisRecord
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,7 @@ class AnalysisAuditStore:
                     )
                     ON CONFLICT(run_id) DO UPDATE SET
                         record_path = excluded.record_path,
+                        model_name = excluded.model_name,
                         analysis_pipeline = excluded.analysis_pipeline,
                         source_provider = excluded.source_provider,
                         resolved_symbol = excluded.resolved_symbol,
@@ -1110,7 +1111,7 @@ class AnalysisAuditStore:
             run_status = "degraded"
         else:
             run_status = "completed"
-        provider = record.meta.ai_provider if isinstance(record.meta.ai_provider, dict) else {}
+        model_identity = analysis_model_identity(record)
         pa_evidence = stage1.get("pa_evidence") if isinstance(stage1, dict) else {}
         pa_evidence = pa_evidence if isinstance(pa_evidence, dict) else {}
         decision_review = {
@@ -1174,7 +1175,10 @@ class AnalysisAuditStore:
             ),
             "bar_count": record.meta.bar_count,
             "decision_stance": record.meta.decision_stance,
-            "model_name": provider.get("model", ""),
+            "model_name": (
+                model_identity["effective_model"]
+                or model_identity["requested_model"] or ""
+            ),
             "run_status": run_status,
             "error_type": exception.get("type", "") or None,
             "partial_reason": partial_reason,

@@ -820,7 +820,9 @@ class HeadlessMonitor:
                 )
             else:
                 try:
-                    self._paper_execution.observe_official(spec, frame.timeframe, frame.bars)
+                    self._paper_execution.observe_official(
+                        spec, frame.timeframe, frame.bars, observed_at_ms=now_ms
+                    )
                 except Exception:
                     logger.exception(
                         "Paper market observation failed for %s %s; PA analysis continues",

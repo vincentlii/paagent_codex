@@ -353,6 +353,50 @@ def test_audit_store_upserts_one_row_per_run(tmp_path: Path) -> None:
     assert rows[0]["record_path"].endswith("second.json")
 
 
+def test_model_index_uses_observed_calls_and_refreshes_on_completion(tmp_path: Path) -> None:
+    store = AnalysisAuditStore(tmp_path / "audit.sqlite3")
+    record = _record()
+    record.role_runtime = {
+        "analysis_backend": "codex_agent",
+        "analysis_backend_identity": {"model": "gpt-6-luna"},
+    }
+    record.call_attempts = []
+    assert store.record_analysis(record, record_path=tmp_path / "partial.json").ok
+    assert store.list_runs()[0]["model_name"] == "gpt-6-luna"
+    record.call_attempts = [
+        {"stage": "stage1", "attempt": 1, "response_hash": "observed",
+         "requested_model": "gpt-6-luna", "effective_model": "served-model"},
+    ]
+    assert store.record_analysis(record, record_path=tmp_path / "complete.json").ok
+    assert store.list_runs()[0]["model_name"] == "served-model"
+
+
+def test_model_identity_preserves_mixed_fallback_and_unknown_effective_model() -> None:
+    from pa_agent.records.projection import analysis_model_identity
+
+    record = _record()
+    record.call_attempts = [
+        {"requested_model": "primary", "effective_model": None, "model": "primary"},
+        {"requested_model": "fallback", "effective_model": "fallback", "response_hash": "ok"},
+        {"requested_model": "primary", "effective_model": "primary", "response_hash": "ok2"},
+    ]
+    assert analysis_model_identity(record) == {
+        "requested_model": "primary / fallback", "effective_model": "fallback / primary",
+    }
+    record.call_attempts = [record.call_attempts[0]]
+    assert analysis_model_identity(record)["effective_model"] is None
+    record.call_attempts = []
+    record.role_runtime = {}
+    assert analysis_model_identity(record)["requested_model"] == "test-model"
+    record.role_runtime = {
+        "analysis_backend": "direct",
+        "analysis_backend_identity": {"deepseek_model": "deepseek-flash", "codex_model": "unused-codex"},
+    }
+    assert analysis_model_identity(record)["requested_model"] == "deepseek-flash"
+    record.role_runtime = {"analysis_backend": "codex_agent"}
+    assert analysis_model_identity(record)["requested_model"] is None
+
+
 def test_audit_store_rejects_uncontrolled_outcome_labels(tmp_path: Path) -> None:
     store = AnalysisAuditStore(tmp_path / "audit.sqlite3")
     assert store.record_analysis(_record(), record_path=tmp_path / "record.json").ok
