@@ -87,6 +87,11 @@ Headless 启动失败时检查：
 
 - 默认只监听 loopback，通过 SSH tunnel 访问。
 - 使用独立 Dashboard token，不复用 Provider API key。
+- 网页密码登录替代 Basic Auth 弹窗；会话 8 小时有效，退出／服务重启后失效。
+  内置浏览器显示“无法访问”时，先核对真实错误码：`ERR_INVALID_AUTH_CREDENTIALS`
+  可能是认证 challenge 失败，不能误判为隧道断开。用未登录首页、`/healthz` 和认证
+  `/api/status` 分别定位页面、服务与授权；密码不放 URL，不为排障开放公网端口。
+  具体安全边界见 [ADR-0023](../architecture/ADR-0023-vps-observability-and-control-plane.md)。
 - Dashboard 用户不能读取 `PA_AGENT_HOME`、内部数据库、records、Paper ledger 或配置。
 - 写入 `paused` 后先看 control `generation`，再等待 runtime `applied_control_generation` 和 `service_state=paused`。
 - Profile 或 Backend 的 `202` 只是 desired state；必须等待 desired/applied generation、fingerprint

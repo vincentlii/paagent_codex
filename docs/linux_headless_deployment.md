@@ -349,8 +349,11 @@ SSH tunnel：
 ssh -L 8765:127.0.0.1:8765 <VPS_USER>@<VPS_HOST>
 ```
 
-随后打开 <http://127.0.0.1:8765>。用户名可填 `admin`，密码是
-`/etc/pa-agent/dashboard_token` 中设置的独立密码。
+随后打开 <http://127.0.0.1:8765>，在网页输入
+`/etc/pa-agent/dashboard_token` 中设置的独立密码，无需用户名或浏览器认证弹窗。
+登录会话固定 8 小时有效；退出或 Dashboard 重启后重新登录。Cookie 只保存随机
+会话 ID，不保存密码。HTTP 仅用于本机 loopback＋SSH tunnel，不得公开 8765。
+显式 Basic Authorization 仍供诊断脚本使用，API 未授权返回 JSON 401。
 
 看板提供：
 

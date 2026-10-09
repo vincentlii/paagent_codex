@@ -76,6 +76,170 @@ def test_dashboard_import_does_not_load_qt() -> None:
     assert result.stdout.strip() == "False"
 
 
+def test_browser_password_login_works_without_basic_auth_dialog(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    server, thread = _running_server(paths)
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        page = response.read().decode()
+        assert response.status == 200
+        assert response.getheader("WWW-Authenticate") is None
+        assert 'autocomplete="current-password"' in page
+        assert "a-secure-test-token" not in page
+
+        connection.request("GET", "/api/status")
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 401
+        assert response.getheader("WWW-Authenticate") is None
+
+        connection.request(
+            "POST", "/api/login", json.dumps({"password": "a-secure-test-token"}),
+            headers={"Content-Type": "application/json", "X-PA-Agent-Control": "1"},
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read()) == {"ok": True}
+        cookie = response.getheader("Set-Cookie")
+        assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+        assert "a-secure-test-token" not in cookie
+        headers = {"Cookie": cookie.split(";", 1)[0], "X-PA-Agent-Control": "1"}
+
+        connection.request("GET", "/", headers=headers)
+        response = connection.getresponse()
+        assert response.status == 200
+        assert "Operations Terminal" in response.read().decode()
+        connection.request("GET", "/api/status", headers=headers)
+        response = connection.getresponse()
+        assert response.status == 200
+        response.read()
+        connection.request("POST", "/api/control", json.dumps({"action": "pause"}), headers={**headers, "Origin": "http://attacker.invalid"})
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 403
+        connection.request("POST", "/api/control", json.dumps({"action": "pause"}), headers={"Cookie": headers["Cookie"]})
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 403
+        connection.request("POST", "/api/control", json.dumps({"action": "pause"}), headers=headers)
+        response = connection.getresponse()
+        assert response.status == 202
+        response.read()
+        assert RuntimeControlStore(paths.runtime_control_path).read().desired_state == "paused"
+
+        connection.request("POST", "/api/logout", "{}", headers=headers)
+        response = connection.getresponse()
+        assert response.status == 200
+        assert "Max-Age=0" in response.getheader("Set-Cookie")
+        response.read()
+        connection.request("GET", "/api/status", headers=headers)
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_browser_session_is_not_transferable_to_a_restarted_server(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    cookie = ""
+    for attempt in range(2):
+        server, thread = _running_server(paths)
+        try:
+            connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+            if attempt == 0:
+                connection.request("POST", "/api/login", json.dumps({"password": "a-secure-test-token"}), headers={"X-PA-Agent-Control": "1"})
+                response = connection.getresponse()
+                response.read()
+                assert response.status == 200
+                cookie = response.getheader("Set-Cookie").split(";", 1)[0]
+            else:
+                for value in (cookie, "pa_agent_dashboard_session=forged", 'pa_agent_dashboard_session="broken'):
+                    connection.request("GET", "/api/status", headers={"Cookie": value})
+                    response = connection.getresponse()
+                    response.read()
+                    assert response.status == 401
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+
+@pytest.mark.parametrize(
+    ("body", "headers", "status"),
+    [
+        ({"password": "wrong"}, {}, 401),
+        ({"password": "错误密码"}, {}, 401),
+        ({"password": None}, {}, 400),
+        ({"password": "\ud800"}, {}, 400),
+        ({"password": "a-secure-test-token", "extra": True}, {}, 400),
+        ({"password": "a-secure-test-token"}, {"X-PA-Agent-Control": "0"}, 403),
+        ({"password": "a-secure-test-token"}, {"Origin": "http://attacker.invalid"}, 403),
+        ({"password": "a-secure-test-token"}, {"Origin": "null"}, 403),
+        ({"password": "a-secure-test-token"}, {"Host": "attacker.invalid"}, 403),
+    ],
+)
+def test_browser_login_rejects_invalid_or_cross_site_requests(tmp_path, body, headers, status) -> None:
+    server, thread = _running_server(_paths(tmp_path))
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        connection.request("POST", "/api/login", json.dumps(body), headers={"X-PA-Agent-Control": "1", **headers})
+        response = connection.getresponse()
+        response.read()
+        assert response.status == status
+        assert response.getheader("Set-Cookie") is None
+        assert response.getheader("WWW-Authenticate") is None
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_browser_sessions_expire_and_failed_logins_are_bounded(tmp_path, monkeypatch) -> None:
+    from pa_agent import dashboard
+
+    clock = [100.0]
+    monkeypatch.setattr(dashboard.time, "monotonic", lambda: clock[0])
+    server, thread = _running_server(_paths(tmp_path))
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        headers = {"X-PA-Agent-Control": "1"}
+        good = json.dumps({"password": "a-secure-test-token"})
+        connection.request("POST", "/api/login", good, headers=headers)
+        response = connection.getresponse()
+        cookie = response.getheader("Set-Cookie").split(";", 1)[0]
+        response.read()
+        clock[0] += 8 * 60 * 60 + 1
+        connection.request("GET", "/api/status", headers={"Cookie": cookie})
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 401
+        for _ in range(10):
+            connection.request("POST", "/api/login", json.dumps({"password": "wrong"}), headers=headers)
+            response = connection.getresponse()
+            response.read()
+            assert response.status == 401
+        connection.request("POST", "/api/login", good, headers=headers)
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 429
+        assert response.getheader("Retry-After") == "60"
+        clock[0] += 61
+        connection.request("POST", "/api/login", good, headers=headers)
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 200
+        assert response.getheader("Set-Cookie").split(";", 1)[0] != cookie
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_dashboard_rejects_non_loopback_bind() -> None:
     with pytest.raises(ValueError, match="loopback"):
         DashboardConfig(host="0.0.0.0", token="a-secure-test-token")

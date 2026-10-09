@@ -27,6 +27,25 @@ Headless 到达不会再提交本轮新任务的安全边界后，在状态投�
 Dashboard 默认只监听 `127.0.0.1`，使用独立 systemd credential 进行 HTTP Basic
 认证，通过 SSH tunnel 访问。控制请求还必须携带自定义 header，并校验浏览器 Origin。
 Dashboard token 与 Provider API Key 彼此隔离。
+
+### 2026-10-09：浏览器表单登录增补
+
+内置浏览器对 Basic Auth challenge 返回 `ERR_INVALID_AUTH_CREDENTIALS`，而同一
+隧道和密码的 HTTP 验证成功。用户批准以网页密码登录替代浏览器认证弹窗。
+未登录首页仅交付无私有数据的登录页；`POST /api/login` 校验独立 Dashboard token
+后签发随机 256-bit、进程内保存的会话，固定 8 小时有效。最多 32 个会话；到期、
+重新登录替换、退出或服务重启后失效。密码不写入 URL、HTML、日志或 Web Storage。
+
+Cookie 为 host-only、`Path=/; HttpOnly; SameSite=Strict`。此服务限定 loopback HTTP
+加 SSH tunnel，因此未使用依赖 HTTPS 的 `Secure` 属性；不得据此直接公开服务。
+所有请求校验 loopback Host；登录、退出和控制 POST 都保留自定义 header、严格同源
+Origin、4096 字节正文上限。10 次错误密码后限制登录 60 秒，无额外依赖或数据库。
+显式 Basic Authorization 继续供原诊断脚本使用，但未授权响应不再发布
+`WWW-Authenticate`，API 返回 JSON 401，页面自动回到登录页。
+
+部署只重启 Dashboard，不中断 Host 或 Codex Worker。参考
+[MDN Set-Cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie)
+与 [OWASP Session Management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
 Bot 与 Dashboard 仅通过 `pa-agent-control` 下两个单向权限目录交换信息：Bot 只能写
 `status/`、Dashboard 只能写 `control/`，双方仅能读取另一方向。Dashboard 用户不属于
 `pa-agent` 组，因此不能读取 Provider credential 或运行状态根目录。

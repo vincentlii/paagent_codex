@@ -7,17 +7,20 @@ import base64
 import hmac
 import json
 import os
+import secrets
 import sys
+import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from pa_agent.config.paths import RuntimePaths, resolve_runtime_paths
-from pa_agent.dashboard_page import DASHBOARD_HTML
+from pa_agent.dashboard_page import DASHBOARD_HTML, LOGIN_HTML
 from pa_agent.operations.analysis_profile import (
     analysis_capabilities,
     validate_analysis_profile,
@@ -30,6 +33,8 @@ from pa_agent.operations.runtime_state import (
 )
 
 _MAX_BODY_BYTES = 4096
+_SESSION_COOKIE = "pa_agent_dashboard_session"
+_SESSION_SECONDS = 8 * 60 * 60
 _RUNTIME_FIELDS = (
     "service_state",
     "started_at_ms",
@@ -422,11 +427,14 @@ def _basic_password(header: str) -> str | None:
 
 def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTPServer:
     control_store = RuntimeControlStore(paths.runtime_control_path)
+    sessions: dict[str, float] = {}
+    auth_lock = threading.Lock()
+    failed_logins: list[float] = []
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "PAAgentDashboard/1"
 
-        def _headers(self, status: int, content_type: str) -> None:
+        def _headers(self, status: int, content_type: str, extra: dict[str, str] | None = None) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "no-store")
@@ -436,26 +444,60 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
             self.send_header(
                 "Content-Security-Policy",
                 "default-src 'self'; script-src 'unsafe-inline'; "
-                "style-src 'unsafe-inline'; frame-ancestors 'none'",
+                "style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'",
             )
+            for name, value in (extra or {}).items():
+                self.send_header(name, value)
             self.end_headers()
 
-        def _json(self, status: int, payload: dict[str, Any]) -> None:
+        def _json(self, status: int, payload: dict[str, Any], extra: dict[str, str] | None = None) -> None:
             body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
-            self._headers(status, "application/json; charset=utf-8")
+            self._headers(status, "application/json; charset=utf-8", extra)
             self.wfile.write(body)
 
-        def _authorized(self) -> bool:
+        def _session_id(self) -> str | None:
+            raw = self.headers.get("Cookie", "")
+            if len(raw) > _MAX_BODY_BYTES:
+                return None
+            try:
+                cookie = SimpleCookie(raw)
+            except CookieError:
+                return None
+            value = cookie.get(_SESSION_COOKIE)
+            return value.value if value else None
+
+        def _has_auth(self) -> bool:
+            session_id = self._session_id()
+            with auth_lock:
+                now = time.monotonic()
+                for key, expiry in list(sessions.items()):
+                    if expiry <= now:
+                        del sessions[key]
+                if session_id in sessions:
+                    return True
             supplied = _basic_password(self.headers.get("Authorization", ""))
-            if supplied is not None and hmac.compare_digest(supplied, config.token):
+            return supplied is not None and hmac.compare_digest(
+                supplied.encode("utf-8"), config.token.encode("utf-8")
+            )
+
+        def _authorized(self) -> bool:
+            if self._has_auth():
                 return True
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="PA Agent"')
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
+            self._json(401, {"error": "authentication_required"})
+            return False
+
+        def _valid_host(self) -> bool:
+            if self.headers.get("Host") in {
+                f"127.0.0.1:{self.server.server_port}",
+                f"localhost:{self.server.server_port}",
+            }:
+                return True
+            self._json(403, {"error": "host_mismatch"})
             return False
 
         def do_GET(self) -> None:
+            if not self._valid_host():
+                return
             path = urlsplit(self.path).path
             if path == "/healthz":
                 health = _health(
@@ -464,12 +506,12 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 )
                 self._json(200 if health["state"] in {"running", "paused"} else 503, health)
                 return
-            if not self._authorized():
-                return
-            if path == "/":
-                body = DASHBOARD_HTML.encode("utf-8")
+            if path in {"/", "/login"}:
+                body = (DASHBOARD_HTML if path == "/" and self._has_auth() else LOGIN_HTML).encode("utf-8")
                 self._headers(200, "text/html; charset=utf-8")
                 self.wfile.write(body)
+                return
+            if not self._authorized():
                 return
             if path == "/api/status":
                 self._json(200, build_dashboard_payload(paths))
@@ -477,17 +519,19 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
             self._json(404, {"error": "not_found"})
 
         def do_POST(self) -> None:
-            if not self._authorized():
+            if not self._valid_host():
                 return
             path = urlsplit(self.path).path
-            if path not in {"/api/control", "/api/profile", "/api/run-once", "/api/fast-mode"}:
+            if path != "/api/login" and not self._authorized():
+                return
+            if path not in {"/api/login", "/api/logout", "/api/control", "/api/profile", "/api/run-once", "/api/fast-mode"}:
                 self._json(404, {"error": "not_found"})
                 return
             if self.headers.get("X-PA-Agent-Control") != "1":
                 self._json(403, {"error": "control_header_required"})
                 return
             origin = self.headers.get("Origin")
-            if origin and urlsplit(origin).netloc != self.headers.get("Host"):
+            if origin and origin != f"http://{self.headers.get('Host')}":
                 self._json(403, {"error": "origin_mismatch"})
                 return
             try:
@@ -504,6 +548,17 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 return
             if not isinstance(body, dict):
                 self._json(400, {"error": "invalid_json"})
+                return
+            if path == "/api/login":
+                self._login(body)
+                return
+            if path == "/api/logout":
+                if body:
+                    self._json(400, {"error": "invalid_logout_request"})
+                    return
+                with auth_lock:
+                    sessions.pop(self._session_id(), None)
+                self._json(200, {"ok": True}, {"Set-Cookie": f"{_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"})
                 return
             if path == "/api/profile":
                 self._profile(body)
@@ -544,6 +599,35 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 202,
                 {"ok": True, "applied": False, "control": control_state_to_dict(state)},
             )
+
+        def _login(self, body: dict[str, Any]) -> None:
+            if set(body) != {"password"} or not isinstance(body["password"], str):
+                self._json(400, {"error": "invalid_login_request"})
+                return
+            try:
+                supplied = body["password"].encode("utf-8")
+            except UnicodeError:
+                self._json(400, {"error": "invalid_login_request"})
+                return
+            with auth_lock:
+                now = time.monotonic()
+                failed_logins[:] = [stamp for stamp in failed_logins if stamp > now - 60]
+                if len(failed_logins) >= 10:
+                    self._json(429, {"error": "login_rate_limited"}, {"Retry-After": "60"})
+                    return
+                if not hmac.compare_digest(supplied, config.token.encode("utf-8")):
+                    failed_logins.append(now)
+                    self._json(401, {"error": "invalid_password"})
+                    return
+                sessions.pop(self._session_id(), None)
+                for key, expiry in list(sessions.items()):
+                    if expiry <= now:
+                        del sessions[key]
+                if len(sessions) >= 32:
+                    del sessions[min(sessions, key=sessions.__getitem__)]
+                session_id = secrets.token_urlsafe(32)
+                sessions[session_id] = now + _SESSION_SECONDS
+            self._json(200, {"ok": True}, {"Set-Cookie": f"{_SESSION_COOKIE}={session_id}; Path=/; HttpOnly; SameSite=Strict; Max-Age={_SESSION_SECONDS}"})
 
         def _profile(self, body: dict[str, Any]) -> None:
             if set(body) != {"expected_generation", "profile"}:
