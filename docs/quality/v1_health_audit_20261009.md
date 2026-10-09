@@ -94,18 +94,36 @@ Fast 控制只影响新快照，不改旧 Frozen Job、登录或 Runtime 文件�
   GUI 或其 mock；遵用户指示不继续 GUI 测试，不声明全仓测试通过。
 - Linux 无模型 dummy 证实旧 runner 留活子进程，新 timeout/normal-exit 全组清理。
 - 原始行情和解释保留 VPS 原位，未导出完整私有数据；不输出 auth/API key/密码。
-- 本轮临时检查脚本发布后清理；不清原始记录、研究结论、登录或运行目录。
+- 本轮临时检查脚本已从本机与 VPS 清理，15 个隔离 pytest 目录与本轮 build
+  中间产物已移除。固定 wheel/bundle 和账本备份保留；不清原始记录、研究结论、
+  登录或生产运行目录。
 
 初次 VPS 成功调用约 373.96 秒、Host 377.21 秒、540882 Provider Token 只是单次
 基线，不等于 p95、Fast 固定 1.5× 或新修复后真实性能。本轮不额外触发付费分析。
 
-## 六、发布验收（待填实际结果）
+## 六、发布验收
 
 用户已明确授权备份、提交、发布、重启与恢复原 Paper。调度已原子置为 paused
 （generation 18），模型/Fast 保持不变；确认 scheduler running/queued/unfinished
 均 0，running dispatch 0。备份服务成功生成
 `/var/backups/pa-agent/pa-agent-20261009T121826Z`，`--verify` 通过。
-固定发布提交、三服务 PID 和恢复状态在实际操作后补记；下一次自然完整分析尚未验收。
+运行代码发布提交：`49fc9ef8ed2bfa47056b87a4edad9e0c7cccaaff`。VPS 仓库从
+`e4d57e2` 干净快进后，在三服务停止状态由既有 uv 离线重新构建安装项目；不改
+uv.lock 或运行依赖，48 项已安装依赖兼容检查通过。源码／安装产物逐文件比对
+PA Agent 259 个、Prompt/知识 38 个全部相同；Runtime digest
+`a368713c54d10c9fc4e72a4a07aebdf86bf51b16aacc91f4cd37e1806d72ce09`，
+asset parity 与 POSIX 权限检查均通过。Headless 无 Qt 导入；部署脚本 Linux 语法通过。
+
+20:22 三服务重新启动，Headless PID 2629149、Worker PID 2629148、Dashboard PID
+2629108，ExecStartPre 成功、NRestarts=0。先核对 paused、generation 18、无运行
+dispatch/未完成任务，再恢复 running（generation 19），applied generation/Fast true
+一致，control_error 为空，`/healthz` 显示 running。没有重复旧任务，三服务与每日
+backup timer 均 enabled。Worker 仅一主进程，TasksCurrent=1、MemoryCurrent 约
+49 MiB；旧残留 CLI/MCP 已随停止服务清理，未放宽资源限制或权限。
+
+上述是发布与无模型运行环境验收。**下一次自然完整分析尚未验收，不能宣称 Fast
+故障已恢复或确定其唯一根因。**本轮没有额外触发完整分析、修改旧 Job 或创建订单。
+看板重启会使旧网页登录会话失效，重新登录即可，不更改密码或 SSH tunnel。
 
 完成标准：固定源码与安装产物一致；备份完整；无旧任务重复；服务预检成功、
 desired/applied 恢复一致；随后自然任务的角色状态、错误分类、回执和延迟可核对。
@@ -113,7 +131,7 @@ desired/applied 恢复一致；随后自然任务的角色状态、错误分类�
 
 ## 参考与长期依据
 
-- [Brooks 官方术语](https://www.brookstradingcourse.com/price-action-trading-terms-glossary/)：背景、趋势/区间、Setup 等专业概念。
+- [Brooks 官方术语索引](https://www.brookstradingcourse.com/price-action-trading-terms-glossary/)：本次网页读取超时；PA 审查依据仓内原文与协议，不声称重新核验了该网页全部内容。
 - [Wyckoff 官方方法](https://www.wyckoffanalytics.com/wyckoff-method/)：量价、供需与背景下的证据解释。
 - [Python subprocess](https://docs.python.org/3/library/subprocess.html)：run 的超时处理与 Popen 私有 session/process lifecycle。
 - 项目 authority：[North Star](../knowledge/codex-analysis-north-star.md)、

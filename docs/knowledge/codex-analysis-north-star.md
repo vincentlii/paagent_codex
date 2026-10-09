@@ -1,7 +1,9 @@
 ---
 lifecycle: active
-capability: research-only
-verification_scope: local
+capability: paper-observation-limited
+verification_scope:
+  - local
+  - VPS-controlled-live
 issue_status: monitoring
 最后核验: 2026-10-09
 权威来源:

@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 最后核验: 2026-10-09
-核验提交: 48eb9b156998379125d6ab9980761af72a4329fa（运行代码）
+核验提交: 49fc9ef8ed2bfa47056b87a4edad9e0c7cccaaff（运行代码）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -35,7 +35,10 @@ pipeline cohort 身份缺失、v3 开仓后缺棒的不确定成交路径，以�
 最后增补的直接影响范围再次通过。GUI 不属于本轮验收范围。
 
 用户已授权备份、暂停、提交、发布并重启三项服务，恢复原有 Paper 调度；不额外
-触发完整模型调用。发布完成与下一次自然调度的实际回执，以
+触发完整模型调用。修复运行提交 `49fc9ef` 已部署，297 个源码／安装文件逐一一致，
+Runtime 资产及权限检查通过。三服务全部重启、预检成功，generation 19 的
+running/Fast true 已应用，无旧任务重复；备份 manifest 校验通过。
+**下一次自然完整分析尚未验收，历史快速失败尚未闭合根因。**发布与回执详情以
 [V1 体检报告](../quality/v1_health_audit_20261009.md) 的发布验收节为准。
 本节优先于下方历史能力表；B 分层与子 Agent 不晋级，真实下单仍禁止。
 

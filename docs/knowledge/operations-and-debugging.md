@@ -1,10 +1,12 @@
 ---
 lifecycle: active
-capability: no-go
-verification_scope: not-verified
+capability: paper-observation-limited
+verification_scope:
+  - local
+  - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-08-26
-核验提交: f8fffc0
+最后核验: 2026-10-09
+核验提交: 49fc9ef8ed2bfa47056b87a4edad9e0c7cccaaff
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
