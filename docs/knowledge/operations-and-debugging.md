@@ -6,7 +6,7 @@ verification_scope:
   - VPS-controlled-live
 issue_status: monitoring
 最后核验: 2026-10-09
-核验提交: 49fc9ef8ed2bfa47056b87a4edad9e0c7cccaaff
+核验提交: 8e41db45790027fb0402f91cd2e9a94bc46e4392
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -55,7 +55,8 @@ observed-at 与当前版本最后确认时间；已影响执行的价格冲突�
 Headless 观察传递冻结 as-of；完成／恢复回调使用原记录 as-of，而非模型完成时间。
 旧记录晚到时不得回退已知新版本；相同版本再次观察也更新最后确认时间，重启后
 保护仍生效。首个修订前已有旧行情的，审计只记录实际已知原值，不伪造旧观察时间。
-发布必须先备份；本地实现及验收见上述报告第八节，部署状态以最新状态页为准。
+发布必须先备份；本地实现及验收见上述报告第八节，VPS 发布及真实账本轮询证据见
+第九节。已修复历史冲突不意味着允许改写旧 rejected 回执或绕过交付 expiry 重放订单。
 
 ## 核心顺序
 

@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 最后核验: 2026-10-09
-核验提交: 49fc9ef8ed2bfa47056b87a4edad9e0c7cccaaff（运行代码）
+核验提交: 8e41db45790027fb0402f91cd2e9a94bc46e4392（运行代码）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -45,8 +45,16 @@ Stage 2 无歧义规范化，不能称 first-pass clean。PA/VPA 判断及已核
 校验有误报。21:52 只读审查之后，用户授权小范围 Paper 修订。本地已实现审计
 版本、跨账户已消费价格保护、冻结观察时间传递、旧结果防倒灌；修正真实调用
 模型身份投影及两处语言误报。Stage 1 只替换原有假设条件说明，不增加硬 Gate、
-重试或必读内容。22:00 自然分析在旧 VPS 代码上仍遭同类 Paper 拒收，新修复
-尚未发布。
+重试或必读内容。22:00 自然分析在旧 VPS 代码上仍遭同类 Paper 拒收。
+
+用户随后授权提交发布：修复提交 `8e41db4` 已安装到 VPS，暂停／备份／停服／
+重启／恢复全部完成。备份 `pa-agent-20261009T153032Z` 的 manifest 与三个 SQLite
+校验通过；171 项发布前核心回归通过，297 个源码／安装文件一致，Runtime 资产及
+权限通过。23:38 三服务 active、NRestarts=0，generation 21 running/Fast true，
+profile generation 2 仍为 `gpt-6-luna/xhigh`，没有 queued/running/unfinished 任务。
+自然行情轮询已审计接收一处未影响执行的价格修订，Paper 不再被该旧棒阻塞；23 份
+原始记录摘要未变，旧拒收回执不改写。新代码完整整点分析仍待自然任务验证，
+不宣称长期稳定、专业效果或性能改善已获证明。未额外调用模型。
 发布与自然任务完整证据见 [V1 体检报告](../quality/v1_health_audit_20261009.md)。
 本节优先于下方历史能力表；B 分层与子 Agent 不晋级，真实下单仍禁止。
 

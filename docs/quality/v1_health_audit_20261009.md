@@ -13,7 +13,7 @@ Fast 往返后历史快速失败的精确底层原因仍缺证据，不能宣称
 
 后续 21:00 自然任务的原始检查结论见第七节：三角色分析完成，但 Paper 因同时间戳
 闭盘行情修订而拒收，不能称完整端到端通过。第八节记录用户授权后的本地修复；
-前七节保留当时证据，不作为当前未修复清单。新代码尚未部署到 VPS。
+前七节保留当时证据，不作为当前未修复清单。新代码已按第九节发布到 VPS。
 
 ## 一、修复清单与验收依据
 
@@ -259,6 +259,43 @@ volume-only 不改变订单、权益或事件；跨账户及旧 fill 的价格�
   下一次自然任务核对角色质量、模型身份、Paper 回执和耗时，不改写旧失败记录。
 - 本轮两处隔离 pytest 临时根已删除，正式 records、旧失败回执、VPS 账本和登录
   均未清理。没有自动 commit；提交与 VPS 发布授权仍待确认。
+
+## 九、授权提交与 VPS 发布验收
+
+用户确认提交发布后，本地 171 项发布前核心回归与关键 Ruff 检查通过，修复提交为
+`8e41db45790027fb0402f91cd2e9a94bc46e4392`。没有使用 subagent 或触发额外模型分析。
+
+1. 控制暂停为 generation 20；确认 scheduler queued/running/unfinished 均 0、无恢复
+   阻断，再生成 `/var/backups/pa-agent/pa-agent-20261009T153032Z`。390 个 manifest
+   文件摘要及 monitoring/analysis/paper 三个 SQLite quick_check 全部通过，备份不含凭据。
+2. 停止 Headless、Worker、Dashboard 后，VPS 干净仓库快进到固定提交；使用原 uv
+   离线构建替换安装包，不变更依赖。48 项已安装依赖兼容，旧安装包已卸载替换。
+3. 源码与已安装 PA Agent 259 个、Prompt/知识 38 个文件逐一摘要一致；Headless
+   导入无 Qt。Runtime digest 为
+   `b991054d11f21bfd80b87f266cde7d24def02209ed0383cfd260109d2573e6c3`，资产与
+   POSIX 权限通过；Codex 登录仍为 ChatGPT，config/rules、凭据和模型配置不改。
+4. 暂停状态建立新增修订表；与备份逐行核对账户、订单、事件、Paper 回执和行情
+   事实均相同，无业务回填。随后在服务用户拥有的隔离账本副本读取原始冻结行情
+   `0c08be0b62b441df8c480b383635a767`，成功接收一处未消费价格修订及 4 根新棒；
+   原账户／订单／事件／回执不变，quick_check 通过，隔离副本已删除。
+5. 三服务重启并先验证 paused/idle，再恢复 generation 21 running；Fast true、
+   profile generation 2、`gpt-6-luna/xhigh`、单资产单 Agent 全量联合链维持原值。
+   23:38 Headless/Worker/Dashboard 全 active、NRestarts=0、ExecMainStatus=0；
+   `/healthz` 为 running，服务与每日备份 timer enabled。没有新 accepted/queued/
+   running/unfinished 分析、控制错误或恢复阻断。
+6. 恢复后的正常行情轮询已在正式账本保存 99 条首次版本记录和 1 条未消费价格修订，
+   quick_check 通过。23 份备份内原始分析记录摘要未变；旧 rejected 回执保留，
+   未倒填过期 No Trade 或订单，也不重新调用模型“洗掉”旧失败。
+
+VPS 生产解释器没有 pytest，未添加 dev 依赖，不宣称 Linux pytest 集合通过；
+Linux 证据为实际安装、权限、隔离原始行情接收、正式 schema、服务预检与自然轮询。
+发布检查遇到 shell 尾部 CR 和 codec LoadedRecord 封套使用错误时只修正临时检查
+调用，不改产品代码；所有实际验收均重新完成。看板重启可能需重新登录，密码与
+SSH tunnel 未变。发布 bundle 和隔离测试目录完成后清理，备份保留。
+
+本次闭合的是固定版本发布、已确认账本根因和自然轮询恢复。**下一次整点完整
+PA→VPA→联合 Stage 2→Paper 尚未验收**；历史快速启动失败的唯一根因、长期
+稳定性、模型假设质量与性能改善不能由本次无模型验收替代。
 
 ## 参考与长期依据
 
