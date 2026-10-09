@@ -232,6 +232,32 @@ class PaperBroker:
             ).fetchone()
             if order["status"] not in {"pending", "open"}:
                 break
+            if (
+                order["status"] == "open"
+                and order["simulation_version"] == LATENCY_PAPER_SIMULATION_VERSION
+            ):
+                from pa_agent.data.bar_close_wait import timeframe_to_seconds
+                from pa_agent.data.datetime_ts import ts_open_to_ms
+
+                previous = int(order["evaluated_through_ts"])
+                expected = int(ts_open_to_ms(previous)) + int(
+                    timeframe_to_seconds(order["timeframe"]) * 1000
+                )
+                observed = int(ts_open_to_ms(raw["ts_open"]))
+                if observed != expected:
+                    # A protective exit in an unobserved bar cannot be reconstructed.
+                    # Censor the outcome; do not invent a later certain PnL.
+                    connection.execute(
+                        "UPDATE paper_orders SET status = 'ambiguous', "
+                        "exit_reason = 'missing_open_position_bars' WHERE order_id = ?",
+                        (order_id,),
+                    )
+                    self._event(connection, order_id, "ambiguous", observed, {
+                        "reason": "missing_open_position_bars",
+                        "expected_bar_open_ms": expected,
+                        "observed_bar_open_ms": observed,
+                    })
+                    break
             self._advance(
                 connection,
                 order,

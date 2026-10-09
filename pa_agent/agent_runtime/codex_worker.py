@@ -122,10 +122,10 @@ class CodexCliWorker:
         self,
         config: CodexCliConfig,
         *,
-        process_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+        process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     ) -> None:
         self._config = config
-        self._process_runner = process_runner
+        self._process_runner = process_runner or self._run_owned_process
 
     def run(
         self,
@@ -562,9 +562,44 @@ class CodexCliWorker:
                     return ChildExecution(None, usage, "invalid_child_json")
                 return ChildExecution(content, usage)
             finally:
-                if process.poll() is None:
+                if os.name != "nt" or process.poll() is None:
                     self._terminate_child_tree(process)
+                if process.poll() is None:
                     process.communicate(timeout=5)
+
+    @staticmethod
+    def _run_owned_process(command, *, timeout, capture_output=False, check=False, **kwargs):
+        """Own the CLI's process group, including MCP descendants, until exit.
+
+        subprocess.run kills only the immediate process on timeout. On Linux a
+        private session also lets us reap descendants left after a normal CLI exit.
+        Windows uses the existing owned-PID tree cleanup while the parent is alive.
+        """
+        if capture_output:
+            kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(
+            command, **kwargs, start_new_session=os.name != "nt",
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+        )
+        try:
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                CodexCliWorker._terminate_child_tree(process)
+                # Drain only after killing the whole owned tree: surviving MCP
+                # processes can otherwise hold the inherited pipes open forever.
+                stdout, stderr = process.communicate(timeout=5)
+                exc.output, exc.stderr = stdout, stderr
+                raise
+            completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            if check:
+                completed.check_returncode()
+            return completed
+        finally:
+            if os.name != "nt" or process.poll() is None:
+                CodexCliWorker._terminate_child_tree(process)
+            if process.poll() is None:
+                process.wait(timeout=5)
 
     @staticmethod
     def _terminate_child_tree(process: subprocess.Popen) -> None:

@@ -26,6 +26,13 @@ if [ ! -x "$CONDA_EXE" ]; then
   exit 2
 fi
 
+for service in pa-agent.service pa-agent-codex-worker.service pa-agent-dashboard.service; do
+  if systemctl is-active --quiet "$service"; then
+    printf '%s\n' "Stop PA Agent services before installing: $service is active." >&2
+    exit 2
+  fi
+done
+
 cd "$APP_DIR"
 
 if ! getent group "$CONTROL_GROUP" >/dev/null 2>&1; then

@@ -409,20 +409,27 @@ Codex 本身不直接改代码、配置、Risk、Paper 或订单。
 
 ## 7. 更新与回滚
 
-更新前先记录当前 commit，并停止服务：
+更新前记录固定 commit、暂停调度并等待 Host/Worker idle，执行和验证账本备份。
+必须停止三个加载项目包的服务，再更新源码或安装包；安装器发现 active 服务即
+拒绝执行，防止运行进程混用新旧模块。单纯更新 pip 包或只重启 Dashboard 不够：
 
 ```bash
 cd /opt/pa-agent
 git rev-parse HEAD
-sudo systemctl stop pa-agent
+sudo systemctl stop pa-agent.service pa-agent-codex-worker.service pa-agent-dashboard.service
 sudo git fetch --all --tags
 sudo git switch <VERIFIED_BRANCH_OR_TAG>
 sudo bash deploy/install_vps.sh
 ```
 
-重新执行 `--check`、`--probe-data`、Runtime audit 与 live canary 后再启动。回滚时先在看板选择
-`DeepSeek Direct` 并保持 paused；若版本级回滚仍有必要，再切回之前记录的 commit，
-再次运行安装脚本和四步验收。不要删除 `/var/lib/pa-agent`，paper 与审计数据都在那里。
+重新执行 `--check` 和 installed/source Runtime audit，并按变更风险决定是否需要数据
+probe/live canary；付费模型验收必须单独授权，不因重启默认触发。启动三项服务后先
+确认暂停状态、desired/applied 一致及无旧任务重复，再恢复原已获批调度。保留 auth、
+配置、失败回执、Frozen Job 和 `/var/lib/pa-agent`；不要重写旧记录或账本。
+
+回滚仍先暂停和备份、等待 idle、停止三服务，再安装原固定提交并核对身份。GPT-only
+部署不可盲选 Direct（它可能没有 API key）；选择可用的旧版本与明确配置，不把联合
+Paper 账本改成旧 PA 账户。恢复数据必须另行验证，不能与普通代码回滚混为一谈。
 
 ## 8. 运行边界
 

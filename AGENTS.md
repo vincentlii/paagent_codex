@@ -1,5 +1,7 @@
 # AGENTS
 
+- V1 Headless、Fast 控制或发布排障先读 `docs/quality/v1_health_audit_20261009.md` 和 `docs/knowledge/current-status.md` 最新条目：全量 A 单 Agent 联合链已获有界 VPS Paper 授权，但历史快速失败尚不能归因 Fast。失败必须保留可信 Worker 分类、实际延迟和未知用量；运行服务停止后才能覆盖安装包，Linux CLI 私有进程组必须清理。下方阶段报告的“未部署／no-go”属于当时证据，不撤销本次有限 Paper 授权。
+
 - 修改或验收联合 Stage 2 分层知识研究前读 `docs/quality/layered_stage2_knowledge_research_20261008.md`：它只属于预注册的 `knowledge_delivery` 研究对照；正式 Codex、Direct、旧 Frozen Job 仍全量必读，离线字节投影不得冒充模型提速或质量非劣。
 
 - Codex 单 Agent 联合分析本地发布或 Stage 9—11 工作先读 `docs/quality/codex_joint_local_release_audit_20261008.md`，尤其是末尾的补充验收。冻结任务持久化、已开始结果对账及一次真实 `gpt-6-luna/xhigh` 联合链已在本地验证；性能目标未过，质量只含单次观察，Linux/VPS 恢复和持续 Paper 仍未验收。本地通过测试不等于上线许可。

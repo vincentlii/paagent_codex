@@ -866,7 +866,10 @@ def test_dashboard_page_has_fixed_scope_profile_controls_and_safe_rendering() ->
         "Requested / Effective Model",
         "Pipeline",
         "run.analysis_pipeline||'unknown'",
-        "Total Latency",
+        "Host / Calls Latency",
+        "Trade candidates",
+        "value!=null&&value!==''",
+        "first_pass_known_count",
         "Repairs",
         "Outcome",
     )

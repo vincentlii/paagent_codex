@@ -110,6 +110,35 @@ def test_short_limit_and_open_position_survive_pending_expiry(tmp_path):
     assert b.order(order.order_id)["status"] == "open"
 
 
+@pytest.mark.parametrize("side", ["long", "short"])
+def test_v3_open_position_missing_bar_is_censored_not_later_profit(tmp_path, side):
+    b = broker(tmp_path)
+    overrides = {} if side == "long" else dict(stop_price=2010, take_profit_price=1980)
+    order = b.submit(plan(side=side, take_profit_price_2=None, **overrides), _spec())
+    b.observe_market(_spec(), "1h", [_bar(T + H, open_=2000, high=2005, low=1995, close=2000)])
+    assert b.order(order.order_id)["status"] == "open"
+    # T+2H could already have stopped/closed the position. It is not observed.
+    b.observe_market(_spec(), "1h", [_bar(T + 3 * H, open_=2000, high=2025, low=1975, close=2000)])
+    row = b.order(order.order_id)
+    assert row["status"] == "ambiguous"
+    assert row["exit_reason"] == "missing_open_position_bars"
+    assert row["realized_pnl"] is None
+    assert row["fill_price"] == 2000
+    assert b.account_snapshot()["equity"] == 10000
+
+
+def test_v3_batch_replay_of_complete_bars_is_not_a_gap(tmp_path):
+    b = broker(tmp_path)
+    order = b.submit(plan(), _spec())
+    b.observe_market(_spec(), "1h", [
+        _bar(T + 3 * H, open_=2000, high=2025, low=1995, close=2020),
+        _bar(T + H, open_=2000, high=2005, low=1995, close=2000),
+        _bar(T + 2 * H, open_=2000, high=2005, low=1995, close=2000),
+    ])
+    assert b.order(order.order_id)["status"] == "closed"
+    assert b.order(order.order_id)["realized_pnl"] is not None
+
+
 def test_market_midbar_is_unknown_not_filled_at_prior_open(tmp_path):
     b = broker(tmp_path)
     order = b.submit(replace(plan(order_type="market"), available_at_ms=T + H + 100), _spec())

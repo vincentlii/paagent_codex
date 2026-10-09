@@ -76,6 +76,8 @@ def summarize_call_metrics(calls):
                        "estimated_sum": sum(estimated) if estimated else None,
                        "complete_actual": len(actual) == len(calls) and bool(calls)}
     return {"protocol_version": "analysis_metrics_v1", "calls": len(calls),
+            "prior_attempt_usage_known": bool(calls) and all(
+                (c.get("metrics") or {}).get("prior_attempt_usage_known", False) for c in calls),
             "usage_coverage_complete": bool(calls) and all(
                 (c.get("metrics") or {}).get("prior_attempt_usage_known", False) for c in calls)
             and all(result.get(key, {}).get("complete_actual", False) for key in

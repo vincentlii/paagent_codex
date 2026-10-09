@@ -159,3 +159,19 @@ def test_vps_provider_environment_matches_the_default_dashboard_profile() -> Non
     ).read_text("utf-8")
 
     assert "PA_AGENT_MODEL=deepseek-v4-flash" in environment
+
+
+def test_installer_rejects_active_services_before_mutating_the_release() -> None:
+    root = Path(__file__).resolve().parents[2]
+    installer = (root / "deploy" / "install_vps.sh").read_text("utf-8")
+
+    guard = installer.index('systemctl is-active --quiet "$service"')
+    for service in (
+        "pa-agent.service",
+        "pa-agent-codex-worker.service",
+        "pa-agent-dashboard.service",
+    ):
+        assert service in installer[:guard]
+    assert guard < installer.index('cd "$APP_DIR"')
+    assert guard < installer.index('"$CONDA_EXE" env update')
+    assert 'Stop PA Agent services before installing' in installer

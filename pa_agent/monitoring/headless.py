@@ -980,12 +980,25 @@ class HeadlessMonitor:
             maximum_attempts = 1 + int(self._settings.monitoring.max_analysis_retries)
             if state.attempts >= maximum_attempts:
                 return "attempts_exhausted"
-            submission = self._service.submit(task)
-            if not submission.accepted:
-                return submission.status
             state.attempts += 1
             state.in_flight_task_id = task.task_id
             self._task_to_state[task.task_id] = state
+            # submit may deliver completion synchronously. Reserve ownership first,
+            # as recovery does, so that callback cannot be lost or re-registered.
+            try:
+                submission = self._service.submit(task)
+            except Exception:
+                if self._task_to_state.get(task.task_id) is state:
+                    self._task_to_state.pop(task.task_id)
+                    state.in_flight_task_id = None
+                    state.attempts -= 1
+                raise
+            if not submission.accepted:
+                if self._task_to_state.get(task.task_id) is state:
+                    self._task_to_state.pop(task.task_id)
+                    state.in_flight_task_id = None
+                    state.attempts -= 1
+                return submission.status
             return "accepted"
 
     def _record_fetch_failure(self, state: _AssetState, exc: Exception) -> None:

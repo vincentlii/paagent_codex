@@ -120,6 +120,7 @@ def test_codex_backend_returns_compatible_reply_and_runtime_metadata(tmp_path: P
     assert result.runtime["initial_context_bytes"] > 0
     assert result.runtime["model"] == "gpt-5.6-terra"
     assert result.runtime["effective_reasoning_effort"] == "xhigh"
+    assert result.runtime["requested_reasoning_effort"] == "xhigh"
     assert result.runtime["runtime_version"] == "runtime-v1"
     assert result.runtime["knowledge_delivery_policy"] == "inline_mandatory_knowledge_v1"
     assert result.runtime["thread_id"] == "thread-1"
@@ -305,6 +306,35 @@ def test_failed_call_ledger_keeps_selected_backend_without_inventing_usage():
     assert entry["analysis_backend"] == "codex_agent"
     assert entry["response_hash"] is None
     assert entry["metrics"]["values"]["prompt_tokens"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize("after_worker", [False, True])
+def test_single_agent_failed_usage_reaches_ledger_without_child_collaboration(tmp_path, after_worker):
+    from dataclasses import replace
+
+    runtime = {"model": "gpt-6-luna", "reasoning_effort": "xhigh"}
+    published = FrozenAgentJobStore(tmp_path).publish(_job(runtime_identity=runtime))
+    error = CodexWorkerOutputError("Codex failed without an availability signal (exit status 1)")
+    error.observed_usage = AIUsage(total_tokens=0, reported_fields=())
+    worker = MagicMock()
+    if after_worker:
+        worker.run.return_value = replace(_result(), content="invalid-json", usage=AIUsage())
+    else:
+        worker.run.side_effect = error
+    backend = CodexAnalysisRoleBackend(worker=worker, publish_job=lambda *args: published, runtime_identity=runtime)
+    entries = []
+    def on_error(exc):
+        entries.append(_call_attempt_entry(arm="pa", stage="stage1", attempt=1, messages=[], status="request_failed", backend_id="codex_agent", failure_metadata=exc.analysis_attempt))
+    with pytest.raises(ModelCallFailure):
+        backend.run(_request(), on_reasoning_token=None, on_content_token=None, cancel_token=None, on_attempt_error=on_error)
+    call = entries[0]
+    assert call["latency_ms"] is not None
+    assert call["requested_model"] == "gpt-6-luna"
+    assert call["effective_model"] == ("gpt-6-luna" if after_worker else None)
+    assert call["requested_reasoning_effort"] == "xhigh"
+    assert call["metrics"]["values"]["total_tokens"]["status"] == "unknown"
+    assert call["metrics"]["values"]["backend_wall_ms"]["status"] == "actual"
+    assert call["usage_observed_without_response"] is True
 
 
 def test_current_role_cycle_budget_stops_without_availability_fallback():

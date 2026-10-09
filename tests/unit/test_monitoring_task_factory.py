@@ -132,6 +132,22 @@ def test_effective_vpa_mode_changes_analysis_cohort_not_market_snapshot() -> Non
     assert soft.task_id == shadow.task_id
 
 
+def test_explicit_joint_pipeline_cannot_dedupe_as_legacy_shadow() -> None:
+    from pa_agent.config.analysis_pipeline import AnalysisPipelineIdentity
+
+    legacy = Settings()
+    legacy.prompt.vpa_mode = "shadow"
+    joint = legacy.model_copy(deep=True)
+    joint.analysis_pipeline = AnalysisPipelineIdentity(pipeline="pa_vpa_joint")
+    kwargs = dict(source="tradingview", venue="OANDA", analysis_fingerprint="b" * 64)
+    first = create_frozen_analysis_task(_frame(), None, legacy, **kwargs)
+    second = create_frozen_analysis_task(_frame(), None, joint, **kwargs)
+
+    assert first.snapshot_hash == second.snapshot_hash
+    assert first.cohort_id != second.cohort_id
+    assert first.task_id != second.task_id
+
+
 def test_runtime_fingerprint_covers_source_and_prompt_assets(tmp_path) -> None:
     source = tmp_path / "pa_agent"
     prompts = tmp_path / "prompts"

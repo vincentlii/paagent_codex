@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 
 from pa_agent.operations.projection import (
     read_backend_experiment_summary,
@@ -104,6 +105,59 @@ def test_operational_summary_never_mixes_pipeline_authorities() -> None:
     assert len(summaries) == 2
     assert {(item["analysis_pipeline"], item["latency_p95_ms"])
             for item in summaries} == {(None, 900.0), ("pa_vpa_joint", 1800.0)}
+
+
+def test_unknown_usage_and_failed_first_attempt_are_not_zero_cost_or_first_pass(tmp_path):
+    db_path = tmp_path / "audit.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE analysis_runs (run_id TEXT, timestamp_local_ms INTEGER, run_status TEXT)")
+        connection.execute("INSERT INTO analysis_runs VALUES ('failed', 1, 'failed')")
+        connection.execute("CREATE TABLE analysis_calls (run_id TEXT, attempt INTEGER, latency_ms REAL, total_tokens INTEGER)")
+        connection.execute("INSERT INTO analysis_calls VALUES ('failed', 1, NULL, 0)")
+    run = read_recent_runs(db_path)[0]
+    assert run["total_latency_ms"] is None
+    assert run["total_tokens"] is None
+    assert summarize_recent_runs([run])[0]["first_pass_rate"] == 0.0
+
+
+def test_projection_uses_canonical_quality_and_preserves_metric_coverage(tmp_path):
+    db_path = tmp_path / "audit.sqlite3"
+    quality = {
+        "first_pass": {"clean": False, "status": "normalized"},
+        "metrics": {"protocol_version": "analysis_metrics_v1", "calls": 2, "values": {
+            "total_tokens": {"actual_count": 1, "estimated_count": 0, "unknown_count": 1, "actual_sum": 50, "complete_actual": False},
+            "initial_context_tokens": {"actual_count": 0, "estimated_count": 2, "unknown_count": 0, "estimated_sum": 30, "complete_actual": False},
+        }},
+    }
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE analysis_runs (run_id TEXT, timestamp_local_ms INTEGER, run_status TEXT, review_context_json TEXT)")
+        connection.execute("INSERT INTO analysis_runs VALUES ('normalized', 1, 'completed', ?)", (json.dumps({"operational_quality": quality, "decision_review": {"reasoning": "private"}}),))
+    run = read_recent_runs(db_path)[0]
+    assert run["first_pass_clean"] is False
+    assert run["total_tokens"] is None
+    assert run["initial_context_tokens"] == 30
+    assert run["metric_statuses"]["total_tokens"] == "unknown"
+    assert run["metric_statuses"]["initial_context_tokens"] == "estimated"
+    assert "review_context_json" not in run
+    assert "decision_review" not in run
+    assert summarize_recent_runs([run])[0]["first_pass_rate"] == 0.0
+
+
+def test_old_success_without_first_pass_evidence_stays_unknown():
+    summary = summarize_recent_runs([{"run_status": "completed"}])[0]
+    assert summary["first_pass_rate"] is None
+    assert summary["first_pass_known_count"] == 0
+
+
+def test_chinese_no_trade_is_not_an_executable_candidate(tmp_path):
+    db_path = tmp_path / "audit.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE analysis_runs (run_id TEXT, timestamp_local_ms INTEGER, order_type TEXT)")
+        connection.executemany("INSERT INTO analysis_runs VALUES (?, ?, ?)", [
+            ('wait', 3, '不下单'), ('trade', 2, '限价单'), ('unknown', 1, 'unexpected'),
+        ])
+    rows = read_recent_runs(db_path)
+    assert [run['decision_kind'] for run in rows] == ['no_trade', 'trade_candidate', 'unknown']
 
 
 def test_backend_experiment_projection_is_read_only_and_protocol_scoped(tmp_path) -> None:

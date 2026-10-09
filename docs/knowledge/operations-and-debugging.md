@@ -14,6 +14,28 @@ issue_status: monitoring
 
 # 运行与排障
 
+## V1 Headless / Fast 故障的核验顺序
+
+1. 核对 desired/applied Fast、control/profile generation 与 `control_error`；控制
+   往返只影响后续冻结任务，不能改旧 Job、登录、AGENTS 或知识。
+2. 核对 Snapshot/cohort、Job Runtime identity 和 service tier；不能靠 UI 按钮
+   与故障时间相邻就判定根因。新 joint pipeline 与旧默认 pipeline 的身份须分离。
+3. 核对 Worker 启动时间、固定源码提交和安装包；服务运行时禁止覆盖安装。
+   包更新后重启 Headless、Worker 和 Dashboard，不能只刷新网页。
+4. 从完整 record 的 Codex call/exception attempts 读取 `worker_error_type`、
+   `worker_failure_reason`、typed wall latency。该 reason 是 Host 分类，不保存
+   raw stderr、Prompt 或模型推理。旧记录缺字段时保持未知，不能倒填为已知根因。
+5. timeout/正常 CLI 退出都需清理该次私有 Linux 进程组，避免遗留 MCP、管道和
+   资源占用；不能按名字结束所有 Codex。TasksMax/MemoryMax 未命中不先扩限额。
+6. 控制暂停、等待 idle、备份并验证、停止三个服务，再发布固定提交。重启后先
+   确认 paused/无重复旧任务，再恢复原获批 Paper；不为排障盲目完整重跑模型。
+
+统计口径：task callback 不等于分析成功；legacy null/零且无覆盖证据的 Token、
+Context、Evidence 和 latency 保持 unknown；首稿通过由 canonical classifier
+判断，不因最终成功掩盖 repair/fallback/normalization。Host 延迟和调用累计分开。
+开仓后的 v3 缺失中间 bar 记录 censored，不凭下一根触价补确定 PnL。
+本轮证据和未闭合项见 [V1 体检报告](../quality/v1_health_audit_20261009.md)。
+
 ## 核心顺序
 
 遇到“分析未通过”、PA-only 降级或 VPS 异常时，按以下顺序执行：

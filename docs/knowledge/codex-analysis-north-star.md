@@ -3,7 +3,7 @@ lifecycle: active
 capability: research-only
 verification_scope: local
 issue_status: monitoring
-最后核验: 2026-09-03
+最后核验: 2026-10-09
 权威来源:
   - CONTEXT.md
   - docs/architecture/ADR-0024-codex-analysis-backend.md
@@ -59,6 +59,13 @@ Dashboard 可以在不暴露凭据的前提下提交 allowlisted、版本化 Ana
 初版资产、旧模式 VPA Shadow 和 HTF 固定。Dashboard 不能编辑 Prompt、AGENTS、Skills、Knowledge、Validator、Router、Risk、Paper、API key、Base URL、文件路径或 VPA/Joint 权限；它也不能读取生产数据库或改变交易权限。每次 requested/effective Backend、model、reasoning、Profile fingerprint 与 Runtime asset identity 都必须进入 Frozen Job、record 与 cohort。
 
 ## 当前边界
+
+2026-10-09 用户已授权全量 A、单 Agent、`pa_vpa_joint`、`gpt-6-luna/xhigh`
+在 VPS 持续有界 Paper 观察，Fast 只作后续冻结任务的 service tier 选择，不保证
+固定 1.5× 加速。该许可不等于盈利、稳定性、B 分层或子 Agent 晋级，也不扩张
+Codex authority。运行状态以[当前状态](current-status.md)和
+[V1 体检报告](../quality/v1_health_audit_20261009.md)为准。
+下方“默认未改变／未部署”的阶段描述保留为历史实施证据，不是当前运维状态。
 
 Stage 内子协作采用研究协议 `host_stage_challenge_v1`：Host 启动独立 Codex 子进程，
 子角色只查同一 Frozen Job 的有限同域资源并给待核意见；父保持完整 mandatory、专业裁决

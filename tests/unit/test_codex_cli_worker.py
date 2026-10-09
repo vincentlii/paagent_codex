@@ -7,6 +7,8 @@ import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,6 +22,41 @@ from pa_agent.agent_runtime.runtime_audit import prepare_live_canary, run_live_c
 from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from tests.unit.test_frozen_agent_job import _job
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_parent_cli_owns_process_group_and_reaps_descendants(monkeypatch, timed_out):
+    import signal
+    from pa_agent.agent_runtime import codex_worker
+
+    process = MagicMock()
+    process.pid = 123456
+    process.returncode = -9 if timed_out else 0
+    process.poll.return_value = process.returncode
+    process.communicate.side_effect = (
+        [subprocess.TimeoutExpired("owned-cli", 1), ("observed usage", "bounded error")]
+        if timed_out else [("final output", "")]
+    )
+    popen = MagicMock(return_value=process)
+    killpg = MagicMock()
+    monkeypatch.setattr(codex_worker.subprocess, "Popen", popen)
+    monkeypatch.setattr(codex_worker, "os", SimpleNamespace(name="posix", killpg=killpg))
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)  # Emulate Linux on Windows.
+
+    if timed_out:
+        with pytest.raises(subprocess.TimeoutExpired) as failure:
+            CodexCliWorker._run_owned_process(["owned-cli"], timeout=1, capture_output=True)
+        assert failure.value.stdout == "observed usage"
+        assert failure.value.stderr == "bounded error"
+        assert process.communicate.call_args_list[-1].kwargs["timeout"] == 5
+    else:
+        result = CodexCliWorker._run_owned_process(["owned-cli"], timeout=1, capture_output=True)
+        assert result.stdout == "final output"
+        assert result.returncode == 0
+    assert popen.call_args.kwargs["start_new_session"] is True
+    assert popen.call_args.kwargs["stdout"] is subprocess.PIPE
+    assert {call.args[0] for call in killpg.call_args_list} == {process.pid}
+    assert killpg.called  # Also cleans remaining MCP processes after a normal exit.
 
 
 def test_isolated_mcp_process_imports_the_host_pa_agent_package(tmp_path: Path) -> None:

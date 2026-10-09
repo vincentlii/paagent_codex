@@ -44,6 +44,10 @@ RECENT_RUN_FIELDS = (
     "evidence_latency_ms",
     "repair_count",
     "outcome",
+    "first_pass_clean",
+    "metric_statuses",
+    "analysis_to_persist_ms",
+    "decision_kind",
 )
 
 
@@ -66,6 +70,8 @@ def read_recent_runs(db_path: Path, *, limit: int = 30) -> list[dict[str, Any]]:
             for row in connection.execute("PRAGMA table_info(analysis_runs)").fetchall()
         }
         selected = [field for field in RECENT_RUN_FIELDS if field in columns]
+        if "review_context_json" in columns:
+            selected.append("review_context_json")
         if "timestamp_local_ms" not in selected:
             return []
         rows = connection.execute(
@@ -79,6 +85,10 @@ def read_recent_runs(db_path: Path, *, limit: int = 30) -> list[dict[str, Any]]:
         ]
         _enrich_realized_outcomes(connection, projected)
         _enrich_call_summaries(connection, projected)
+        for row, run in zip(rows, projected):
+            _enrich_operational_quality(
+                run, row["review_context_json"] if "review_context_json" in selected else None,
+            )
         return projected
     except (OSError, sqlite3.Error, TypeError, ValueError):
         return []
@@ -160,17 +170,17 @@ def _enrich_call_summaries(
             continue
         run["analysis_backend"] = unique_values(calls, "analysis_backend")
         run["requested_model"] = unique_values(calls, "requested_model", "model")
-        run["effective_model"] = unique_values(calls, "effective_model", "model")
+        run["effective_model"] = unique_values(calls, "effective_model")
         run["requested_reasoning_effort"] = unique_values(
             calls, "requested_reasoning_effort"
         )
         run["effective_reasoning_effort"] = unique_values(
             calls, "effective_reasoning_effort"
         )
-        run["total_latency_ms"] = sum(
-            float(item["latency_ms"])
-            for item in calls
-            if "latency_ms" in selected and item["latency_ms"] is not None
+        latencies = [item["latency_ms"] for item in calls] if "latency_ms" in selected else []
+        run["total_latency_ms"] = (
+            sum(float(value) for value in latencies)
+            if latencies and all(value is not None for value in latencies) else None
         )
         for key in (
             "total_tokens",
@@ -180,11 +190,9 @@ def _enrich_call_summaries(
             "evidence_denied_count",
             "evidence_latency_ms",
         ):
-            run[key] = sum(
-                float(item[key]) if key == "evidence_latency_ms" else int(item[key])
-                for item in calls
-                if key in selected and item[key] is not None
-            )
+            # Legacy ledger columns default to zero even when not reported.
+            # Only versioned metric coverage below can establish a known total.
+            run[key] = None
         run["repair_count"] = sum(
             1
             for item in calls
@@ -193,6 +201,52 @@ def _enrich_call_summaries(
             and item["attempt"] > 1
         )
         run["outcome"] = run.get("outcome") or run.get("terminal_outcome")
+
+
+def _enrich_operational_quality(run: dict[str, Any], review_json: str | None) -> None:
+    """Expose only canonical derived quality/measurements, never review prose."""
+    run["metric_statuses"] = {}
+    order_type = str(run.get("order_type") or "")
+    run["decision_kind"] = (
+        "no_trade" if order_type in {"不下单", "no_trade"} else
+        "trade_candidate" if order_type in {"市价单", "限价单", "突破单", "market", "limit", "breakout"}
+        else "unknown"
+    )
+    try:
+        review = json.loads(review_json) if review_json else {}
+        quality = review.get("operational_quality") or {}
+        first_pass = (quality.get("first_pass") or {}).get("clean")
+        metrics = quality.get("metrics") or {}
+    except (TypeError, ValueError, AttributeError):
+        first_pass, metrics = None, {}
+    run["first_pass_clean"] = first_pass if type(first_pass) is bool else (
+        False if run.get("run_status") in {"failed", "partial", "degraded"}
+        or (run.get("repair_count") or 0) > 0 else None
+    )
+    if metrics.get("protocol_version") != "analysis_metrics_v1":
+        return
+    calls = int(metrics.get("calls") or 0)
+    values = metrics.get("values") or {}
+    for key in (
+        "total_tokens", "initial_context_tokens", "retrieval_context_tokens",
+        "evidence_call_count", "evidence_denied_count", "evidence_latency_ms",
+    ):
+        value = values.get(key) or {}
+        actual = int(value.get("actual_count") or 0)
+        estimated = int(value.get("estimated_count") or 0)
+        if key == "total_tokens" and metrics.get("prior_attempt_usage_known") is False:
+            run[key], status = None, "unknown"
+        elif calls > 0 and value.get("complete_actual") and value.get("actual_sum") is not None:
+            run[key], status = value["actual_sum"], "actual"
+        elif calls > 0 and actual + estimated == calls and estimated > 0 and value.get("estimated_sum") is not None:
+            run[key] = (value.get("actual_sum") or 0) + (value.get("estimated_sum") or 0)
+            status = "estimated"
+        else:
+            run[key], status = None, "unknown"
+        run["metric_statuses"][key] = status
+    host_wall = metrics.get("analysis_to_persist_ms") or {}
+    if host_wall.get("status") == "actual":
+        run["analysis_to_persist_ms"] = host_wall.get("value")
 
 
 def _enrich_realized_outcomes(
@@ -268,10 +322,17 @@ def summarize_recent_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for item in items
             if item.get("retrieval_context_tokens") is not None
         ]
-        evidence_calls = sum(int(item.get("evidence_call_count") or 0) for item in items)
-        evidence_denied = sum(int(item.get("evidence_denied_count") or 0) for item in items)
+        evidence_calls = (
+            sum(int(item["evidence_call_count"]) for item in items)
+            if all(item.get("evidence_call_count") is not None for item in items) else None
+        )
+        evidence_denied = (
+            sum(int(item["evidence_denied_count"]) for item in items)
+            if all(item.get("evidence_denied_count") is not None for item in items) else None
+        )
         completed = sum(item.get("run_status") == "completed" for item in items)
-        repaired = sum(int(item.get("repair_count") or 0) > 0 for item in items)
+        first_pass = [item.get("first_pass_clean") for item in items
+                      if type(item.get("first_pass_clean")) is bool]
 
         def mean(values: list[float]) -> float | None:
             return sum(values) / len(values) if values else None
@@ -282,7 +343,10 @@ def summarize_recent_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "analysis_pipeline": pipeline,
                 "run_count": len(items),
                 "operational_success_rate": completed / len(items),
-                "first_pass_rate": (len(items) - repaired) / len(items),
+                "first_pass_rate": sum(first_pass) / len(first_pass) if first_pass else None,
+                "first_pass_known_count": len(first_pass),
+                "latency_known_count": len(latencies),
+                "tokens_known_count": len(total_tokens),
                 "latency_p50_ms": _nearest_rank(latencies, 0.50),
                 "latency_p95_ms": _nearest_rank(latencies, 0.95),
                 "mean_total_tokens": mean(total_tokens),

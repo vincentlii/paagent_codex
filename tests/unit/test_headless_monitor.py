@@ -292,6 +292,39 @@ def _completion(
     return JobCompletion(task=task, status="completed", result=result)
 
 
+def test_synchronous_completion_is_registered_before_dispatch(tmp_path) -> None:
+    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+
+    def submit(task):
+        service.submitted.append(task)
+        service.on_completion(_completion(task, status="completed", success=True, retryable=False))
+        return SubmissionResult("accepted", task.task_id, task.asset_key)
+
+    service.submit = submit
+    try:
+        assert monitor.poll_once().accepted == 1
+        state = monitor._states[0]
+        assert state.in_flight_task_id is None
+        assert state.successful_task_id == service.submitted[0].task_id
+        assert state.attempts == 1
+        assert monitor._task_to_state == {}
+        assert monitor.poll_once().accepted == 0
+    finally:
+        monitor.shutdown()
+
+
+def test_rejected_dispatch_rolls_back_reserved_task_state(tmp_path) -> None:
+    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+    service.submit = lambda task: SubmissionResult("queue_full", task.task_id, task.asset_key)
+    try:
+        assert monitor.poll_once().accepted == 0
+        assert monitor._states[0].in_flight_task_id is None
+        assert monitor._states[0].attempts == 0
+        assert monitor._task_to_state == {}
+    finally:
+        monitor.shutdown()
+
+
 def test_provider_failure_retries_same_snapshot_after_backoff_then_dedupes_success(tmp_path) -> None:
     monitor, source, _audit, service, clock = _monitor(tmp_path)
 
@@ -768,6 +801,54 @@ def test_fast_control_waits_for_idle_and_freezes_tier_into_new_codex_task(tmp_pa
     result = monitor.poll_once()
     assert result.accepted == 1
     assert service.submitted[0].payload.analysis_backend_identity["service_tier"] == "fast"
+    monitor.shutdown()
+
+
+def test_fast_roundtrip_preserves_frozen_tasks_and_rejects_stale_control(tmp_path) -> None:
+    monitor, _source, _audit, service, _clock = _monitor(tmp_path)
+    monitor._backend_switcher = lambda mode: mode == "codex_only"
+    store = RuntimeControlStore(monitor._paths.runtime_control_path)
+    control = store.set_desired_backend("codex_only", actor="test")
+    enabled = store.set_codex_fast_mode(True, expected_generation=control.generation, actor="test")
+    assert monitor._apply_control(enabled, verify_latest=True) == (False, None)
+    assert monitor.poll_once().accepted == 1
+    original = service.submitted[0]
+    assert original.payload.analysis_backend_identity["service_tier"] == "fast"
+
+    disabled = store.set_codex_fast_mode(False, expected_generation=enabled.generation, actor="test")
+    service.wait_idle = lambda _timeout=None: False
+    assert monitor._apply_control(disabled, verify_latest=True)[0] is True
+    assert monitor._applied_codex_fast_mode is True
+    enabled_again = store.set_codex_fast_mode(True, expected_generation=disabled.generation, actor="test")
+    service.wait_idle = lambda _timeout=None: True
+    assert monitor._apply_control(disabled, verify_latest=True)[0] is True
+    assert monitor._apply_control(enabled_again, verify_latest=True) == (False, None)
+    assert monitor._applied_control_generation == enabled_again.generation
+    assert original.payload.analysis_backend_identity["service_tier"] == "fast"
+    assert monitor._submission_matches_applied_control() is True
+    monitor.shutdown()
+
+
+def test_applied_fast_off_then_on_changes_only_future_task_cohort(tmp_path):
+    monitor, source, _audit, service, clock = _monitor(tmp_path)
+    monitor._backend_switcher = lambda mode: mode == "codex_only"
+    store = RuntimeControlStore(monitor._paths.runtime_control_path)
+    control = store.set_desired_backend("codex_only", actor="test")
+    for enabled in (True, False, True):
+        control = store.set_codex_fast_mode(enabled, expected_generation=control.generation, actor="test")
+        assert monitor._apply_control(control, verify_latest=True) == (False, None)
+        assert monitor.poll_once().accepted == 1
+        task = service.submitted[-1]
+        assert task.payload.analysis_backend_identity.get("service_tier") == ("fast" if enabled else None)
+        service.on_completion(_completion(task, status="completed", success=True, retryable=False))
+        source.advance()
+        clock.wall_ms += 3_600_000
+        clock.monotonic_value += 60
+    first, normal, fast_again = service.submitted
+    assert first.cohort_id == fast_again.cohort_id
+    assert first.cohort_id != normal.cohort_id
+    assert len({task.task_id for task in service.submitted}) == 3
+    assert first.payload.analysis_backend_identity["service_tier"] == "fast"
     monitor.shutdown()
 
 

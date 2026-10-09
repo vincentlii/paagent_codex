@@ -7,7 +7,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -19,6 +19,7 @@ from pa_agent.agent_runtime.codex_worker import (
     CodexWorkerError,
     CodexWorkerOutputError,
     CodexWorkerRateLimited,
+    CodexWorkerStopped,
     CodexWorkerTimeout,
 )
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore, JobIntegrityError
@@ -252,7 +253,6 @@ class CodexAnalysisRoleBackend:
         )
         if remaining_cycle_seconds <= 0:
             if request.agent_context and request.role in {"stage1", "stage2", "vpa_evidence"}:
-                from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped
                 from pa_agent.ai.role_contracts import AnalysisRoleStop
                 stopped = CodexWorkerStopped(AnalysisRoleStop(
                     role=request.role, status="incomplete", reason="analysis cycle wall-clock budget exceeded",
@@ -351,6 +351,10 @@ class CodexAnalysisRoleBackend:
         attempt_meta = {
             "stage": request.role,
             "analysis_backend": self.backend_id,
+            "model": job.manifest.model,
+            "requested_model": job.manifest.model,
+            "requested_reasoning_effort": job.manifest.reasoning_effort,
+            "runtime_version": self._runtime_identity.get("runtime_version"),
             "job_digest": job.manifest.job_digest,
             "attempt": attempt,
             "investigation_policy": frozen_runtime_identity.get(
@@ -370,20 +374,24 @@ class CodexAnalysisRoleBackend:
                 parent_job_digest=session_options["parent_job_digest"],
             )
         except CodexWorkerError as exc:
+            attempt_meta["latency_ms"] = (time.monotonic() - started) * 1000
+            attempt_meta["worker_error_type"] = type(exc).__name__
+            # Worker messages are bounded Host classifications, not raw provider
+            # stderr, credentials, prompts or model reasoning.
+            if not isinstance(exc, CodexWorkerStopped):
+                attempt_meta["worker_failure_reason"] = str(exc)[:512]
             if getattr(exc, "observed_usage", None) is not None:
-                from dataclasses import asdict
                 attempt_meta.update(usage=asdict(exc.observed_usage),
                                     usage_observation=dict(getattr(exc, "usage_observation", {})),
                                     model=job.manifest.model, reasoning_effort=job.manifest.reasoning_effort,
                                     latency_ms=(time.monotonic() - started) * 1000)
-                exc.analysis_attempt = dict(attempt_meta)
             if getattr(exc, "collaboration", None):
                 attempt_meta["collaboration"] = dict(exc.collaboration)
                 attempt_meta["usage"] = dict(exc.collaboration.get("aggregate_usage") or {})
                 attempt_meta["model"] = job.manifest.model
                 attempt_meta["reasoning_effort"] = job.manifest.reasoning_effort
                 attempt_meta["latency_ms"] = (time.monotonic() - started) * 1000
-                exc.analysis_attempt = dict(attempt_meta)
+            exc.analysis_attempt = dict(attempt_meta)
             if on_attempt_error is not None:
                 on_attempt_error(exc)
             failure = _worker_failure(exc)
@@ -398,11 +406,15 @@ class CodexAnalysisRoleBackend:
         self._circuit.record_success()
         # Freeze observations before normalization/repair can fail. This is a
         # failure ledger, not a fabricated reply or accepted trading Draft.
+        attempt_meta.update(
+            usage=asdict(result.usage), model=job.manifest.model,
+            reasoning_effort=job.manifest.reasoning_effort,
+            effective_model=result.model or job.manifest.model,
+            effective_reasoning_effort=result.reasoning_effort or job.manifest.reasoning_effort,
+            latency_ms=result.latency_ms, timings=dict(result.timings),
+        )
         if result.collaboration:
-            from dataclasses import asdict
-            attempt_meta.update(collaboration=dict(result.collaboration), usage=asdict(result.usage),
-                                model=job.manifest.model, reasoning_effort=job.manifest.reasoning_effort,
-                                latency_ms=result.latency_ms)
+            attempt_meta["collaboration"] = dict(result.collaboration)
         repair_context = extract_repair_context(request.messages)
         content = result.content
         strict_null_pruned_count = 0
@@ -418,8 +430,7 @@ class CodexAnalysisRoleBackend:
                     separators=(",", ":"),
                 )
             except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
-                if attempt_meta.get("collaboration"):
-                    exc.analysis_attempt = dict(attempt_meta)
+                exc.analysis_attempt = dict(attempt_meta)
                 if on_attempt_error is not None:
                     on_attempt_error(exc)
                 self._raise_failure(
@@ -444,8 +455,7 @@ class CodexAnalysisRoleBackend:
                     separators=(",", ":"),
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                if attempt_meta.get("collaboration"):
-                    exc.analysis_attempt = dict(attempt_meta)
+                exc.analysis_attempt = dict(attempt_meta)
                 if on_attempt_error is not None:
                     on_attempt_error(exc)
                 self._raise_failure(
@@ -497,7 +507,7 @@ class CodexAnalysisRoleBackend:
             or self._runtime_identity.get("profile_fingerprint")
             or self._runtime_identity.get("analysis_profile_fingerprint"),
             "requested_thinking": request.thinking,
-            "requested_reasoning_effort": request.reasoning_effort,
+            "requested_reasoning_effort": job.manifest.reasoning_effort,
             "effective_thinking": True,
             "effective_reasoning_effort": job.manifest.reasoning_effort
             or self._runtime_identity.get("reasoning_effort", request.reasoning_effort),
@@ -680,8 +690,6 @@ class CodexAnalysisRoleBackend:
 
 
 def _worker_failure(exc: CodexWorkerError) -> ProviderFailure:
-    from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped
-
     if isinstance(exc, CodexWorkerStopped):
         return ProviderFailure(
             kind="role_stopped",

@@ -259,17 +259,26 @@ def _call_attempt_entry(
     )
     if not isinstance(model_call_meta, dict):
         model_call_meta = {}
-    observed_failure = (reply is None and backend_id == "codex_agent"
-                        and isinstance(failure_metadata, dict) and bool(failure_metadata.get("collaboration")))
-    if observed_failure:
+    failed_codex_call = (
+        reply is None and backend_id == "codex_agent"
+        and isinstance(failure_metadata, dict)
+    )
+    observed_failure = failed_codex_call and isinstance(failure_metadata.get("usage"), dict)
+    if failed_codex_call:
         from pa_agent.ai.deepseek_client import AIUsage
         model_call_meta = failure_metadata
-        usage = AIUsage(**dict(model_call_meta.get("usage") or {}))
+        if observed_failure:
+            usage = AIUsage(**dict(model_call_meta["usage"]))
         latency_ms = model_call_meta.get("latency_ms")
     from pa_agent.ai.analysis_metrics import call_metrics
-    metrics = model_call_meta.get("metrics") or call_metrics(usage, model_call_meta)
+    metrics = model_call_meta.get("metrics") or call_metrics(
+        usage, model_call_meta, wall_ms=latency_ms if failed_codex_call else None,
+    )
     if observed_failure:
-        metrics["usage_scope"] = "observed_failure_including_child"
+        metrics["usage_scope"] = (
+            "observed_failure_including_child" if model_call_meta.get("collaboration")
+            else "observed_failure_without_response"
+        )
     call = {
         "arm": arm,
         "stage": stage,
@@ -295,6 +304,7 @@ def _call_attempt_entry(
             model_call_meta.get("requested_model", model_call_meta.get("model"))
         ),
         "effective_model": _audit_text(
+            model_call_meta.get("effective_model") if failed_codex_call else
             model_call_meta.get("effective_model", model_call_meta.get("model"))
         ),
         "runtime_version": _audit_text(model_call_meta.get("runtime_version")),
@@ -353,6 +363,9 @@ def _call_attempt_entry(
         "created_at_ms": int(datetime.now().timestamp() * 1000),
     }
     if call["analysis_backend"] == "codex_agent":
+        if failed_codex_call:
+            call["worker_error_type"] = _audit_text(model_call_meta.get("worker_error_type"))
+            call["worker_failure_reason"] = _audit_text(model_call_meta.get("worker_failure_reason"))
         if observed_failure:
             call["usage_observed_without_response"] = True
         call["stage_subagents"] = _audit_text(model_call_meta.get("stage_subagents", "off"))

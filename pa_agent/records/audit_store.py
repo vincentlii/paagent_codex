@@ -1140,6 +1140,14 @@ class AnalysisAuditStore:
             ),
             "decision_review": decision_review,
         }
+        from pa_agent.ai.analysis_metrics import summarize_call_metrics
+        from pa_agent.experiments.pa_vpa_aabb import classify_first_pass
+
+        review_context["operational_quality"] = {
+            "first_pass": classify_first_pass(record),
+            "metrics": copy.deepcopy(role_execution.get("metrics"))
+            or summarize_call_metrics(record.call_attempts),
+        }
         baseline_stage2 = (
             record.pa_baseline_stage2
             if isinstance(record.pa_baseline_stage2, dict)

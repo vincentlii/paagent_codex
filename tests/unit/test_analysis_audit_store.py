@@ -251,6 +251,18 @@ def test_concurrent_asset_records_are_indexed_once(tmp_path) -> None:
     assert count == 20
 
 
+def test_index_projects_canonical_first_pass_without_private_prose(tmp_path):
+    record = _record().model_copy(deep=True)
+    record.validation_audit = [{"category": "normalization", "severity": "normalization"}]
+    db_path = tmp_path / "audit.sqlite3"
+    assert AnalysisAuditStore(db_path).record_analysis(record, record_path=tmp_path / 'record.json').ok
+    run = read_recent_runs(db_path)[0]
+    assert run['first_pass_clean'] is False
+    assert run['total_tokens'] is None  # Legacy counters have no reported-field coverage.
+    assert 'decision_review' not in run
+    assert 'review_context_json' not in run
+
+
 def test_pipeline_identity_is_indexed_without_relabeling_legacy_records(tmp_path) -> None:
     db_path = tmp_path / "audit.sqlite3"
     store = AnalysisAuditStore(db_path)

@@ -166,7 +166,7 @@ def _analysis_settings_payload(settings: Any) -> dict[str, Any]:
     prompt.pop("vpa_enabled", None)
     prompt["vpa_mode"] = resolve_production_vpa_mode(settings.prompt)
     general = settings.general.model_dump()
-    return {
+    payload = {
         "provider": provider,
         "general": {
             name: general[name]
@@ -176,6 +176,10 @@ def _analysis_settings_payload(settings: Any) -> dict[str, Any]:
         "prompt": prompt,
         "validation": settings.validation.model_dump(),
     }
+    pipeline = getattr(settings, "analysis_pipeline", None)
+    if pipeline is not None:
+        payload["analysis_pipeline"] = _plain_value(pipeline)
+    return payload
 
 
 def analysis_cohort_id(
