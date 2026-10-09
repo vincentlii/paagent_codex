@@ -229,6 +229,18 @@ VPA report 和 Stage 2 `joint_analysis`；旧 `requested/effective_vpa_mode=off`
 
 ## 冻结任务重启与本地 CLI/MCP 解释器
 
+发布迁移时，旧版可能存在 accepted 但没有冻结 payload／完成回执的历史任务。
+不得填造 payload、改成成功或重新请求模型；先暂停并备份，按精确 task ID 核对
+原始记录与 ledger，明确不可恢复时人工登记失败并保留原因及原件。2026-10-09
+VPS 的一条旧 Bitget 任务按此处理，未改变新 Binance 任务语义。
+
+非交互验收脚本与正式 Worker 都必须向 CLI 提供 `stdin=DEVNULL`；否则 SSH
+管道可能使 CLI 等待额外输入，不能把这种等待归因为模型推理或账号故障。
+发布时除了 Runtime 资产 digest，还须比对完整已安装 Python 包与固定提交，
+记录 CLI 版本；npm 入口 JS 的 digest 不能独自证明底层 native binary 版本。
+升级 CLI 必须重新 canary，即使入口摘要未变。完整私有行情、记录及 auth 不导出
+到扩大访问范围的临时目录；质量检查在原位执行，只输出检查结果与必要回执。
+
 Codex Headless 接受任务时，冻结 payload 与调度回执同事务落库；`started_at_ms`
 必须先于模型调用持久化。重启时，未开始且 digest/身份正确的任务可自动排队；
 已开始任务只能用唯一、完整、已审计的原始 JSON record 对账，不能因为缺少调度

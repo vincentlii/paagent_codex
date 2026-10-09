@@ -1,11 +1,11 @@
 ---
 lifecycle: active
-capability: no-go
+capability: paper-observation-limited
 verification_scope:
   - local
-  - VPS-partial
+  - VPS-controlled-live
 最后核验: 2026-10-09
-核验提交: working-tree audit（未提交）
+核验提交: 48eb9b156998379125d6ab9980761af72a4329fa（运行代码）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -20,6 +20,18 @@ verification_scope:
 ---
 
 # 当前状态
+
+2026-10-09 全量 A 已以运行提交 `48eb9b1` 安装到原 VPS `/opt/pa-agent`，替换旧
+安装；已按用户授权启动有界持续 Paper，不接入真实下单。Codex CLI 固定 0.162.0，
+ChatGPT 登录、AGENTS/Skill/Fast canary、全包源码／安装产物比对、用户权限负向
+检查、公开行情探测、59 项 Linux 定向回归、备份隔离恢复和真实联合链通过。
+首次 VPS 联合链三角色首稿 validated、零 repair/fallback/denied，调用合计
+373.96 秒、Host 到结果可用约 377.21 秒、540882 Provider Token，选择等待。
+任务／原始记录／独立 `pipeline-pa_vpa_joint` Paper 的 no_trade 回执一致；暂停
+重启后没有重跑。三个服务与每日备份 timer 已启用，Fast requested/applied 为 true。
+仍有 PA/VPA 引用表达警告，不宣称 p95、收益或固定 1.5× 加速达标。VPS 原始
+记录原位保留，没有导出完整私有事实；看板只经 SSH tunnel 访问 loopback 8765。
+详见[发布与三角色验收](../quality/codex_joint_local_release_audit_20261008.md)。
 
 2026-10-09 用户批准全量 A 的有界 VPS Paper 观察发布，并豁免性能目标作为该次
 Paper pilot 的阻断条件；这不代表专业质量、收益或实盘上线晋级。发布配置固定
