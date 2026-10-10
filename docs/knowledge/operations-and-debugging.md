@@ -16,6 +16,18 @@ issue_status: monitoring
 
 # 运行与排障
 
+## Provider 修复拒绝与 VPA 身份停止
+
+修复派发前的 `invalid_request` 先比对 canonical 错误完整路径、Provider Schema
+与原始 Draft，不先改 Prompt。嵌套 required 不应变成根字段；原 Draft 缺父对象时，
+授权最小实际缺失容器，并在模型补字段后完整重验，不让赋值器自行扩权限。
+
+VPA 的 `review_required` 若报告 hash 不一致，先区分 PA 价格 / 指标 hash 与
+VPA OHLCV / 来源 hash，再用同一原 frozen frame 和既有完整 catalog verifier
+核对同源身份、handoff、cutoff；不能把不同 hash 直接当错配或强制相等。
+新 Job 交付显式 binding，旧 Job 保持原投影。失败不改写、不自动重跑。
+诊断证据及验证边界见 [契约根因报告](../quality/v1_contract_failure_repair_20261011.md)。
+
 ## 调度完成但分析失败：错误传递
 
 `JobCompletion.status=completed` 只表示 handler 已返回；分析成功仍看

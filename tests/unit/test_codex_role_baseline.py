@@ -40,12 +40,14 @@ def test_vpa_delivery_matches_host_selected_window_scope(tmp_path):
 
 @pytest.mark.parametrize("role", ["stage1", "stage2", "vpa_evidence", "joint_arbiter"])
 def test_baseline_preserves_complete_resources_and_individual_audit(tmp_path, role):
+    from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
+
     text = "# 原文\n完整案例、反证和边界，不得摘要。\n" * 100
     (tmp_path / "market.txt").write_text(text, encoding="utf-8")
     context = {"task_id": "baseline", "allowed_knowledge_ids": ["market.txt"],
                "higher_timeframe": {"evidence": [{"evidence_id": "HTF.H1", "value": 123}]},
                "experience_entries": [{"summary": "frozen experience"}],
-               "role_evidence": {"evidence": [{"evidence_id": "vpa-e001", "facts": {"volume": 7}}]}}
+               "role_evidence": build_vpa_evidence_catalog(make_frame(), recent_limit=1, pa_window_sizes=())}
     publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path, job_root=tmp_path/"jobs")
     path = publisher(_request(role, context), 1)
     job = FrozenAgentJobStore(path.parent).open(path.name)

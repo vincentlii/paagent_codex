@@ -106,10 +106,14 @@ def test_repair_tools_remain_bounded_and_fixed_jobs_do_not_offer_optional_invest
 
 
 def test_vpa_delivery_keeps_its_own_values_and_legacy_jobs_keep_old_transport(tmp_path):
+    from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog, vpa_catalog_id
+
+    catalog = build_vpa_evidence_catalog(make_frame(), recent_limit=1, pa_window_sizes=())
+    catalog["evidence"][0]["source_reference"] = {"fact_id": "PA.WINDOW.K5"}
+    catalog["catalog_id"] = vpa_catalog_id(catalog)
     publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path, job_root=tmp_path / "jobs")
     path = publisher(_request("vpa_evidence", {"task_id": "vpa-delivery",
-                     "role_evidence": {"evidence": [{"evidence_id": "vpa-e001", "facts": {"volume": 7},
-                         "source_reference": {"fact_id": "PA.WINDOW.K5"}}]}}), 1)
+                     "role_evidence": catalog}), 1)
     job = FrozenAgentJobStore(path.parent).open(path.name)
     gateway = FrozenEvidenceGateway(job)
     baseline = EvidenceMcpServer(gateway, job_digest=path.name)._call_tool("get_role_baseline", {})["structuredContent"]
@@ -119,9 +123,10 @@ def test_vpa_delivery_keeps_its_own_values_and_legacy_jobs_keep_old_transport(tm
     assert gateway.get_market_core()["role_skill"] == job.runtime["skills"]["vpa_evidence"]
 
     legacy = replace(job, core_context={key: value for key, value in job.core_context.items()
-                                       if key != "analysis_execution_policy"})
+                                       if key not in {"analysis_execution_policy", "vpa_catalog_binding"}})
     legacy_gateway = FrozenEvidenceGateway(legacy)
     assert "role_skill" not in legacy_gateway.get_market_core()
+    assert legacy_gateway.get_market_core()["vpa_catalog_context"]["snapshot_hash"] == catalog["snapshot_hash"]
     old = EvidenceMcpServer(legacy_gateway, job_digest=path.name)._call_tool("get_role_baseline", {})["structuredContent"]
     assert "delivery_index" not in old
     assert "// @exec:" in CodexCliWorker._initial_prompt(legacy)

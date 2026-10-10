@@ -416,6 +416,61 @@ def test_provider_contract_repair_is_bounded_to_one_attempt() -> None:
     assert calls == 1
 
 
+@pytest.mark.parametrize("transport", ["codex_patch", "direct"])
+@pytest.mark.parametrize("has_parent", [False, True])
+def test_incremental_repair_targets_original_draft_and_revalidates(
+    transport: str, has_parent: bool,
+) -> None:
+    from pa_agent.agent_runtime.repair_contract import (
+        apply_patch_envelope,
+        extract_repair_context,
+    )
+
+    settings = Settings(validation=ValidationSettings(retry_max=1))
+    validator = JsonValidator(settings.validation)
+    draft = _stage1_provider_draft()
+    draft.pop("incremental_delta", None)
+    delta = {"new_closed_bars": ["K1"], "changed_fields": [],
+             "summary": "当前已收盘棒未改变主要市场解释。"}
+    if has_parent:
+        draft["incremental_delta"] = {key: value for key, value in delta.items()
+                                      if key != "summary"}
+    pointer = "/incremental_delta/summary" if has_parent else "/incremental_delta"
+    calls = []
+
+    def call_api(messages):
+        context = extract_repair_context(messages, output_schema=validator.schema_for("stage1"))
+        assert context is not None
+        assert context["editable_pointers"] == [pointer]
+        calls.append(context)
+        if transport == "codex_patch":
+            candidate = apply_patch_envelope(context, {
+                "status": "repaired", "changed_pointers": [pointer],
+                "replacement_fragments": [{"pointer": pointer, "operation": "replace",
+                                           "value_json": json.dumps(delta["summary"] if has_parent else delta)}],
+            })
+        else:
+            candidate = copy.deepcopy(draft)
+            candidate["incremental_delta"] = delta
+            # Exercise Direct's projection, not just the accepted candidate path.
+            candidate["diagnosis_confidence"] = 99
+        return make_reply(candidate)
+
+    result = validate_with_retry(
+        stage="stage1", messages=[], reply=make_reply(draft), validator=validator,
+        validation_settings=settings.validation,
+        validate_kwargs={"kline_frame": make_frame(), "incremental_new_bar_count": 1,
+                         "incremental_previous_stage1": VALID_STAGE1},
+        call_api=call_api,
+    )
+    assert isinstance(result.result, Ok)
+    assert result.attempts == 2
+    assert len(calls) == 1
+    assert result.result.obj["incremental_delta"]["summary"] == delta["summary"]
+    assert result.result.obj["diagnosis_confidence"] == draft["diagnosis_confidence"]
+    assert result.result.obj["direction"] == "bullish"
+
+
 def test_provider_repair_receives_schema_and_fact_issues_in_one_attempt() -> None:
     settings = Settings(
         prompt=PromptSettings(vpa_mode="off"),

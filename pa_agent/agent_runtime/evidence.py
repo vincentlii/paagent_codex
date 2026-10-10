@@ -511,6 +511,12 @@ class FrozenEvidenceGateway:
                     core["vpa_catalog_context"] = {
                         key: value for key, value in catalog.items() if key != "evidence"
                     }
+                    if self._core_context.get("vpa_catalog_binding"):
+                        # Only newly published jobs carry this verified binding.
+                        # Keep old frozen resources and canonical catalog hashes
+                        # unchanged; expose a scoped name at the model boundary.
+                        metadata = core["vpa_catalog_context"]
+                        metadata["ohlcv_snapshot_hash"] = metadata.pop("snapshot_hash")
             return core
         return self._query(
             "get_market_core",

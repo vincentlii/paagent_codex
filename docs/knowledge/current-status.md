@@ -4,7 +4,7 @@ capability: paper-observation-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-10
+最后核验: 2026-10-11
 核验提交: aa2d08c667b2d21e3d3ab90caf0997d5093092fe（运行 Python 代码；后续发布证据提交仅更新文档）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
@@ -20,6 +20,20 @@ verification_scope:
 ---
 
 # 当前状态
+
+## 2026-10-11 ETH / BTC 契约根因修复（本地通过，发布已获授权）
+
+ETH 增量首稿缺整个容器，canonical required 路径丢失父级导致修复发布被拒；
+现在保留完整路径，并仅在 Provider Schema 已允许、原 Draft 确实缺失父对象时
+授权缺失容器，由模型补判断后完整重验。BTC VPA 将 PA 价格 hash 与 OHLCV/来源
+hash 误当同一种身份；两者由原冻结 frame 复算均正确，新 Job 由完整 catalog
+校验绑定同源并明确模型投影的 hash 范围。旧 Job、原 catalog 与历史记录不改。
+
+278 项定向回归、关键静态检查及两份真实失败输入的离线契约核对通过。
+ETH summary 使用测试夹具，不是新模型质量样本；没有付费重跑。
+三个产品文件是本轮全部运行改动；Runtime AGENTS、Skills、Prompt、知识和交易
+规则均保持不变。已获提交发布授权，VPS 此时仍运行上一条目的旧包，发布回执
+待核验后追加。见 [契约根因报告](../quality/v1_contract_failure_repair_20261011.md)。
 
 ## 2026-10-10 历史失败根因审计（已发布；自然三品种待验收）
 

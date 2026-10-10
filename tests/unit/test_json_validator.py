@@ -104,6 +104,15 @@ def test_custom_contract_error_is_not_reported_as_zero_schema_errors() -> None:
     assert "0 schema error(s)" not in result.message
 
 
+def test_nested_canonical_required_field_retains_parent_and_array_index() -> None:
+    stage1 = copy.deepcopy(VALID_STAGE1)
+    del stage1["bar_by_bar_summary"][0]["reason"]
+    result = _validator().validate("stage1", json.dumps(stage1), kline_frame=make_frame())
+    assert isinstance(result, ValidationError)
+    assert "bar_by_bar_summary.0.reason" in result.missing_fields
+    assert "reason" not in result.missing_fields
+
+
 def test_schema_errors_are_deduplicated_by_field_path() -> None:
     stage1 = copy.deepcopy(VALID_STAGE1)
     stage1["cycle_position"] = "spike"

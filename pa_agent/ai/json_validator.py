@@ -231,6 +231,7 @@ def _merge_provider_issues(
     *,
     provider_obj: dict[str, Any],
     canonical_obj: dict[str, Any],
+    provider_schema: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Combine schema and downstream errors without duplicate editable paths."""
     merged = list(issues)
@@ -254,6 +255,9 @@ def _merge_provider_issues(
             provider_obj=provider_obj,
             canonical_obj=canonical_obj,
         )
+        issue = _remap_missing_draft_parent(
+            issue, provider_obj=provider_obj, provider_schema=provider_schema,
+        )
         key = (
             str(issue.get("pointer", "")),
             str(issue.get("kind", "")),
@@ -264,6 +268,36 @@ def _merge_provider_issues(
         seen.add(key)
         merged.append(issue)
     return merged
+
+
+def _remap_missing_draft_parent(
+    issue: dict[str, Any], *, provider_obj: dict[str, Any], provider_schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Repair the first absent Draft container, never a canonical-only field."""
+    pointer = str(issue.get("pointer", ""))
+    if not pointer:
+        return issue
+    parts = [part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")]
+    schema = provider_schema
+    for part in parts:
+        if part in schema.get("properties", {}):
+            schema = schema["properties"][part]
+        elif part.isdigit() and isinstance(schema.get("items"), dict):
+            schema = schema["items"]
+        else:
+            return issue
+    value: Any = provider_obj
+    for index, part in enumerate(parts):
+        if isinstance(value, dict):
+            if part not in value:
+                target = parts[:index + 1]
+                return {**issue, "path": _json_path(target), "pointer": _json_pointer(target)}
+            value = value[part]
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return issue
+    return issue
 
 
 def _remap_materialized_trace_issue(
@@ -797,6 +831,7 @@ class JsonValidator:
             if err.validator == "required":
                 # Extract the missing property name from the message
                 field = err.message.split("'")[1] if "'" in err.message else str(path)
+                field = _json_path([*err.absolute_path, field])
                 missing.append(field)
                 schema_issue_keys.append(f"missing:{field}")
             else:
@@ -933,6 +968,7 @@ class JsonValidator:
                 allowed,
                 provider_obj=pre_normalized_obj,
                 canonical_obj=obj,
+                provider_schema=draft_schema,
             )
             provider_missing = list(
                 dict.fromkeys(

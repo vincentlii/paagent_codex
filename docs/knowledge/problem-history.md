@@ -59,6 +59,10 @@ issue_status: monitoring
 - **正确原则：**normalizer 仅复制容器、白名单和无语义记号；repair 只修改被 JSON Pointer 授权的路径；Router 只读已验证枚举。
 - **当前实现/证据：**[ADR-0018](../architecture/ADR-0018-evidence-context-and-provider-drafts.md)、[AGENTS](../../AGENTS.md)。
 - **复发检查：**若程序输出了模型草稿中不存在的市场结论、Evidence 或价格，立即追踪其创造点。
+- **修复路径补充：**canonical required 路径保留父级与数组下标；若原 Draft 缺失
+  整个容器，先确认完整目标属于 Provider Schema，再授权第一个实际缺失的 key。
+  不提升 null、错误类型或 canonical-only 字段，不由程序补市场判断。两个赋值器
+  不各自造父对象。见 [ETH / BTC 契约根因](../quality/v1_contract_failure_repair_20261011.md)。
 
 ### PH-05 PA/VPA/Joint authority 与实验身份混淆
 
@@ -81,6 +85,9 @@ issue_status: monitoring
 - **正确原则：**一次请求只解析一次 identity 并冻结主周期/HTF/volume/catalog；所有下游复制稳定 hash 和 Evidence ID。
 - **当前实现/证据：**[ADR-0008](../architecture/ADR-0008-canonical-record-and-validation-boundaries.md)、[ADR-0015](../architecture/ADR-0015-runtime-recovery-and-frozen-execution-facts.md)。
 - **复发检查：**比较 task、frame、record、handoff 和 research artifact 的 source/venue/symbol/timeframe/hash。
+- **hash 范围补充：**PA 价格 / 指标 hash 与 VPA OHLCV / 来源 hash 不是同一种身份，
+  不能直接比较字符串。新 Job 在完整 catalog 校验后交付同 frame binding 与范围名；
+  不忽略真错配、不修改原算法或 catalog ID、不重标旧 Job。见上述契约根因报告。
 
 ### PH-07 Candidate、执行资格、结构失效与 Paper 语义混合
 

@@ -1,5 +1,7 @@
 # AGENTS
 
+- 排查 Provider 定向修复或 VPA 冻结身份停止前读 `docs/quality/v1_contract_failure_repair_20261011.md`：canonical required 路径必须保留父级与数组下标；只在 Provider Schema 已允许完整目标且原 Draft 确实缺少容器时授权该缺失容器，不能扩大到 null、错误类型或 canonical-only 字段。PA 价格 hash 与 VPA OHLCV/来源 hash 不直接比较；新 Job 由既有完整 catalog 校验绑定同一 frame，并在模型投影中明确作用域。旧 Job、原 catalog、历史失败和交易规则不改写。
+
 - V1 大量运行失败排障先读 `docs/quality/v1_failure_root_cause_audit_20261010.md`：三品种 CLI/MCP 的线程也计入 TasksMax；callback completed 不等于分析成功。只传递已有 canonical 错误和可信 Worker 原因，不保存原始 stderr/认证细节，不改历史回执、不开启 incomplete 自动重跑。容量修复与自然三品种验收分别报告。
 
 - 修改交易总览或交易统计前读 `docs/quality/trader_dashboard_20261010.md`：Dashboard 只读 Host JSON，不读数据库、不调用模型。唯一任务、模型意图、Paper 处置与入场分别计数；正式联合账户及 v3 收益隔离，未知与不确定不计零。复盘只复述 canonical 内容，订单推进落后时参考浮盈亏保持未知。本地实现与验收不等于 VPS 已发布。

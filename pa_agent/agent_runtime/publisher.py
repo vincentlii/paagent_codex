@@ -149,6 +149,19 @@ class CodexJobPublisher:
             dict.fromkeys(str(item) for item in context.pop("allowed_knowledge_ids", ()))
         )
         role_evidence = context.pop("role_evidence", None)
+        if request.role in {"vpa_evidence", "joint_arbiter"} and isinstance(role_evidence, dict):
+            from pa_agent.ai.vpa_measurements import validate_frozen_vpa_catalog
+
+            # Reuse the canonical verifier before selecting visible rows. PA's
+            # price/indicator hash and VPA's OHLCV/provenance hash have different
+            # domains; bind them to the same frame rather than comparing them.
+            role_evidence = validate_frozen_vpa_catalog(self._frame, role_evidence)
+            context["vpa_catalog_binding"] = {
+                "price_snapshot_hash": catalog.snapshot_hash,
+                "ohlcv_snapshot_hash": role_evidence["snapshot_hash"],
+                "catalog_id": role_evidence["catalog_id"],
+                "verified_same_frame": True,
+            }
         if request.role == "vpa_evidence" and isinstance(role_evidence, dict):
             from pa_agent.ai.vpa_measurements import prompt_vpa_evidence_ids
 

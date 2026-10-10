@@ -219,6 +219,9 @@ def test_publisher_exposes_only_vpa_evidence_id_index_before_retrieval(
     tmp_path: Path,
 ) -> None:
     frame = make_frame()
+    from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
+
+    catalog = build_vpa_evidence_catalog(frame, recent_limit=2, pa_window_sizes=())
     prompt_dir = tmp_path / "prompts"
     prompt_dir.mkdir()
     publisher = CodexJobPublisher(
@@ -232,12 +235,7 @@ def test_publisher_exposes_only_vpa_evidence_id_index_before_retrieval(
             {
                 "task_id": "task-vpa",
                 "allowed_knowledge_ids": [],
-                "role_evidence": {
-                    "evidence": [
-                        {"evidence_id": "vpa-e001", "facts": {"volume": 1}},
-                        {"evidence_id": "vpa-e002", "facts": {"volume": 2}},
-                    ]
-                },
+                "role_evidence": catalog,
             },
         ),
         1,
@@ -247,7 +245,53 @@ def test_publisher_exposes_only_vpa_evidence_id_index_before_retrieval(
 
     assert initial["evidence_index"]["vpa_evidence_ids"] == ["vpa-e001", "vpa-e002"]
     assert "role_evidence" not in job.request["messages"][1]["content"]
-    assert job.fact_projection["role_evidence"]["evidence"][0]["facts"]["volume"] == 1
+    assert job.fact_projection["role_evidence"]["evidence"] == catalog["evidence"]
+
+
+def test_vpa_catalog_binding_distinguishes_price_and_ohlcv_hashes(tmp_path: Path) -> None:
+    from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
+    from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
+
+    frame = make_frame()
+    catalog = build_vpa_evidence_catalog(frame)
+    original = json.dumps(catalog, sort_keys=True)
+    publisher = CodexJobPublisher(frame=frame, prompt_dir=tmp_path, job_root=tmp_path / "jobs")
+    path = publisher(_request("vpa_evidence", {"task_id": "vpa-identity", "role_evidence": catalog}), 1)
+    job = FrozenAgentJobStore(path.parent).open(path.name)
+    core = FrozenEvidenceGateway(job).get_market_core()
+
+    assert catalog["snapshot_hash"] != job.manifest.snapshot_hash
+    assert core["vpa_catalog_binding"] == {
+        "price_snapshot_hash": job.manifest.snapshot_hash,
+        "ohlcv_snapshot_hash": catalog["snapshot_hash"],
+        "catalog_id": catalog["catalog_id"], "verified_same_frame": True,
+    }
+    assert "snapshot_hash" not in core["vpa_catalog_context"]
+    assert core["vpa_catalog_context"]["ohlcv_snapshot_hash"] == catalog["snapshot_hash"]
+    assert job.fact_projection["role_evidence"]["snapshot_hash"] == catalog["snapshot_hash"]
+    assert {key: value for key, value in core["vpa_catalog_context"].items()
+            if key != "ohlcv_snapshot_hash"} == {
+        key: value for key, value in catalog.items() if key not in {"evidence", "snapshot_hash"}
+    }
+    assert json.dumps(catalog, sort_keys=True) == original
+
+
+@pytest.mark.parametrize("defect", ["other_frame", "changed_content"])
+def test_vpa_catalog_binding_uses_existing_frozen_catalog_validation(tmp_path: Path, defect: str) -> None:
+    from dataclasses import replace
+    from pa_agent.ai.vpa_measurements import build_vpa_evidence_catalog
+
+    frame = make_frame()
+    if defect == "other_frame":
+        other = replace(frame, bars=(replace(frame.bars[0], volume=frame.bars[0].volume + 1), *frame.bars[1:]))
+        catalog = build_vpa_evidence_catalog(other)
+    else:
+        catalog = build_vpa_evidence_catalog(frame)
+        catalog["data_reason"] = "changed without a matching catalog digest"
+    publisher = CodexJobPublisher(frame=frame, prompt_dir=tmp_path, job_root=tmp_path / "jobs")
+    with pytest.raises(ValueError, match="frozen VPA catalog"):
+        publisher(_request("vpa_evidence", {"task_id": "invalid-vpa-identity", "role_evidence": catalog}), 1)
+    assert not (tmp_path / "jobs").exists()
 
 
 def test_publisher_rejects_knowledge_outside_prompt_allowlist(tmp_path: Path) -> None:
