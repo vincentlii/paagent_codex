@@ -6,7 +6,7 @@ verification_scope:
   - VPS-controlled-live
 issue_status: monitoring
 最后核验: 2026-10-10
-核验提交: b295aa711b66ec0b6d0c15f6d56405e2f0bf2ff5
+核验提交: 94e43f0195002c806924d826c0b8b2c94b410d93（运行代码；容量修正为 systemd 单元）
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -23,6 +23,12 @@ issue_status: monitoring
 默认仍单黄金与并发 1；服务 idle 后才 applied，旧 frozen identity 不重标。
 VPS 并发调整须同步核对 `PA_AGENT_CODEX_MAX_WORKERS` 容量；调度设为 3 而 Worker
 仍为 1 不会产生三任务并行。当前单黄金不会因此加速 Stage 1→VPA→联合 Stage 2。
+用户已启用三品种。Worker 的 `TasksMax` 计入 CLI/MCP 线程；2026-10-10 实际
+64 上限命中 pids 拒绝 23、OOM 0，隔离探针验证 256 可容纳 150 线程。
+发布单元采用有界 256，保留内存 1 GB、CPU 200% 与权限隔离，不扩大模型并发。
+先暂停新任务、确认 scheduler/inbox 排空、备份，再重启 Worker；单元/文档改动
+不需要重装 Python 包或中断 Dashboard。历史退出 -6 不倒填唯一根因，后续自然
+任务实际成功率与 pids/memory 计数分开核对，见交易总览发布报告。
 非该原生 VPS 范围的旧监控保留原数据源，不得把不支持的品种请求误报已应用。
 取消勾选后，检查 `analysis_enabled=false` 与 Paper pending/open：有正式活跃
 订单仍轮询行情，无活跃订单不额外取数。暂停整体分析仍沿原暂停/expiry 语义。

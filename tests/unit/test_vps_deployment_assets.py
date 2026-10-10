@@ -161,6 +161,20 @@ def test_vps_provider_environment_matches_the_default_dashboard_profile() -> Non
     assert "PA_AGENT_MODEL=deepseek-v4-flash" in environment
 
 
+def test_codex_worker_has_bounded_task_capacity_for_three_analyses() -> None:
+    root = Path(__file__).resolve().parents[2]
+    service = (root / "deploy/systemd/pa-agent-codex-worker.service").read_text("utf-8")
+    fields = dict(
+        line.split("=", 1)
+        for line in service.splitlines()
+        if "=" in line and not line.startswith("#")
+    )
+    # Tasks include threads: three CLI/MCP stacks need room beyond one 64-task budget.
+    assert 3 * 64 + 16 <= int(fields["TasksMax"]) <= 256
+    assert fields["MemoryMax"] == "1G"
+    assert fields["CPUQuota"] == "200%"
+
+
 def test_installer_rejects_active_services_before_mutating_the_release() -> None:
     root = Path(__file__).resolve().parents[2]
     installer = (root / "deploy" / "install_vps.sh").read_text("utf-8")

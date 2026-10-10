@@ -157,7 +157,12 @@ PA_AGENT_CODEX_MODEL_CATALOG=
 
 上述为默认单资产示例。看板并发选 2/3 时，同步将非密配置
 `PA_AGENT_CODEX_MAX_WORKERS` 设为至少对应容量，并在 Host/Worker 排空、暂停后重启。
-2026-10-10 用户批准当前 VPS 容量为 3，但仍只启用 XAUUSDT；不代表已实测三模型峰值。
+2026-10-10 用户已在看板启用 XAUUSDT/BTCUSDT/ETHUSDT，当前并发与 Worker 容量为 3。
+Worker 的 `TasksMax=256` 有界容纳三路 CLI/MCP 进程和线程；该限制计入线程，
+不能把三个分析任务等同于三个系统进程。保留 `MemoryMax=1G`、`CPUQuota=200%`，
+不关闭权限隔离。容量故障先核对 cgroup 的 `pids.events`、`memory.events`；
+只有线程上限明确命中时才调整，不因 Provider 失败盲目扩容。三模型真实峰值及
+恢复效果仍由后续定时 Paper 验证，详见交易总览发布报告。
 
 如果只做 ChatGPT Codex/Luna 验收，`/etc/pa-agent/pa-agent-codex-secret.env` 保持安装器创建的
 空文件。只有选择 `deepseek-flash` Codex 工程 Backend 时，才用与 Direct API credential

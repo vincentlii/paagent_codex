@@ -18,7 +18,8 @@ RestartSec=10s
 UMask=0007
 MemoryMax=1G
 CPUQuota=200%
-TasksMax=64
+# Counts threads as well as processes: budget for three CLI/MCP stacks plus Worker.
+TasksMax=256
 LimitNOFILE=1024
 NoNewPrivileges=true
 PrivateTmp=true

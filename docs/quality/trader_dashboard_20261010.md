@@ -86,7 +86,7 @@ Paper 未实现资金费、真实盘口撮合、容量约束与清算，不能�
 中断的唯一原因，不能据此宣称不存在 HTTP 环境问题；未为让测试通过修改认证规则。
 发布到 Linux 后仍应核对实际登录和只读页面可达性，不需要额外模型分析。
 
-未验证：VPS 实际发布、生产历史库数据覆盖、浏览器像素验收与长期运行负载。
+初次本地验收未验证：VPS 实际发布、生产历史库数据覆盖、浏览器像素验收与长期运行负载。
 Node 的轻量 DOM 用例验证 JS 行为，不冒充真实浏览器端到端或视觉验收。
 新文件应随正常包构建自动包含；发布必须同时更新 Host 与 Dashboard，保留账本和控制
 配置，不重跑分析、不重置账户。仅更新 Dashboard 会收到“Host 尚未发布交易数据”。
@@ -105,6 +105,36 @@ Node 的轻量 DOM 用例验证 JS 行为，不冒充真实浏览器端到端或
 再与 VPS checkout/installed 比对。不能用“文本看起来相同”冒充字节身份一致。
 Windows tar 对中文文件名曾有提取错误；改用 ZIP，必须同时验证资源数量及字节，
 不能仅校验已成功提取的子集。以上只修正发布流程，不引入应用规则或依赖。
+
+### VPS 发布验收及并发容量修正
+
+运行代码 `94e43f0` 已发布；`811c0b1` 为交易页初始提交。暂停、排空、停止三项
+服务后安装固定 wheel，再重启并恢复原 Profile；备份
+`/var/backups/pa-agent/pa-agent-20261010T045057Z` 校验通过。生产三库 quick_check
+均为 ok，暂停期间表计数与备份一致；原记录、账户和配置未重置。
+262 个代码/Runtime 文件与 38 个 Prompt 文件在 Git、wheel、VPS checkout 和
+installed 逐字节一致；48 个依赖一致性、Runtime 资产及隔离权限检查通过。
+认证 `/trading`、`/api/trading` 与 `/healthz` 为 200，未认证私有 API 为 401；
+三品种唯一任务计数与独立 SQLite 查询一致，真实黄金产品身份与联合分析已显示。
+未额外 Run Once；实际浏览器像素和交易盈利能力仍不属于本次验收。
+
+恢复后自然定时任务暴露原有 Worker 容量问题：`TasksMax=64`、`pids.events max=23`，
+BTC/ETH CLI 退出 -6，内存峰值约 243 MB、memory OOM 计数为 0。同类失败在发布前
+也存在，不能归因只读页面或 Fast。用户授权有界容量修复；不修改模型、协议、知识、
+Skills、Prompt、线程池并发数量或数据库。旧失败保留，不重跑洗掉。
+
+独立同 VPS cgroup 线程探针（5 秒硬上限、无 Codex/行情调用）：64 上限下 150 个
+请求仅创建 63 个工作线程，报 `can't start new thread`，pids 拒绝 1、OOM 0；
+256 上限下全部 150 个通过，pids 拒绝 0、OOM 0。部署资产回归先确认旧值失败，
+再锁定三路线程余量及 1 GB/200% 原资源边界。Worker 单元改为 `TasksMax=256`，
+不是无限放开。Linux PID 控制器计入 TID，依据
+[Linux cgroup v2 PID 文档](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#pid)。
+
+这里复现并修复的是已确认的线程容量不足，不是完整模型调用；尚不能断言全部
+历史 -6 只有这一原因。真实三品种后续自然任务必须核对实际分析成功、逐阶段回执、
+耗时及资源峰值，调度 completed 回调本身不构成分析成功证明。
+三视角自审：PA 交易员确认订单与判断边界不变；VPA 交易员确认知识与证据交付不变；
+量化软件架构师确认容量有限、OOM/CPU/权限隔离不放宽、idle 重启不丢任务。
 
 参考：只读连接遵循 [SQLite URI](https://www.sqlite.org/uri.html)；
 无新增图表依赖，使用 [SVG polyline](https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Element/polyline)；

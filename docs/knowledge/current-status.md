@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 最后核验: 2026-10-10
-核验提交: b295aa711b66ec0b6d0c15f6d56405e2f0bf2ff5（运行代码）
+核验提交: 94e43f0195002c806924d826c0b8b2c94b410d93（运行 Python 代码；后续容量修正仅更新 systemd 单元）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,7 +21,7 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-10 交易总览（本地新增，未发布）
+## 2026-10-10 交易总览（已发布；并发容量修正）
 
 用户选定“交易总览”原型后，新增真实账本只读投影与 `/trading` 页面：
 账户概览、XAU/BTC/ETH 对比、累计已实现净盈亏、订单筛选、最近分析与原始 PA/VPA
@@ -31,8 +31,16 @@ verification_scope:
 统计分开唯一任务、联合模型意图、Paper 处置与已记入场；研究账户和旧版本不进入
 收益。已记入场但退出路径不明仍列 ambiguous，不计收益；订单推进落后、价格缺失
 或陈旧时不报参考浮盈亏。完整市场身份用于复盘关联。验收与未验证边界见
-[交易总览报告](../quality/trader_dashboard_20261010.md)。尚未 commit 或部署到 VPS，
-上方 YAML 的已发布提交身份继续保留。
+[交易总览报告](../quality/trader_dashboard_20261010.md)。`811c0b1` 与 `94e43f0`
+已提交并部署；真实库的黄金 `tradifi_perpetual` 类型漏计已修正，不重标旧数据。
+三库及备份、安装字节身份、私有 API 权限、真实任务计数通过；三品种/Fast/aggressive/
+并发 3 保留。浏览器像素、长期负载与盈利未验证。
+
+恢复后自然任务命中 Worker `TasksMax=64`，pids 拒绝 23、OOM 0，BTC/ETH 退出 -6。
+该类失败发布前也存在。用户批准有界线程容量修复，隔离无模型对照：64 时 150
+线程仅成功 63，256 时全部成功；单元改为 256，保留 1 GB/200% 和权限边界。
+Python/AGENTS/Skills/Prompt/交易规则不变，旧回执不改写；发布状态和下一自然任务
+核对需读交易总览报告末尾。容量通过不等于三品种完整分析或盈利已验收。
 
 ## 2026-10-10 四项运行升级与并发 3（已发布）
 
