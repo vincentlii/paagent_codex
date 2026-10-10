@@ -102,5 +102,26 @@ PA-only 的状态驱动 retryable 与 canonical 细分类别存在兼容审阅�
 
 ## 六、发布回执
 
-待在用户授权的暂停、备份、安装、重启与恢复核验后登记。安装通过不等于自然
-三品种分析、长期稳定、p95 或盈利已验证。
+用户明确授权提交发布后，运行提交 `aa2d08c667b2d21e3d3ab90caf0997d5093092fe`
+已从规范 LF 的 Git archive 构建 wheel，并快进 VPS 源码、停止三服务后重装。
+备份 `/var/backups/pa-agent/pa-agent-20261010T053726Z` manifest 验证无错误；
+暂停 generation 30 已 applied 且 scheduler/Spool 排空后才停服安装。
+
+发布核验：
+
+- wheel 与 VPS 安装的 272 个源码/Runtime/Prompt/fixture 文件对 Git blob 字节一致。
+- 48 项依赖一致；Runtime 权限审计无问题，资产 digest 仍为
+  `b991054d11f21bfd80b87f266cde7d24def02209ed0383cfd260109d2573e6c3`。
+- 13:38 重启三个服务，ExecStartPre/ExecMainStatus=0、NRestarts=0、全部 active。
+- 恢复 generation 31 running 且已 applied；Profile generation 4、指纹、设置 hash、
+  三品种、并发 3、Fast true、`codex_only`、`gpt-6-luna/xhigh` 均保持不变。
+- 71 原始记录哈希未变；monitoring/analysis/Paper 三库 quick_check=ok。
+- `/healthz` running/200；私有 status/trading 接口 200，未认证 status 401。
+- Worker 保持 TasksMax=256、MemoryMax=1 GB、CPU 200%；pids max/OOM 全 0，
+  这是重启后空闲观测，不是三个 CLI 峰值或完整分析验收。
+
+未额外调用模型或触发 Run Once，历史错误不改写。下一自然三品种完整链、长期
+稳定、p95 和盈利仍未验证。发布后文档证据提交不改变已核验的运行 Python 身份。
+
+回退时先暂停并排空；恢复固定旧包及服务后再恢复原控制，不能运行中覆盖文件。
+本轮未迁移 schema；备份用于事故恢复，不能为回退代码顺便回滚正常新增 Paper 数据。

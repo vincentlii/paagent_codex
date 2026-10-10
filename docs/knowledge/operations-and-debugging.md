@@ -6,7 +6,7 @@ verification_scope:
   - VPS-controlled-live
 issue_status: monitoring
 最后核验: 2026-10-10
-核验提交: 94e43f0195002c806924d826c0b8b2c94b410d93（运行代码；容量修正为 systemd 单元）
+核验提交: aa2d08c667b2d21e3d3ab90caf0997d5093092fe（运行代码；后续发布证据提交仅更新文档）
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md

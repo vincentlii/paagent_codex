@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 最后核验: 2026-10-10
-核验提交: 94e43f0195002c806924d826c0b8b2c94b410d93（运行 Python 代码；后续容量修正仅更新 systemd 单元）
+核验提交: aa2d08c667b2d21e3d3ab90caf0997d5093092fe（运行 Python 代码；后续发布证据提交仅更新文档）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,7 +21,7 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-10 历史失败根因审计（本地修复通过，已获发布授权）
+## 2026-10-10 历史失败根因审计（已发布；自然三品种待验收）
 
 原位清点 71 份分析记录、54 个历史失败；当前看板的三品种失败合计同为 54，
 不含更早的 Bitget 身份。13:09 容量修正后截至本轮核对尚无新增模型任务。
@@ -30,7 +30,13 @@ exit 1/-6 不推断唯一根因。已确认 TasksMax=64 触顶并已发布有界
 
 另有失败回执丢失已封装原因：本地补录 canonical exception/outcome 与可信
 Worker 原因，进程启动 OSError 保留数值 errno；没有新增规则、schema、Prompt、
-重试或历史回填。用户授权本轮提交发布，实际发布证据随后登记于
+重试或历史回填。89 项定向回归通过，运行提交 `aa2d08c` 已获批安装到 VPS；
+272 个源码/资源文件与 Git 字节一致，48 项依赖及 Runtime 权限审计通过。
+备份 `pa-agent-20261010T053726Z` 已验证；三个服务预检/退出码 0、active、
+NRestarts=0，恢复 generation 31 running 并已 applied。Profile generation 4、
+三品种/并发 3/Fast/模型保持原样；71 原始记录哈希与三库 quick_check 通过。
+看板私有接口 200、未认证 401。pids/OOM 计数 0 尚为空闲观测，不冒充满载验收。
+未额外调用模型，下一自然三品种完整链仍待观察。完整证据见
 [根因报告](../quality/v1_failure_root_cause_audit_20261010.md)。
 
 ## 2026-10-10 交易总览（已发布；并发容量修正）
