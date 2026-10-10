@@ -16,6 +16,29 @@ issue_status: monitoring
 
 # 运行与排障
 
+## 私有源码仓库与清理边界
+
+独立私有仓库为 `vincentlii/paagent_codex`，发布分支为 `main`。
+本地继续在现有 `codex-analysis-backend-v1` 工作树开发，使用独立 remote
+`paagent_codex` 推送 `HEAD:main`；原 `origin` 保留为 PA_Agent 上游，
+不使用 `--mirror`、`--all` 或上传其他实验分支。源码上传不代表 VPS 已更新。
+
+清理前核对 tracked 引用和运行资源契约；宣传图片、一次性 probe 结果及
+生成缓存可移除，运行代码、PA/VPA 原文、Runtime AGENTS/Skills、lock、
+必要测试与正式审计证据保持完整。已提交文件可从清理前提交恢复；缓存
+可再生成，虚拟环境保留在本地且不上传。不得顺手清理其他工作树或 Git 对象。
+
+上传前分别扫描当前 tracked 文件与当前分支可达历史，不仅检查 `.gitignore`。
+生产配置、API key、Codex auth、数据库和原始运行记录保持本地；保留的上游
+历史曾包含日志，不能把当前目录已忽略当成历史已清理。2026-10-11 历史扫描
+的 45 项命中逐项复核为请求 ID（44）和密钥遮罩测试的虚构 fixture（1），
+不是实际认证密钥；不为消除误报修改测试或放宽扫描规则。
+
+本次源码树由 697 减为 675 个 tracked 文件；212 个测试／helper／fixture
+及运行代码、知识、Runtime 资源、部署文件和依赖锁均与清理前逐字节一致。
+当前源码树扫描仅命中上述虚构 fixture；README 的本地链接与忽略规则通过。
+未重跑模型、未修改 VPS，不能把源码整理当作新的运行或盈利验收。
+
 ## Provider 修复拒绝与 VPA 身份停止
 
 修复派发前的 `invalid_request` 先比对 canonical 错误完整路径、Provider Schema

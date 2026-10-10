@@ -15,6 +15,7 @@ venv/
 .ruff_cache/
 .mypy_cache/
 .hypothesis/
+/thinking_route_probe_result.json
 
 # ── 密钥与本地配置（切勿提交）────────────────────────────────────────────────
 .env
@@ -52,7 +53,6 @@ index.js
 /*.jpeg
 /*.jpg
 /*.png
-!/赞助码.jpeg
 !/二元决策树演示图.jpg
 !/assets/**/*.png
 videoCover-*
@@ -72,7 +72,6 @@ MAC*.txt
 .vscode/
 .cursor/
 .kiro/
-.superpowers/
 .superpowers/
 
 # ── tools 目录下的本地诊断输出（保留 .py 脚本本身）──────────────────────────

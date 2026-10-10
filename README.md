@@ -1,151 +1,66 @@
-# PA Agent — AI K线分析辅助工具（桌面端 / Linux Headless）
+# PA Agent Codex
 
-**交流 QQ 群：1016222782**
+基于已优化的 [PA_Agent](https://github.com/rosemarycox5334-debug/PA_Agent) 增加受约束的 Codex Analysis Backend。当前运行方向是 **Linux VPS Headless + 网页看板 + Paper 模拟观察**；原 Direct Backend 与 Windows 桌面入口继续保留。
 
----
+Brooks PA 是主市场框架，Wyckoff VPA 是独立证据层。Codex 负责理解上下文、调查冻结证据和专业判断；Host 程序拥有行情身份、时间边界、Router、校验、风险、订单数学及持久化权限。
 
-面向主观交易者的 **价格行为（Price Action）** AI 辅助决策工具。从 **MT5 / TradingView / yfinance / AkShare** 读取 K 线，将结构化 K 线数据与预计算特征送入大模型做**两阶段分析**（市场诊断 → 交易决策），**不是**截图识图，**不连接券商、不执行下单**。
+## 分析链路
 
----
+正式 Codex 全量单 Agent 联合链：
 
-## 主要功能
-
-- 📈 **多数据源**：MT5（Windows）、TradingView（全平台）、yfinance（期货/加密货币）、AkShare（A 股）
-- 🧠 **两阶段 AI 分析**：市场诊断 → 策略路由 → 交易决策（限价/突破/市价或不下单）
-- 🔄 **增量分析与持续跟踪**：新增 K 线时复用上次结论；开启 `keep_analysis` 后新 K 线收盘自动触发新一轮分析
-- 🌳 **决策树可视化**：赛博科幻风格可交互流程图，自动播放闸门→策略路径动画
-- 🔮 **未来走势预期**：AI 预测下一根 K 线方向和下一个市场周期位置
-- 💬 **分析后自由追问**：完整对话会话管理器，实时推理流 + Token 进度条，对话历史持久化
-- 📚 **经验库**：按周期位置检索历史案例供分析参考
-- 📝 **完整落盘**：Prompt、原始响应、诊断/决策 JSON、Token 用量、追问记录
-- 🛡️ **可配置校验体系**：JSON 校验、一致性检查、语义校验、截断修复、失败自动重试
-- 🔒 **API Key** 本地密文存储，并支持环境变量、凭据文件与 systemd credentials
-
----
-
-## 环境要求
-
-| 项目     | 要求                                                                    |
-| -------- | ----------------------------------------------------------------------- |
-| 操作系统 | Windows 10 / 11、macOS 12+；Linux VPS 使用无 GUI 的 Headless 服务       |
-| Python   | 3.11+                                                                    |
-| 数据源   | MT5 / TradingView / yfinance / AkShare **至少配置一种**                  |
-| 网络     | 可访问所配置的 AI API（如 DeepSeek、PackyAPI 等）                        |
-
----
-
-## 快速开始
-
-桌面图形界面：
-
-```cmd
-pip install -e ".[desktop]"
-python -m pa_agent.main
+```text
+Frozen Snapshot（主周期 + HTF）
+→ PA Stage 1 市场诊断
+→ Validator → Brooks Router
+→ 独立 VPA Evidence Analyst
+→ PA + VPA 联合 Stage 2 交易决策
+→ Validator / Risk / Trader Equation
+→ 审计记录与 Paper
 ```
 
-首次启动后在**设置**中填写 **Base URL**、**模型名** 与 **API Key**。
+- 完整知识和阶段协议由 Host 选择，经只读 Evidence MCP 交付；模型可在同一冻结快照内按需调查证据，不能获取未来行情、改代码或绕过交易边界。
+- 不同快照使用独立会话；同快照的 PA Stage 1 首稿验证通过后才允许受控续接 Stage 2。VPA 与修复任务隔离，不开启长期记忆。
+- Runtime `AGENTS.md`、角色 Skills 与规则按发布版本冻结。分层知识及 Stage 内子 Agent 仍属于隔离研究，不自动进入正式链。
+- 当前 Binance Headless Profile 支持 XAUUSDT、BTCUSDT、ETHUSDT，有界并发及保守／平衡／激进倾向；默认配置与 VPS 实际启用状态须分别核对。
+- 看板用于控制与复盘；模型意图、Paper 接收、实际入场及收益分别统计。不连接交易账户自动下单，Paper 不等于真实成交或盈利证明。
 
-> 如需隔离环境也可创建虚拟环境：`python -m venv .venv` 后激活再安装。
+## 安装与部署
 
-Linux VPS 不安装 Qt：
+Python 3.11+，依赖版本以 `uv.lock` 为准。Linux Headless 不安装 Qt：
 
 ```bash
-pip install -e ".[vps]"
-pa-agent-headless --check
-pa-agent-headless --probe-data
-pa-agent-headless
+uv sync --frozen --extra vps
+uv run --frozen --extra vps pa-agent-headless --check
 ```
 
-Headless 会为每个配置资产独立拉取已收盘 K 线并自动调用 AI；同一快照成功后不会重复分析，失败只按有界退避重试。`--probe-data` 只验证行情、身份和合约规格，不调用模型。当前原生 paper 市场包括 Binance、OKX、Bitget 的 XAU 永续；完整安装、配置与 systemd 部署见 [`docs/linux_headless_deployment.md`](docs/linux_headless_deployment.md)。
+上述检查需要先按部署文档配置 `PA_AGENT_HOME`、数据源及隔离 Worker。Codex CLI 安装、账户认证、权限隔离、systemd 服务、看板登录与 SSH tunnel 均见 [Linux Headless 部署文档](docs/linux_headless_deployment.md)，不要直接把样例视为已配置环境。
 
-核心安装只包含分析、校验与审计依赖；`[desktop]` 提供完整桌面与数据源，`[vps]` 提供三家原生交易所 Headless 依赖，`[tradingview]` 单独提供 TradingView 数据源。Linux 若改用 TradingView，应安装 `.[vps,tradingview]`。
+| 入口 | 用途 |
+| --- | --- |
+| [联合链配置样例](config/settings.vps.codex-joint.example.json) | 显式选择 Codex 联合 pipeline |
+| [Worker 环境样例](deploy/systemd/pa-agent-codex-joint.env.example) | Codex 模型、思考强度及服务配置 |
+| [配置说明](config/README.md) | 配置字段和本地凭据管理 |
+| [当前状态](docs/knowledge/current-status.md) | 实际验收范围、VPS 发布状态及未验证项 |
+| [Codex Analysis North Star](docs/knowledge/codex-analysis-north-star.md) | 长期架构和不可越过的边界 |
+| [知识库入口](docs/knowledge/README.md) | 架构、知识调用、研究及排障索引 |
 
-> 若需运行包含 GUI 的完整测试，使用：`pip install -e ".[desktop,dev]"`。发布与 CI 使用仓库内 `uv.lock`。
+原桌面版安装 `.[desktop]` 后使用 `python -m pa_agent.main`，说明见 [桌面使用文档](PA_Agent使用文档.md)。Direct 与 Codex 不共享隐式认证；旧 off/shadow 与新版联合链不是同一协议。
 
----
+## 仓库内容与维护
 
-## 详细说明
+| 路径 | 内容 |
+| --- | --- |
+| `pa_agent/` | 分析、Codex Runtime、Headless、Dashboard、执行与审计代码 |
+| `prompt_engineering/` | Brooks / VPA 原文知识、阶段协议及 Schema |
+| `tests/` | 保留的回归测试、属性测试、集成测试与 fixture |
+| `deploy/` | Linux 安装与 systemd 服务文件 |
+| `docs/` | 升级计划、ADR、验收证据与长期知识库 |
+| `tools/` | 有长期用途的诊断、验收与研究工具 |
 
-完整操作界面说明见 [`PA_Agent使用文档.md`](PA_Agent使用文档.md)，配置字段说明见 [`config/README.md`](config/README.md)。
+修改前读取 [AGENTS.md](AGENTS.md) 和项目变更规范。CI 使用锁定依赖执行非 live 回归与资源检查；真实模型／行情实验必须显式授权，不因上传仓库而重跑。
 
----
+当前源码树不包含本地 API key、Codex 登录凭据、生产配置、运行数据库、分析记录、虚拟环境或缓存。清理仅移除已确认无运行依赖的宣传素材、一次性结果及再生成缓存，不删减知识、Runtime Skills 或必要测试。源码历史保留；只发布当前分支，不镜像其他工作树和实验分支。上游历史曾包含日志，上传前须单独复核，方法见 [运行与排障](docs/knowledge/operations-and-debugging.md)。
 
-**免责声明**：本工具仅供学习与研究，不构成投资建议。交易有风险，决策后果自负。
+**免责声明：**仅供学习与研究，不构成投资建议，不保证盈利。
 
-本项目采用 [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE) 发布。
-
----
-
-## 群友反馈榜单
-
-感谢群友的使用反馈与鼓励，以下为群友评价截图（按时间从早到晚排列）：
-
-<p align="center">
-  <img src="qunyou/BD58CB2D6E4F45CC17CF832C506A982C.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/653EC872A0D6883A34B7B37B692C8B1D.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260619-205140.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260619-235505.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260620-150714.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260620-150833.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260620-220824.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260623-125929.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/91003065F07407E92B50964AE7F8A944.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260624-191001.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260628-014043.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260628-213700.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260629-163821.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ20260701-212522.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/BB4AE8110A7011426BD29D5CE8B5F73B.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/F383D366F2254692418DB18AAA617ACE.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/AD48DF6289CB6A9D51FE0B8EE2EC38C2.jpg" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/F61C8DCDB67924B64B33403D20047E0B.png" alt="群友反馈" width="480" />
-</p>
-<p align="center">
-  <img src="qunyou/QQ_1783089951396.png" alt="群友反馈" width="480" />
-</p>
-
----
-
-## 打赏与支持
-
-如果你觉得这个程序对你有帮助的话，可以打赏激励作者继续优化程序，感谢你的支持和鼓励！
-
-（作者会优先解决打赏人的问题，因为人太多了！回复不过来！）
-
-<p align="center">
-  <img src="赞助码.jpeg" alt="打赏二维码" width="420" />
-</p>
+保留原项目来源及 [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)。
