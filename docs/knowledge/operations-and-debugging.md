@@ -18,7 +18,9 @@ issue_status: monitoring
 
 ## 私有源码仓库与清理边界
 
-独立私有仓库为 `vincentlii/paagent_codex`，发布分支为 `main`。
+独立私有仓库目标为 `vincentlii/paagent_codex`，目标发布分支为 `main`。
+首次创建和上传前，须明确核对用户授权的账户、私有属性及历史载荷范围；
+本地提交或已登录 GitHub 不能独自证明外部仓库已经创建或上传完成。
 本地继续在现有 `codex-analysis-backend-v1` 工作树开发，使用独立 remote
 `paagent_codex` 推送 `HEAD:main`；原 `origin` 保留为 PA_Agent 上游，
 不使用 `--mirror`、`--all` 或上传其他实验分支。源码上传不代表 VPS 已更新。
