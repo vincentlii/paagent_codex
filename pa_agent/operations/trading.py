@@ -54,6 +54,7 @@ ORDER_FIELDS = (
     "order_id",
     "run_id",
     "symbol",
+    "instrument_type",
     "side",
     "order_type",
     "status",
@@ -105,8 +106,9 @@ RUN_FIELDS = (
     "model",
     "confidence",
 )
+_PERPETUAL_TYPES = "('perpetual','tradifi_perpetual')"
 _MARKET_FILTER = (
-    "provider = 'binance_usdm' AND venue = 'BINANCE' AND instrument_type = 'perpetual' "
+    f"provider = 'binance_usdm' AND venue = 'BINANCE' AND instrument_type IN {_PERPETUAL_TYPES} "
     "AND timeframe = '1h' AND symbol IN ('XAUUSDT','BTCUSDT','ETHUSDT')"
 )
 _ORDER_FILTER = f"account_id = '{ACCOUNT_ID}' AND arm = '{PIPELINE}' AND {_MARKET_FILTER}"
@@ -206,7 +208,7 @@ def _analysis(
     join = (
         " FROM monitoring_jobs m LEFT JOIN analysis.analysis_runs r ON r.run_id = m.run_id "
         "AND r.symbol = m.symbol AND r.timeframe = m.timeframe AND r.source_provider = m.source "
-        "AND r.venue = m.venue AND r.resolved_symbol = m.symbol AND r.instrument_type = 'perpetual' "
+        f"AND r.venue = m.venue AND r.resolved_symbol = m.symbol AND r.instrument_type IN {_PERPETUAL_TYPES} "
     )
     for period in periods.values():
         rows = connection.execute(
@@ -432,7 +434,7 @@ def build_trading_projection(
             "provider": "binance_usdm",
             "venue": "BINANCE",
             "timeframe": "1h",
-            "instrument_type": "perpetual",
+            "instrument_type": "perpetual / tradifi_perpetual",
         },
         "analysis_available": False,
         "paper_available": False,
@@ -492,11 +494,11 @@ def build_trading_projection(
                 ids = list({order["run_id"] for order in result["orders"]})
                 marks = ",".join("?" for _ in ids)
                 rows = connection.execute(
-                    "SELECT run_id, symbol, timeframe, analysis_pipeline, stage1_cycle_position, "
+                    "SELECT run_id, symbol, timeframe, instrument_type, analysis_pipeline, stage1_cycle_position, "
                     "stage1_direction, stage1_gate_result, "
                     "CASE WHEN length(review_context_json) <= 1000000 THEN review_context_json END AS review_json "
                     f"FROM analysis_runs WHERE run_id IN ({marks}) AND source_provider = 'binance_usdm' "
-                    "AND venue = 'BINANCE' AND resolved_symbol = symbol AND instrument_type = 'perpetual'",
+                    f"AND venue = 'BINANCE' AND resolved_symbol = symbol AND instrument_type IN {_PERPETUAL_TYPES}",
                     ids,
                 ).fetchall()
                 by_run = {row["run_id"]: row for row in rows}
@@ -505,6 +507,7 @@ def build_trading_projection(
                     if (
                         row
                         and row["symbol"] == order["symbol"]
+                        and row["instrument_type"] == order["instrument_type"]
                         and row["timeframe"] == "1h"
                         and row["analysis_pipeline"] == PIPELINE
                     ):

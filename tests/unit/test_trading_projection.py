@@ -396,3 +396,37 @@ def test_headless_review_publishes_safe_trader_block_without_database_mutation(l
     status.write({"service_state": "running", **projection})
     assert status.read()["trading"]["paper_available"] is True
     assert status.read()["trading"]["analysis_available"] is True
+
+
+@pytest.mark.parametrize("instrument_type", ["perpetual", "tradifi_perpetual"])
+def test_provider_perpetual_product_types_keep_intent_pnl_and_review(ledgers, instrument_type):
+    _task(ledgers, "product")
+    _analysis(
+        ledgers,
+        "product",
+        order_type="限价单",
+        instrument_type=instrument_type,
+        review_context_json=json.dumps({"decision_review": {"reasoning": "stored PA"}}),
+    )
+    _order(ledgers, "product", instrument_type=instrument_type, pnl=12.0)
+    result = _report(ledgers)
+    assert _asset(result)["joint_completed"] == 1
+    assert _asset(result)["candidates"] == 1
+    assert _asset(result)["realized_pnl"] == 12.0
+    assert result["orders"][0]["instrument_type"] == instrument_type
+    assert result["orders"][0]["review"]["reasoning"] == "stored PA"
+
+
+def test_product_types_are_not_canonicalized_or_cross_bound(ledgers):
+    _analysis(
+        ledgers,
+        "mismatch",
+        instrument_type="tradifi_perpetual",
+        review_context_json=json.dumps({"decision_review": {"reasoning": "other type"}}),
+    )
+    _order(ledgers, "mismatch", instrument_type="perpetual")
+    _order(ledgers, "unsupported", instrument_type="linear_swap", pnl=999.0)
+    result = _report(ledgers)
+    assert len(result["orders"]) == 1
+    assert _asset(result)["realized_pnl"] == 100.0
+    assert not result["orders"][0].get("review")

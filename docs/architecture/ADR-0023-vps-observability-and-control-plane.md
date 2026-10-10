@@ -70,7 +70,9 @@ Headless 在既有 30 秒 review cache 中只读分析索引、调度账本与 P
 原 `/api/status` 不附加交易大块，避免运行控制页面反复下载复盘内容。
 
 交易统计固定隔离正式 `pipeline-pa_vpa_joint` / `pa_vpa_joint`、Binance USD-M
-perpetual / 1h 与 `paper_latency_v3`。整账户已结算余额和结构风险与范围内净收益分开。
+`perpetual` 或 `tradifi_perpetual` / 1h 与 `paper_latency_v3`；黄金产品类型沿用
+Provider 元数据原值，订单复盘仍按实际类型精确关联，不合并身份。
+整账户已结算余额和结构风险与范围内净收益分开。
 调度任务计数不等同当前 Codex 联合样本数；候选与 No Trade 只来自成功且身份匹配的
 联合分析。净收益、胜率和曲线仅使用已知平仓结果，未知路径不计零。
 

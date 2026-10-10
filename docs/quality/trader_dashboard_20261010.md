@@ -30,7 +30,7 @@ SLA。订单每品种/状态最多 10 笔，任务最近 30 条，曲线最多 1
 | 完成 / 失败 | 完成要求调度 completed 且 analysis_success=1；失败来自最新非取消失败回执，取消和未有终态分开。不能等同模型判断正确。 |
 | 模型意图 | 仅成功、完整身份匹配的 `pa_vpa_joint` 索引，候选与模型 No Trade 分开。无索引/身份不匹配保持未知覆盖，不猜协议。 |
 | Paper 处置 | 正式联合账户和 arm 的 paper_decisions，通过 task_id 关联当前市场任务；submitted/no_trade/rejected 分开。尚无处置不冒充接单。 |
-| 订单与收益范围 | `pipeline-pa_vpa_joint`、arm=`pa_vpa_joint`、`paper_latency_v3`、binance_usdm/BINANCE/perpetual、1h、三品种。研究、其他账户和版本不混入。 |
+| 订单与收益范围 | `pipeline-pa_vpa_joint`、arm=`pa_vpa_joint`、`paper_latency_v3`、binance_usdm/BINANCE、1h、三品种；产品类型允许 Provider 实际记录的 `perpetual` 和黄金 `tradifi_perpetual`，不改写身份。研究、其他账户和版本不混入。 |
 | 已记入场 | 已有 fill_price 与 fill_bar_ts 的 open/closed/ambiguous；不确定入场未有 fill 不计。已记入场不代表退出路径已知。 |
 | 平仓净收益 | 只用 status=closed 且有限 realized_pnl；该值已扣双边 fees，不能再次减 fees。缺失只算 coverage，不计零。 |
 | 胜率 | 净收益 >0 的已知平仓笔数 / 已知平仓笔数；零收益单列 breakeven。pending/open/cancelled/ambiguous 不进分母，零样本为未知。 |
@@ -90,6 +90,21 @@ Paper 未实现资金费、真实盘口撮合、容量约束与清算，不能�
 Node 的轻量 DOM 用例验证 JS 行为，不冒充真实浏览器端到端或视觉验收。
 新文件应随正常包构建自动包含；发布必须同时更新 Host 与 Dashboard，保留账本和控制
 配置，不重跑分析、不重置账户。仅更新 Dashboard 会收到“Host 尚未发布交易数据”。
+
+### 发布前真实库修正
+
+首次暂停发布核对发现 XAU 的 `instrument_type` 来自 Provider `contractType`，实际为
+`tradifi_perpetual`，不是合成 fixture 使用的 `perpetual`；初始过滤漏计黄金联合意图。
+只读统计允许这两种已知永续产品类型，保留实际类型，订单复盘进一步精确比较类型。
+未知类型、其他来源/市场/版本仍排除，不重标旧记录、不改交易安全或订单数学。
+新增两种类型及跨类型拒绝关联回归；投影、页面、Host/cache 的新鲜回归 69 passed。
+三角色核对通过：PA/VPA 只补展示，量化侧修正产品范围而不合并事实身份。
+
+跨平台打包须避免本机 `core.autocrlf=true` 使 `git archive` 交付 CRLF：从固定提交使用
+`git -c core.autocrlf=false -c core.eol=lf archive`，wheel 内源码/资产逐项比对 Git blob，
+再与 VPS checkout/installed 比对。不能用“文本看起来相同”冒充字节身份一致。
+Windows tar 对中文文件名曾有提取错误；改用 ZIP，必须同时验证资源数量及字节，
+不能仅校验已成功提取的子集。以上只修正发布流程，不引入应用规则或依赖。
 
 参考：只读连接遵循 [SQLite URI](https://www.sqlite.org/uri.html)；
 无新增图表依赖，使用 [SVG polyline](https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Element/polyline)；
