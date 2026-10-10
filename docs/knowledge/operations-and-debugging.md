@@ -5,8 +5,8 @@ verification_scope:
   - local
   - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-10-10
-核验提交: aa2d08c667b2d21e3d3ab90caf0997d5093092fe（运行代码；后续发布证据提交仅更新文档）
+最后核验: 2026-10-11
+核验提交: 18d9dccef219bd80d03521cfdf15dda918b236bc（运行代码；后续发布证据提交仅更新文档）
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -70,6 +70,8 @@ Codex 长期记忆在发布 config 与每次 CLI override 中均关闭；存在�
    与故障时间相邻就判定根因。新 joint pipeline 与旧默认 pipeline 的身份须分离。
 3. 核对 Worker 启动时间、固定源码提交和安装包；服务运行时禁止覆盖安装。
    包更新后重启 Headless、Worker 和 Dashboard，不能只刷新网页。
+   Windows 导出发布档案显式使用 `git -c core.autocrlf=false -c core.eol=lf archive`；
+   中文路径完整提取，wheel 与 Git blob 逐文件核验，不把工作区换行混入 Runtime digest。
 4. 从完整 record 的 Codex call/exception attempts 读取 `worker_error_type`、
    `worker_failure_reason`、typed wall latency。该 reason 是 Host 分类，不保存
    raw stderr、Prompt 或模型推理。旧记录缺字段时保持未知，不能倒填为已知根因。

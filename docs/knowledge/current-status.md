@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 最后核验: 2026-10-11
-核验提交: aa2d08c667b2d21e3d3ab90caf0997d5093092fe（运行 Python 代码；后续发布证据提交仅更新文档）
+核验提交: 18d9dccef219bd80d03521cfdf15dda918b236bc（运行 Python 代码；后续发布证据提交仅更新文档）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,7 +21,7 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-11 ETH / BTC 契约根因修复（本地通过，发布已获授权）
+## 2026-10-11 ETH / BTC 契约根因修复（已发布；下一自然任务待验收）
 
 ETH 增量首稿缺整个容器，canonical required 路径丢失父级导致修复发布被拒；
 现在保留完整路径，并仅在 Provider Schema 已允许、原 Draft 确实缺失父对象时
@@ -32,8 +32,13 @@ hash 误当同一种身份；两者由原冻结 frame 复算均正确，新 Job 
 278 项定向回归、关键静态检查及两份真实失败输入的离线契约核对通过。
 ETH summary 使用测试夹具，不是新模型质量样本；没有付费重跑。
 三个产品文件是本轮全部运行改动；Runtime AGENTS、Skills、Prompt、知识和交易
-规则均保持不变。已获提交发布授权，VPS 此时仍运行上一条目的旧包，发布回执
-待核验后追加。见 [契约根因报告](../quality/v1_contract_failure_repair_20261011.md)。
+规则均保持不变。运行提交 `18d9dcc` 已获批发布；规范 LF 的 Linux wheel 与 Git
+301 个发布文件字节一致，48 项依赖不变，Runtime / 权限审计通过。备份
+`pa-agent-20261010T163829Z` 核验通过；112 原始记录及三库保留，三服务 active /
+退出码 0 / NRestarts=0，generation 33 running 已 applied，Profile generation 4 /
+三品种 / 并发 3 / Fast / 模型与设置保持原样。私有接口 200、未认证 401。
+无模型重跑；空闲资源事件 0 不等于满载验收，下一自然分析效果待观察。
+见 [契约根因报告](../quality/v1_contract_failure_repair_20261011.md)。
 
 ## 2026-10-10 历史失败根因审计（已发布；自然三品种待验收）
 

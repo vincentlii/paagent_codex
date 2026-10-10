@@ -6,7 +6,8 @@
 
 两次失败均有确定的契约层根因，不应以新增交易 Gate、Prompt 或 Skills 规则修复。
 本轮仅修改三个产品文件；未改知识、Runtime AGENTS、Skills、Prompt、模型、
-hash 算法、数据库 schema 或交易执行逻辑。用户已授权提交发布，实际发布回执另行登记。
+hash 算法、数据库 schema 或交易执行逻辑。用户已授权提交发布；运行提交
+`18d9dccef219bd80d03521cfdf15dda918b236bc` 已安装到 VPS，发布回执见末节。
 
 ## ETH：canonical 错误路径没有映射回原始 Draft
 
@@ -93,4 +94,29 @@ Stage 1 已验证。VPA 约 86.18 秒后返回 `review_required`，认为
 用户已授权备份、提交发布。发布前暂停并排空，验证一致性备份，停止三个服务后
 安装固定提交；先在 paused 状态核对身份与预检，再恢复原 Paper 配置。
 无 schema 迁移；回退应重新安装固定旧包，不顺便回滚正常新增 Paper 数据。
-实际运行提交、备份及恢复核验待发布后追加，不能以本地测试代替 VPS 回执。
+实际运行提交、备份及恢复核验如下，不能以本地测试代替 VPS 回执。
+
+### 2026-10-11 00:46 发布回执
+
+- 暂停 generation 32 已 applied，scheduler / inbox 排空，未中断模型分析。
+- 备份 `/var/backups/pa-agent/pa-agent-20261010T163829Z` 的 manifest 通过验证，
+  backup service `Result=success`、`ExecMainStatus=0`。
+- 停止三个服务后，将 VPS 源码从 `7146437` 快进到固定运行提交 `18d9dcc`，
+  仅重装项目 wheel，无依赖升级；48 项已安装依赖版本未改变。
+- Windows 临时包的中文路径和换行核验未过，未安装。固定 Git archive 显式设置
+  `core.autocrlf=false`、`core.eol=lf`，在 Linux 隔离目录使用原有构建工具打包；
+  最终 wheel 的 301 个发布文件与 Git blob、源码及安装字节一致。
+- wheel SHA-256：`cc62b78f2bca89603caedfc9e7710fdc21672c2cded1bf219bb6eb605021525f`。
+- Runtime asset digest 仍为
+  `b991054d11f21bfd80b87f266cde7d24def02209ed0383cfd260109d2573e6c3`，
+  installed / source 与权限审计 `ok=true`；未修改 Runtime 规则。
+- 112 份原始记录哈希均保留；monitoring / analysis / Paper 三库 quick_check=ok。
+- 三服务预检及主进程退出码 0、active、NRestarts=0；原控制恢复 generation 33
+  running 且已 applied，Profile generation 4、指纹、三品种 / 并发 3 / Fast true /
+  `codex_only` / `gpt-6-luna/xhigh` / aggressive 与设置均不变。
+- `/healthz`、私有 status / trading 接口均 200，未认证 status 为 401。
+- Worker 保持 TasksMax=256、MemoryMax=1 GB；pids 拒绝、OOM 等事件均 0，
+  此时为空闲状态，不能冒充三任务满载或完整模型分析验收。
+
+没有 Run Once、模型重跑、历史回填或 schema 迁移。后续自然分析、长期稳定与交易
+效果仍待观察。发布证据的后续文档提交不改变上述已核验的运行 Python 身份。
