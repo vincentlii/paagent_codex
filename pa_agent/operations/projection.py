@@ -10,6 +10,7 @@ from typing import Any
 
 from pa_agent.execution.reporting import build_paper_report
 from pa_agent.experiments.backend_aabb import BACKEND_AABB_PROTOCOL_VERSION
+from pa_agent.operations.trading import build_trading_projection
 
 RECENT_RUN_FIELDS = (
     "run_id",
@@ -456,6 +457,7 @@ def build_review_projection(
     analysis_db_path: Path,
     paper_db_path: Path,
     *,
+    monitoring_db_path: Path | None = None,
     codex_circuit_path: Path | None = None,
     codex_worker_status_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -499,10 +501,15 @@ def build_review_projection(
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             codex["worker_status_unreadable"] = True
     recent_runs = read_recent_runs(analysis_db_path, limit=200)
-    return {
+    projection = {
         "recent_runs": recent_runs[:30],
         "analysis_summary": summarize_recent_runs(recent_runs),
         "backend_experiments": read_backend_experiment_summary(analysis_db_path),
         "paper": paper,
         "codex": codex,
     }
+    if monitoring_db_path is not None:
+        projection["trading"] = build_trading_projection(
+            analysis_db_path, monitoring_db_path, paper_db_path,
+        )
+    return projection

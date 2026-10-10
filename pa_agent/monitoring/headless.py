@@ -659,6 +659,7 @@ class HeadlessMonitor:
                 self._review_projection = build_review_projection(
                     self._paths.analysis_audit_db_path,
                     self._paths.paper_trading_db_path,
+                    monitoring_db_path=self._paths.monitoring_audit_db_path,
                     codex_circuit_path=self._paths.state_root / "codex-circuit.json",
                     codex_worker_status_path=self._codex_worker_status_path,
                 )

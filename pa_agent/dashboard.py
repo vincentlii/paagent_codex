@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 
 from pa_agent.config.paths import RuntimePaths, resolve_runtime_paths
 from pa_agent.dashboard_page import DASHBOARD_HTML, LOGIN_HTML
+from pa_agent.trading_page import TRADING_HTML
 from pa_agent.operations.analysis_profile import (
     analysis_capabilities,
     validate_analysis_profile,
@@ -31,6 +32,7 @@ from pa_agent.operations.runtime_state import (
     RuntimeStatusStore,
     control_state_to_dict,
 )
+from pa_agent.operations.trading import safe_trading_projection
 
 _MAX_BODY_BYTES = 4096
 _SESSION_COOKIE = "pa_agent_dashboard_session"
@@ -355,6 +357,19 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
     }
 
 
+def build_trading_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -> dict[str, Any]:
+    """Only a credential-free JSON projection; no trading DB or model access."""
+    current_ms = int(time.time()*1000) if now_ms is None else int(now_ms)
+    runtime = RuntimeStatusStore(paths.runtime_status_path).read()
+    return {
+        "schema_version": 1,
+        "generated_at_ms": current_ms,
+        "health": _health(runtime, now_ms=current_ms),
+        "runtime": _safe_runtime_projection(runtime),
+        "trading": safe_trading_projection((runtime or {}).get("trading")),
+    }
+
+
 def _run_once_ready(
     control: Any,
     runtime: dict[str, Any],
@@ -516,8 +531,9 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 )
                 self._json(200 if health["state"] in {"running", "paused"} else 503, health)
                 return
-            if path in {"/", "/login"}:
-                body = (DASHBOARD_HTML if path == "/" and self._has_auth() else LOGIN_HTML).encode("utf-8")
+            if path in {"/", "/login", "/trading"}:
+                page = TRADING_HTML if path == "/trading" else DASHBOARD_HTML
+                body = (page if path != "/login" and self._has_auth() else LOGIN_HTML).encode("utf-8")
                 self._headers(200, "text/html; charset=utf-8")
                 self.wfile.write(body)
                 return
@@ -525,6 +541,9 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 return
             if path == "/api/status":
                 self._json(200, build_dashboard_payload(paths))
+                return
+            if path == "/api/trading":
+                self._json(200, build_trading_dashboard_payload(paths))
                 return
             self._json(404, {"error": "not_found"})
 

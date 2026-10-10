@@ -10,8 +10,9 @@ import threading
 import pytest
 
 from pa_agent.config.paths import resolve_runtime_paths
-from pa_agent.dashboard import DashboardConfig, build_dashboard_payload, create_server
+from pa_agent.dashboard import DashboardConfig, build_dashboard_payload, build_trading_dashboard_payload, create_server
 from pa_agent.dashboard_page import DASHBOARD_HTML
+from pa_agent.trading_page import TRADING_HTML
 from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 from pa_agent.operations.runtime_state import (
     RuntimeControlStore,
@@ -74,6 +75,65 @@ def test_dashboard_import_does_not_load_qt() -> None:
     )
 
     assert result.stdout.strip() == "False"
+
+
+def test_trading_page_and_projection_require_auth_and_never_write_controls(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    server, thread = _running_server(paths)
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        connection.request("GET", "/trading")
+        response = connection.getresponse()
+        assert response.status == 200
+        assert 'autocomplete="current-password"' in response.read().decode()
+        connection.request("GET", "/api/trading")
+        response = connection.getresponse()
+        assert response.status == 401
+        response.read()
+        headers = {"Authorization": _authorization("a-secure-test-token")}
+        connection.request("GET", "/trading", headers=headers)
+        response = connection.getresponse()
+        assert response.status == 200
+        assert "frame-ancestors 'none'" in response.getheader("Content-Security-Policy")
+        assert response.read().decode() == TRADING_HTML
+        connection.request("GET", "/api/trading", headers=headers)
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read())["trading"] == {}
+        connection.request("POST", "/api/trading", "{}", headers=headers)
+        response = connection.getresponse()
+        assert response.status == 404
+        response.read()
+        assert not paths.runtime_control_path.exists()
+        assert not paths.paper_trading_db_path.exists()
+        assert not paths.analysis_audit_db_path.exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_trading_payload_is_bounded_allowlisted_and_separate_from_operations(tmp_path, monkeypatch) -> None:
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(RuntimeStatusStore, "read", lambda self: {
+        "updated_at_ms": 1000, "trading": {
+            "schema_version": 1, "generated_at_ms": 1000, "database": "secret-path",
+            "account": {"settled_balance": 123, "api_key": "secret-key"},
+            "periods": {"all": {"assets": [{"symbol": "XAUUSDT", "tasks": 5, "raw_prompt": "secret"}],
+                                 "curve": [{"bar_ts": 100, "pnl": 5, "secret": "hidden"}]}},
+            "orders": [{"order_id": "o1", "review": {"reasoning": "<script>not HTML</script>", "raw_prompt": "secret"}}]*200,
+        },
+    })
+    payload = build_trading_dashboard_payload(paths, now_ms=1001)
+    assert payload["trading"]["account"]["settled_balance"] == 123
+    assert len(payload["trading"]["orders"]) == 150
+    assert "secret" not in json.dumps(payload)
+    assert payload["trading"]["orders"][0]["review"]["reasoning"] == "<script>not HTML</script>"
+    assert "trading" not in build_dashboard_payload(paths, now_ms=1001)
+    assert "/api/control" not in TRADING_HTML
+    assert "/api/profile" not in TRADING_HTML
+    assert "innerHTML" not in TRADING_HTML
+    assert 'href="/trading"' in DASHBOARD_HTML
 
 
 def test_browser_password_login_works_without_basic_auth_dialog(tmp_path) -> None:

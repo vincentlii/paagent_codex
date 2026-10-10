@@ -23,6 +23,11 @@ VPA provenance，不增加策略模块或 Gate。见 [运行升级](../quality/v
 
 ## 总览
 
+交易总览另见 [只读统计口径](../quality/trader_dashboard_20261010.md)：
+`Headless → operations/trading.py → status JSON → /api/trading → trading_page.py`。
+它不接入模型或交易执行；列表有界、全历史计数不截断。正式账户/版本隔离，
+未知路径和价格不补造。当前仅本地实现，不代表 VPS 页面已更新。
+
 ```mermaid
 flowchart TD
     GUI[Windows Qt GUI] --> REQ[AnalysisRequest]

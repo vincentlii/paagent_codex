@@ -395,6 +395,7 @@ class RuntimeStatusStore:
             "analysis_summary": list,
             "paper": dict,
             "codex": dict,
+            "trading": dict,
         }
         for key, expected_type in expected_containers.items():
             value = raw.get(key, expected_type())

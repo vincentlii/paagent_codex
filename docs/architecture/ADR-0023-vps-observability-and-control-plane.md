@@ -62,6 +62,23 @@ Bot 与 Dashboard 仅通过 `pa-agent-control` 下两个单向权限目录交换
 `status/`、Dashboard 只能写 `control/`，双方仅能读取另一方向。Dashboard 用户不属于
 `pa-agent` 组，因此不能读取 Provider credential 或运行状态根目录。
 
+### 2026-10-10：只读交易总览增补
+
+`GET /trading` 与 `GET /api/trading` 复用已有登录、Host 校验和安全响应头。
+Headless 在既有 30 秒 review cache 中只读分析索引、调度账本与 Paper 账本，发布
+`trading.schema_version=1`；网页不读取 DB、配置、原始 Prompt，也不发起模型或执行请求。
+原 `/api/status` 不附加交易大块，避免运行控制页面反复下载复盘内容。
+
+交易统计固定隔离正式 `pipeline-pa_vpa_joint` / `pa_vpa_joint`、Binance USD-M
+perpetual / 1h 与 `paper_latency_v3`。整账户已结算余额和结构风险与范围内净收益分开。
+调度任务计数不等同当前 Codex 联合样本数；候选与 No Trade 只来自成功且身份匹配的
+联合分析。净收益、胜率和曲线仅使用已知平仓结果，未知路径不计零。
+
+复盘复述现有 canonical PA/VPA 内容，不生成新判断。各品种每状态 10 笔订单、
+最近 30 个任务和曲线最近 180 个有平仓日期均有界，聚合计数不受列表截断影响。
+SQL 使用 `mode=ro` 与有界读取；不增加 schema、依赖或数据库权限。
+详细统计口径、验收与发布边界见 [交易总览说明](../quality/trader_dashboard_20261010.md)。
+
 ## 理由
 
 - 交易员：暂停不能改变冻结快照、PA/VPA 结论或 Paper 执行语义。
