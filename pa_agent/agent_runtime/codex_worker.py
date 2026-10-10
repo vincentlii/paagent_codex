@@ -246,8 +246,10 @@ class CodexCliWorker:
                     )) from exc
                 raise CodexWorkerTimeout("Codex job exceeded wall-clock budget") from exc
             except OSError as exc:
+                # Keep the OS classification, never its raw text or credential/path detail.
+                suffix = f" (errno {exc.errno})" if exc.errno is not None else ""
                 raise CodexWorkerUnavailable(
-                    "Codex process could not be started"
+                    "Codex process could not be started" + suffix
                 ) from exc
             process_ms = (time.monotonic() - process_started) * 1000
             process_completed_epoch_ms = int(time.time() * 1000)

@@ -16,6 +16,15 @@ issue_status: monitoring
 
 # 运行与排障
 
+## 调度完成但分析失败：错误传递
+
+`JobCompletion.status=completed` 只表示 handler 已返回；分析成功仍看
+`analysis_success`。失败 record.exception/run_outcome 已有原因时，调度审计
+须保留该原因及可信 Worker failure reason；成功 sidecar 不升级为整链失败。
+启动错误保留数值 errno，不记录原始 stderr、路径或认证细节。旧记录缺失的
+原因保持未知，不倒填、不以重跑覆盖。先核对 TasksMax 线程拒绝与 OOM，再判断
+CLI 异常退出；详见 [根因报告](../quality/v1_failure_root_cause_audit_20261010.md)。
+
 ## 白名单运行配置与会话保留
 
 当前发布版本的 `AnalysisProfile.symbols` 仅允许 Binance XAUUSDT/BTCUSDT/ETHUSDT；

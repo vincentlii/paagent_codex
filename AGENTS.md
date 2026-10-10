@@ -1,5 +1,7 @@
 # AGENTS
 
+- V1 大量运行失败排障先读 `docs/quality/v1_failure_root_cause_audit_20261010.md`：三品种 CLI/MCP 的线程也计入 TasksMax；callback completed 不等于分析成功。只传递已有 canonical 错误和可信 Worker 原因，不保存原始 stderr/认证细节，不改历史回执、不开启 incomplete 自动重跑。容量修复与自然三品种验收分别报告。
+
 - 修改交易总览或交易统计前读 `docs/quality/trader_dashboard_20261010.md`：Dashboard 只读 Host JSON，不读数据库、不调用模型。唯一任务、模型意图、Paper 处置与入场分别计数；正式联合账户及 v3 收益隔离，未知与不确定不计零。复盘只复述 canonical 内容，订单推进落后时参考浮盈亏保持未知。本地实现与验收不等于 VPS 已发布。
 
 - 修改 V1 会话保留、黄金背景、品种/并发/倾向控制前读 `docs/quality/v1_operations_upgrade_20261010.md`：默认仍为单黄金/并发 1，只有白名单品种可选；新增默认 Profile 字段不得改变旧指纹。停用品种的正式 Paper 活跃订单仍须观察，清理只在 Worker idle 删除超过 14 天的专属会话；不删除 auth、原始记录或恢复任务，不添加位置距离 Gate。本地验收不等于 VPS 已发布。

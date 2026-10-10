@@ -656,6 +656,22 @@ def test_worker_maps_process_start_oserror_to_availability(tmp_path: Path) -> No
         worker.run(published)
 
 
+def test_process_start_error_preserves_errno_without_sensitive_detail(tmp_path: Path) -> None:
+    published = FrozenAgentJobStore(tmp_path / "jobs").publish(_job())
+
+    def unavailable(_command, **_kwargs):
+        raise OSError(11, "PRIVATE_DETAIL", "/private/auth.json")
+
+    worker = CodexCliWorker(CodexCliConfig(
+        codex_home=tmp_path / "home", runtime_root=tmp_path / "runtime",
+        outbox_root=tmp_path / "outbox", model="gpt-5.6-terra", reasoning_effort="high",
+    ), process_runner=unavailable)
+    with pytest.raises(CodexWorkerUnavailable) as caught:
+        worker.run(published)
+    assert str(caught.value) == "Codex process could not be started (errno 11)"
+    assert not list((tmp_path / "outbox").glob("*.json"))
+
+
 def test_worker_leaves_schema_judgment_to_pa_validator(tmp_path: Path) -> None:
     published = FrozenAgentJobStore(tmp_path / "jobs").publish(_job())
 

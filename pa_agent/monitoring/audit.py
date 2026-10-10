@@ -115,6 +115,23 @@ class SchedulerAuditStore:
         run_id = self._run_id(completion.result)
         analysis_status = self._analysis_status(completion)
         analysis_success = self._analysis_success(completion)
+        error_type, error_message = completion.error_type, completion.error_message
+        if completion.status == "completed" and not analysis_success:
+            record = getattr(completion.result, "record", None)
+            failure = getattr(record, "exception", None)
+            failure = failure if isinstance(failure, dict) else {}
+            outcome = getattr(record, "run_outcome", None)
+            outcome = outcome if isinstance(outcome, dict) else {}
+            error_type = error_type or failure.get("type") or analysis_status
+            if not error_message:
+                error_message = failure.get("message") or outcome.get("reason")
+                attempts = failure.get("attempts") or []
+                for attempt in reversed(attempts):
+                    if isinstance(attempt, dict) and attempt.get("worker_failure_reason"):
+                        error_message = ": ".join(filter(None, (
+                            error_message, attempt["worker_failure_reason"],
+                        )))
+                        break
         try:
             with self._lock, self._connect() as connection:
                 connection.execute(
@@ -153,8 +170,8 @@ class SchedulerAuditStore:
                         "submitted_at_ms": task.created_at_ms,
                         "completion_status": completion.status,
                         "run_id": run_id,
-                        "error_type": completion.error_type,
-                        "error_message": (completion.error_message or "")[:2_000] or None,
+                        "error_type": error_type,
+                        "error_message": (error_message or "")[:2_000] or None,
                         "queue_latency_ms": completion.queue_latency_ms,
                         "execution_latency_ms": completion.execution_latency_ms,
                         "completed_at_ms": now_ms,
