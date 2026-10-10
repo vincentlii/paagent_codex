@@ -136,6 +136,21 @@ Skills、Prompt、线程池并发数量或数据库。旧失败保留，不重�
 三视角自审：PA 交易员确认订单与判断边界不变；VPA 交易员确认知识与证据交付不变；
 量化软件架构师确认容量有限、OOM/CPU/权限隔离不放宽、idle 重启不丢任务。
 
+容量修复提交 `37d397f` 已发布到 VPS：只更新 systemd 单元与文档/回归，运行
+Python 包仍为 `94e43f0`，没有重复构建或覆盖运行包。部署资产 7 项通过，Ruff 与
+diff 检查通过。排空后只重启 Worker，Host/Dashboard PID 未变；Worker 预检退出 0、
+active、NRestarts=0、TasksMax=256、MemoryMax=1073741824、CPUQuota=200%。
+重启后空闲 TasksCurrent=1，pids 拒绝 0、OOM 0。该空闲结果不冒充三模型峰值。
+暂停 generation 28、恢复 generation 29，desired/applied 已一致，Profile generation 4
+和指纹不变；仍 XAU/BTC/ETH、并发 3、aggressive、Fast、`gpt-6-luna/xhigh`。
+新一致性备份 `/var/backups/pa-agent/pa-agent-20261010T050902Z` manifest 验证通过，
+三库在发布前后均与备份表计数一致，71 个原记录及 settings hash 保留。
+旧单元另存 `/var/backups/pa-agent/worker-unit-before-capacity-20261010.service`；
+需要回退时先暂停/排空，仅还原旧单元、daemon-reload、重启 Worker，再恢复控制。
+旧 64 容量不能承载当前三品种配置，回退同时须按获批控制降低并发，不能静默更改。
+SSH 隧道仅监听本机 127.0.0.1:8765，实际本地 `/healthz` 为 200；看板密码不变。
+下一自然定时任务尚未发生，不能宣称真实三品种分析已恢复或所有 Provider 故障已解决。
+
 参考：只读连接遵循 [SQLite URI](https://www.sqlite.org/uri.html)；
 无新增图表依赖，使用 [SVG polyline](https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Element/polyline)；
 HTTP 取消使用 [AbortController](https://developer.mozilla.org/en-US/docs/Web/API/AbortController)。
