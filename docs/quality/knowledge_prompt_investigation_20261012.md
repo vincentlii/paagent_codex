@@ -3,9 +3,10 @@
 ## 范围与证据边界
 
 本地候选基于 `codex-analysis-backend-v1` 的 `1403ff2`，工作开始时无未提交变更。
-实施范围是教材适用条件、角色输出契约、Stage 1 调查流程；不涉及 GUI、部署、数据库
-migration、历史结果修订、VPA 概率校准或性能优化。以下实现与验证属于本地未提交版本，
-不改变 `current-status.md` 中已发布 VPS 的身份、Profile 或前向 Paper 状态。
+实施范围是教材适用条件、角色输出契约、Stage 1 调查流程；初次实施不涉及 GUI、部署、
+数据库 migration、历史结果修订、VPA 概率校准或性能优化。以下本地验收完成后，用户
+另行授权 commit、推送指定私有仓库及发布 VPS；实际运行身份和发布核验见末尾回执，
+与本地测试、模型质量及前向 Paper 效果分开报告。
 
 ## 1：教材的周期、单位与参照
 
@@ -131,10 +132,45 @@ PA 与 VPA 审查确认背景、结构与 Router 所有权保持，联合报告�
 ## 发布与回退边界
 
 初次本地验收未 commit、发布或付费调用模型，也未改线上历史任务。2026-10-12 用户随后
-明确授权 commit 并发布 VPS；发布回执在实际验证后追加。发布前仍须按既有流程
+明确授权 commit 并发布 VPS，随后明确允许推送指定私有仓库；实际回执见后文。发布前须按既有流程
 冻结可审查提交、构建目标平台 wheel、核验依赖锁与 Runtime identity；本地 wheel
 smoke 不替代 Linux/VPS 验收。回退须恢复同一发布的 Python、知识和 Runtime 资产，
 不能仅回退 Worker 后继续执行带新 marker 的 Job；旧 Worker 没有本次配额校验。
 已经冻结的任务保留原身份并按对应版本处理，不迁移或重跑以改写历史。
 
 本轮未验证真实模型质量改善、利润、胜率校准、token 节省或提速。
+
+## VPS 发布回执（2026-10-12）
+
+运行提交为 `c20d04f41f06d344c9da1b7a76997ab1f722765c`，已推送到用户明确授权的
+私有仓库 `vincentlii/paagent_codex` 的 `main`；原 upstream remote 未改变。
+VPS 从 `18d9dcc` 快进到该提交，发布证据的后续提交只更新文档。
+
+发布前再次执行 129 项聚焦非 live 回归，全部通过；关键静态检查和
+`git diff --check` 通过。线上 generation 34 暂停后等待三个原有任务自然结束，
+确认 Host queued/running/unfinished 均为 0、无 in-flight/recovery-blocked asset，
+Worker inbox 无 pending JSON 或 `.running`，再停止三个加载项目包的服务。
+旧历史结果和失败均保留，没有触发 Run Once、模型重跑或旧 Job 迁移。
+
+| 检查 | VPS 实际结果 |
+| --- | --- |
+| 发布前备份 | `pa-agent-20261011T170707Z`，服务 Result=success / ExecMainStatus=0；5785 项 manifest 哈希与三份 SQLite quick_check 通过 |
+| Linux 构建与离线安装 | 新旧提交分别构建完整 wheel；新包 `--no-deps --reinstall --offline` 安装，48 项依赖版本不变且 pip check 通过 |
+| Linux wheel SHA-256 | `be3b43bc479024dc9e06acd212d5547dc0618e25e515b790bab83ac1c31d6286` |
+| 源码、安装包与资源一致性 | 302 个包内文件逐字节一致；从安装位置导入 Headless 不加载 Qt |
+| Runtime / 权限 | installed/source audit `ok=true`，issues 为空；新版本 `codex-runtime-v1-1f44fa580db45e16` |
+| Runtime asset digest | `1f44fa580db45e167fe43787e76d96b0c5ea3c74c696dbf50938da230c089463` |
+| 原始数据与认证 | 197 份原始记录及 10 项配置/认证文件哈希不变；原三库 quick_check 通过，不改 DB schema 或账本 |
+| 服务 | Host、Worker、Dashboard 均 active/running，ExecMainStatus=0、NRestarts=0；Worker auth=healthy |
+| 控制与 Profile | 先在暂停状态确认新 Worker 身份，后恢复 generation 35 running 且已 applied；Profile generation 4 和 fingerprint、三品种、并发 3、Fast、模型、Run Once generation 均保持原样 |
+| HTTP 与行情 | `/healthz`、认证 `/api/status` 和 `/api/trading` 均 200，未认证 `/api/status` 为 401；三品种 connected、fetch_failures=0 |
+
+本次 Stage1 Skill 改变 Runtime identity。历史冻结资源仍保持原字节，但这不表示旧身份
+可由新 Worker 执行或旧 PA 会话可跨版本续接；发布的空闲检查同时覆盖 Host 与 Worker。
+完整回退包已在更新前构建核验；代码回退仍须先暂停、等队列清空、停三服务，再恢复
+旧版 Python、知识与 Runtime 并审计，不把正常代码回退变成数据库或历史记录回滚。
+
+新版本服务与固定发布验收通过；尚未观察新版本的下一自然模型完整链，未证明
+分析质量、延迟、token、失败率或前向 Paper 效果改善。初次发布前正在运行的任务属于
+旧版本，不计作本次修订的模型验收。任务专属测试及发布暂存产物在核验后清理，
+正式备份和线上历史证据保留。

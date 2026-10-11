@@ -4,8 +4,8 @@ capability: paper-observation-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-11
-核验提交: 18d9dccef219bd80d03521cfdf15dda918b236bc（运行 Python 代码；后续发布证据提交仅更新文档）
+最后核验: 2026-10-12
+核验提交: c20d04f41f06d344c9da1b7a76997ab1f722765c（运行 Python、知识与 Runtime；后续发布证据提交仅更新文档）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,7 +21,7 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-12 知识、角色契约与调查限制（本地候选，未发布）
+## 2026-10-12 知识、角色契约与调查限制（已发布；自然模型效果待验收）
 
 本地基于 `1403ff2` 完成三项修订：教材时间/tick 示例注明周期、品种与价格参照；
 PA Draft 的事实引用与合法字段一致，显式联合 Stage 2 的系统、阶段协议及尾部要求
@@ -33,8 +33,19 @@ PA Draft 的事实引用与合法字段一致，显式联合 Stage 2 的系统�
 合法/错误参数与父子范围隔离；关键静态检查通过。隔离 wheel 的 302 个包内文件与
 本地源码/资源字节一致，安装位置导入 Headless 不加载 Qt。GUI 与真实 live 未验收。
 
-这是未提交的本地候选；历史 Frozen Job 不迁移，VPS 仍以以下已发布记录为准。
-真实模型质量、延迟、用量及前向 Paper 效果未验证。具体根因、兼容与验收范围见
+运行提交 `c20d04f` 已提交并推送到用户授权的私有仓库 `vincentlii/paagent_codex/main`，
+随后按空闲发布流程安装到 VPS。发布前另有 129 项聚焦回归通过；Linux wheel 的
+302 个包内文件与固定源码/资源逐字节一致，48 项依赖不变，安装位置 Headless
+不加载 Qt，Runtime 资产与权限审计通过。备份 `pa-agent-20261011T170707Z` 的
+5785 项 manifest 与三库 quick_check 通过；197 份原始记录及 10 项配置/认证文件
+哈希保持不变，不迁移旧 Frozen Job、不改账本或 DB schema。
+
+三服务 active、退出码 0、NRestarts=0；先确认暂停，再恢复 generation 35 running
+且已 applied。Profile generation 4 / 三品种 / 并发 3 / Fast / 模型保持原样，
+三品种行情连接正常；健康与私有接口 200，未认证 401。新 Runtime 为
+`codex-runtime-v1-1f44fa580db45e16`，旧版本队列及恢复任务均已清空，无跨版本续接。
+未额外调用模型或 Run Once；真实模型质量、延迟、用量及前向 Paper 效果未验证。
+具体根因、兼容与验收范围见
 [修订报告](../quality/knowledge_prompt_investigation_20261012.md)。
 
 ## 2026-10-11 ETH / BTC 契约根因修复（已发布；下一自然任务待验收）

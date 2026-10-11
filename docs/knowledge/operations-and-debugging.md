@@ -5,8 +5,8 @@ verification_scope:
   - local
   - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-10-11
-核验提交: 18d9dccef219bd80d03521cfdf15dda918b236bc（运行代码；后续发布证据提交仅更新文档）
+最后核验: 2026-10-12
+核验提交: c20d04f41f06d344c9da1b7a76997ab1f722765c（运行代码、知识与 Runtime；后续发布证据提交仅更新文档）
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -346,6 +346,15 @@ Worker 独立复核，不能因最终 Draft 有效而忽略 denied。预算失�
 未知策略在 CLI/MCP 启动前拒绝；历史无标记 Job、child、repair 按各自冻结契约检查。
 不改旧 Job 或重跑历史失败来消除审计。见
 [知识/Prompt/调查修订](../quality/knowledge_prompt_investigation_20261012.md)。
+
+Runtime AGENTS/Skills 改动会改变冻结的 asset digest；更新前须同时确认 Host 的
+queued/running/unfinished 为 0、无 in-flight 或 recovery-blocked asset，Worker inbox
+无 pending JSON 或 `.running`。旧 Job 与 PA 会话保留原身份，不迁移或跨版本续接。
+若部署只改项目包且依赖锁、systemd 和配置未变，可在停止三服务后离线重装完整
+`--no-deps` wheel，并核对全部依赖、installed/source 字节、Runtime 权限及原配置。
+若这些前提不成立，按 [部署文档](../linux_headless_deployment.md) 执行完整安装流程。
+启动后先核验暂停状态、Worker 新身份和认证、接口健康，再恢复原获批调度。
+回退必须恢复对应版本的 Python、知识与 Runtime，不单独降级 Worker。
 
 VPA 后续闭盘 hard error 要核对否定句的**主语**，不能把同句所有 `K#` 当成
 “没有更晚收线”的对象。2026-09-24 两次真实首稿都说最新 K1 无后续闭盘，

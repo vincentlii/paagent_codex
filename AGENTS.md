@@ -1,6 +1,6 @@
 # AGENTS
 
-- 修改教材示例、PA/Joint Prompt 契约或 Stage 1 调查限制前读 `docs/quality/knowledge_prompt_investigation_20261012.md`：时间、tick 和价格参照必须注明适用范围，章节 ID 与案例保持完整；Provider Draft 不要求 canonical-only 字段，显式 Joint 使用自身角色与未校准先验。新冻结 `stage1_investigation_v1` 先成功读取完整 Packet，再允许最多一次事实、一次知识调查，所有尝试计数；Gateway 与 Worker 共同校验，旧 Frozen Job 不迁移。该报告只证明本地候选，不代表 VPS 已发布或模型质量提高。
+- 修改教材示例、PA/Joint Prompt 契约或 Stage 1 调查限制前读 `docs/quality/knowledge_prompt_investigation_20261012.md`：时间、tick 和价格参照必须注明适用范围，章节 ID 与案例保持完整；Provider Draft 不要求 canonical-only 字段，显式 Joint 使用自身角色与未校准先验。新冻结 `stage1_investigation_v1` 先成功读取完整 Packet，再允许最多一次事实、一次知识调查，所有尝试计数；Gateway 与 Worker 共同校验，旧 Frozen Job 不迁移。报告分别记录本地验收与固定提交 VPS 发布；Runtime 资产更新前须确认 Host 和 Worker 队列清空且无恢复阻塞，不跨版本续接旧会话。发布不证明模型质量提高。
 
 - 排查 Provider 定向修复或 VPA 冻结身份停止前读 `docs/quality/v1_contract_failure_repair_20261011.md`：canonical required 路径必须保留父级与数组下标；只在 Provider Schema 已允许完整目标且原 Draft 确实缺少容器时授权该缺失容器，不能扩大到 null、错误类型或 canonical-only 字段。PA 价格 hash 与 VPA OHLCV/来源 hash 不直接比较；新 Job 由既有完整 catalog 校验绑定同一 frame，并在模型投影中明确作用域。旧 Job、原 catalog、历史失败和交易规则不改写。
 
