@@ -66,6 +66,7 @@ def run_joint(
     codex=False,
     frame=None,
     worker_failure_role=None,
+    captured_requests=None,
 ):
     from unittest.mock import MagicMock
     from pa_agent.config.settings import Settings, ValidationSettings
@@ -161,6 +162,8 @@ def run_joint(
                 )
 
         def agent_call(request, **kwargs):
+            if captured_requests is not None:
+                captured_requests.append(request)
             check_worker_failure(request.role, kwargs)
             check_agent_stop(request.role)
             assert request.snapshot_hash
@@ -176,6 +179,8 @@ def run_joint(
         backend.run.side_effect = agent_call
 
         def agent_vpa_call(request, **kwargs):
+            if captured_requests is not None:
+                captured_requests.append(request)
             check_worker_failure(request.role, kwargs)
             check_agent_stop(request.role)
             from pa_agent.ai.fact_catalog import analysis_snapshot_hash

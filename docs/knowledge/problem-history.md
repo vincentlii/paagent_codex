@@ -16,6 +16,9 @@ issue_status: monitoring
 
 本页记录跨样本成立的问题族，而不是逐次运行流水账。单次错误先保留原始 record、audit、日志和模型输出；只有形成稳定根因、错误修法或复发检查后才进入这里。
 
+2026-10-12 对 PH-03、PH-13、PH-18 补充本地契约验证与复发检查；该补充基于
+`1403ff2` 的未提交候选，不代表重新验收其余历史问题或修改已发布 VPS 状态。
+
 ### PH-01 程序越权解释 PA/Wyckoff 语义
 
 - `issue_status`：resolved，持续 monitoring。
@@ -48,6 +51,10 @@ issue_status: monitoring
 - **正确原则：**一次分析的 Prompt、Contract、materializer、validator、retry 和 digest 使用同一个显式 `prompt_dir`/resource snapshot。
 - **当前实现/证据：**[ADR-0022](../architecture/ADR-0022-runtime-resource-and-release-reproducibility.md)、[AGENTS](../../AGENTS.md)。
 - **复发检查：**任何组件重新调用默认路径解析或重新 hash 当前文件，都视为漂移风险。
+- **角色契约补充：**同一资源目录仍可能包含语义冲突：Provider Draft 不允许的 canonical
+  字段不能由 Prompt 要求；显式 Joint 的 system、protocol 与最终提醒必须使用同一角色，
+  普通 PA 保持 price-only。验证实际 Direct 请求和冻结 MCP 交付，不能只检查单个字符串。
+  见 [知识/Prompt/调查修订](../quality/knowledge_prompt_investigation_20261012.md)。
 
 ### PH-04 normalizer/router/repair 猜测模型意图
 
@@ -165,6 +172,9 @@ issue_status: monitoring
 - **正确原则：**`ResolvedInstrumentIdentity` 与 `InstrumentSpec` 同源冻结；订单数学使用 venue 原生单位和真实精度。
 - **当前实现/证据：**[ADR-0010](../architecture/ADR-0010-canonical-instrument-identity.md) 至 [ADR-0014](../architecture/ADR-0014-vps-preflight-and-paper-reporting.md)。
 - **复发检查：**上线前逐 venue `--probe-data`，核对 identity key、contract size、tick 和 quantity step。
+- **教材参照补充：**教材的时间、点数和 tick 示例也有单位与锚点；例如 5m 的 24 根不等于
+  任意周期的两小时，E-mini 从信号极点数出的 tick 不等于从 entry 算出的收益。
+  保留示例与背景，明确参照及假设；不得把固定数值变成跨品种的交易 Gate。见上述修订报告。
 
 ### PH-14 Volume provenance、真实零/缺失零和非因果 seasonality
 
@@ -218,8 +228,13 @@ issue_status: monitoring
 - **根因：**把 Codex 当成新的自治交易系统，而不是现有 Draft/Validator 前的 Analysis Backend。
 - **错误修法：**从旧 `codex-paagent` 复制框架、fast scanner、五信号投票和截断知识包。
 - **正确原则：**当前 vNext 是唯一源码；Codex 只实现 `AnalysisRoleBackend`，知识由 PA Context/Router 授权，输出继续进入同一 materializer、Validator、Risk 和正式 PA authority。
-- **当前实现/证据：**[ADR-0024](../architecture/ADR-0024-codex-analysis-backend.md)；代码实现和 VPS 验证尚未完成。
+- **当前实现/证据：**[ADR-0024](../architecture/ADR-0024-codex-analysis-backend.md)；
+  当前能力和环境证据以 [当前状态](current-status.md)为准，本次调查流程补充只在本地验证。
 - **复发检查：**任何 Codex 代码若能命名 Setup、绕过 Router、直接写 DB/订单，或在 Prompt 外读取未授权知识，立即停止 Phase。
+- **流程审计补充：**Skill 写明的 baseline-first、一次事实/一次知识调查，不能由仅统计成功
+  总调用数的 Worker 冒充执行。新 Job 显式冻结策略版本，以同一纯流程校验器约束 Gateway
+  与 Worker；失败尝试占配额、denied 不能被成功 Draft 掩盖。历史无标记 Job 保留原语义，
+  child/repair 保留各自 scope 与预算；此限制不参与专业市场判断。见上述修订报告。
 
 ### PH-19 长会话、Backend 混合与 availability/quality 混淆
 

@@ -292,7 +292,9 @@ class CodexJobPublisher:
             projection["role_evidence"] = role_evidence
         if request.role == "stage1" and repair_context is None:
             from pa_agent.agent_runtime.decision_packet import build_stage1_decision_packet
+            from pa_agent.agent_runtime.investigation_policy import STAGE1_INVESTIGATION_POLICY
 
+            context["stage1_investigation_policy"] = STAGE1_INVESTIGATION_POLICY
             context["stage1_decision_packet"] = build_stage1_decision_packet(
                 snapshot_hash=str(request.snapshot_hash).lower(),
                 cutoff_ts_open=int(request.cutoff_ts_open),

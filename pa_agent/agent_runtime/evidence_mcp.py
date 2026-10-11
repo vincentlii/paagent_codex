@@ -10,6 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
+from jsonschema import Draft7Validator
 from pydantic import Field, WithJsonSchema
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from pa_agent.agent_runtime.evidence import (
     CHILD_VPA_OPERATIONS,
 )
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
+from pa_agent.agent_runtime.investigation_policy import STAGE1_INVESTIGATION_TOOLS
 
 _PROTOCOL_VERSION = "2025-06-18"
 _TOOL_ANNOTATIONS = {
@@ -316,6 +318,10 @@ class EvidenceMcpServer:
         self._call_lock = threading.Lock()
         self._mcp_calls = 0
         self._audit_call_indices: list[int] = []
+        self._argument_validators = {
+            tool["name"]: Draft7Validator(tool["inputSchema"])
+            for tool in _tools() if tool["name"] in STAGE1_INVESTIGATION_TOOLS
+        }
 
     def handle(self, message: dict[str, Any]) -> dict[str, Any] | None:
         request_id = message.get("id")
@@ -351,7 +357,7 @@ class EvidenceMcpServer:
                 params = message.get("params") or {}
                 result = self._call_tool(
                     str(params.get("name") or ""),
-                    params.get("arguments") or {},
+                    params.get("arguments"),
                 )
             else:
                 return self._error(request_id, -32601, f"method not found: {method}")
@@ -359,12 +365,18 @@ class EvidenceMcpServer:
         except (TypeError, ValueError, KeyError) as exc:
             return self._error(request_id, -32602, f"invalid params: {exc}")
 
-    def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _call_tool(self, name: str, arguments: Any) -> dict[str, Any]:
         # The SDK runs synchronous tools in a thread pool. Budget accounting and
         # its durable receipt must be one transaction, including denied calls.
         with self._call_lock:
             self._refresh_binding()
             self._mcp_calls += 1
+            if arguments is None or not self._gateway.strict_stage1_investigation:
+                arguments = arguments or {}
+            invalid = self._argument_error(name, arguments)
+            if invalid is not None:
+                self._publish_audit()
+                return invalid
             if name in {"start_stage_challenge", "get_stage_challenge"}:
                 return self._challenge_tool(name, arguments)
             if name not in self._gateway.available_tool_names():
@@ -375,6 +387,27 @@ class EvidenceMcpServer:
                     "isError": True,
                 }
             return self._dispatch_tool(name, arguments)
+
+    def reject_invalid_tool_arguments(self, name: str, arguments: Any) -> dict[str, Any] | None:
+        """SDK boundary check before its own argument parser can bypass audit."""
+        with self._call_lock:
+            self._refresh_binding()
+            invalid = self._argument_error(name, {} if arguments is None else arguments)
+            if invalid is not None:
+                self._mcp_calls += 1
+                self._publish_audit()
+            return invalid
+
+    def _argument_error(self, name: str, arguments: Any) -> dict[str, Any] | None:
+        validator = self._argument_validators.get(name)
+        if (not self._gateway.strict_stage1_investigation or validator is None
+                or validator.is_valid(arguments)):
+            return None
+        try:
+            self._gateway.reject_invalid_tool_arguments(name)
+        except (EvidenceAccessDenied, EvidenceBudgetExceeded) as exc:
+            return {"content": [{"type": "text", "text": str(exc)}], "isError": True}
+        raise AssertionError("invalid tool arguments were not rejected")
 
     def _challenge_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         from pa_agent.agent_runtime.stage_challenge import CHALLENGE_PROTOCOL, challenge_rpc
@@ -683,12 +716,24 @@ def _run_official_sdk(server: EvidenceMcpServer) -> None:
     from mcp.types import ToolAnnotations
     from mcp.server.mcpserver.exceptions import ToolError
 
+    async def validate_arguments(ctx, call_next):
+        # The pinned SDK invokes middleware before its Pydantic tool parser.
+        # Successful checks neither consume a call nor duplicate Gateway audit.
+        if ctx.method == "tools/call" and isinstance(ctx.params, dict):
+            invalid = server.reject_invalid_tool_arguments(
+                str(ctx.params.get("name") or ""), ctx.params.get("arguments"),
+            )
+            if invalid is not None:
+                return invalid
+        return await call_next(ctx)
+
     mcp = MCPServer(
         "pa-agent-frozen-evidence",
         instructions=(
             "Only frozen, role-authorized evidence is available. Calls and bytes are "
             "budgeted; no live data, database, network, or write capability is exposed."
         ),
+        middleware=[validate_arguments],
     )
 
     def payload(name: str, arguments: dict[str, Any]) -> dict[str, Any]:

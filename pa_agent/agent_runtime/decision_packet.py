@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import Any, Mapping, Sequence
 
+from pa_agent.agent_runtime.investigation_policy import STAGE1_INVESTIGATION_LIMITS
+
 STAGE1_PACKET_VERSION = "bounded_stage1_packet_v2"
 _SPINE_IDS = frozenset({
     *(f"PA.WINDOW.K{size}" for size in (5, 8, 10, 20, 40)),
@@ -119,12 +121,13 @@ def build_stage1_decision_packet(
             "section_index": section_index,
             "retrieval_rule": "Read exact indexed sections only when they can change a named unresolved conclusion.",
         },
-        "investigation_envelope": {
-            "max_optional_calls": 2,
-            "max_fact_batches": 1,
-            "max_knowledge_batches": 1,
-        },
+        "investigation_envelope": dict(STAGE1_INVESTIGATION_LIMITS),
     }
+    if "stage1_investigation_policy" in core_context:
+        packet["investigation_envelope"].update(
+            policy_version=core_context["stage1_investigation_policy"],
+            quota_basis="attempts", baseline_requirement="successful_packet_first",
+        )
     if isinstance(core_context.get("market_context"), Mapping):
         packet["market_context"] = dict(core_context["market_context"])
     packet["packet_digest"] = hashlib.sha256(_canonical_bytes(packet)).hexdigest()

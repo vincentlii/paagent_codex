@@ -34,6 +34,9 @@ from pa_agent.agent_runtime.execution_contract import (
     uses_result_envelope,
 )
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJob, FrozenAgentJobStore
+from pa_agent.agent_runtime.investigation_policy import (
+    InvestigationPolicyViolation, stage1_investigation_enabled, validate_stage1_investigation,
+)
 from pa_agent.agent_runtime.runtime_assets import load_codex_runtime_assets
 from pa_agent.ai.deepseek_client import AIUsage
 from pa_agent.ai.provider_capabilities import project_strict_output_schema
@@ -138,6 +141,10 @@ class CodexCliWorker:
     ) -> CodexWorkerResult:
         published = Path(published_job).resolve()
         job = FrozenAgentJobStore(published.parent).open(published.name)
+        try:
+            stage1_investigation_enabled(job)
+        except InvestigationPolicyViolation as exc:
+            raise CodexWorkerOutputError(str(exc)) from exc
         self._validate_session_options(
             job,
             persist_session=bool(persist_session),
@@ -1402,6 +1409,15 @@ class CodexCliWorker:
         """Make semantic-parity Skill steps an acceptance invariant."""
         if any(event.get("actor", "parent") != "parent" for event in events):
             raise CodexWorkerOutputError("parent mandatory audit contains non-parent reads")
+        try:
+            if stage1_investigation_enabled(job):
+                validate_stage1_investigation(events)
+        except InvestigationPolicyViolation as exc:
+            if "budget_exceeded" in exc.reason:
+                raise CodexWorkerStopped(AnalysisRoleStop(
+                    role="stage1", status="incomplete", reason=str(exc),
+                )) from exc
+            raise CodexWorkerOutputError(str(exc)) from exc
         for event in events:
             if event.get("status") == "denied" and "budget_exceeded" in str(event.get("reason")):
                 if stage2_host_gated_draft(job):

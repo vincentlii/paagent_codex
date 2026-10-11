@@ -338,6 +338,15 @@ Codex 性能排障先核对 Frozen Job 的实际入口和 agents_text：packet �
 处理时间与 Provider 等待分开看；额度失败不作为性能样本。当前证据与契约去重边界见
 [运行链路审计](../quality/runtime_chain_audit_20260914.md)。
 
+Stage 1 调查拒绝先看冻结 `stage1_investigation_policy` 与 Evidence audit 的 operation、
+status、reason。显式 `stage1_investigation_v1` 必须先成功交付完整 Packet；事实与知识
+各最多一次，失败尝试也占配额，窗口测量/投影共用事实配额。Gateway 在读取前拒绝，
+Worker 独立复核，不能因最终 Draft 有效而忽略 denied。预算失败是 incomplete，其他
+权限/流程拒绝是输出契约失败，均不是 availability fallback，也不是市场 No Trade。
+未知策略在 CLI/MCP 启动前拒绝；历史无标记 Job、child、repair 按各自冻结契约检查。
+不改旧 Job 或重跑历史失败来消除审计。见
+[知识/Prompt/调查修订](../quality/knowledge_prompt_investigation_20261012.md)。
+
 VPA 后续闭盘 hard error 要核对否定句的**主语**，不能把同句所有 `K#` 当成
 “没有更晚收线”的对象。2026-09-24 两次真实首稿都说最新 K1 无后续闭盘，
 K2 仅是相对活动比较或前棒；旧 Validator 因逐个扫描同句 K 标签误拒并多耗

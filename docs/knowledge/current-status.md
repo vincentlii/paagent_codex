@@ -21,6 +21,22 @@ verification_scope:
 
 # 当前状态
 
+## 2026-10-12 知识、角色契约与调查限制（本地候选，未发布）
+
+本地基于 `1403ff2` 完成三项修订：教材时间/tick 示例注明周期、品种与价格参照；
+PA Draft 的事实引用与合法字段一致，显式联合 Stage 2 的系统、阶段协议及尾部要求
+统一为联合角色；新 Stage 1 冻结 `stage1_investigation_v1`，先读取完整 Packet，
+最多一次事实与一次知识调查，Gateway 和 Worker 对所有尝试共同校验。
+完整 mandatory 知识、章节 ID、案例、唯一物化器及 PA/VPA 权限保留。
+
+1699 项 headless 非 live Unit/Integration/Property 回归通过，含真实本地 MCP stdio
+合法/错误参数与父子范围隔离；关键静态检查通过。隔离 wheel 的 302 个包内文件与
+本地源码/资源字节一致，安装位置导入 Headless 不加载 Qt。GUI 与真实 live 未验收。
+
+这是未提交的本地候选；历史 Frozen Job 不迁移，VPS 仍以以下已发布记录为准。
+真实模型质量、延迟、用量及前向 Paper 效果未验证。具体根因、兼容与验收范围见
+[修订报告](../quality/knowledge_prompt_investigation_20261012.md)。
+
 ## 2026-10-11 ETH / BTC 契约根因修复（已发布；下一自然任务待验收）
 
 ETH 增量首稿缺整个容器，canonical required 路径丢失父级导致修复发布被拒；

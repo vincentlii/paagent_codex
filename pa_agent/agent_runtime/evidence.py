@@ -17,14 +17,14 @@ from pa_agent.agent_runtime.execution_contract import (
     skill_key, stage2_host_gated_draft,
 )
 from pa_agent.agent_runtime.execution_contract import BOUNDED_CONTEXT_POLICY
+from pa_agent.agent_runtime.investigation_policy import (
+    OPTIONAL_INVESTIGATION_OPERATIONS, InvestigationPolicyViolation,
+    stage1_investigation_enabled, validate_stage1_investigation,
+)
 from pa_agent.ai.token_counter import estimate_tokens
 
 PRICE_FRAME_CHUNK_SIZE = 50
 
-OPTIONAL_INVESTIGATION_OPERATIONS = frozenset({
-    "list_fact_ids", "get_measurements", "get_pa_evidence", "get_facts", "get_bars",
-    "search_allowed_knowledge", "read_allowed_knowledge", "measure_price_window", "project_price_leg",
-})
 REPAIR_OPERATIONS = frozenset({
     "get_repair_findings", "get_facts", "get_pa_evidence", "get_htf_evidence",
     "get_vpa_evidence", "read_allowed_knowledge",
@@ -82,6 +82,10 @@ class FrozenEvidenceGateway:
         self._bytes_used = 0
         self._audit: list[EvidenceAuditEvent] = []
         self._core_context = self._extract_core_context()
+        try:
+            self._stage1_investigation = stage1_investigation_enabled(job, actor=self._actor)
+        except InvestigationPolicyViolation as exc:
+            raise EvidenceAccessDenied(str(exc)) from exc
 
     @property
     def audit_events(self) -> tuple[EvidenceAuditEvent, ...]:
@@ -97,6 +101,17 @@ class FrozenEvidenceGateway:
     def frozen_job(self) -> FrozenAgentJob:
         """Expose immutable identity to the local MCP transport, not to the model."""
         return self._job
+
+    @property
+    def strict_stage1_investigation(self) -> bool:
+        return self._stage1_investigation
+
+    def reject_invalid_tool_arguments(self, operation: str) -> None:
+        """Charge a failed transport attempt without retaining caller arguments."""
+        def reject() -> None:
+            raise EvidenceAccessDenied("invalid frozen evidence tool arguments")
+
+        self._query(operation, {}, reject)
 
     @property
     def snapshot_identity(self) -> dict[str, Any]:
@@ -917,6 +932,18 @@ class FrozenEvidenceGateway:
             self._deny(call_index, operation, request, "call_budget_exceeded")
             raise EvidenceBudgetExceeded("evidence call budget exceeded")
         self._calls_used = call_index
+        if self._stage1_investigation:
+            try:
+                validate_stage1_investigation(
+                    [*(asdict(event) for event in self._audit),
+                     {"operation": operation, "status": "pending"}],
+                    require_packet=False, reject_denied=False,
+                )
+            except InvestigationPolicyViolation as exc:
+                self._deny(call_index, operation, request, exc.reason)
+                if "budget_exceeded" in exc.reason:
+                    raise EvidenceBudgetExceeded(str(exc)) from exc
+                raise EvidenceAccessDenied(str(exc)) from exc
         try:
             if self._actor == "child" and operation not in self.available_tool_names():
                 raise EvidenceAccessDenied("operation is outside delegated evidence scope")
@@ -937,6 +964,7 @@ class FrozenEvidenceGateway:
                 self._core_context.get("context_policy") == BOUNDED_CONTEXT_POLICY
                 and self._job.manifest.role == "stage1"
                 and self._actor == "parent"
+                and not self._stage1_investigation
                 and operation in OPTIONAL_INVESTIGATION_OPERATIONS
             ):
                 self._optional_calls_used += 1

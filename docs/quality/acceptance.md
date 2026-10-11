@@ -34,7 +34,10 @@
 21. `semantic_parity_v1` Codex Stage 1/2 未读取完整 price-only frame、全部已发布 HTF Evidence、
     阶段协议或任一 `loading_policy=mandatory` 模块却被接受的次数为 0；`bounded_context_v2`
     Stage 1 未恰好读取一次 digest-bound Decision Packet（内含完整 price frame、全部 HTF、事实脊柱、
-    原文 foundation sections 与完整 section index），或成功 optional 调查超过两次却被接受的次数为 0。
+    全部 Host 选择的 mandatory 原文 foundation sections 与完整 section index），或成功 optional
+    调查超过两次却被接受的次数为 0。显式冻结 `stage1_investigation_v1` 的新 Stage 1 必须先
+    成功读取 Packet，事实调查最多一次、知识调查最多一次、合计最多两次；所有尝试均占配额，
+    denied 不得被后续 Draft 掩盖。缺少该字段的历史 Job 保留原契约；未知版本在启动前拒绝。
 22. PA Stage 1/2 通过 Frozen Job 或 Evidence 工具读取到 `volume`、`amount` 或 `volume_state` 的次数为 0。
 23. `semantic_parity_v1` Job 未按 knowledge manifest 的 `load_order` 首次读取 mandatory 模块却被接受的次数为 0。
 24. Dashboard、worker status 或长期日志出现 Codex token、账号标识、原始登录输出或 reasoning stream 的次数为 0。
@@ -54,8 +57,9 @@
 - PA-only 无重试 Prompt 的 p95 token 不超过迁移前匹配基线的 60%。
 - 研究 B 臂总 token 不超过同 Snapshot PA-only 的 1.35 倍；生产 Shadow 不调用 Joint。
 - Prompt 压缩不得删除 Background、八态频谱、Always In、Setup、竞争假设、HTF、Gate 或核心 VPA 证据域。
-- `bounded_context_v2` 不摘要或删除知识：foundation 以原文 section 常驻，其余冻结原文按精确 section ID
-  on-demand。历史 `semantic_parity_v1` 继续原样回放；新策略须通过 matched replay/盲评后方可晋级。
+- `bounded_context_v2` 不摘要或删除知识：Host 选择的全部 mandatory 知识以原文 section
+  常驻 foundation，其他已授权冻结原文按精确 section ID on-demand。历史 `semantic_parity_v1`
+  继续原样回放；新策略须通过 matched replay/盲评后方可晋级。
 - 记录 Decision Packet bytes/tokens、optional 调查次数和 `last_evidence_to_final_ms`；不得以放大 timeout
   代替架构或模型策略优化。
 - 20 个资产并发排队时无丢失、重复、跨资产身份污染或重复数据库记录。

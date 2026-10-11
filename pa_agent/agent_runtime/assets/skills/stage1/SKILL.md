@@ -10,7 +10,7 @@ description: Use when a frozen PA Agent job requests Brooks Stage 1 market diagn
 
 1. 调用一次 `get_stage1_decision_packet`，核对可直接比较的 identity、cutoff 与 role；packet digest 已由 Host/Gateway 验证，不自行重算。完整阅读冻结窗口、全部 HTF、PA fact spine、bar_measurements、角色协议、foundation 原文；`section_index` 只列尚未内嵌原文的 section，不重读已交付的 foundation。窗口长度以 packet 为准；表格 columns 与 rows 逐列对应，保留了真实 fact ID、几何和指标。交付失败为 incomplete，身份矛盾为 review_required。
 2. 基线已完整读取后，若 Job 允许 `stage1_challenge_v1` / `single_challenge_v1` 且存在一个影响诊断的具体事件争议，立即按 Runtime AGENTS 委托一次，而不是完成整份诊断后再启动。限定为该事件的边界、尺度、随后闭盘响应；给出边界源棒、事件及连续后续、相关完整 Brooks section，必要时给对应 HTF。child 不判断整份 cycle 或起草替代 Stage 1。父同期建立整体周期、过渡风险、Always In、HTF/位置、其他 patterns 及字段一致性；不要重复 child 的逐棒调查。K 编号越大越早；长期背景与近期方向分别评价，previous_analysis 只作待复核对照。没有实质争议就不启动。
-3. 仅针对能改变上述结论的证据缺口取证，最多两个问题。先使用已交付测量；缺值按精确 ID 批量 `get_pa_evidence`，理论缺口按索引 section IDs 批量 `read_allowed_knowledge`。最多各一次、合计两次可选取证调用；fixed 模式不做可选调查或启动挑战。不得重复整图、开放搜索、读取 VPA 或自行重算已有事实。
+3. 仅针对能改变上述结论的证据缺口取证，最多两个问题。先使用已交付测量；缺值按精确 ID 批量 `get_pa_evidence`，尚未交付的窗口或投影测量可用 `measure_price_window` / `project_price_leg`，三者共用一次 fact 配额。理论缺口直接按 packet 索引 section IDs 批量 `read_allowed_knowledge`，不先搜索。fact 与 knowledge 最多各一次、合计两次；`investigation_envelope.policy_version=stage1_investigation_v1` 时按调用尝试计数，失败也占配额，且必须先成功读取 packet。预算耗尽返回 incomplete，取证拒绝不得以成功 Draft 掩盖；child 与 pointer repair 仍受各自独立的范围和预算约束。fixed 模式不做可选调查或启动挑战。不得重复整图、开放搜索、读取 VPA 或自行重算已有事实。
 4. 综合时收集 child（如已启动），按本 Job 原值核对已读引用，仅重评受影响的判断及依赖字段；失败不采用且保留审计，不改变父停止语义。形成当前最有支持的诊断与条件。保留实质竞争解释和反证；突破发生不等于接受，旧边界的回收不等于近期边界的回收。尚未发生的确认与市场模糊性可以保留，不必靠延长推理消除。检查实质一致性与字段引用后提交 JSON；不输出调查流水账。剩余资源不足按停止协议处理，不伪装成低确定性的有效分析。
 
 Gate 由 Host 唯一 materializer 从 Draft 物化，模型不补静态 Gate/trace。完整证据下的低确定性可以 unknown；缺少必读资源或预算耗尽必须按 Runtime AGENTS 返回 incomplete，身份矛盾返回 review_required。不得把执行失败写成市场诊断。

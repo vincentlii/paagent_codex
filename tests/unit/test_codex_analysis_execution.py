@@ -56,7 +56,7 @@ def test_new_jobs_bind_matching_transport_and_readonly_tools(tmp_path, model):
     assert "get_role_baseline" not in names
     assert "get_vpa_evidence" not in names
     assert "get_repair_findings" not in names
-    assert FrozenEvidenceGateway(job).get_market_core()["role_skill"] == job.runtime["skills"]["stage1"]
+    assert FrozenEvidenceGateway(job).get_stage1_decision_packet()["role_skill"] == job.runtime["skills"]["stage1"]
 
     old_job = replace(job, core_context={key: value for key, value in job.core_context.items()
                                          if key != "instruction_delivery_policy"})

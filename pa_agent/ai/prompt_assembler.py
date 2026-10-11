@@ -96,7 +96,7 @@ _PA_FACTUAL_CLAIM_RULE = """
 
 - “突破前高/前低”必须指向 K2 及更早的可识别结构位，并引用对应 K 线或程序 prior-window 比较字段；K1 自己的 high/low 不能被称为“此前高/前低”。程序只提供数值比较，不替你确认突破、收回或回测。
 - 单根 K 线内部位置只引用 `PA.BAR.K#`，不复制 `canonical_value` 的 key=value：程序事实为 `upper_quartile` 时可解释为“收盘靠近本棒高点”，`lower_quartile` 时可解释为“收盘靠近本棒低点”，`middle_half` 时解释为“收盘居于本棒中部”；这不表示该棒创出窗口新高/新低。
-- 最近逐棒相邻比较优先引用 `PA.PAIR.K1.K2` 至 `PA.PAIR.K5.K6`；字段名始终表达 newer bar 相对 older bar，例如 `newer_low_vs_older_low` 只比较两棒低点。JSON reason 只引用 fact ID，不复制 canonical_value 的 key=value。K1 相对前窗的高低比较引用 `PA.COMPARE.K1.PRIOR5/10/20`。不要手写价位。跨窗口的`新高/新低/窗口最高/窗口最低`必须同时有具体 `K#-K#` 比较，或一个真实且已列入 `pa_evidence.fact_refs` 的 `PA.PAIR` / `PA.WINDOW` / `PA.COMPARE` 引用。
+- 最近逐棒相邻比较优先引用 `PA.PAIR.K1.K2` 至 `PA.PAIR.K5.K6`；字段名始终表达 newer bar 相对 older bar，例如 `newer_low_vs_older_low` 只比较两棒低点。JSON reason 只引用 fact ID，不复制 canonical_value 的 key=value。K1 相对前窗的高低比较引用 `PA.COMPARE.K1.PRIOR5/10/20`。不要手写价位。跨窗口的`新高/新低/窗口最高/窗口最低`必须同时有具体 `K#-K#` 比较，或一个真实且已在当前 Provider Draft 合法引用字段中声明的 `PA.PAIR` / `PA.WINDOW` / `PA.COMPARE` 引用；合法字段见下方 PA_EVIDENCE 契约。
 - 阳线/阴线根数与连续段由 `PA.WINDOW` 保存。`gate_trace` 与摘要只引用对应 fact ID 后做“空头占优/延续性较强”等定性解释，不复写阳线/阴线根数，也不自行重算。
 - 任何“反弹/回撤超过 N 根”等数量结论必须引用明确 `K#-K#`；无法给出范围时改写为定性描述。
 - `close-EMA20` 是价格距 EMA 的距离，不是 EMA 斜率。EMA 上行/下行幅度只能引用程序给出的“EMA20 自身变化”。
@@ -170,7 +170,7 @@ _STAGE2_API_TASK_RULE = """
 **必须**：在 assistant 正文 `content` 输出**完整阶段二裸 JSON**（仅此一种交付物）。
 """.strip()
 
-_OPENCLAW_AGENT_NO_TOOLS_RULE = """
+_OPENCLAW_AGENT_NO_TOOLS_RULE_TEMPLATE = """
 ## PA Agent × QClaw 任务模式（硬约束）
 
 你正在接收 **PA Agent 程序化 K 线分析**请求，不是通用编程/运维助手会话。
@@ -178,12 +178,15 @@ _OPENCLAW_AGENT_NO_TOOLS_RULE = """
 **禁止调用任何工具**，包括但不限于：`exec`、运行 Python/shell、读/写/编辑文件、浏览器、联网搜索、在 `~/.qclaw/workspace` 写中间 `.md`/`.json` 等。
 
 - K 线表、EMA/ATR、几何特征、阶段一诊断（若有）**已全部在用户消息中给出**；禁止再拉数据或读盘。
-- 你负责提出结构入场、失效位、目标与 PA 胜率先验，不调用工具。风险点数、盈亏比与交易者方程由程序在输出后复算；不得为了让方程通过而改写结构价格或胜率。
+- 你负责提出结构入场、失效位、目标与 {win_rate_prior}，不调用工具。风险点数、盈亏比与交易者方程由程序在输出后复算；不得为了让方程通过而改写结构价格或胜率。
 - **唯一交付物**：assistant 正文 `content` 中的裸 JSON（阶段一或阶段二 schema）。不得在磁盘上留档后再回复。
 
 违反会导致分析极慢、工具刷屏，且程序无法解析你的输出。
 """.strip()
 
+_OPENCLAW_AGENT_NO_TOOLS_RULE = _OPENCLAW_AGENT_NO_TOOLS_RULE_TEMPLATE.format(
+    win_rate_prior="PA 胜率先验",
+)
 
 
 _INCREMENTAL_OUTPUT_HARD_RULES = """
@@ -244,14 +247,22 @@ def _stage2_output_contract(
     from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
 
     return (
-        f"{_STAGE2_OUTPUT_CONTRACT}\n\n"
+        f"{_stage2_output_rules(joint_stage2=joint_stage2)}\n\n"
         "## Exact Stage 2 provider contract\n"
         f"{render_provider_draft_contract('stage2', decision_tree_path=decision_tree_path, joint_stage2=joint_stage2)}"
     )
 
 
-def _stage2_tail_reminder() -> str:
-    return _STAGE2_TAIL_REMINDER
+def _stage2_tail_reminder(*, joint_stage2: bool = False, host_output: bool = False) -> str:
+    contract = "pa_vpa_stage2_draft_v1" if joint_stage2 else "Stage 2 Draft v2"
+    delivery = (
+        f"按 Host 输出模式提交 {contract}。"
+        if host_output else f"正文只写 {contract} 裸 JSON。"
+    )
+    return (
+        f"【输出】{delivery}确认保留最终 decision_intent，"
+        "不要输出 Stage1 冻结字段、§10.3、terminal 或静态 trace 字段。"
+    )
 
 
 _NEXT_BAR_PREDICTION_INSTRUCTION = """\
@@ -502,6 +513,23 @@ def stage2_prompt_txt_files(
     ]
 
 
+def _joint_stage2_persona_text(text: str) -> str:
+    """Project the three PA-only persona rules for the explicit joint role."""
+    replacements = {
+        "只依赖 K 线与 EMA20（**不依赖成交量**）":
+            "以 K 线与 EMA20 的 Brooks 判断为主；仅联合 Stage 2 可参考 Host 已验收的 VPA 报告",
+        "识别与决策不以成交量为必要条件；无成交量或不可比时**忽略**一切成交量条款。":
+            "Brooks Setup 不以成交量为必要条件；联合 Stage 2 只参考已验收 VPA 报告，量不可用或不可比时不补造 VPA 结论。",
+        "`estimated_win_rate` 必须针对当前 PA Setup、位置、触发、失效位与目标独立估计":
+            "联合 `estimated_win_rate` 必须在已验证 PA/Router 边界内，针对当前 Setup、位置、触发、失效位、目标与已验收 VPA 报告独立估计，不能机械加减 PA-only 先验",
+    }
+    for before, after in replacements.items():
+        if before not in text:
+            raise ValueError(f"joint Stage 2 persona is missing required wording: {before}")
+        text = text.replace(before, after, 1)
+    return text
+
+
 def select_agent_knowledge_text(
     *, role: str, module_id: str, text: str, joint_stage2: bool = False,
 ) -> str:
@@ -513,21 +541,10 @@ def select_agent_knowledge_text(
     complete document, matching PromptAssembler's compatibility behavior.
     """
     if role in {"stage1", "stage2"} and module_id == "提示词大纲_人设与思维方式.txt":
-        # Keep the Direct source intact. Every Codex role follows the frozen
-        # output schema; only the joint Stage 2 role may use accepted VPA.
+        # Keep the source intact. Direct and Codex share the explicit joint
+        # role semantics; the Codex transport projection remains separate.
         if joint_stage2 and role == "stage2":
-            replacements = {
-                "只依赖 K 线与 EMA20（**不依赖成交量**）":
-                    "以 K 线与 EMA20 的 Brooks 判断为主；仅联合 Stage 2 可参考 Host 已验收的 VPA 报告",
-                "识别与决策不以成交量为必要条件；无成交量或不可比时**忽略**一切成交量条款。":
-                    "Brooks Setup 不以成交量为必要条件；联合 Stage 2 只参考已验收 VPA 报告，量不可用或不可比时不补造 VPA 结论。",
-                "`estimated_win_rate` 必须针对当前 PA Setup、位置、触发、失效位与目标独立估计":
-                    "联合 `estimated_win_rate` 必须在已验证 PA/Router 边界内，针对当前 Setup、位置、触发、失效位、目标与已验收 VPA 报告独立估计，不能机械加减 PA-only 先验",
-            }
-            for before, after in replacements.items():
-                if before not in text:
-                    raise ValueError(f"joint Stage 2 persona is missing required wording: {before}")
-                text = text.replace(before, after, 1)
+            text = _joint_stage2_persona_text(text)
         text = text.replace(
             "本 Agent **只输出单次分析 JSON**",
             "本 Agent **只输出当前角色的单次分析结果**", 1,
@@ -596,12 +613,12 @@ ANALYSIS_FACT_CATALOG；alternatives 可为空，禁止复制 primary 伪造不�
 §1.2 无法识别时在该节点停止，§1.3 极端混乱时在该节点停止。
 """.strip()
 
-_STAGE2_OUTPUT_CONTRACT = """
-## Stage 2 Provider Draft v2
+_STAGE2_OUTPUT_CONTRACT_TEMPLATE = """
+## {contract_title}
 只输出裸 JSON。Stage 2 负责 Brooks Setup、信号与入场时机、entry、结构 stop、TP1、
-可选的结构延伸 TP2、PA 主观胜率先验及最终 `trade|wait|reject` 意图；程序复算价格几何、RR、Breakeven、Expectancy
+可选的结构延伸 TP2、{prior_label}主观胜率先验及最终 `trade|wait|reject` 意图；程序复算价格几何、RR、Breakeven、Expectancy
 和 Trader Equation，并执行订单安全检查。
-Stage 2 是具体 PA 交易方案的唯一所有者；程序不替它选择 Setup 或入场时机。
+{role_scope}
 
 字段形状、必填项、类型和枚举只以紧随其后的自动生成 Provider Contract 为准。
 不要输出 Stage 1 冻结字段、`gate_shortcircuited`、静态 trace 字段、§10.3、
@@ -612,21 +629,43 @@ so choose the applicable `11.1`-`11.4`. Every executable order must include node
 若 `order_type=不下单`，方向、三价、交易置信度和胜率必须按 contract 置 null。
 `next_bar_prediction` 是启用时由 LLM 提供的辅助判断，不参与订单授权。
 模型仍需判断 §10.1/§10.2、Setup 是否成立、信号质量和是否执行；
-不得为了让方程通过而调整结构价格或胜率。`estimated_win_rate` 仍是未经统计校准的 PA 主观胜率先验。
+不得为了让方程通过而调整结构价格或胜率。{prior_scope}
 先基于本轮 Background、Location、Setup、信号与反证形成定性概率排序，再给数值；
 教学材料中的通用频率不得复制为本轮胜率，Breakeven 也不得反推胜率。
-TP1 是执行目标和 Trader Equation 唯一回报基础；仅在存在可核对的独立远端结构目标时填写 TP2，
+{joint_analysis_rule}TP1 是执行目标和 Trader Equation 唯一回报基础；仅在存在可核对的独立远端结构目标时填写 TP2，
 否则 `take_profit_price_2=null`，不得为满足字段或美化收益凭空投射。
 """.strip()
+
+
+def _stage2_output_rules(*, joint_stage2: bool = False) -> str:
+    return _STAGE2_OUTPUT_CONTRACT_TEMPLATE.format(
+        contract_title=(
+            "Joint Stage 2 Provider Draft (`pa_vpa_stage2_draft_v1`)"
+            if joint_stage2 else "Stage 2 Provider Draft v2"
+        ),
+        prior_label="联合" if joint_stage2 else "PA ",
+        role_scope=(
+            "联合 Stage 2 在已验证 PA/Router 边界内结合 Host 已验收 VPA 报告，独立选择最终方案；"
+            "不得重写上游诊断、创造边界外 Setup 或让 VPA 单独定义概率。"
+            if joint_stage2 else
+            "Stage 2 是具体 PA 交易方案的唯一所有者；程序不替它选择 Setup 或入场时机。"
+        ),
+        prior_scope=(
+            "`estimated_win_rate` 是未经统计校准的联合主观胜率先验，须独立估计，不能机械加减 PA-only 先验。"
+            if joint_stage2 else
+            "`estimated_win_rate` 仍是未经统计校准的 PA 主观胜率先验。"
+        ),
+        joint_analysis_rule=(
+            "`joint_analysis` 必须论证支持、挑战、方案与等待、限价可达性、目标阻力和结构失效；"
+            "`vpa_evidence_refs` 只引用已验收报告中的证据，数据不足时可明确仅以价格依据决策。\n"
+            if joint_stage2 else ""
+        ),
+    )
+
 
 _STAGE1_TAIL_REMINDER = (
     "【输出】正文只写 Stage 1 Draft v2 裸 JSON。确认含真实 primary、可为空的 alternatives、"
     "证据引用和完整语义 gate_trace；不要输出程序拥有的静态字段。"
-)
-
-_STAGE2_TAIL_REMINDER = (
-    "【输出】正文只写 Stage 2 Draft v2 裸 JSON。确认保留最终 decision_intent，"
-    "不要输出 Stage1 冻结字段、§10.3、terminal 或静态 trace 字段。"
 )
 
 
@@ -829,7 +868,8 @@ class PromptAssembler:
     # DeepSeek KV Cache hits require the *prefix* of consecutive requests to
     # be byte-identical.  System prompts are fully static (persona + txt files)
     # and never change during a session, so we cache them at the process level.
-    # Stage 1 and Stage 2 share one static system blob so S1→S2 prefix matches.
+    # Stage 1 and ordinary PA Stage 2 share a static system blob. Explicit joint
+    # Stage 2 requires a different role, so its system prefix cannot match S1.
 
     @functools.cached_property
     def _shared_system_prompt(self) -> str:
@@ -849,19 +889,28 @@ class PromptAssembler:
         """Return cached shared system prompt."""
         return self._shared_system_prompt
 
-    def _build_stage2_system_prompt(self) -> str:
-        """Return cached shared system prompt (byte-identical to Stage 1)."""
+    def _build_stage2_system_prompt(self, *, joint_stage2: bool = False) -> str:
+        """Keep the PA prefix; project a distinct system role for joint Stage 2."""
+        if joint_stage2:
+            return self._build_shared_system_prompt_inner(joint_stage2=True)
         return self._shared_system_prompt
 
-    def _build_shared_system_prompt_inner(self) -> str:
-        """Build the static persona and transport contract shared by both stages."""
+    def _build_shared_system_prompt_inner(self, *, joint_stage2: bool = False) -> str:
+        """Build the persona and Direct transport rules for the selected role."""
         system_parts = [
             _LANGUAGE_ZH_RULE,
             _PA_TERMINOLOGY_ZH,
-            _OPENCLAW_AGENT_NO_TOOLS_RULE,
+            (
+                _OPENCLAW_AGENT_NO_TOOLS_RULE_TEMPLATE.format(win_rate_prior="联合胜率先验")
+                if joint_stage2 else _OPENCLAW_AGENT_NO_TOOLS_RULE
+            ),
             _THINKING_CONTENT_OUTPUT_RULE,
         ]
-        system_parts.extend(self._load(name) for name in COMMON_SYSTEM_PROMPT_TXT_FILES)
+        system_parts.extend(
+            _joint_stage2_persona_text(self._load(name))
+            if joint_stage2 and name == "提示词大纲_人设与思维方式.txt" else self._load(name)
+            for name in COMMON_SYSTEM_PROMPT_TXT_FILES
+        )
         return "\n\n---\n\n".join(p for p in system_parts if p)
 
     # ── File loading ──────────────────────────────────────────────────────────
@@ -1740,7 +1789,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
                 self._render_transition_guidance(stage1_json),
                 breakout_tick_hint or "",
                 previous_prediction,
-                _STAGE2_OUTPUT_CONTRACT.replace(
+                _stage2_output_rules(joint_stage2=joint_stage2).replace(
                     "只输出裸 JSON。", "按 Host 输出模式提交当前 Draft，不输出额外文字。"
                 ).replace(
                     "紧随其后的自动生成 Provider Contract", "core_context.provider_output_schema"
@@ -1750,10 +1799,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
                     if enable_next_bar_prediction
                     else "下根K线预测已关闭：不输出 next_bar_prediction；完成本轮 decision、decision_trace 和 decision_intent。"
                 ),
-                _stage2_tail_reminder().replace(
-                    "正文只写 Stage 2 Draft v2 裸 JSON。",
-                    "按 Host 输出模式提交 Stage 2 Draft v2。",
-                ),
+                _stage2_tail_reminder(joint_stage2=joint_stage2, host_output=True),
             ],
         }
 
@@ -1857,6 +1903,9 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
 
         Standalone mode (OpenClaw Agent and similar):
           [system, user(S2 task + full K-line tables)]
+
+        Explicit joint Stage 2 projects only the system role in either mode.
+        Its system prefix differs from S1; prefix cache reuse is not guaranteed.
         """
         from pa_agent.ai.deepseek_client import supports_kv_prefix_chain
 
@@ -1884,13 +1933,18 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
                 stage1_reply_content,
             )
             chain = [dict(m) for m in stage1_messages]
+            if joint_stage2:
+                system_content = self._build_stage2_system_prompt(joint_stage2=True)
+                for message in chain:
+                    if message.get("role") == "system":
+                        message["content"] = system_content
             while chain and chain[-1].get("role") == "assistant":
                 chain.pop()
             chain.append({"role": "assistant", "content": assistant_content})
             chain.append({"role": "user", "content": stage2_user_content})
             return chain
 
-        system_content = self._build_stage2_system_prompt()
+        system_content = self._build_stage2_system_prompt(joint_stage2=joint_stage2)
         return [
             {"role": "system", "content": system_content},
             {"role": "user", "content": stage2_user_content},
@@ -2029,7 +2083,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
             f"{prev_pred_block + chr(10) if prev_pred_block else ''}"
             f"请根据以上诊断和K线数据按路由后的 Brooks 分支与 §9–§11、§14 输出 Stage 2 Draft。\n"
             f"注意:如果判断不下单,entry_price、take_profit_price、take_profit_price_2、stop_loss_price、order_direction 必须全部为 null。\n\n"
-            f"{_stage2_tail_reminder()}"
+            f"{_stage2_tail_reminder(joint_stage2=joint_stage2)}"
         )
 
     def stage2_system_prompt_only(
