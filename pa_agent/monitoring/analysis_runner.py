@@ -43,6 +43,7 @@ class FrozenAnalysisPayload:
     analysis_backend_identity: Mapping[str, Any] = field(default_factory=dict)
     analysis_profile_fingerprint: str = ""
     analysis_profile_identity: Mapping[str, Any] = field(default_factory=dict)
+    execution_policy: str | None = None
 
 
 class IndependentAnalysisHandler:

@@ -512,6 +512,12 @@ def build_review_projection(
         projection["trading"] = build_trading_projection(
             analysis_db_path, monitoring_db_path, paper_db_path,
         )
+        projection["trading"]["execution_versions"] = {
+            "paper_latency_v3": build_trading_projection(
+                analysis_db_path, monitoring_db_path, paper_db_path,
+                simulation_version="paper_latency_v3",
+            ),
+        }
         by_run = {item["run_id"]: item for item in projection["trading"]["analyses"]}
         for run in projection["recent_runs"]:
             disposition = by_run.get(run["run_id"], {})

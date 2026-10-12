@@ -75,6 +75,19 @@ assert.ok(nodes.orders.textContent.includes('无订单'));
 assert.ok(nodes.chart.textContent.includes('暂无已知平仓'));
 vm.runInContext("showReview({run_id:'review',review:{reasoning:'<script>plain text</script>'}},false)",context);
 assert.ok(nodes['review-content'].textContent.includes('<script>plain text</script>'));
+vm.runInContext("showReview({review:{vpa_timing:'insufficient_data',vpa_entry_applicable:false,vpa_data_status:'available'}},false)",context);
+assert.ok(nodes['review-content'].textContent.includes('不适用（尚无具体入场尝试）'));
+vm.runInContext("showReview({review:{vpa_timing:'insufficient_data',vpa_entry_applicable:false,vpa_data_status:'unavailable'}},false)",context);
+assert.ok(nodes['review-content'].textContent.includes('量价数据不可用'));
+context.data.trading.scope={simulation_version:'paper_latency_v4'};
+context.data.trading.execution_versions={paper_latency_v3:{...context.data.trading,
+  scope:{simulation_version:'paper_latency_v3'},account:{settled_balance:9876},orders:[]}};
+nodes['execution-version'].value='paper_latency_v3';nodes['execution-version'].events.change();
+assert.ok(nodes.version.textContent.includes('paper_latency_v3'));
+assert.ok(nodes.balance.textContent.includes('9,876'));
+nodes['execution-version'].value='paper_latency_v4';nodes['execution-version'].events.change();
+assert.ok(nodes.version.textContent.includes('paper_latency_v4'));
+assert.ok(nodes.notice.textContent.includes('v3 尚有 3 笔挂单/持仓'));
 assert.equal(nodes['review-dialog'].open,true);
 nodes['close-review'].events.click();assert.equal(nodes['review-dialog'].open,false);
 vm.runInContext("fetchError='connection failed; cached data';render(data)",context);
@@ -92,6 +105,7 @@ console.log('Trading rendering, empty states, review and read-only fetch: OK');
         [node, "-e", harness],
         input=json.dumps({"script": script, "ids": re.findall(r'id="([^"]+)"', TRADING_HTML)}),
         text=True,
+        encoding="utf-8",
         capture_output=True,
         timeout=5,
         check=False,

@@ -82,3 +82,7 @@ test_pending_writer_no_plaintext_key.py
 新增文件格式化后再次运行其中 24 项核心边界检查，全部通过；这是上述 188 项的子集，不重复计数。
 
 下一步是阶段 7 冻结证据盲评与独立实验协议，本阶段不提前开展。
+
+## 2026-10-13 后续授权修订
+
+本报告前文的固定下一收盘 expiry 是原 v3 验收证据。新 1h Headless 显式 pipeline 冻结 `limit_3bar_v1`：接收/激活资格仍到下一收盘，限价 pending 独立到第三个后续收盘；其他订单、旧 Frozen Job 和研究账户不迁移。扩展限价使用 v4，新增 nullable 新鲜度字段，不回填旧行。缺棒、柱内顺序未知仍 censored；有效新分析可提前替代，失败不续期。新版本验收、备份/回退边界及发布结果见 [运行修订报告](v1_runtime_failure_paper_audit_20261012.md)。

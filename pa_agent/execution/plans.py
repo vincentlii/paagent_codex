@@ -118,6 +118,11 @@ def official_paper_plan(
         expected_expiry = int(ts_open_to_ms(decision_bar_ts(record))) + 2 * duration * 1000
         if timing.decision_expires_at_ms != expected_expiry:
             raise ValueError("delivery expiry does not match frozen snapshot")
+        if timing.execution_policy is not None and (
+            timeframe != "1h"
+            or timing.limit_expires_at_ms != expected_expiry + 2 * duration * 1000
+        ):
+            raise ValueError("limit expiry does not match frozen snapshot")
         if now < timing.result_available_at_ms:
             raise ValueError("delivery result is not yet available")
         if now >= timing.decision_expires_at_ms:
@@ -129,7 +134,7 @@ def official_paper_plan(
             if (stage2.get("analysis_basis", {}).get("protocol_version") != "pa_vpa_stage2_draft_v1"
                     or not _field(record, "vpa_evidence")):
                 raise ValueError("joint decision provenance is missing")
-        delivery = (now, timing.decision_expires_at_ms)
+        delivery = (now, timing.decision_expires_at_ms, timing.limit_expires_at_ms)
     plan = _plan_from_decision(
         record,
         spec,
@@ -137,7 +142,13 @@ def official_paper_plan(
         dedupe_key=dedupe_key,
     )
     if plan is not None and delivery is not None:
-        return replace(plan, available_at_ms=delivery[0], expires_at_ms=delivery[1], take_profit_price_2=None)
+        extended_limit = plan.order_type == "limit" and delivery[2] is not None
+        return replace(
+            plan, available_at_ms=delivery[0],
+            expires_at_ms=delivery[2] if extended_limit else delivery[1],
+            result_expires_at_ms=delivery[1] if extended_limit else None,
+            take_profit_price_2=None,
+        )
     return plan
 
 

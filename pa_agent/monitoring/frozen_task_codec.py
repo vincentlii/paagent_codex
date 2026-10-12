@@ -73,6 +73,8 @@ def encode_task(task: AnalysisTask) -> tuple[str, str]:
             "analysis_profile_identity": dict(payload.analysis_profile_identity),
         },
     }
+    if payload.execution_policy is not None:
+        value["payload"]["execution_policy"] = payload.execution_policy
     encoded = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -85,6 +87,8 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
         raise ValueError("unsupported frozen task version")
     identity = value["identity"]
     source = value["payload"]
+    if source.get("execution_policy") not in {None, "limit_3bar_v1"}:
+        raise ValueError("unknown frozen execution policy")
     htf = source["htf_context"]
     if isinstance(htf.get("frame"), dict):
         htf["frame"] = _frame_from_dict(htf["frame"])
@@ -101,6 +105,7 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
         analysis_backend_identity=source["analysis_backend_identity"],
         analysis_profile_fingerprint=source["analysis_profile_fingerprint"],
         analysis_profile_identity=source["analysis_profile_identity"],
+        execution_policy=source.get("execution_policy"),
     )
     task = AnalysisTask.create(
         source=identity["source"], venue=identity["venue"],

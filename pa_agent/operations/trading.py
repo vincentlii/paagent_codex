@@ -17,7 +17,7 @@ HOUR_MS = 3_600_000
 ACCOUNT_ID = "pipeline-pa_vpa_joint"
 PIPELINE = "pa_vpa_joint"
 # A fixed reporting stratum, not whichever default the Broker uses in the future.
-SIMULATION_VERSION = "paper_latency_v3"
+SIMULATION_VERSION = "paper_latency_v4"
 ANALYSIS_FIELDS = (
     "tasks",
     "completed",
@@ -89,6 +89,7 @@ REVIEW_FIELDS = (
     "vpa_observations",
     "vpa_confirmation",
     "vpa_data_status",
+    "vpa_entry_applicable",
 )
 RUN_FIELDS = (
     "task_id",
@@ -179,6 +180,9 @@ def _review(raw: Any) -> dict[str, Any]:
         }
     )
     observations = vpa.get("observations")
+    hypotheses = context.get("pa_hypotheses")
+    candidates = hypotheses.get("setup_candidates") if isinstance(hypotheses, dict) else None
+    result["vpa_entry_applicable"] = bool(candidates) if isinstance(candidates, list) else None
     lines = []
     for item in observations[:8] if isinstance(observations, list) else []:
         if not isinstance(item, dict):
@@ -317,9 +321,8 @@ def _mark(connection: sqlite3.Connection, order: sqlite3.Row, now_ms: int) -> di
 
 
 def _paper(
-    connection: sqlite3.Connection, periods: dict[str, Any], now_ms: int
+    connection: sqlite3.Connection, periods: dict[str, Any], now_ms: int, version: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    version = SIMULATION_VERSION
     scoped = f"{_ORDER_FILTER} AND simulation_version = :version"
     for period in periods.values():
         params = {"version": version, "start": period["start_ms"], "now": now_ms}
@@ -412,10 +415,13 @@ def _paper(
 
 
 def build_trading_projection(
-    analysis_db: Path, monitoring_db: Path, paper_db: Path, *, now_ms: int | None = None
+    analysis_db: Path, monitoring_db: Path, paper_db: Path, *, now_ms: int | None = None,
+    simulation_version: str = SIMULATION_VERSION,
 ) -> dict[str, Any]:
     """Aggregate full ledgers; bound journals/prose and SQL work, not total counts."""
     now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    if simulation_version not in {"paper_latency_v3", "paper_latency_v4"}:
+        raise ValueError("unknown trading projection simulation version")
     periods = {
         key: {
             "start_ms": now_ms - days * 24 * HOUR_MS if days else 0,
@@ -433,7 +439,7 @@ def build_trading_projection(
         "scope": {
             "account_id": ACCOUNT_ID,
             "pipeline": PIPELINE,
-            "simulation_version": SIMULATION_VERSION,
+            "simulation_version": simulation_version,
             "provider": "binance_usdm",
             "venue": "BINANCE",
             "timeframe": "1h",
@@ -458,7 +464,7 @@ def build_trading_projection(
                 asset.update(dict.fromkeys(ANALYSIS_FIELDS))
     try:
         with _reader(paper_db) as connection:
-            result["account"], result["orders"] = _paper(connection, periods, now_ms)
+            result["account"], result["orders"] = _paper(connection, periods, now_ms, simulation_version)
         result["paper_available"] = True
     except (OSError, sqlite3.Error, TypeError, ValueError):
         for period in periods.values():
@@ -539,7 +545,7 @@ def build_trading_projection(
     return result
 
 
-def safe_trading_projection(value: Any) -> dict[str, Any]:
+def safe_trading_projection(value: Any, *, include_versions: bool = True) -> dict[str, Any]:
     """Dashboard allowlist: no database paths, arbitrary JSON or raw model output."""
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         return {}
@@ -623,4 +629,12 @@ def safe_trading_projection(value: Any) -> dict[str, Any]:
         {**select(item, RUN_FIELDS), "review": select(item.get("review"), REVIEW_FIELDS)}
         for item in items(value.get("analyses"), 30)
     ]
+    if include_versions:
+        versions = value.get("execution_versions")
+        legacy = versions.get("paper_latency_v3") if isinstance(versions, dict) else None
+        if (isinstance(legacy, dict) and isinstance(legacy.get("scope"), dict)
+                and legacy["scope"].get("simulation_version") == "paper_latency_v3"):
+            result["execution_versions"] = {
+                "paper_latency_v3": safe_trading_projection(legacy, include_versions=False),
+            }
     return result

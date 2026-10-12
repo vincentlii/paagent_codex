@@ -226,12 +226,17 @@ def create_frozen_analysis_task(
     analysis_backend_identity: Mapping[str, Any] | None = None,
     analysis_profile: AnalysisProfile | Mapping[str, object] | None = None,
     analysis_profile_fingerprint: str | None = None,
+    execution_policy: str | None = None,
 ) -> AnalysisTask:
     """Deep-freeze one validated snapshot before it enters the scheduler."""
     if not isinstance(frame, KlineFrame):
         raise TypeError("frame must be a KlineFrame")
     if analysis_backend_mode not in {"deepseek_only", "auto", "codex_only"}:
         raise ValueError("unsupported analysis backend mode")
+    if execution_policy not in {None, "limit_3bar_v1"}:
+        raise ValueError("unknown execution policy")
+    if execution_policy and (frame.timeframe != "1h" or getattr(settings, "analysis_pipeline", None) is None):
+        raise ValueError("limit_3bar_v1 requires an explicit 1h pipeline")
     profile_identity: dict[str, Any] = {}
     profile_fp = str(analysis_profile_fingerprint or "").strip().lower()
     if analysis_profile is not None:
@@ -291,7 +296,15 @@ def create_frozen_analysis_task(
         ),
         analysis_profile_fingerprint=profile_fp,
         analysis_profile_identity=copy.deepcopy(profile_identity),
+        execution_policy=execution_policy,
     )
+    cohort = analysis_cohort_id(
+        settings, analysis_fingerprint, analysis_backend_mode=analysis_backend_mode,
+        analysis_backend_identity=analysis_backend_identity,
+        analysis_profile_identity=profile_identity,
+    )
+    if execution_policy:
+        cohort = _stable_hash({"base": cohort, "execution_policy": execution_policy})
     return AnalysisTask.create(
         source=source,
         venue=venue,
@@ -302,13 +315,7 @@ def create_frozen_analysis_task(
             frozen_htf,
             incremental_identity,
         ),
-        cohort_id=analysis_cohort_id(
-            settings,
-            analysis_fingerprint,
-            analysis_backend_mode=analysis_backend_mode,
-            analysis_backend_identity=analysis_backend_identity,
-            analysis_profile_identity=profile_identity,
-        ),
+        cohort_id=cohort,
         payload=payload,
         created_at_ms=created_at_ms,
     )

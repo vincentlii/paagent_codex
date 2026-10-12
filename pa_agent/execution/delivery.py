@@ -30,9 +30,16 @@ def validated_delivery(record, *, now_ms: int) -> AnalysisTiming | None:
     expiry = latest_open + 2 * duration * 1000
     if expiry <= as_of:
         return None
+    policy = record.role_runtime.get("execution_policy")
+    if policy not in {None, "limit_3bar_v1"}:
+        raise ValueError("unknown frozen execution policy")
+    if policy is not None and record.meta.timeframe != "1h":
+        raise ValueError("limit_3bar_v1 requires the 1h decision timeframe")
     return AnalysisTiming(
         analysis_as_of_ms=as_of,
         model_completed_at_ms=completed,
         validated_at_ms=now_ms,
         decision_expires_at_ms=expiry,
+        execution_policy=policy,
+        limit_expires_at_ms=latest_open + 4 * duration * 1000 if policy else None,
     )

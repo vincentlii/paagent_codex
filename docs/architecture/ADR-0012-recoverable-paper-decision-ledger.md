@@ -110,3 +110,13 @@ price tolerance, a new market interpretation, or a rewrite of old evidence.
 - Missing-disposition reconciliation without analysis resubmission tests.
 - Official audit/authority boundary tests.
 - B-arm PA fallback ITT and four-arm prevalidation tests.
+
+## Authorized amendment: 2026-10-13 limit lifetime
+
+The user authorized implementation and VPS publication of the reviewed three-close initial lifetime for new explicit-pipeline 1h Headless LIMIT orders. Frozen `limit_3bar_v1` separates next-close result freshness from third-close pending expiry. Broker activation checks freshness again under its write lock. Market/breakout and unmarked restored jobs retain original timing.
+
+Extended LIMIT orders use `paper_latency_v4`, without relabeling v1-v3 orders or rewriting their prices, events, PnL or expiry. Valid hourly analyses, including No Trade, retain supersession semantics. Failures never renew expiry; opened positions retain protective exits. Missing eligible bars while v4 is pending produce an ambiguous outcome, not a later certain fill/no-fill.
+
+Migration adds only nullable `paper_orders.result_expires_at_ms`; legacy rows remain null without backfill. Before migration: pause, drain Host/Worker, stop services and verify a consistent backup. After migration: compare all legacy columns and other tables, run SQLite quick checks and inspect version scoping. Rollback requires a build supporting both v4 and the earlier quarantine amendment; an old reader must not take over this ledger. Restoring a pre-release data backup would discard later evidence and requires a separate recovery decision.
+
+Separate v3/v4 projections preserve historical visibility and PnL scope. Capital/risk remains shared by the official account. The longer lifetime is an initial policy, not proven superior returns.

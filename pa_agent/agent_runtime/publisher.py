@@ -537,7 +537,7 @@ class CodexJobPublisher:
                 max_evidence_calls=3,
                 max_evidence_response_bytes=response_bytes,
                 max_evidence_bytes=response_bytes + 2 * 65_536,
-                max_wall_seconds=240,
+                max_wall_seconds=300,
             )
         if role == "stage2":
             frame_calls = max(1, (int(bar_count) + PRICE_FRAME_CHUNK_SIZE - 1) // PRICE_FRAME_CHUNK_SIZE)
@@ -575,7 +575,7 @@ class CodexJobPublisher:
                 262_144,
                 mandatory_knowledge_bytes + int(bar_count) * 768 + 196_608,
             ),
-            max_wall_seconds=240,
+            max_wall_seconds=300 if role == "stage1" else 240,
         )
 
     @staticmethod

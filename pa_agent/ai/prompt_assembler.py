@@ -657,6 +657,8 @@ def _stage2_output_rules(*, joint_stage2: bool = False) -> str:
         ),
         joint_analysis_rule=(
             "`joint_analysis` 必须论证支持、挑战、方案与等待、限价可达性、目标阻力和结构失效；"
+            "在 entry_reachability / selection_vs_wait 说明已存 VPA 位置证据是否影响入场锚点或等待；"
+            "无相关证据不强求影响，前置 VPA timing 不适用不等于背景/位置数据不可用，不增加后置调用；"
             "`vpa_evidence_refs` 只引用已验收报告中的证据，数据不足时可明确仅以价格依据决策。\n"
             if joint_stage2 else ""
         ),

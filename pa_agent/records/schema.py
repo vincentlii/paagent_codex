@@ -28,6 +28,8 @@ class AnalysisTiming(BaseModel):
     validated_at_ms: int | None = Field(default=None, ge=0, strict=True)
     result_available_at_ms: int | None = Field(default=None, ge=0, strict=True)
     decision_expires_at_ms: int | None = Field(default=None, ge=0, strict=True)
+    execution_policy: Literal["limit_3bar_v1"] | None = None
+    limit_expires_at_ms: int | None = Field(default=None, ge=0, strict=True)
 
     @model_validator(mode="after")
     def _ordered_observations(self) -> "AnalysisTiming":
@@ -40,6 +42,13 @@ class AnalysisTiming(BaseModel):
                 raise ValueError("delivery observations must be present and chronological")
         if self.decision_expires_at_ms is not None and self.decision_expires_at_ms <= self.analysis_as_of_ms:
             raise ValueError("decision expiry must be after analysis as-of")
+        if (self.execution_policy is None) != (self.limit_expires_at_ms is None):
+            raise ValueError("limit expiry requires its frozen execution policy")
+        if self.limit_expires_at_ms is not None and (
+            self.decision_expires_at_ms is None
+            or self.limit_expires_at_ms <= self.decision_expires_at_ms
+        ):
+            raise ValueError("limit expiry must follow result freshness expiry")
         return self
 
 

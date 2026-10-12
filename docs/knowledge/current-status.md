@@ -21,6 +21,45 @@ verification_scope:
 
 # 当前状态
 
+## 2026-10-13 本轮优化（本地完成，待发布）
+
+Recent Runs 状态置首/固定、品种筛选、Outcome 折叠和 Backend 字段后置；Stage 1 首稿 300s（整链仍共享 600s）；VPA/Joint 明确既有结构位置证据及等待/入场说明，复盘区分无 Entry Attempt 与数据不可用。
+
+新 1h Headless 显式 pipeline 冻结 limit_3bar_v1，限价到第三个后续收盘、接单新鲜度仍下一收盘；新增 paper_latency_v4 与 nullable 字段，旧任务/订单不迁移。v4 pending 缺棒 censored，旧模糊成交不改。v3/v4 统计分层且历史可见，共同账户资本/风险保持独立说明。
+
+Headless 非 live 回归 1747 passed / 9 deselected（Qt 排除），最终提示和限价聚焦 17 passed。发布须 Host/Worker idle、停止服务、验证备份及旧数据比较；旧 Paper 引擎不能直接回退接管。ICT 既有改动保留且不纳入提交。详细证据见 [本轮修订](../quality/v1_runtime_failure_paper_audit_20261012.md)。
+
+
+## 2026-10-13 预算与时效初值（建议，未实施）
+
+00:07 新版六次自然分析共五次完整成功、一次 Stage 1 240 秒超时；00:00 三品种
+成功。成功首稿最长 234 秒，整链耗时约 349—476 秒。建议首稿先试 300 秒，
+保留整链共享 600 秒及其他阶段原上限，观察是否转移失败；尚未修改或发布。
+
+用户决定暂不优化 Paper 不确定成交，未来使用模拟盘回执。VPA 优先明确已有
+PA 结构位置的量价接受/拒绝及反证，由联合 Stage 2 定价，不新增后置模型调用。
+1h + 4h 的未成交限价初值建议到第三个后续 1h 收盘；接单新鲜度仍只到下一收盘，
+每小时有效分析可提前替代/撤单，旧 TTL 不因失败重置。三个小时是待验证上限，
+不是理论标准或已证明最优。当前复用 expiry 字段须先版本化拆分职责才能实施。
+详见[预算、位置及挂单建议](../quality/v1_runtime_failure_paper_audit_20261012.md)。
+
+## 后续 23:00 自然任务与 Recent Runs（展示调整仅本地）
+
+`227e197` 已有自然 XAU/ETH 两条完整联合分析成功；XAU 的空 incremental summary
+经一次授权 repair 成功。BTC 在 Stage 1 达到原冻结 240 秒预算停止，用量保持未知；
+这不是旧数组 repair 缺陷复发，不改历史失败或自动重跑。最近列表仍包含旧版 20:00 /
+21:00 失败，须按时间和分析指纹区分。Worker 认证正常。
+
+用户要求的 Recent Runs 本地调整为 Status 首列固定、品种筛选、完整 Paper 原因
+折叠及 Backend/Model/Effort 后置；74 项相关测试通过，尚未提交或发布。
+既有 ICT 评估改动经用户确认保留，不纳入本轮修改。
+
+ETH 唯一 ambiguous 订单在 20:15 激活、21:00 到期，整小时触价无法确定发生在
+激活前后。前置 VPA 的 timing 因尚无 Entry Attempt 为 insufficient_data；联合
+Stage 2 仍可使用其位置证据。1h OHLC 与下一收盘 expiry 的组合存在成交可观测性
+限制，不能猜测成交或暗改时效。证据与源码路径见
+[自然任务与执行语义核对](../quality/v1_runtime_failure_paper_audit_20261012.md)。
+
 ## 2026-10-12 自然运行与 Paper 拒收（已发布；完整新模型链待观察）
 
 截至 13:19，运行 `c20d04f` 发布后 45 个任务中 39 个完成、6 个 incomplete。

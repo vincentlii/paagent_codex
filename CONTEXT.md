@@ -218,3 +218,15 @@ Codex 输出仍先进入现有 Provider Draft/materializer/Validator 链。
   缺失 arm 保留并阻止验收；per-protocol 只作处理交付诊断。
 - E2E/fixture 不得触发正式交易 CSV、通知或其他生产副作用；复盘连续性读写必须使用同一个
   `PA_AGENT_HOME` 派生目录。
+
+## 2026-10-13 Headless 限价时效修订
+
+新显式 pipeline 的 1h Headless 任务冻结 `execution_policy=limit_3bar_v1`，进入 payload digest 与 cohort；旧恢复任务无 marker 时不补标。结果新鲜度仍到下一收盘，只有 LIMIT pending 到第三个后续 1h 收盘（latest closed open + 4h）。交付、激活、失败不重置时钟，Broker 在写锁内再次核对新鲜度。
+
+扩展限价使用 `paper_latency_v4`，旧订单与 market/breakout 仍用原协议。每小时有效分析（含 No Trade）保留替代 pending 的语义；已开仓不受挂单到期影响。v4 pending 从首个有效棒开始必须连续可观察，缺棒保持 `missing_pending_order_bars` / ambiguous，不确认后续入场或未成交。旧历史不重算。
+
+迁移只新增 nullable `paper_orders.result_expires_at_ms`，旧行不回填。v3/v4 收益与流水分开投影，正式账户资本及风险仍共同管理。回退必须同时认识 v4 和历史冲突隔离审计，禁止旧引擎接管现库。
+
+VPA 保持一次前置调用，在 PA 已定义的位置分析接受、拒绝、Test 与反证；Joint Stage 2 在 Router 范围内说明这些证据对入场/等待的影响。无 Entry Attempt 表示 timing 不适用，不等于量价数据不可用。首稿 Stage 1 上限为 300s，repair 180s、VPA 180s、Stage 2 300s、整链共享 600s 不变。
+
+详细验收与发布证据见 `docs/quality/v1_runtime_failure_paper_audit_20261012.md` 的 2026-10-13 修订；三棒是待观察初值，不证明收益、质量或性能改善。

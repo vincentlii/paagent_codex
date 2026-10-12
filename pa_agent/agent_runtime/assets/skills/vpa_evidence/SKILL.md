@@ -17,7 +17,7 @@ description: Use when a frozen PA Agent job requests an independent VPA evidence
 2. 新基线的 `mandatory_modules` 全部是 `loading_policy=mandatory`；按 ID 与 `load_order` 定位并阅读全部 PA 已选 VPA 模块原文。digest 是 Host 的冻结校验身份，不要求你重新计算。此简短清单替代重复的章节目录，不减少授权知识。旧冻结 Job 若交付 `list_allowed_knowledge`，仍按原清单定位。不得固定截取前若干段，也不得用 Skill 摘要替代当前知识版本。
 3. 阅读随包交付的全部 VPA evidence 分块，覆盖本次授权目录。这是原 Windows VPA Prompt 的量价信息基线，不能只抽取支持既有假设的证据。任一必读交付失败即停止，不用部分内容继续判断。
 4. 完整基线读完后，若 Job 允许 `vpa_challenge_v1` / `single_challenge_v1`，先识别一个有实质争议的 Effort/Result 比较或事件后续，按 Runtime AGENTS 尽早委托一次。资源包含事件与同源比较对象的精确 evidence，以及相关完整 VPA section；child 单次批量读 scope，不接收父整份报告。父同期处理其余独立事件、Background/Location、假设适用性与 entry timing；不让 child 重做全目录。没有争议不启动。按 `Background → Location → Effort/Result → Leg/Wave Comparison → Acceptance/Follow-through` 分析；最后才考虑 Wyckoff 标签。
-5. 从完整目录中为每个 observation 选择精确 VPA evidence ID；不得猜测或枚举 index 外 ID。必须同时寻找挑战 primary hypothesis 的证据，说明支持、挑战、中性或信息不足。比较必须有明确对象和同源因果基线。
+5. 从完整目录中为每个 observation 选择精确 VPA evidence ID；不得猜测或枚举 index 外 ID。优先围绕 PA 已定义的结构区域及其实际交互窗口，分析量价接受、拒绝、回测与反证；用已有 observations 和 next_confirmation 表达，证据不足就保留未决，不强求每个位置都有结论，不创造新位置或订单价。必须同时寻找挑战 primary hypothesis 的证据，说明支持、挑战、中性或信息不足。比较必须有明确对象和同源因果基线。
    一个解释句若涉及多个比较，应分别写明各自的 evidence ID、窗口/前棒及因果基线；新高/新低必须有冻结回看区间。引用多个 ID 不等于它们共同证明同一个未经界定的比较。
    同源比较必须保留两段结果的方向、幅度和相对强弱；“都缺乏确认”不能掩盖一段横走而另一段显著下跌。解释限制不等于消除这种不对称。
 6. 标签不能替代 Evidence，也不能成为第二个 Setup Router。

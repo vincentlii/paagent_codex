@@ -107,3 +107,11 @@
 3. `git diff --check` 通过。
 4. 清理缓存、临时日志与一次性回放产物。
 5. 单独提交，提交信息标明 Phase。
+
+## 1h Headless limit_3bar_v1 / paper_latency_v4
+
+- 新任务 marker 必须通过 Frozen payload、codec digest、cohort 与 Orchestrator 到 delivery；旧无 marker 任务保持原结果与执行版本。
+- 结果新鲜度下一收盘不变，只有限价 pending 到第三个后续收盘；Broker 写锁内二次核对，迟到不得入单。No Trade 替代使用原新鲜度，失败不续期，market/breakout 不延长。
+- 重启恢复、连续棒未触价到期/后续触价、首棒和中间棒缺失均须验证；缺棒不可确认成交或未成交，不确定不计零。
+- nullable schema 新列不得回填或改写旧字段、事件、结果；发布前验证一致备份，迁移后比较旧行并 quick_check。回退必须支持 v4 和 quarantine。
+- v3/v4 收益、曲线与订单独立展示；共同资本/风险明确标注，范围外活跃订单可见。VPA 显示 applicability 不改 canonical enum，不新增模型调用或订单权限。

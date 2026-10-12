@@ -14,6 +14,23 @@ NOW = 1_800_000_000_000
 ACCOUNT = "pipeline-pa_vpa_joint"
 
 
+def test_execution_versions_keep_profit_and_journals_separate(ledgers):
+    from pa_agent.operations.trading import safe_trading_projection
+
+    _order(ledgers, "current", pnl=12)
+    _order(ledgers, "legacy", simulation_version="paper_latency_v3", pnl=99)
+    current = build_trading_projection(*ledgers, now_ms=NOW)
+    legacy = build_trading_projection(*ledgers, now_ms=NOW, simulation_version="paper_latency_v3")
+    assert _asset(current)["realized_pnl"] == 12
+    assert _asset(legacy)["realized_pnl"] == 99
+    assert {o["run_id"] for o in current["orders"]} == {"current"}
+    assert {o["run_id"] for o in legacy["orders"]} == {"legacy"}
+    current["execution_versions"] = {"paper_latency_v3": legacy, "untrusted": {"raw_prompt": "secret"}}
+    safe = safe_trading_projection(current)
+    assert set(safe["execution_versions"]) == {"paper_latency_v3"}
+    assert safe["execution_versions"]["paper_latency_v3"]["scope"]["simulation_version"] == "paper_latency_v3"
+
+
 def _insert(path, table, **values):
     with sqlite3.connect(path) as connection:
         columns = ",".join(values)
@@ -123,7 +140,7 @@ def _order(ledgers, name, *, status="closed", pnl=100.0, **overrides):
             "exit_bar_ts": NOW - HOUR,
             "realized_pnl": pnl,
             "fees": 5.0,
-            "simulation_version": "paper_latency_v3",
+            "simulation_version": "paper_latency_v4",
             "evaluated_through_ts": NOW - HOUR,
             **overrides,
         },

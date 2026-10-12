@@ -241,3 +241,140 @@ Run Once 或历史订单；下一自然完整模型链、长期稳定性、交�
 本轮 VPS 暂存目录、本地发布 bundle 和 174 项测试目录已清理。上文初次修复遗留的
 十个不可遍历测试目录仍受系统权限限制，不进入 Git 或发布包；未强行改权限或删除
 其他任务缓存。正式数据备份、原始记录和凭据均保留。
+
+## 后续自然任务、面板及执行语义核对
+
+用户随后要求调整 Recent Runs 并核对失败、不确定订单、VPA timing 与订单时效。
+既有 ICT 评估及其 AGENTS/知识库导航改动经用户确认保留，不纳入本轮修改。
+线上仍为 `227e197`；本轮仅只读线上，没有发布、模型重跑或账本写入。
+
+### Recent Runs 展示（本地修改，未提交或发布）
+
+此前 Outcome 将模型意图、Paper 状态和完整拒绝原因拼入 nowrap 单元格，造成表宽
+膨胀；Status 又排在最后。现在 Status 为首列并固定在横向滚动左侧，Outcome 只
+显示意图及 Paper 状态，完整原因保留在默认关闭的 details。新增只读品种筛选，
+只筛当前已加载 Recent Runs，不改变控制面的启用品种、全局统计或服务状态；
+Backend、Requested / Effective Model、Effort 移到最后，所有字段继续 textContent。
+
+真实 JS DOM 测试核对列/数据对应、筛选往返与空态、完整原因保留及折叠、模型意图
+与 Paper 分离、原数据不变、筛选不新增 HTTP 请求。Dashboard、Trading 页面与投影
+合计 74 passed，26.98s；首轮默认沙箱的 loopback 请求遭 WinError 10013，受控权限
+下完整重跑通过，没有修改服务器或认证代码。关键 Ruff 与 diff 检查通过。
+41 个本轮文档本地链接核对通过，本轮专属测试目录已清理。
+未做实际浏览器像素验收；不是 GUI Qt 改动。
+
+PA/VPA/软件边界核对：只改已存事实的展示，市场判断、候选价、Validator、订单时效、
+成交路径与原控制写入接口不变。
+
+### 最近失败的版本与原因
+
+| 任务 | 版本与事实 |
+| --- | --- |
+| 20:00 XAU `4dd87fd9`、21:00 BTC `374d7ae0` | 旧分析指纹 `5156127a`；首稿支撑区间跨 K1.close，旧保护投影又破坏授权删除。均为 `227e197` 发布前的历史失败，不能据 Recent Runs 仍显示它们判断新修复复发 |
+| 23:00 BTC `8b73c1b4` | 新指纹 `d08edcc5`，Stage 1 wall 240311ms，冻结 budget.max_wall_seconds=240，原因为 wall-clock budget exceeded；没有 Draft 或 Validator 错误，token unknown，不能把零值当免费。当前 Worker auth healthy，不能将此归因认证或数组缺陷 |
+| 23:00 XAU `a1071e9c` | 首稿 incremental_delta.summary 为空，一次授权 repair 后完整 PA→VPA→Joint 成功，Paper no_trade；不是持续失败 |
+| 23:00 ETH `a4be22f9` | 完整联合链成功，无 repair，Paper no_trade |
+
+新版已经有两个自然完整成功样本及一个预算停止。未修改 240 秒预算、增加调用或
+自动重跑；为何该调用超过预算仍缺少内部推理/服务耗时细分，不能猜测唯一外部原因。
+
+### 不确定订单与一小时执行证据
+
+唯一 ambiguous 为 ETH `90da25dc`，来源 `0d71be5c`，limit long 2533、stop 2512、
+TP1 2559.37。20:15:35.660 激活，21:00 到期；20:00—21:00 棒为 O2545.1 / H2545.38 /
+L2517.58 / C2530.57，整棒触及限价，但无法确定触价在激活前或后。因此事件原因为
+delivery_window_intrabar，fill/exit/PnL/fees 保持 null，不是亏损或确认未成交。
+
+expiry 固定为最新已闭盘棒开盘时间 + 两个主周期，即下一主周期收盘；不是交付后
+完整一小时，本例剩余约 44 分 24 秒。只限制 pending，已开仓仍由 stop/TP1 推进。
+它防止旧信号长时间执行，但没有证明是一小时策略的最优订单寿命。
+
+当分析在有效棒柱内交付、又在该棒收盘到期时，当前 1h OHLC 只有部分时间覆盖，
+触价通常无法确认为交付后成交。这是 `paper_latency_v3` 的已知可观测性限制，
+不能放宽顺序猜测成交。更细执行证据应优先研究；较长时效也须独立协议/版本及
+因果验收，不能改旧订单、旧收益或直接延长已冻结 expiry。实际交易所支持多种
+timeInForce，并不强制一小时限价寿命，参见
+[Binance USD-M 官方枚举](https://developers.binance.com/zh-CN/docs/products/derivatives-trading-usds-futures/common-definition)。
+
+### 前置 VPA timing 与入场位置权限
+
+显式 Joint 的 `_run_predecision_vpa` 使用 `compile_pa_handoff(stage1, None, frame)`；
+此时没有 Stage 2 订单，candidate_ids 为空。Prompt 和 Validator 均要求该场景的
+entry_timing_relation=insufficient_data，含义为“没有可评价的具体入场尝试”，不能
+由该字段推断量价数据缺失。只读全库 207 个已存 VPA 报告中 206 个为该值，另一个
+为 neutral；跨历史协议计数不构成同 cohort 效果证据。
+
+独立 VPA 可提供 Background、Location、Effort/Result、Acceptance/Rejection 与后续
+确认；不自己创建 Setup、方向或订单价。当前联合 Stage 2 可以据这些证据影响等待
+条件及 Brooks/Router 范围内的入场位置，不局限于给 PA 订单贴 supports/neutral/
+challenges 标签。旧 Shadow 正式 PA 订单不能被 VPA 修改，不能混用这两种权限。
+
+原始 timing 枚举没有改写；将“无对象”与“证据不足”分开，应通过显示 applicability
+或版本化契约研究，不能强行将没有候选的 VPA 改成 supports 或把最终订单倒填给
+更早的 VPA 分析。所有契约及执行数据设计的后续修改须另行确认范围。
+
+## 2026-10-13 初始预算、VPA 位置与挂单时效建议（未实施）
+
+00:07 只读新分析指纹 `d08edcc5` 的六个自然任务：五个完整成功，一个 Stage 1
+240 秒预算停止。00:00 三品种均成功；23:00 XAU 空 summary 的 repair 已成功，
+不计为终态失败。五个非停止首稿耗时为 164.83、173.83、177.26、186.41、234.08 秒；
+完整链交付前 wall 为 348.8—475.7 秒。超时样本被截断，不能由成功样本推断真实
+全分布 p95、平均总成本或把其未报告用量当零。
+
+建议首稿 Stage 1 先试 **300 秒**，repair 180、VPA 180、Stage 2 300 和整链 600 秒
+暂时保留。成功调用已接近 240，少量余量有实际依据，但不直接倍增预算。整链
+由同一 `CodexAnalysisRoleBackend` 共享；Spool/Worker 对每阶段按剩余预算 clamp，
+不是三个独立上限相加。更大 Stage 1 预算可能将停止转移到 VPA/Stage 2，需要在
+新自然样本分别检查预算停止、交付延迟与用量覆盖。900 秒 `analysis_timeout_seconds`
+主要用于 `--once` 等待上界，不应误称持续调度每任务 hard deadline。
+
+用户明确暂不优化当前 Paper 的 OHLC 不确定成交，未来接入模拟盘后使用交易所
+模拟盘执行回执；本轮没有接入交易所或改写旧 Paper。模拟盘新结果须保留自身
+来源和执行协议，不能倒填为旧 Paper 已知成交。
+
+VPA 已接收完整 Stage 1 背景、结构位置和假设，不应重复增加一次后置调用来处理
+不存在的 Entry Attempt。优先明确现有报告关注 PA 已定义支撑/阻力、回测窗口的
+量价接受/拒绝、反证与尚待确认条件，并由联合 Stage 2 说明这些位置证据如何影响
+最终等待与定价。已有 observations 的 Effort/Result、Acceptance/Rejection 和
+next_confirmation 可承载这些内容，不要求所有位置强制给结论，不创造新的 Setup、
+订单价或 VPA Gate。界面可区分无 Entry Attempt 与实际量价数据不可用；原始枚举
+保持契约含义。理论依据见
+[Wyckoff 官方方法](https://www.wyckoffanalytics.com/wyckoff-method/)，不由此宣称
+本项目 VPA 已带来交易增益。
+
+对 **1h 决策 + 4h 背景**，建议未成交限价单初始硬上限为 **三个后续 1h 收盘**，
+从触发该分析的已闭盘边界计时，不从模型回复或提交时间重新起算。例如 12:00
+闭盘触发、12:08 接单，最迟 15:00 到期。旧接单新鲜度仍只到下一 1h 收盘；
+迟到分析不能因为新挂单寿命变长而获准入单。
+
+这是在回调等待与信息老化之间选取的工程初值，不是 4h 背景必然持续三小时，
+也不是 Brooks、Wyckoff 或交易所规定。Brooks 对限价回调的论述强调强弱趋势
+和双向交易背景对等待深度的影响，并不提供跨品种/周期统一 TTL；
+[原始问答](https://www.brookstradingcourse.com/ask-al/pullbacks-entering/)只能支持
+按背景判断等待，不证明此处三小时最优。之后可对 1/2/3 小时做同源、有成本和
+覆盖标记的比较，不用单次成交率证明更优。
+
+三小时是硬上限：当前每小时有效分析（包括 No Trade）会替代/撤销旧 pending，
+可提前结束；失败分析不刷新原 TTL，已开仓不受挂单时限约束。若未来希望明确保留
+已有订单，须另定义管理语义，不能把所有新 No Trade 自动解释成继续挂单。
+
+现有 `decision_expires_at_ms` 同时承担结果接收与挂单过期，不能直接替换其公式。
+实施须把结果新鲜度与 pending expiry 分开冻结、校验、持久化，保持不同执行版本
+与旧 Frozen Job/订单隔离。以上方案经同一协作者只读边界审查；本轮只更新建议
+与知识记录，没有改 240/600 秒预算、expiry、Prompt、Schema 或 VPS 运行状态。
+
+## 2026-10-13 本轮优化实现与本地验收
+
+用户已授权完成上述初值设计、commit 和 VPS 发布；以下是本地实现，发布证据单独登记。
+
+- Recent Runs 的 Status 首列固定，Outcome 精简并折叠完整原因，品种筛选，Backend/Model/Effort 后置。
+- Stage 1 首稿 wall 300s；repair/VPA/Stage 2 与整链共享预算不变，不自动重跑旧失败。
+- VPA/Joint 的现有协议与 Skills 明确 PA 结构位置的接受/拒绝、Test、反证与待确认条件；理论知识只保留位置与量价解释，不混入执行 action。Joint 说明证据对自身入场/等待的影响；没有新增角色、模型调用或 VPA 订单权限。
+- 复盘用原 `review_context.pa_hypotheses.setup_candidates` 判断有无 Entry Attempt；区分不适用、实际 unavailable 和 timing 证据不足，原 canonical 值不变。
+- 新 1h 显式 Headless 任务冻结 limit_3bar_v1。结果接收新鲜度下一收盘不变；限价挂单最迟第三个后续收盘，交付后剩余时间通常少于三小时。市场/突破单、旧恢复任务与旧订单不变。
+- 新扩展限价使用 paper_latency_v4。新增 nullable result_expires_at_ms，没有回填；锁内再次校验新鲜度。新版挂单缺首棒或中间棒保持 ambiguous，不能跳过未知成交路径。旧不确定订单保留，未接交易所模拟盘。
+- v3/v4 收益与流水分开查看；账户资本及风险共同管理。另一版本有活跃挂单/持仓时提示切换查看。
+
+独立协作者最终审查发现新版三棒 pending 缺口未检查；四种自动化场景先复现错误 open/cancelled，再修复为 ambiguous。40 项相关测试通过。Headless 非 live 全量回归 1747 passed / 9 deselected（排除 Qt GUI），之后补充的版本活跃提示及限价测试 17 passed；关键静态检查及 diff 检查另行核验。只有外部 tvDatafeed 的两项既有 DeprecationWarning。没有用测试结果宣称模型判断或收益提高。
+
+三角色判断：PA 的 Setup/Router/结构失效与唯一物化器不变；VPA 保持 PA-defined location 与 Evidence first，无第二 Setup/Gate；软件层冻结时钟、版本、失败边界与数据保留明确。三棒初值及 300s 预算仍需要新自然样本观察，尚无新 cohort 的质量、token 或交易增益结论。

@@ -125,13 +125,15 @@ class ProductionOrchestratorFactory:
             # configured baseline, rather than silently adding a new selection.
             settings.general.decision_stance = self._settings.general.decision_stance
         if mode == "deepseek_only":
-            return self._build_direct(settings=settings, profile_identity=profile_identity)
+            return self._build_direct(settings=settings, profile_identity=profile_identity,
+                                      execution_policy=task.payload.execution_policy)
         assert self._codex_backend_factory is not None
         primary = self._build_orchestrator(
             settings=settings,
             client=None,
             analysis_backend=self._codex_backend_factory(task, settings),
             profile_identity=profile_identity,
+            execution_policy=task.payload.execution_policy,
         )
         if mode == "codex_only":
             return primary
@@ -140,6 +142,7 @@ class ProductionOrchestratorFactory:
             cold_fallback=self._build_direct(
                 settings=settings.model_copy(deep=True),
                 profile_identity=profile_identity,
+                execution_policy=task.payload.execution_policy,
             ),
             pipeline_identity=settings.analysis_pipeline,
         )
@@ -158,6 +161,7 @@ class ProductionOrchestratorFactory:
     def _build_direct(
         self, *, client: Any | None = None, settings: Any | None = None,
         profile_identity: Mapping[str, Any] | None = None,
+        execution_policy: str | None = None,
     ) -> TwoStageOrchestrator:
         settings = settings or self._profile_settings.model_copy(deep=True)
         profile_identity = profile_identity or self._profile_identity
@@ -173,6 +177,7 @@ class ProductionOrchestratorFactory:
                 logger=self._logger,
             ),
             profile_identity=profile_identity,
+            execution_policy=execution_policy,
         )
 
     def _build_orchestrator(
@@ -182,6 +187,7 @@ class ProductionOrchestratorFactory:
         client: Any | None,
         analysis_backend: Any,
         profile_identity: Mapping[str, Any] | None = None,
+        execution_policy: str | None = None,
     ) -> TwoStageOrchestrator:
         experience_reader = ExperienceReader(
             experience_dir=self._experience_dir,
@@ -202,4 +208,5 @@ class ProductionOrchestratorFactory:
             exp_reader=experience_reader,
             settings=settings,
             profile_identity=profile_identity,
+            execution_policy=execution_policy,
         )

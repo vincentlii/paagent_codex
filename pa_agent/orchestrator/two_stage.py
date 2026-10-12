@@ -188,6 +188,8 @@ _VPA_ROLE_PROTOCOL = {
         "Every PA hypothesis receives exactly one supports, neutral, challenges or insufficient_data assessment.",
         "A candidate event remains candidate or unresolved until follow-through or rejection evidence confirms it.",
         "When no Entry Attempt exists, entry_timing_relation must be insufficient_data.",
+        "Use PA-defined structural locations to assess volume-conditioned acceptance, rejection, tests and counterevidence; do not create levels or order prices.",
+        "No Entry Attempt means timing is not applicable, not that available background/location evidence is unusable; express concrete unresolved location conditions in existing observations and next_confirmation.",
         "next_confirmation is pending_closed_bar only for a concrete unresolved VPA competition; otherwise not_applicable.",
         "Available data must add genuine Effort/Result, sequence, acceptance/rejection or timing information, not paraphrase PA.",
     ],
@@ -856,6 +858,7 @@ class TwoStageOrchestrator:
         defer_execution_policy: bool = False,
         allow_research_joint: bool = False,
         profile_identity: dict[str, Any] | None = None,
+        execution_policy: str | None = None,
     ) -> None:
         assembler_tree = getattr(assembler, "decision_tree_path", None)
         validator_tree = getattr(validator, "decision_tree_path", None)
@@ -884,6 +887,9 @@ class TwoStageOrchestrator:
             logger=logger,
         )
         self._profile_identity = dict(profile_identity or {})
+        if execution_policy not in {None, "limit_3bar_v1"}:
+            raise ValueError("unknown execution policy")
+        self._execution_policy = execution_policy
         self._call_arm = call_arm
         self._allow_provider_fallback = allow_provider_fallback
         self._defer_execution_policy = defer_execution_policy
@@ -987,6 +993,8 @@ class TwoStageOrchestrator:
         if pipeline is None:
             return
         record.analysis_pipeline = pipeline
+        if self._execution_policy is not None:
+            record.role_runtime["execution_policy"] = self._execution_policy
         if pipeline.pipeline != "pa_vpa_joint":
             return
         from pa_agent.ai.role_contracts import AnalysisRoleStop

@@ -958,6 +958,10 @@ class HeadlessMonitor:
             ),
             analysis_profile=self._applied_profile,
             analysis_profile_fingerprint=self._applied_profile_fingerprint,
+            execution_policy=(
+                "limit_3bar_v1" if frame.timeframe == "1h"
+                and self._settings.analysis_pipeline is not None else None
+            ),
         )
         with self._lock:
             state.fetch_failures = 0
