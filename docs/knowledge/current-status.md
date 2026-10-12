@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 最后核验: 2026-10-12
-核验提交: c20d04f41f06d344c9da1b7a76997ab1f722765c（运行 Python、知识与 Runtime；后续发布证据提交仅更新文档）
+核验提交: 227e1979ae7b4d7eebb5fe797e5c39c4aaf71d1e（运行 Python 与资源；后续发布证据提交仅更新文档）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,7 +21,7 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-12 自然运行与 Paper 拒收（本地已修复，VPS 待发布）
+## 2026-10-12 自然运行与 Paper 拒收（已发布；完整新模型链待观察）
 
 截至 13:19，运行 `c20d04f` 发布后 45 个任务中 39 个完成、6 个 incomplete。
 五个 Stage 1 首稿含跨 K1.close 支撑区间；修复中另暴露排序后 index 未映回 Draft，
@@ -37,7 +37,16 @@ verification_scope:
 回放隔离棒；不覆盖旧事实、清库、补挂历史订单或重跑模型。模型完成不等于接单。
 运行/交易页已补 Paper 处置原因，CLI 分类补 terminal 与嵌套错误并保留未知。
 全量 headless 非 live 1730 项通过，最终 50 项 Paper 与真实数值临时库复算通过，
-wheel 的 302 个文件字节一致且安装位置无 Qt。未提交/发布；VPS 仍为下方 `c20d04f`。
+wheel 的 302 个文件字节一致且安装位置无 Qt。随后用户授权提交发布；运行提交
+`227e197` 已推送私有 main 并安装到 VPS。发布前 174 项聚焦回归通过；Linux 包的
+302 个文件与固定提交及安装位置一致，48 项依赖不变，Runtime/权限审计通过。
+备份 `pa-agent-20261012T135657Z` 的 8633 项摘要与三库完整性通过；275 份原始记录、
+九项配置/认证文件和七张 Paper 表在安装前后不变。三服务 active、退出码 0、
+NRestarts=0，generation 37 running 已 applied，原 Profile/Fast/三品种/并发不变。
+自然行情轮询已审计隔离一条历史冲突，BTC 旧 close 82815.0 保留；原账户、订单、
+事件和 Paper 决策仍逐字段不变。原始分析不改写，未额外触发模型或 Run Once。
+Runtime asset 仍为 `1f44fa58`；Python/Schema 已改变，发布仍排空旧任务，不跨版本续接。
+CLI 未知退出与上游价格修订根因、完整新模型链及长期稳定性仍未验收。
 见 [自然失败与挂单诊断](../quality/v1_runtime_failure_paper_audit_20261012.md)。
 
 ## 2026-10-12 知识、角色契约与调查限制（已发布；自然模型效果待验收）

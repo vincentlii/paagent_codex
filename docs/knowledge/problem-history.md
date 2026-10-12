@@ -68,7 +68,7 @@ issue_status: monitoring
 - **正确原则：**normalizer 仅复制容器、白名单和无语义记号；repair 只修改被 JSON Pointer 授权的路径；Router 只读已验证枚举。
 - **2026-10-12 新 repair 边界（local resolved / VPS active）**：canonical 支撑列表排序后错误下标未逆映
   原 Draft，另有授权删除数组项被旧 index 投影成重复项；正确模型修复会被程序
-  破坏。真实记录与纯函数已复现，本地已修复；索引身份及删除位移必须保留，不能
+  破坏。真实记录与纯函数已复现，修复 `227e197` 已发布；索引身份及删除位移必须保留，不能
   直接扩大整个数组权限。见 [自然运行诊断](../quality/v1_runtime_failure_paper_audit_20261012.md)。
 - **当前实现/证据：**[ADR-0018](../architecture/ADR-0018-evidence-context-and-provider-drafts.md)、[AGENTS](../../AGENTS.md)。
 - **复发检查：**若程序输出了模型草稿中不存在的市场结论、Evidence 或价格，立即追踪其创造点。
@@ -116,7 +116,8 @@ issue_status: monitoring
   拒收新 trade；candidate 与 eligible 不代表 submitted。必须对账 paper_decisions 的
   status/order_id/reason，再读订单；保护旧执行事实与隔离未来行情版本分开设计。
   用户已授权本地隔离无潜在活跃依赖的旧冲突，保留旧价与审计，拒绝延迟新单回放；
-  见 [自然运行诊断与修复](../quality/v1_runtime_failure_paper_audit_20261012.md)，VPS 待发布。
+  见 [自然运行诊断与修复](../quality/v1_runtime_failure_paper_audit_20261012.md)。修复 `227e197`
+  已发布，VPS 自然轮询隔离旧冲突通过，旧价、原订单和收益不变；完整新模型链待观察。
 
 ### PH-08 Provider、持久化、线程和重试错误分类
 

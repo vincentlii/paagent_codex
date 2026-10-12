@@ -6,7 +6,7 @@ verification_scope:
   - VPS-controlled-live
 issue_status: monitoring
 最后核验: 2026-10-12
-核验提交: c20d04f41f06d344c9da1b7a76997ab1f722765c（运行代码、知识与 Runtime；后续发布证据提交仅更新文档）
+核验提交: 227e1979ae7b4d7eebb5fe797e5c39c4aaf71d1e（运行代码与资源；后续发布证据提交仅更新文档）
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -30,7 +30,8 @@ eligible 但 rejected 时先读 reason；完整窗口中已消费旧 OHLC 冲突
 记录 `consumed_price_conflict_quarantined`；原 accepted OHLC 不变，accepted 版本
 读取排除隔离 reason，重复隔离幂等更新观察时间，延迟新单不得回放隔离棒。
 整批其他硬冲突仍回滚；不以价差容差放行，不改旧 rejected 或重跑模型。
-本地修复已验收、VPS 待发布；回退读取器必须理解新 reason，不能直接加载旧代码
+修复 `227e197` 已发布，VPS 自然轮询已隔离旧冲突且保留旧价；完整新模型链待观察。
+回退读取器必须理解新 reason，不能直接加载旧代码
 后把隔离审计当成 accepted revision。保留完整备份并使用兼容回退构建。
 
 ## 私有源码仓库与清理边界

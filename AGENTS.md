@@ -1,6 +1,6 @@
 # AGENTS
 
-- 排查新自然运行的支撑位 repair 或 `trade` 无 Paper 挂单前读 `docs/quality/v1_runtime_failure_paper_audit_20261012.md`：canonical 排序下标须映回原 Draft；授权数组项删除及 survivor 编辑按原索引权限匹配，不投影成重复项。用户已授权 ADR-0012 的历史冲突隔离：跨账户无潜在活跃依赖才审计隔离旧 OHLC，accepted 版本排除隔离 reason，延迟新订单不得回放隔离棒；不加价格容差、不改历史结果。报告区分诊断与本地修复，VPS 未发布新修复。
+- 排查新自然运行的支撑位 repair 或 `trade` 无 Paper 挂单前读 `docs/quality/v1_runtime_failure_paper_audit_20261012.md`：canonical 排序下标须映回原 Draft；授权数组项删除及 survivor 编辑按原索引权限匹配，不投影成重复项。用户已授权 ADR-0012 的历史冲突隔离：跨账户无潜在活跃依赖才审计隔离旧 OHLC，accepted 版本排除隔离 reason，延迟新订单不得回放隔离棒；不加价格容差、不改历史结果。修复 `227e197` 已发布 VPS；自然轮询隔离旧冲突通过，完整新模型链待观察。含隔离审计的现库禁止直接回退旧 Paper reader。
 
 - 修改教材示例、PA/Joint Prompt 契约或 Stage 1 调查限制前读 `docs/quality/knowledge_prompt_investigation_20261012.md`：时间、tick 和价格参照必须注明适用范围，章节 ID 与案例保持完整；Provider Draft 不要求 canonical-only 字段，显式 Joint 使用自身角色与未校准先验。新冻结 `stage1_investigation_v1` 先成功读取完整 Packet，再允许最多一次事实、一次知识调查，所有尝试计数；Gateway 与 Worker 共同校验，旧 Frozen Job 不迁移。报告分别记录本地验收与固定提交 VPS 发布；Runtime 资产更新前须确认 Host 和 Worker 队列清空且无恢复阻塞，不跨版本续接旧会话。发布不证明模型质量提高。
 

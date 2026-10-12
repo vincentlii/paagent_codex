@@ -1,9 +1,10 @@
 # V1 自然运行失败与 Paper 拒收排查
 
 核验日期：2026-10-12，Asia/Shanghai。范围：Headless Codex Backend、Draft repair、
-Paper 接单与只读显示。运行提交 `c20d04f41f06d344c9da1b7a76997ab1f722765c`，
-Runtime `codex-runtime-v1-1f44fa580db45e16`。本次只读线上，未修复产品代码、部署、
-改 Profile、重跑模型或改写记录；本文是诊断证据，不是修复验收。
+Paper 接单与只读显示。最初诊断的运行提交为
+`c20d04f41f06d344c9da1b7a76997ab1f722765c`，Runtime 为
+`codex-runtime-v1-1f44fa580db45e16`。诊断阶段只读线上，未修改产品或历史记录；
+随后用户授权的本地修复、验证及 `227e197` VPS 发布回执分别见末尾章节。
 
 ## 自然运行口径
 
@@ -130,7 +131,7 @@ BTC `77e2dca26184437bb7938385a4484f86` 的 Stage 1 与 VPA 完成，但联合 St
 须复用以上真实输入的离线测试，核对相邻数组、权限越界与事务保护，保留失败证据，
 再观察新自然任务。以上为最初诊断；后续用户授权的本地修复及验证见下文。
 
-## 用户授权后的本地修复（未提交、未发布）
+## 用户授权后的本地修复（初次验收时未提交、未发布）
 
 用户要求完整修复已发现的问题，限制最多一个 subagent；随后明确选定历史冲突
 隔离方案。本轮一个只读协作者先审实施边界、再审实际 diff，未创建其他协作者。
@@ -189,5 +190,54 @@ Run Once 或旧任务恢复。新 quarantine 使用原 revisions 表的新 reaso
 接受新 OHLC。回退读取器必须识别并排除该 reason，不能直接将旧版本加载到已有
 隔离审计的账本；完整契约和回退边界见 ADR-0012 本日修订。
 
-本地已修复已确认程序缺陷并完成上述验证；VPS 仍运行 `c20d04f`，新代码未发布，
+上述为初次本地验收；当时 VPS 仍运行 `c20d04f`，新代码未发布，
 新版本自然模型效果、长期运行、CLI 未知退出根因与数据源价格修订原因未验收。
+
+## 授权提交与 VPS 发布回执（2026-10-12）
+
+用户随后明确要求 commit 并发布 VPS。运行提交
+`227e1979ae7b4d7eebb5fe797e5c39c4aaf71d1e` 已提交并推送用户授权的
+`vincentlii/paagent_codex/main`。后续回执提交只更新项目文档，不改变运行包。
+同一只读协作者复核发布边界，无阻塞项；没有创建第二个协作者。
+
+发布前 174 项直接相关非 live 测试通过，8.53s；关键 Ruff 与 diff 检查通过。
+第一次复核因未创建 basetemp 父目录导致 setup 失败，补齐本次临时目录后完整通过，
+没有修改产品代码。Linux 隔离验证初次漏传既有 risk_policy 构造参数，补齐后通过。
+不把检查脚本调用错误当作产品失败或隐去失败检查。
+
+generation 36 暂停已 applied；Host queued/running/unfinished、持久 ledger 未完成、
+active Frozen Task、Worker inbox 待处理任务均为零，各资产无 in-flight、恢复阻断
+或 control error。随后停止三项加载包的服务；无旧任务迁移或模型重跑。
+
+| 发布检查 | VPS 实际证据 |
+| --- | --- |
+| 一致性备份 | `pa-agent-20261012T135657Z`；服务 Result=success / ExecMainStatus=0，8633 项 manifest 摘要及三库 quick_check 通过 |
+| 固定源码 | 干净 VPS checkout 从 `c20d04f` 快进到 `227e197`，通过验证过的增量 Git bundle 交付，不传仓库凭据 |
+| Linux wheel | 离线构建/重装完整包，302 个源码/资源文件与 Git 固定提交、安装位置逐字节一致；Headless 不加载 Qt |
+| wheel SHA-256 | `26595a03d7e64a5596bfb60e3dbede8b725fe381562972ba9a6dbf8e7eed6870` |
+| 依赖 | 48 项安装版本不变，uv pip check 通过；未修改 lock、systemd 或配置 |
+| Runtime 与权限 | installed/source audit ok=true、issues=[]；asset digest 仍为 `1f44fa580db45e167fe43787e76d96b0c5ea3c74c696dbf50938da230c089463` |
+| 原始数据保护 | 275 份原始记录及九项配置/认证文件摘要不变；安装前后七张 Paper 表逐行摘要一致，无 schema migration 或回填 |
+| Linux 隔离账本 | 已安装包保留旧 cancelled 未成交订单/事件/账户；修订隔离、延迟新单拒绝、独立未来单 pending 通过；数组授权删除不再复制项 |
+| 重启暂停验收 | 三服务 active/running、ExecMainStatus=0、NRestarts=0；Worker auth=healthy；控制/Profile 一致 |
+| HTTP | healthz、认证 status/trading 200；未认证 status 401；认证信息只在进程内使用，不输出或留存 |
+| 恢复调度 | generation 37 running 已 applied；Profile generation 4、fingerprint、三品种、并发 3、Fast、模型与 Run Once generation 5 保持原样 |
+| 自然行情轮询 | XAU/BTC/ETH connected、fetch_failures=0；三库 quick_check 通过；正式库出现一条 quarantine 审计，BTC 历史 close 82815.0 保留；原账户、订单、事件、Paper 决策逐行摘要仍不变 |
+| 运行投影 | recent_runs 已含 paper_status / paper_reason / paper_order_id，不改模型意图或成功口径 |
+
+本轮 Provider Schema description 不参与 Runtime assets digest，所以 asset identity 未变；
+Python 分析指纹和 Frozen Job Schema/request digest 已改变，不能据相同 asset digest
+跨版本续接。上文空闲检查仍完整执行。
+
+**回退限制：**正式账本已经产生隔离 reason，禁止直接安装 pre-amendment Paper reader
+并接管现库。后续代码回退必须使用识别/排除 quarantine 的兼容构建，不删除审计或
+回滚线上订单/收益。完整固定运行包与正式备份保留供恢复；数据恢复需另行核验。
+
+恢复调度后的即时核验中，固定版本发布及自然轮询验收通过。未额外触发模型、
+Run Once 或历史订单；下一自然完整模型链、长期稳定性、交易收益/模型质量改善，
+历史 CLI exit 1 底层原因及上游价格修订原因仍未验收。
+
+固定 wheel、提交身份、安装核验与回退边界已保存到 VPS 的正式 releases 备份目录；
+本轮 VPS 暂存目录、本地发布 bundle 和 174 项测试目录已清理。上文初次修复遗留的
+十个不可遍历测试目录仍受系统权限限制，不进入 Git 或发布包；未强行改权限或删除
+其他任务缓存。正式数据备份、原始记录和凭据均保留。
