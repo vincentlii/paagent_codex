@@ -59,6 +59,30 @@ def test_schema_failure_is_not_masked_by_plugin_auth_warning():
     assert type(failure) is CodexWorkerOutputError
 
 
+@pytest.mark.parametrize("event, expected", [
+    ({"type": "item.completed", "item": {"type": "error", "message": "rate limit exceeded"}}, "CodexWorkerRateLimited"),
+    ({"type": "turn.failed", "error": {"code": "context_length_exceeded", "message": "private request details"}}, "CodexWorkerOutputError"),
+    ({"type": "turn.failed", "error": {"code": "unknown_code", "message": "opaque failure"}}, "CodexWorkerOutputError"),
+])
+def test_structured_cli_failure_is_classified_without_startup_warning_or_raw_text(event, expected):
+    from pa_agent.agent_runtime.codex_worker import _classify_failed_process
+
+    failure = _classify_failed_process(1, json.dumps(event), "plugin cache status 401 Unauthorized private-token")
+    assert type(failure).__name__ == expected
+    assert "private" not in str(failure) and "opaque" not in str(failure)
+    if event.get("error", {}).get("code") == "context_length_exceeded":
+        assert "context window" in str(failure)
+
+
+def test_agent_message_cannot_supply_cli_availability_classification():
+    from pa_agent.agent_runtime.codex_worker import _classify_failed_process
+
+    stdout = json.dumps({"type": "item.completed", "item": {
+        "type": "agent_message", "code": "rate_limit_exceeded", "message": "rate limit",
+    }})
+    assert type(_classify_failed_process(1, stdout, "")) is CodexWorkerOutputError
+
+
 def test_deepseek_schema_is_serializable_through_real_gateway():
     from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
     job = _job()

@@ -41,6 +41,94 @@ def _settings() -> SimpleNamespace:
     )
 
 
+@pytest.mark.parametrize("field", ["support_levels", "resistance_levels"])
+@pytest.mark.parametrize("removed", [0, 1, 2])
+def test_authorized_level_removal_preserves_other_array_items(field, removed) -> None:
+    before = {field: ["100-110", "80-90", "60-70"], "diagnosis_confidence": 62}
+    candidate = copy.deepcopy(before)
+    candidate[field].pop(removed)
+    pointer = f"/{field}/{removed}"
+
+    assert detect_unallowed_draft_changes(before, candidate, editable_pointers={pointer}) == []
+    assert project_allowed_draft_changes(before, candidate, editable_pointers={pointer}) == candidate
+
+    candidate["diagnosis_confidence"] = 99
+    assert len(detect_unallowed_draft_changes(before, candidate, editable_pointers={pointer})) == 1
+    projected = project_allowed_draft_changes(before, candidate, editable_pointers={pointer})
+    assert projected[field] == candidate[field]
+    assert projected["diagnosis_confidence"] == 62
+
+
+def test_level_removal_cannot_reprice_or_reorder_unreported_siblings() -> None:
+    before = {"support_levels": ["100-110", "80-90", "60-70"]}
+    for levels in (["60-70", "80-90"], ["81-90", "60-70"], ["80-90"]):
+        candidate = {"support_levels": levels}
+        assert detect_unallowed_draft_changes(before, candidate, editable_pointers={"/support_levels/0"})
+        assert project_allowed_draft_changes(
+            before, candidate, editable_pointers={"/support_levels/0"},
+        ) == before
+
+
+def test_authorized_array_removal_and_original_sibling_replacement_can_be_combined() -> None:
+    before = {"support_levels": ["100-110", "80-90", "60-70"]}
+    candidate = {"support_levels": ["79-89", "60-70"]}
+    allowed = {"/support_levels/0", "/support_levels/1"}
+    assert detect_unallowed_draft_changes(before, candidate, editable_pointers=allowed) == []
+    assert project_allowed_draft_changes(before, candidate, editable_pointers=allowed) == candidate
+    # The surviving original item 2 is still outside the authorization.
+    unallowed = {"support_levels": ["79-89", "61-70"]}
+    assert detect_unallowed_draft_changes(before, unallowed, editable_pointers=allowed)
+    assert project_allowed_draft_changes(before, unallowed, editable_pointers=allowed) == before
+
+
+def test_array_removal_preserves_authorized_original_survivor_child_edit() -> None:
+    before = {"gate_trace": [{"node_id": "1.2", "reason": "old"}, {"node_id": "2.3", "reason": "old"}]}
+    candidate = {"gate_trace": [{"node_id": "2.3", "reason": "repaired"}]}
+    allowed = {"/gate_trace/0", "/gate_trace/1/reason"}
+    assert detect_unallowed_draft_changes(before, candidate, editable_pointers=allowed) == []
+    assert project_allowed_draft_changes(before, candidate, editable_pointers=allowed) == candidate
+    candidate["gate_trace"][0]["node_id"] = "2.4"
+    assert detect_unallowed_draft_changes(before, candidate, editable_pointers=allowed)
+
+
+@pytest.mark.parametrize("transport", ["direct", "codex_patch"])
+@pytest.mark.parametrize("reordered", [False, True])
+def test_stage1_repair_removes_original_invalid_level_without_shifting_permissions(transport, reordered) -> None:
+    from pa_agent.agent_runtime.repair_contract import apply_patch_envelope, extract_repair_context
+
+    draft = _stage1_provider_draft()
+    draft["support_levels"] = ["2040-2046", "1990-2000", "1970-1980"]
+    if reordered:
+        draft["support_levels"] = ["1990-2000", "2040-2046", "1970-1980"]
+    pointer = f"/support_levels/{1 if reordered else 0}"
+    settings = Settings(validation=ValidationSettings(retry_max=3, retry_max_semantic=1))
+    validator = JsonValidator(settings)
+
+    def repair(messages):
+        context = extract_repair_context(messages, output_schema=validator.schema_for("stage1"))
+        assert context is not None and context["editable_pointers"] == [pointer]
+        if transport == "codex_patch":
+            candidate = apply_patch_envelope(context, {
+                "status": "repaired", "changed_pointers": [pointer],
+                "replacement_fragments": [{"pointer": pointer, "operation": "remove", "value_json": "null"}],
+            })
+        else:
+            candidate = copy.deepcopy(draft)
+            candidate["support_levels"].remove("2040-2046")
+            candidate["diagnosis_confidence"] = 99
+        return make_reply(candidate)
+
+    result = validate_with_retry(
+        stage="stage1", messages=[], reply=make_reply(draft), validator=validator,
+        validation_settings=settings.validation, validate_kwargs={"kline_frame": make_frame()},
+        call_api=repair,
+    )
+    assert isinstance(result.result, Ok)
+    assert result.attempts == 2
+    assert result.result.provider_obj["support_levels"] == ["1990-2000", "1970-1980"]
+    assert result.result.provider_obj["diagnosis_confidence"] == draft["diagnosis_confidence"]
+
+
 def test_retry_policy_allows_one_trade_metric_reconsideration() -> None:
     settings = _settings()
 

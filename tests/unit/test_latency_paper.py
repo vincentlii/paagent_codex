@@ -58,6 +58,30 @@ def test_untouched_pending_expires_at_next_close(tmp_path):
     assert row["exit_reason"] == "decision_expired"
 
 
+def test_v3_expired_unfilled_history_conflict_allows_only_independent_future_plan(tmp_path):
+    b = broker(tmp_path)
+    old = b.submit(plan(), _spec())
+    bar = _bar(T + H, open_=2005, high=2010, low=2003, close=2007)
+    b.observe_market(_spec(), "1h", [bar], observed_at_ms=T + 2 * H)
+    before = b.order(old.order_id), b.events(old.order_id), b.account_snapshot()
+    assert before[0]["status"] == "cancelled" and before[0]["fill_price"] is None
+    revised = replace(bar, close=2007.01)
+    restarted = broker(tmp_path)
+    restarted.observe_market(_spec(), "1h", [revised], observed_at_ms=T + 3 * H)
+    restarted.observe_market(_spec(), "1h", [revised], observed_at_ms=T + 4 * H)
+    assert (restarted.order(old.order_id), restarted.events(old.order_id), restarted.account_snapshot()) == before
+    with pytest.raises(ValueError, match="quarantined"):
+        restarted.submit(replace(plan(), run_id="late"), _spec())
+    future_plan = replace(plan(), run_id="future", created_bar_ts=T + 3 * H,
+                          available_at_ms=T + 4 * H, expires_at_ms=T + 5 * H)
+    future = restarted.submit(future_plan, _spec())
+    assert future.status == "pending"
+    restarted.observe_market(_spec(), "1h", [revised, _bar(T + 4 * H, open_=2000, high=2008, low=1998, close=2005)],
+                             observed_at_ms=T + 5 * H)
+    assert restarted.order(future.order_id)["status"] == "open"
+    assert restarted.order(future.order_id)["fill_price"] == 2000
+
+
 def test_stale_or_incomplete_delivery_is_rejected(tmp_path):
     b = broker(tmp_path)
     with pytest.raises(ValueError, match="expired"):

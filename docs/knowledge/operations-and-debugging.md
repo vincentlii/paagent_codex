@@ -16,6 +16,23 @@ issue_status: monitoring
 
 # 运行与排障
 
+## 自然失败与 trade 未挂单
+
+先按运行提交、恢复运行时点和 task_id 划分新增与历史失败，读取 record 的
+validation_audit 原 Draft、修复响应与 bounded_contract_projection；错误下标
+可能来自 canonical 排序，删除数组项也可能被旧下标投影成重复，不能先归因模型。
+`trade` 再核对 execution_disposition、交付/expiry、paper_decisions 与 paper_orders。
+eligible 但 rejected 时先读 reason；完整窗口中已消费旧 OHLC 冲突可阻塞新建单，
+不能将其误作挂单尚未触发或任意清理账本。具体真实输入与复算路径见
+[自然运行诊断](../quality/v1_runtime_failure_paper_audit_20261012.md)。
+
+用户已授权的隔离逻辑只在跨全部账户无可能依赖冲突棒的 pending/open 订单时
+记录 `consumed_price_conflict_quarantined`；原 accepted OHLC 不变，accepted 版本
+读取排除隔离 reason，重复隔离幂等更新观察时间，延迟新单不得回放隔离棒。
+整批其他硬冲突仍回滚；不以价差容差放行，不改旧 rejected 或重跑模型。
+本地修复已验收、VPS 待发布；回退读取器必须理解新 reason，不能直接加载旧代码
+后把隔离审计当成 accepted revision。保留完整备份并使用兼容回退构建。
+
 ## 私有源码仓库与清理边界
 
 独立私有仓库目标为 `vincentlii/paagent_codex`，目标发布分支为 `main`。

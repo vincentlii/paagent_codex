@@ -512,4 +512,9 @@ def build_review_projection(
         projection["trading"] = build_trading_projection(
             analysis_db_path, monitoring_db_path, paper_db_path,
         )
+        by_run = {item["run_id"]: item for item in projection["trading"]["analyses"]}
+        for run in projection["recent_runs"]:
+            disposition = by_run.get(run["run_id"], {})
+            for key in ("paper_status", "paper_reason", "paper_order_id"):
+                run[key] = disposition.get(key)
     return projection

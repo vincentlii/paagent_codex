@@ -220,7 +220,17 @@ def apply_patch_envelope(
         raise ValueError("repair fragment pointers do not match changed_pointers")
     original = json.loads(str(repair_context["original_draft"]))
     result = copy.deepcopy(original)
-    for fragment in fragments:
+    replacements = [item for item in fragments if item.get("operation") != "remove"]
+    removals = [item for item in fragments if item.get("operation") == "remove"]
+    # Validator pointers address the original Draft, not an array shifted by
+    # an earlier removal. Replace first; remove deepest, highest indexes first.
+    removals.sort(key=lambda item: (
+        str(item["pointer"]).count("/"),
+        str(item["pointer"]).rsplit("/", 1)[0],
+        int(_parts(str(item["pointer"]))[-1])
+        if _parts(str(item["pointer"]))[-1].isdigit() else -1,
+    ), reverse=True)
+    for fragment in [*replacements, *removals]:
         pointer = str(fragment["pointer"])
         if pointer not in allowed:
             raise ValueError("repair fragment exceeds Validator authority")

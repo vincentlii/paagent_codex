@@ -1639,6 +1639,8 @@ def _classify_failed_process(
     """Classify Codex failures without treating unknown errors as availability."""
     detail, status = _failure_detail(stdout, stderr)
     suffix = f" (exit status {returncode})"
+    if "context_length_exceeded" in detail:
+        return CodexWorkerOutputError("Codex context window exceeded" + suffix)
     if status in {401, 403} or any(
         token in detail for token in ("unauthorized", "login required", "authentication")
     ):
@@ -1651,7 +1653,7 @@ def _classify_failed_process(
         return CodexWorkerTimeout("Codex execution timed out" + suffix)
     if status in {400, 404, 409, 422} or any(
         token in detail
-        for token in ("invalid_json_schema", "invalid_request", "output schema")
+        for token in ("invalid_json_schema", "invalid json schema", "invalid_request", "output schema")
     ):
         return CodexWorkerOutputError("Codex request was rejected" + suffix)
     if (status is not None and status >= 500) or any(
@@ -1677,6 +1679,8 @@ def _failure_detail(
 ) -> tuple[str, int | None]:
     """Extract only classification fields from Codex JSONL and stderr."""
     fragments: list[str] = []
+    errors: list[dict[str, Any]] = []
+    terminal_errors: list[dict[str, Any]] = []
     status: int | None = None
     for line in str(stdout or "").splitlines():
         try:
@@ -1686,10 +1690,23 @@ def _failure_detail(
             continue
         if not isinstance(event, dict):
             continue
-        candidate = event.get("error") if isinstance(event.get("error"), dict) else event
+        event_type = event.get("type")
+        if event_type == "turn.failed":
+            terminal_errors.append(event.get("error") if isinstance(event.get("error"), dict) else event)
+        elif event_type == "error":
+            errors.append(event.get("error") if isinstance(event.get("error"), dict) else event)
+        elif str(event_type).startswith("item.") and isinstance(event.get("item"), dict):
+            if event["item"].get("type") == "error":
+                errors.append(event["item"])
+    selected = terminal_errors[-1:] or errors[-1:]
+    if selected:
+        # A terminal CLI error outranks startup/plugin stderr even when unknown.
+        # Agent messages and tool output cannot supply process-failure authority.
+        fragments = []
+    for candidate in selected:
         for key in ("message", "code", "type"):
             value = candidate.get(key)
-            if value is not None:
+            if isinstance(value, (str, int)):
                 fragments.append(str(value))
         raw_status = candidate.get("status_code", candidate.get("status"))
         try:
@@ -1700,7 +1717,7 @@ def _failure_detail(
             status = parsed_status
     # Structured turn errors outrank unrelated startup/plugin warnings.
     combined = " ".join(fragments).lower()
-    if not any(token in combined for token in ("invalid_request", "invalid json schema", "unauthorized", "rate limit", "timeout")):
+    if not selected:
         combined += " " + str(stderr or "").lower()
     if status is None:
         match = re.search(

@@ -78,6 +78,9 @@ _MODE_FIELDS = (
     "decision_stance", "analysis_backend",
 )
 _RECENT_RUN_FIELDS = (
+    "paper_status",
+    "paper_reason",
+    "paper_order_id",
     "run_id",
     "timestamp_local_ms",
     "symbol",

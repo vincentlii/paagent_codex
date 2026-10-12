@@ -129,6 +129,14 @@ def _stage1_draft_schema() -> dict[str, Any]:
         key: copy.deepcopy(STAGE1_SCHEMA["properties"][key])
         for key in model_fields
     }
+    for field, side in (("support_levels", "below"), ("resistance_levels", "above")):
+        properties[field]["description"] = (
+            f"At most three distinct structural prices or ranges, entirely {side} frozen K1.close. "
+            "For a range, both endpoints must be on that side; a band crossing K1.close "
+            "does not belong in this field. Order near-to-far; the Host may sort representation "
+            "without changing prices. Return [] when no qualifying level is identified; "
+            "do not clip, move or invent a price to satisfy this field contract."
+        )
     hypothesis = _draft_hypothesis_schema()
     properties["protocol_version"] = {"type": "string", "const": "pa_draft_v2"}
     properties["market_hypotheses"] = {

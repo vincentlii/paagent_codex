@@ -29,9 +29,12 @@ be removed from the research denominator.
    changes retain before/after facts and observation time in
    `paper_market_bar_revisions`; unchanged observations advance the version's
    confirmed-through time. Older frozen observations cannot revert newer facts.
-   Consumed price conflicts and conflicting duplicates inside one observation
-   reject the whole observation transaction. No original analysis record, order,
-   realized result, or rejected disposition is rewritten.
+   Consumed price conflicts reject the incoming revision. The user-approved
+   2026-10-12 amendment below isolates conflicts whose execution dependencies
+   are historical, allowing independent future bars to progress. Conflicts that
+   may affect an active order, and conflicting duplicates inside one observation,
+   still reject the whole observation transaction. No original analysis record,
+   order, realized result, or rejected disposition is rewritten.
 3. Each paper order maintains its own evaluated-through timestamp. An order
    submitted after later bars were observed replays every persisted closed bar
    after its creation timestamp exactly once and in chronological order.
@@ -57,6 +60,38 @@ be removed from the research denominator.
    Candidate prices must align with the provider-declared tick size.
 
 ## Consequences
+
+### 2026-10-12 amendment: isolate historical consumed-price conflicts
+
+The user explicitly approved retaining prior execution facts while isolating
+historical conflicts that no longer affect any active order. This is not a
+price tolerance, a new market interpretation, or a rewrite of old evidence.
+
+- For consumed OHLC conflicts, check all accounts for `pending/open` orders
+  whose `created_bar_ts < conflicting_bar_ts`, including orders that have not
+  replayed that bar yet. Any such potential dependency keeps the transaction
+  rejection. A filled trade is not required for consumption: a no-fill replay
+  also depended on OHLC.
+- Otherwise retain `paper_market_bars` unchanged and record the rejected facts
+  in the existing revisions table with reason
+  `consumed_price_conflict_quarantined`, including before/after facts and first/
+  latest observation time. Repeated identical quarantine observations are
+  idempotent. Accepted-version selection excludes this reason; quarantine does
+  not advance the accepted version's confirmed-through time.
+- Continue processing independent later bars atomically. Any other hard
+  conflict rolls back the entire batch, including its new quarantine audit.
+  Do not silently replace a current analysis's Frozen Snapshot with old prices.
+- Before inserting a new order, reject if its replay would cross a quarantined
+  bar after its creation timestamp. An independent future order starts at or
+  after the historical conflict and never replays that bar. Existing task
+  dispositions remain immutable; rejection never causes model resubmission.
+- Schema and simulation versions remain unchanged: old facts, orders, PnL,
+  expiry, activation and ambiguity rules are preserved. This protects v1/v2/v3
+  histories without relabeling outcomes or claiming new trading evidence.
+- Rollback must understand this quarantine reason and exclude it from accepted
+  revisions. Do not restore a pre-amendment reader against a ledger containing
+  these audit rows. Preserve a consistent backup; use a compatible rollback
+  build or a separate pre-amendment instance, never delete historical evidence.
 
 - Model latency no longer changes which later bars an order can observe.
 - Restarts do not require model calls to repair execution state.

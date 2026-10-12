@@ -255,6 +255,9 @@ def _merge_provider_issues(
             provider_obj=provider_obj,
             canonical_obj=canonical_obj,
         )
+        issue = _remap_structure_level_issue(
+            issue, provider_obj=provider_obj, canonical_obj=canonical_obj,
+        )
         issue = _remap_missing_draft_parent(
             issue, provider_obj=provider_obj, provider_schema=provider_schema,
         )
@@ -268,6 +271,33 @@ def _merge_provider_issues(
         seen.add(key)
         merged.append(issue)
     return merged
+
+
+def _remap_structure_level_issue(
+    issue: dict[str, Any], *, provider_obj: dict[str, Any], canonical_obj: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind a sorted canonical level to its original Draft occurrence."""
+    pointer = str(issue.get("pointer", ""))
+    parts = pointer.lstrip("/").split("/") if pointer else []
+    if len(parts) != 2 or parts[0] not in {"support_levels", "resistance_levels"} or not parts[1].isdigit():
+        return issue
+    canonical = canonical_obj.get(parts[0])
+    provider = provider_obj.get(parts[0])
+    index = int(parts[1])
+    if not isinstance(canonical, list) or not isinstance(provider, list) or index >= len(canonical):
+        return issue
+    value = canonical[index]
+    occurrence = canonical[:index].count(value)
+    matches = [i for i, item in enumerate(provider) if item == value]
+    if occurrence >= len(matches):
+        return issue
+    original = matches[occurrence]
+    return {
+        **issue, "path": f"{parts[0]}.{original}", "pointer": f"/{parts[0]}/{original}",
+        "message": str(issue.get("message", "")).replace(
+            f"{parts[0]}[{index}]", f"{parts[0]}[{original}]",
+        ),
+    }
 
 
 def _remap_missing_draft_parent(

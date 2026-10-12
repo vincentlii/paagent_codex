@@ -30,6 +30,9 @@
 17. Codex worker 读取生产数据库、Paper ledger、DeepSeek credential，或以 Headless Unix 用户执行的次数为 0。
 18. Frozen Job、dispatch、worker 实际 runtime identity 与成功 result 任一不一致却被接受的次数为 0。
 19. Codex Patch Envelope 修改 Validator allowlist 外 JSON Pointer，或 Host 未以原稿重新验证就接受的次数为 0。
+    Canonical 排序下标必须绑定原 Draft，授权数组项删除的位移不能制造重复；多项
+    remove、remove+replace 与 survivor 子字段编辑均以原 Draft 权限核验。未授权
+    survivor、节点身份、价格或其他语义变化不得借数组缩短进入结果。
 20. `codex_only` 因创建 Direct/VPA client 而要求 DeepSeek credential 的次数为 0。
 21. `semantic_parity_v1` Codex Stage 1/2 未读取完整 price-only frame、全部已发布 HTF Evidence、
     阶段协议或任一 `loading_policy=mandatory` 模块却被接受的次数为 0；`bounded_context_v2`
@@ -41,6 +44,9 @@
 22. PA Stage 1/2 通过 Frozen Job 或 Evidence 工具读取到 `volume`、`amount` 或 `volume_state` 的次数为 0。
 23. `semantic_parity_v1` Job 未按 knowledge manifest 的 `load_order` 首次读取 mandatory 模块却被接受的次数为 0。
 24. Dashboard、worker status 或长期日志出现 Codex token、账号标识、原始登录输出或 reasoning stream 的次数为 0。
+25. Paper 覆盖已消费历史 OHLC 或改写历史 rejected/订单/收益的次数为 0。用户授权的
+    历史冲突隔离只能在跨账户无潜在 pending/open 依赖时进行；隔离不成为 accepted
+    revision，延迟新订单不得回放隔离棒，其他冲突仍回滚整批，独立未来订单可继续。
 
 ## 结构与鲁棒性
 

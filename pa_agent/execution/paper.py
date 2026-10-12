@@ -18,6 +18,7 @@ PaperOrderType = Literal["market", "limit", "breakout"]
 PAPER_SIMULATION_VERSION = "paper_ohlc_v2"
 LEGACY_PAPER_SIMULATION_VERSION = "paper_ohlc_v1"
 LATENCY_PAPER_SIMULATION_VERSION = "paper_latency_v3"
+QUARANTINED_PRICE_CONFLICT = "consumed_price_conflict_quarantined"
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,14 @@ class PaperBroker:
             ).fetchone()
             if existing is not None:
                 return self._paper_order(existing)
+            if connection.execute(
+                "SELECT 1 FROM paper_market_bar_revisions WHERE provider = ? AND venue = ? "
+                "AND instrument_type = ? AND symbol = ? AND timeframe = ? "
+                "AND ts_open > ? AND reason = ? LIMIT 1",
+                (spec.provider, spec.venue, spec.instrument_type, spec.symbol, plan.timeframe,
+                 int(plan.created_bar_ts), QUARANTINED_PRICE_CONFLICT),
+            ).fetchone() is not None:
+                raise ValueError("paper decision would replay quarantined price history")
             if activate_now and plan.available_at_ms is not None:
                 # Observe activation after acquiring the write lock, not before IO.
                 now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -329,9 +338,9 @@ class PaperBroker:
                     version = connection.execute(
                         "SELECT revision_id, confirmed_through_at_ms FROM paper_market_bar_revisions "
                         "WHERE provider = ? AND venue = ? AND instrument_type = ? "
-                        "AND symbol = ? AND timeframe = ? AND ts_open = ? "
+                        "AND symbol = ? AND timeframe = ? AND ts_open = ? AND reason != ? "
                         "ORDER BY revision_id DESC LIMIT 1",
-                        (*market_key, bar_ts),
+                        (*market_key, bar_ts, QUARANTINED_PRICE_CONFLICT),
                     ).fetchone()
                     # A delayed Frozen record is an old observation, not a new revision.
                     if version is not None and observed_at_ms < version["confirmed_through_at_ms"]:
@@ -357,12 +366,23 @@ class PaperBroker:
                         "COALESCE(evaluated_through_ts, exit_bar_ts, fill_bar_ts) >= ? LIMIT 1",
                         (*market_key, bar_ts, bar_ts),
                     ).fetchone() is not None:
-                        # All accounts share this market; even a pending no-fill replay
-                        # depended on the observed OHLC path. Never revise its result.
-                        raise ValueError(
-                            "conflicting closed bar for paper market identity and timestamp: "
-                            "price already consumed by execution"
+                        # Protect unreplayed dependencies too, across every account.
+                        if connection.execute(
+                            "SELECT 1 FROM paper_orders WHERE provider = ? AND venue = ? "
+                            "AND instrument_type = ? AND symbol = ? AND timeframe = ? "
+                            "AND status IN ('pending','open') AND created_bar_ts < ? LIMIT 1",
+                            (*market_key, bar_ts),
+                        ).fetchone() is not None:
+                            raise ValueError(
+                                "conflicting closed bar for paper market identity and timestamp: "
+                                "price already consumed by execution"
+                            )
+                        self._quarantine_price_conflict(
+                            connection, market_key, bar_ts, previous, facts, observed_at_ms,
                         )
+                        # Reject this revision, preserving the accepted execution facts.
+                        # Independent later bars and future orders can still progress.
+                        continue
                     self._record_bar_revision(
                         connection, market_key, bar_ts, previous, facts, observed_at_ms,
                         "unconsumed_price_revision" if price_changed else "volume_revision",
@@ -394,6 +414,32 @@ class PaperBroker:
             for order in orders:
                 self._replay_stored_bars(connection, str(order["order_id"]), spec)
             return observed
+
+    @staticmethod
+    def _quarantine_price_conflict(
+        connection: sqlite3.Connection, market_key: tuple[str, ...], bar_ts: int,
+        previous: tuple[float, ...], facts: tuple[float, ...], observed_at_ms: int,
+    ) -> None:
+        fields = ("open", "high", "low", "close", "volume", "amount")
+        before_json = json.dumps(dict(zip(fields, previous)))
+        after_json = json.dumps(dict(zip(fields, facts)))
+        existing = connection.execute(
+            "SELECT revision_id FROM paper_market_bar_revisions WHERE provider = ? AND venue = ? "
+            "AND instrument_type = ? AND symbol = ? AND timeframe = ? AND ts_open = ? "
+            "AND reason = ? AND before_facts_json = ? AND after_facts_json = ? LIMIT 1",
+            (*market_key, bar_ts, QUARANTINED_PRICE_CONFLICT, before_json, after_json),
+        ).fetchone()
+        if existing is not None:
+            connection.execute(
+                "UPDATE paper_market_bar_revisions SET confirmed_through_at_ms = "
+                "MAX(confirmed_through_at_ms, ?) WHERE revision_id = ?",
+                (observed_at_ms, existing["revision_id"]),
+            )
+        else:
+            PaperBroker._record_bar_revision(
+                connection, market_key, bar_ts, previous, facts, observed_at_ms,
+                QUARANTINED_PRICE_CONFLICT,
+            )
 
     @staticmethod
     def _record_bar_revision(

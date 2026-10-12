@@ -166,6 +166,12 @@ Codex 输出仍先进入现有 Provider Draft/materializer/Validator 链。
 - PA Provider Contract 错误一次聚合；最多允许一次按 JSON Pointer 授权的修复。
   程序只把被点名路径的候选修正投影回原 Draft，未授权的新增、删除、置空、数组重排或
   语义变化不进入接受结果；投影结果必须重新通过完整校验，禁止通过宽松 normalizer 猜测模型意图。
+- Canonical 结构价位排序后的错误下标必须映回原 Draft。Patch Envelope 的指针绑定
+  原 Draft；合法数组项删除引起的位移不是 sibling 越权。删除及其他授权编辑只能在
+  原索引权限内接受，所有未授权 survivor 的字段保持原样，不按新索引复制旧字段。
+- Paper 已消费 OHLC 的新冲突版本仍拒绝；按 ADR-0012 的 2026-10-12 用户授权修订，
+  跨账户没有可能依赖该棒的活跃订单时，可审计隔离旧冲突并继续独立新棒，不覆盖
+  accepted facts 或历史结果。延迟新订单若会回放隔离棒仍拒绝，价差大小不是放行依据。
 - VPA 修复按 hypothesis ID、证据集合或时序证据对匹配稳定语义，不按数组下标恢复，
   也不得恢复校验明确要求修改的字段。
 - Trader Equation 只能引用模型已经声明且 Catalog 可解析的 PA Evidence ID；程序不得

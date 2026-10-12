@@ -105,6 +105,9 @@ RUN_FIELDS = (
     "order_type",
     "model",
     "confidence",
+    "paper_status",
+    "paper_reason",
+    "paper_order_id",
 )
 _PERPETUAL_TYPES = "('perpetual','tradifi_perpetual')"
 _MARKET_FILTER = (
@@ -255,7 +258,7 @@ def _analysis(
         (now_ms,),
     ).fetchall()
     return [
-        {**{key: row[key] for key in RUN_FIELDS}, "review": _review(row["review_json"])}
+        {**{key: row[key] if key in row.keys() else None for key in RUN_FIELDS}, "review": _review(row["review_json"])}
         for row in rows
     ]
 
@@ -466,6 +469,22 @@ def build_trading_projection(
         try:
             with _reader(paper_db) as connection:
                 connection.execute("ATTACH DATABASE ? AS monitoring", (_uri(monitoring_db),))
+                rows = connection.execute(
+                    "SELECT m.task_id,m.run_id,d.status,d.order_id,substr(d.reason,1,2000) AS reason "
+                    "FROM monitoring.monitoring_jobs m JOIN paper_decisions d "
+                    "ON d.dedupe_key=m.task_id AND d.run_id=m.run_id "
+                    f"WHERE {_TASK_FILTER} AND d.account_id=? AND d.arm=? "
+                    "AND m.task_created_at_ms <= ? ORDER BY m.task_created_at_ms DESC LIMIT 30",
+                    (ACCOUNT_ID, PIPELINE, now_ms),
+                ).fetchall()
+                by_task = {row["task_id"]: row for row in rows}
+                for analysis in result["analyses"]:
+                    disposition = by_task.get(analysis["task_id"])
+                    if disposition and analysis["pipeline"] == PIPELINE and analysis["success"] == 1:
+                        analysis.update(
+                            paper_status=disposition["status"], paper_order_id=disposition["order_id"],
+                            paper_reason=disposition["reason"],
+                        )
                 for period in periods.values():
                     rows = connection.execute(
                         "SELECT m.symbol, SUM(d.status = 'submitted') AS paper_submitted, "

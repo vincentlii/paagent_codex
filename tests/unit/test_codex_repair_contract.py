@@ -35,6 +35,19 @@ def _context() -> dict:
     return context
 
 
+@pytest.mark.parametrize("pointers", [["/support_levels/0", "/support_levels/2"], ["/support_levels/2", "/support_levels/0"]])
+def test_patch_removals_keep_original_array_item_identity(pointers) -> None:
+    context = {
+        "original_draft": json.dumps({"support_levels": ["100", "90", "80"]}),
+        "editable_pointers": pointers,
+    }
+    candidate = apply_patch_envelope(context, {
+        "status": "repaired", "changed_pointers": pointers,
+        "replacement_fragments": [{"pointer": p, "operation": "remove", "value_json": "null"} for p in pointers],
+    })
+    assert candidate == {"support_levels": ["90"]}
+
+
 def test_repair_rejects_canonical_only_path_before_dispatch() -> None:
     from pa_agent.ai.pa_provider_contracts import schema_for_provider_draft
 

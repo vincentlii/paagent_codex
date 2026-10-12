@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from functools import lru_cache
 from typing import Any, Literal
 
 StageName = Literal["stage1", "stage2"]
@@ -144,6 +145,8 @@ def detect_unallowed_draft_changes(
     changes = _json_differences(before, after)
     violations: list[str] = []
     for pointer, old, new in changes:
+        if _authorized_array_removal(old, new, pointer, editable_pointers) is not None:
+            continue
         if any(
             pointer == allowed
             or (allowed and pointer.startswith(allowed + "/"))
@@ -165,7 +168,23 @@ def project_allowed_draft_changes(
     if "" in editable_pointers:
         return copy.deepcopy(candidate)
     projected = copy.deepcopy(before)
+    projected_arrays: set[str] = set()
     for pointer in sorted(editable_pointers, key=lambda value: value.count("/")):
+        if any(pointer.startswith(parent + "/") for parent in projected_arrays):
+            continue
+        parts = _pointer_parts(pointer)
+        if parts and parts[-1].isdigit():
+            parent = "/" + "/".join(_pointer_escape(part) for part in parts[:-1])
+            _, old_array = _pointer_value(before, parent)
+            _, new_array = _pointer_value(candidate, parent)
+            if isinstance(old_array, list) and isinstance(new_array, list) and len(new_array) < len(old_array):
+                if parent not in projected_arrays and _authorized_array_removal(
+                    old_array, new_array, parent, editable_pointers,
+                ) is not None:
+                    _assign_pointer(projected, parent, copy.deepcopy(new_array))
+                    projected_arrays.add(parent)
+                # Never reinterpret a shortened array's shifted index as replacement.
+                continue
         candidate_pointer = _semantic_candidate_pointer(
             before,
             candidate,
@@ -179,6 +198,38 @@ def project_allowed_draft_changes(
         else:
             _remove_pointer(projected, pointer)
     return projected
+
+
+def _authorized_array_removal(
+    before: Any, after: Any, pointer: str, editable_pointers: set[str],
+) -> tuple[int, ...] | None:
+    """Match authorized original deletions/edits; all other survivors stay unchanged."""
+    if not isinstance(before, list) or not isinstance(after, list) or len(after) >= len(before):
+        return None
+    allowed = {index for index in range(len(before)) if f"{pointer}/{index}" in editable_pointers}
+
+    @lru_cache(None)
+    def match(old_index: int, new_index: int) -> tuple[int, ...] | None:
+        if old_index == len(before):
+            return () if new_index == len(after) else None
+        survivor_changes = (
+            _json_differences(before[old_index], after[new_index], f"{pointer}/{old_index}")
+            if new_index < len(after) else None
+        )
+        if survivor_changes is not None and all(
+            any(path == grant or path.startswith(grant + "/") for grant in editable_pointers)
+            for path, _, _ in survivor_changes
+        ):
+            rest = match(old_index + 1, new_index + 1)
+            if rest is not None:
+                return rest
+        if old_index in allowed:
+            rest = match(old_index + 1, new_index)
+            if rest is not None:
+                return (old_index, *rest)
+        return None
+
+    return match(0, 0)
 
 
 def _semantic_candidate_pointer(

@@ -134,6 +134,33 @@ def _report(ledgers):
     return build_trading_projection(*ledgers, now_ms=NOW)
 
 
+def test_model_candidate_exposes_its_own_paper_rejection_without_becoming_no_trade(ledgers):
+    from pa_agent.operations.trading import safe_trading_projection
+
+    _task(ledgers, "candidate")
+    _analysis(ledgers, "candidate", order_type="限价单")
+    _insert(ledgers[2], "paper_decisions", account_id=ACCOUNT, arm="pa_vpa_joint",
+            dedupe_key="candidate", run_id="candidate", status="rejected", order_id=None,
+            reason="paper decision would replay quarantined price history")
+    _insert(ledgers[2], "paper_decisions", account_id="research-A1", arm="A1",
+            dedupe_key="candidate", run_id="candidate", status="submitted", order_id="research",
+            reason="wrong account")
+    result = _report(ledgers)
+    run = result["analyses"][0]
+    assert run["order_type"] == "限价单" and run["success"] == 1
+    assert run["paper_status"] == "rejected" and run["paper_order_id"] is None
+    assert run["paper_reason"] == "paper decision would replay quarantined price history"
+    assert safe_trading_projection(result)["analyses"][0]["paper_reason"] == run["paper_reason"]
+
+
+def test_unmatched_paper_decision_does_not_attach_to_other_run(ledgers):
+    _task(ledgers, "candidate")
+    _analysis(ledgers, "candidate", order_type="限价单")
+    _insert(ledgers[2], "paper_decisions", account_id=ACCOUNT, arm="pa_vpa_joint",
+            dedupe_key="candidate", run_id="other", status="rejected", reason="wrong run")
+    assert _report(ledgers)["analyses"][0]["paper_status"] is None
+
+
 def _asset(report, symbol="XAUUSDT", period="all"):
     return next(row for row in report["periods"][period]["assets"] if row["symbol"] == symbol)
 

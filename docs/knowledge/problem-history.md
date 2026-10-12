@@ -66,6 +66,10 @@ issue_status: monitoring
 - **根因：**用“提高通过率”替代契约边界，混合了格式恢复和语义创造。
 - **错误修法：**增加更聪明的 normalizer、兜底订单或默认 K1 Evidence。
 - **正确原则：**normalizer 仅复制容器、白名单和无语义记号；repair 只修改被 JSON Pointer 授权的路径；Router 只读已验证枚举。
+- **2026-10-12 新 repair 边界（local resolved / VPS active）**：canonical 支撑列表排序后错误下标未逆映
+  原 Draft，另有授权删除数组项被旧 index 投影成重复项；正确模型修复会被程序
+  破坏。真实记录与纯函数已复现，本地已修复；索引身份及删除位移必须保留，不能
+  直接扩大整个数组权限。见 [自然运行诊断](../quality/v1_runtime_failure_paper_audit_20261012.md)。
 - **当前实现/证据：**[ADR-0018](../architecture/ADR-0018-evidence-context-and-provider-drafts.md)、[AGENTS](../../AGENTS.md)。
 - **复发检查：**若程序输出了模型草稿中不存在的市场结论、Evidence 或价格，立即追踪其创造点。
 - **修复路径补充：**canonical required 路径保留父级与数组下标；若原 Draft 缺失
@@ -108,6 +112,11 @@ issue_status: monitoring
 - **正确原则：**candidate 不可变；订单数学/有效资格进入 `execution_disposition`；结构 stop 与 invalidation condition 分开。
 - **当前实现/证据：**[ADR-0019](../architecture/ADR-0019-immutable-candidate-and-paper-ohlc-v2.md)、[CONTEXT](../../CONTEXT.md)。
 - **复发检查：**比较 provider draft、materialized candidate 和 execution disposition，确认前者未被 policy 改写。
+- **2026-10-12 新执行边界（local resolved / VPS active）**：历史已消费 OHLC 冲突经完整滚动窗口事务反复
+  拒收新 trade；candidate 与 eligible 不代表 submitted。必须对账 paper_decisions 的
+  status/order_id/reason，再读订单；保护旧执行事实与隔离未来行情版本分开设计。
+  用户已授权本地隔离无潜在活跃依赖的旧冲突，保留旧价与审计，拒绝延迟新单回放；
+  见 [自然运行诊断与修复](../quality/v1_runtime_failure_paper_audit_20261012.md)，VPS 待发布。
 
 ### PH-08 Provider、持久化、线程和重试错误分类
 

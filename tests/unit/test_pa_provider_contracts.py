@@ -47,6 +47,22 @@ def test_unknown_hypothesis_reference_reports_original_draft_pointer(hypothesis_
                for issue in result.contract_issues)
 
 
+@pytest.mark.parametrize(
+    ("field", "levels"),
+    [("support_levels", ["1990", "2040-2046"]),
+     ("resistance_levels", ["2100", "2040-2046"])],
+)
+def test_sorted_level_error_uses_original_provider_array_index(field, levels) -> None:
+    draft = _stage1_draft()
+    draft[field] = levels
+    result = JsonValidator().validate("stage1", json.dumps(draft), kline_frame=make_frame())
+    assert isinstance(result, ValidationError)
+    issues = [issue for issue in result.contract_issues if issue["pointer"].startswith(f"/{field}/")]
+    assert issues
+    assert {issue["pointer"] for issue in issues} == {f"/{field}/1"}
+    assert all(f"{field}[1]" in issue["message"] for issue in issues)
+
+
 def test_provider_draft_schema_interface_is_isolated_and_stable() -> None:
     stage1 = schema_for_provider_draft("stage1")
     stage2 = schema_for_provider_draft("stage2")

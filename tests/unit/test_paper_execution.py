@@ -456,6 +456,110 @@ def test_unconsumed_closed_bar_revision_is_audited_without_blocking_new_bars(
         assert json.loads(after)["close"] == 4191.45
 
 
+@pytest.mark.parametrize(("terminal", "version"), [
+    ("cancelled", "paper_ohlc_v1"), ("cancelled", "paper_ohlc_v2"),
+    ("closed", "paper_ohlc_v2"), ("ambiguous", "paper_ohlc_v2"),
+])
+def test_terminal_consumed_price_conflict_is_quarantined_without_blocking_future_orders(tmp_path, terminal, version):
+    db = tmp_path / "paper.sqlite3"
+    broker = PaperBroker(db, account_id="pa-official", initial_equity=10000.0, risk_policy=RiskPolicy())
+    order = broker.submit(_plan(), _spec())
+    if version == "paper_ohlc_v1":
+        with sqlite3.connect(db) as connection:
+            # Seed an existing v1 row, as retained by the supported migration.
+            connection.execute("UPDATE paper_orders SET simulation_version=? WHERE order_id=?", (version, order.order_id))
+    bar = _bar(2000, open_=2005.0, high=2008.0, low=2002.0, close=2004.0)
+    if terminal == "closed":
+        bar = replace(bar, open=2000.0, low=1998.0)
+    elif terminal == "ambiguous":
+        bar = replace(bar, low=1989.0)
+    broker.observe_market(_spec(), "1h", [bar], observed_at_ms=10000)
+    if terminal == "cancelled":
+        broker.supersede_pending(_spec(), "1h", as_of_bar_ts=2000, excluding_dedupe_key="next")
+    elif terminal == "closed":
+        broker.observe_market(_spec(), "1h", [replace(bar, ts_open=3000, open=2010.0, high=2025.0, low=2005.0)], observed_at_ms=11000)
+    assert broker.order(order.order_id)["status"] == terminal
+    before = broker.order(order.order_id), broker.events(order.order_id), broker.account_snapshot()
+    revised = replace(bar, close=bar.close + 0.01)
+    new_bar = replace(bar, ts_open=4000)
+
+    assert broker.observe_market(_spec(), "1h", [revised, new_bar], observed_at_ms=20000) == 1
+    assert broker.observe_market(_spec(), "1h", [revised, new_bar], observed_at_ms=30000) == 0
+    assert (broker.order(order.order_id), broker.events(order.order_id), broker.account_snapshot()) == before
+    with sqlite3.connect(db) as connection:
+        assert connection.execute("SELECT close FROM paper_market_bars WHERE ts_open=2000").fetchone()[0] == bar.close
+        revisions = connection.execute(
+            "SELECT before_facts_json,after_facts_json,observed_at_ms,confirmed_through_at_ms "
+            "FROM paper_market_bar_revisions WHERE reason='consumed_price_conflict_quarantined'",
+        ).fetchall()
+        assert len(revisions) == 1
+        assert json.loads(revisions[0][0])["close"] == bar.close
+        assert json.loads(revisions[0][1])["close"] == revised.close
+        assert revisions[0][2:] == (20000, 30000)
+    # A delayed old decision must not newly replay the disputed history.
+    with pytest.raises(ValueError, match="quarantined"):
+        broker.submit(_plan(run_id="delayed"), _spec())
+    future = broker.submit(replace(_plan(run_id="future"), created_bar_ts=4000), _spec())
+    assert future.status == "pending"
+
+
+def test_unreplayed_active_order_in_other_account_blocks_history_quarantine(tmp_path):
+    db = tmp_path / "paper.sqlite3"
+    first = PaperBroker(db, account_id="first", initial_equity=10000.0, risk_policy=RiskPolicy())
+    bar = _bar(2000, open_=2005.0, high=2008.0, low=2002.0, close=2004.0)
+    old = first.submit(_plan(), _spec())
+    first.observe_market(_spec(), "1h", [bar], observed_at_ms=10000)
+    first.supersede_pending(_spec(), "1h", as_of_bar_ts=2000, excluding_dedupe_key="next")
+    assert first.order(old.order_id)["status"] == "cancelled"
+    other = PaperBroker(db, account_id="other", initial_equity=10000.0, risk_policy=RiskPolicy())
+    waiting = other.submit(replace(_plan(run_id="waiting"), created_bar_ts=500), _spec())
+    with sqlite3.connect(db) as connection:
+        # Existing legacy/recovery rows may not yet have a replay watermark.
+        connection.execute("UPDATE paper_orders SET evaluated_through_ts=NULL WHERE order_id=?", (waiting.order_id,))
+    with pytest.raises(ValueError, match="price already consumed"):
+        first.observe_market(_spec(), "1h", [replace(bar, close=2004.01), replace(bar, ts_open=3000)], observed_at_ms=20000)
+    with sqlite3.connect(db) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM paper_market_bars").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM paper_market_bar_revisions").fetchone()[0] == 1
+
+
+def test_quarantine_does_not_advance_accepted_version_or_revert_newer_confirmation(tmp_path):
+    db = tmp_path / "paper.sqlite3"
+    broker = PaperBroker(db, account_id="first", initial_equity=10000.0, risk_policy=RiskPolicy())
+    broker.submit(_plan(), _spec())
+    bar = _bar(2000, open_=2005.0, high=2008.0, low=2002.0, close=2004.0)
+    broker.observe_market(_spec(), "1h", [bar], observed_at_ms=10000)
+    broker.supersede_pending(_spec(), "1h", as_of_bar_ts=2000, excluding_dedupe_key="new")
+    broker.observe_market(_spec(), "1h", [replace(bar, close=2004.01)], observed_at_ms=20000)
+    broker.observe_market(_spec(), "1h", [bar], observed_at_ms=40000)
+    # A previously frozen observation must not become a newer conflict.
+    broker.observe_market(_spec(), "1h", [replace(bar, close=2004.02)], observed_at_ms=30000)
+    with sqlite3.connect(db) as connection:
+        assert connection.execute("SELECT reason,confirmed_through_at_ms FROM paper_market_bar_revisions ORDER BY revision_id").fetchall() == [
+            ("first_observation", 40000), ("consumed_price_conflict_quarantined", 20000),
+        ]
+        assert connection.execute("SELECT close FROM paper_market_bars").fetchone()[0] == 2004.0
+
+
+def test_active_conflict_rolls_back_other_quarantine_and_new_bars(tmp_path):
+    db = tmp_path / "paper.sqlite3"
+    broker = PaperBroker(db, account_id="first", initial_equity=10000.0, risk_policy=RiskPolicy())
+    broker.submit(_plan(), _spec())
+    old = _bar(2000, open_=2005.0, high=2008.0, low=2002.0, close=2004.0)
+    broker.observe_market(_spec(), "1h", [old], observed_at_ms=10000)
+    broker.supersede_pending(_spec(), "1h", as_of_bar_ts=2000, excluding_dedupe_key="new")
+    active = broker.submit(replace(_plan(run_id="active"), created_bar_ts=2000), _spec())
+    current = replace(old, ts_open=3000)
+    broker.observe_market(_spec(), "1h", [current], observed_at_ms=11000)
+    before = broker.order(active.order_id), broker.events(active.order_id)
+    with pytest.raises(ValueError, match="price already consumed"):
+        broker.observe_market(_spec(), "1h", [replace(old, close=2004.01), replace(current, close=2004.01), replace(old, ts_open=4000)], observed_at_ms=20000)
+    with sqlite3.connect(db) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM paper_market_bars").fetchone()[0] == 2
+        assert connection.execute("SELECT COUNT(*) FROM paper_market_bar_revisions").fetchone()[0] == 2
+    assert (broker.order(active.order_id), broker.events(active.order_id)) == before
+
+
 def test_same_market_timestamp_used_by_execution_still_rejects_price_changes(tmp_path: Path) -> None:
     broker = PaperBroker(
         tmp_path / "paper.sqlite3",
