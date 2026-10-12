@@ -378,3 +378,25 @@ next_confirmation 可承载这些内容，不要求所有位置强制给结论�
 独立协作者最终审查发现新版三棒 pending 缺口未检查；四种自动化场景先复现错误 open/cancelled，再修复为 ambiguous。40 项相关测试通过。Headless 非 live 全量回归 1747 passed / 9 deselected（排除 Qt GUI），之后补充的版本活跃提示及限价测试 17 passed；关键静态检查及 diff 检查另行核验。只有外部 tvDatafeed 的两项既有 DeprecationWarning。没有用测试结果宣称模型判断或收益提高。
 
 三角色判断：PA 的 Setup/Router/结构失效与唯一物化器不变；VPA 保持 PA-defined location 与 Evidence first，无第二 Setup/Gate；软件层冻结时钟、版本、失败边界与数据保留明确。三棒初值及 300s 预算仍需要新自然样本观察，尚无新 cohort 的质量、token 或交易增益结论。
+
+## 2026-10-13 固定提交 VPS 发布验收
+
+运行提交 `59605db351c143bced2db65756ffa5a780c0ab98` 已推送私有 main，并由验证过的增量 Git bundle 快进部署。文档收据后续单独提交；VPS 运行身份仍固定该提交，ICT 既有改动未包含。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 安全边界 | 控制 37→38 paused，Host 队列、active Frozen Task、未完成 accepted 任务、Worker inbox 与恢复阻塞均为零后才停三服务；records/pending 是保留的分析记录，未删除 |
+| 发布前备份 | pa-agent-20261012T164557Z：8842 文件全部 manifest 校验通过，三份 SQLite quick_check=ok |
+| 代码与包 | Linux wheel、安装包与固定 Git 302 文件逐字节相同；48 项依赖版本未变，pip check 通过；Headless 无 Qt 导入 |
+| Runtime | installed/source 权限审计通过，asset digest `4ab1384cf286000c5ab46469a91855fae074408311963205fc5fc5eaa9e1e177`；实际 Worker 同身份，认证 healthy，CLI binary digest 未变 |
+| 数据迁移 | 只新增 nullable result_expires_at_ms，所有旧列和其他表行摘要一致；旧行新列全 null。原 v3 三单及 v2 一单未重标 |
+| 安装后验证 | 11 项隔离 Linux probe 通过：连续棒/缺首棒及中间棒、后续触价/未触价、重启、锁内迟到拒绝、原 v3 到期、复盘 applicability 及只读版本投影；临时订单不入正式账本 |
+| HTTP | healthz、api/status、api/trading、Dashboard 与交易页 200；未授权 API 401；新列显示和 v3/v4 投影均验证 |
+| 恢复运行 | 控制 39 running，原 profile generation 4/fingerprint 31fe1647...、codex_only、gpt-6-luna/xhigh、三品种、并发3、Fast及 Run Once generation 5 均保持。三个服务 active/running，ExecMainStatus 0、NRestarts 0；资产 connected，无恢复阻塞 |
+| 保留证据 | 290 个原始分析/配置/凭据文件摘要一致；恢复后旧订单、账户、事件行摘要一致。正式发布目录已保存 wheel、哈希收据与兼容回退边界 |
+
+本地 Headless 非 live 1747 项通过、最终聚焦 17 项通过、关键静态和 diff 检查通过。GitHub Linux wheel/assets job 成功；Linux 完整 test job 在 pytestqt 初始化阶段因 `libEGL.so.1` 缺失停止，未运行测试，属于本次明确排除的 GUI 环境验证缺口，不能写为全平台 CI 通过。Windows 完整 GUI CI 的状态另以 Actions 为准。VPS 不安装 pytest/GUI 依赖，因此使用安装包隔离 probe，而非冒称 VPS 全量回归。
+
+曾因构建器选中系统 Python 的旧 setuptools 而打包失败；在安装前定位，显式使用既有发布环境 Python 后离线成功，未改 pyproject 或依赖。没有触发额外 Run Once、付费 canary 或旧失败重跑；新版本自然完整模型链、预算停止率、token 和限价收益仍待观察，发布不证明这些指标改善。旧模糊订单仍保留。
+
+回退不可让 v4/quarantine 不兼容的旧 Paper reader 接管现库；普通代码回退和恢复旧数据是不同操作。备份/正式 wheel 已保留，本次 VPS 发布暂存目录、本地测试目录、发布 bundle/wheel 和新构建目录已清理；正式备份及发布 wheel 保留，历史其他任务产物未处理。

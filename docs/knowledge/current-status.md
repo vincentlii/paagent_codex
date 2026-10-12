@@ -4,8 +4,8 @@ capability: paper-observation-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-12
-核验提交: 227e1979ae7b4d7eebb5fe797e5c39c4aaf71d1e（运行 Python 与资源；后续发布证据提交仅更新文档）
+最后核验: 2026-10-13
+核验提交: 59605db351c143bced2db65756ffa5a780c0ab98（运行 Python 与资源；后续发布证据提交仅更新文档）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,13 +21,13 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-13 本轮优化（本地完成，待发布）
+## 2026-10-13 本轮优化（已发布 VPS）
 
 Recent Runs 状态置首/固定、品种筛选、Outcome 折叠和 Backend 字段后置；Stage 1 首稿 300s（整链仍共享 600s）；VPA/Joint 明确既有结构位置证据及等待/入场说明，复盘区分无 Entry Attempt 与数据不可用。
 
 新 1h Headless 显式 pipeline 冻结 limit_3bar_v1，限价到第三个后续收盘、接单新鲜度仍下一收盘；新增 paper_latency_v4 与 nullable 字段，旧任务/订单不迁移。v4 pending 缺棒 censored，旧模糊成交不改。v3/v4 统计分层且历史可见，共同账户资本/风险保持独立说明。
 
-Headless 非 live 回归 1747 passed / 9 deselected（Qt 排除），最终提示和限价聚焦 17 passed。发布须 Host/Worker idle、停止服务、验证备份及旧数据比较；旧 Paper 引擎不能直接回退接管。ICT 既有改动保留且不纳入提交。详细证据见 [本轮修订](../quality/v1_runtime_failure_paper_audit_20261012.md)。
+Headless 非 live 回归 1747 passed / 9 deselected（Qt 排除），最终提示和限价聚焦 17 passed。VPS 已在 Host/Worker idle 后停服、验证8842文件/三库备份、安装固定 Linux wheel 并比较旧数据。11 项安装包 probe、Runtime 权限与身份、HTTP及鉴权检查通过；控制39恢复running，三服务与三资产正常，原配置保持。旧 Paper 引擎不能直接回退接管。290 个原始分析/配置/凭据摘要及旧订单/账户/事件保留。Linux wheel CI成功；完整Linux test CI受GUI libEGL缺失阻塞，不宣称全平台CI通过。新自然模型链及成本/收益变化仍待观察。ICT 既有改动保留且不纳入提交。详细证据见 [本轮修订](../quality/v1_runtime_failure_paper_audit_20261012.md)。
 
 
 ## 2026-10-13 预算与时效初值（建议，未实施）
