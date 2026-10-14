@@ -4,8 +4,8 @@ capability: paper-observation-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-14（本地候选；VPS发布证据仍为2026-10-13）
-核验提交: 本地候选e9f40d1604b187556bbd15ac3b84c0440c89a68d；VPS最后已知运行59605db351c143bced2db65756ffa5a780c0ab98（本轮未连通复核）
+最后核验: 2026-10-14（VPS固定提交安装、离线验收及恢复运行）
+核验提交: VPS运行e9f40d1604b187556bbd15ac3b84c0440c89a68d
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -20,6 +20,26 @@ verification_scope:
 ---
 
 # 当前状态
+
+## 2026-10-14 Runtime/知识覆盖优化已发布VPS
+
+用户明确授权使用指定既有SSH密钥，仅操作PA Agent。VPS确认原提交59605db、工作区干净；
+暂停39→40并等待Host队列、Worker inbox及恢复阻塞为空，停止三个服务后执行备份。
+备份`pa-agent-20261014T065901Z`的12887文件manifest和三份SQLite quick_check通过。
+固定提交e9f40d1离线构建及安装；306包成员按Git LF原文逐字节核验，13项Runtime资源及
+POSIX权限审计通过。Linux安装环境14项离线契约检查通过，覆盖四角色/repair、旧Job、
+PA续接、研究扩展与全部替代假设；不调用模型、不生成订单，Headless无Qt。
+
+安装期间三份数据库逻辑内容、426个配置/认证/待交付文件及48项依赖保持一致。
+三个服务均active/running、Result=success、NRestarts=0，新asset为f2957d56...，Worker auth healthy。
+恢复原running代次41，XAU/BTC/ETH均连接；gpt-6-luna/xhigh、Fast、aggressive、并发3及
+1h/4h Profile原值保留，Run Once仍为5。面板health/status/trading为200，未认证status为401。
+重启后的内存调度计数重新开始，不代表历史记录删除；未额外触发单次模型分析。
+
+本地1774 passed / 7 deselected与上述Linux安装检查分别报告；没有全量Linux/GUI CI、
+新版本自然模型链质量或持续Paper收益结论。新旧wheel、验证备份及收据保留；四个既有ICT文件
+未纳入提交。此前的“未发布/等待授权”已由本节更新，下方历史条目保留当时证据。
+详见[发布验收](../quality/v1_runtime_failure_paper_audit_20261012.md)末节。
 
 ## 2026-10-14 已提交/推送，VPS发布等待SSH授权
 

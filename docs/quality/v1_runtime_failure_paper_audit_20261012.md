@@ -805,3 +805,57 @@ SSH预检遇到两份同名专用密钥的公钥不同、旧文件Windows访问�
 当前提交/推送完成，VPS发布待连接授权；不报告已上线。固定archive、bundle、wheel及本地
 验收收据保存在`docs/changelog/releases/20261014-runtime-knowledge/`；具名测试、构建/安装
 暂存及临时SSH副本已清理，正式源码备份和原始配对研究证据保留。
+
+## 2026-10-14 固定提交VPS发布完成
+
+前节SSH阻塞随后获得用户明确授权：使用指定既有密钥，仅发布PA Agent及核验其服务。
+未读取或修改其他项目，没有输出私钥、口令或认证内容。实际连接用户为ubuntu，限定PA Agent
+路径的部署操作使用sudo；原专用密钥未修改。运行代码固定为
+`e9f40d1604b187556bbd15ac3b84c0440c89a68d`，后续文档收据提交不改变运行代码身份。
+
+### 发布、备份与一致性
+
+VPS发布前HEAD为59605db351c143bced2db65756ffa5a780c0ab98且干净，控制generation39、running。
+暂停到40，核验Host queued/running/unfinished均0、Worker inbox为空、无in_flight/恢复阻塞，
+再停止Host、Codex Worker和Dashboard三个服务。执行原备份服务并验证
+`/var/backups/pa-agent/pa-agent-20261014T065901Z`：manifest含12887文件，三份SQLite quick_check为ok。
+保留配置、认证、Frozen Job、失败回执与历史账本，未迁移或回填数据。
+
+通过本地已核验的增量Git bundle传递固定提交；确认pyproject.toml/uv.lock无变化后，在VPS离线
+构建匹配新旧提交的wheel，保存两份回退/发布包，再fast-forward源码并离线reinstall、no-deps。
+安装前后三份数据库逐表行数/内容hash相同，426个配置/认证/待交付文件hash及48项依赖相同，
+pip check通过。该数据库一致性结论限定停服安装窗口；恢复运行后Paper正常推进不受此断言限制。
+
+Linux包SHA256为`4a46959b681705e27640c12090fb9bcacdec3e52749f6f7ad19ec029b0b283ef`；
+旧包为`c6cc5d7c0769affcf8625dd0fb378635056d6065c6ba7eaed759c63e6dd68256`。
+Windows Git archive受core.eol影响使用CRLF，不能直接与Linux包按字节比较；改用显式
+core.autocrlf=false、core.eol=lf生成的固定归档，SHA256为
+`8c1640a1cb9da94d92e1e3f05372dd09330b4f24881e57884e20fa2edbdce4ea`。
+安装后的306包成员与Git LF原文逐字节相同；既有GUI dark.qss排除仍属原打包规则，未改业务代码。
+
+### Linux安装与恢复核验
+
+全新安装进程从site-packages导入，执行14项离线检查：四角色normal与repair资源/拒绝边界、
+同快照PA续接的共同指令身份、显式challenge/layered研究扩展、未标记旧Frozen Job、全部替代
+假设的复核教材与交易权限、VPA全部周期及已有挑战窗口。全部通过，model_calls=0、
+production_database_reads=0、paper_writes=0；这是部署辅助probe，不是新增生产功能或全量Linux测试。
+13项Runtime资源installed/source审计与POSIX只读权限检查通过，issues为空；Headless导入无Qt。
+
+先在暂停状态启动三个服务，核验新Runtime digest
+`f2957d56a69acef229425b46c93df4531a9ea177c4bdb93e57042492193643f3`、Worker auth healthy，
+再恢复原running到generation41。最后核验三个服务均active/running、Result=success、NRestarts=0，
+XAUUSDT/BTCUSDT/ETHUSDT均连接、无恢复阻塞；原Profile fingerprint
+`31fe1647d1396aaf04788ddce793a4d04ac7845f9b84581a6fd6ea00e88323f1`、codex_only、
+gpt-6-luna/xhigh、Fast、aggressive、并发3、1h/4h及Run Once generation5保留。
+CLI digest仍为61b0194f...；只读HTTP healthz/status/trading均200，未认证status拒绝401。
+三个ExecStartPre部署检查随服务启动通过；未额外Run Once、模型canary或订单实验。
+服务重启会重置内存scheduler计数，历史数据库并未清空。
+
+正式收据、新旧wheel、bundle及离线核验脚本保存在PA Agent专属
+`/var/backups/pa-agent/releases/runtime-knowledge-e9f40d1-joDYel/`，脱敏收据也保存在本地既有
+`docs/changelog/releases/20261014-runtime-knowledge/vps-receipts/`。发布暂存目录在收据取回后清理；
+四个既有ICT文件保持备份时字节，未commit或部署。保留原源码备份、历史研究与执行记录。
+
+结论：提交、推送、VPS安装与原授权Paper调度恢复完成。本地Headless非live1774 passed /
+7 deselected与Linux14项安装probe分开报告；全量Linux/GUI CI未跑，新Runtime的自然模型链及
+长期质量/性能/收益仍待观察。发布成功不修改此前单快照配对的负面耗时证据或质量不确定性。
