@@ -152,3 +152,96 @@ def test_trigger_child_id_list_is_retained_for_terminal_reconciliation():
     )
     row = c.get_algo("BTC-USDT-SWAP", "pad" + "a" * 29)
     assert json.loads(row["child_order_ids"]) == ["456", "457"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "valid",
+        "wrong_user",
+        "group_read",
+        "other_read",
+        "extra_user",
+        "invalid_acl",
+        "wrong_directory",
+        "writable_directory",
+        "wrong_owner",
+        "symlink",
+        "bad_version",
+        "truncated",
+        "plain_0600",
+        "plain_0400",
+    ],
+)
+def test_credential_loader_understands_private_systemd_acl(tmp_path, monkeypatch, case):
+    import os
+    import stat
+    import struct
+    from pathlib import Path
+    from types import SimpleNamespace
+    import pa_agent.execution.okx_demo as module
+
+    directory = tmp_path / "credentials"
+    directory.mkdir()
+    for name in ["key", "secret", "passphrase"]:
+        (directory / ("okx-demo-" + name)).write_text("test-" + name)
+    original_stat = Path.stat
+
+    def metadata(path, *args, **kwargs):
+        value = original_stat(path, *args, **kwargs)
+        if path == directory or path.parent == directory:
+            fields = list(value)
+            fields[0] = (
+                (stat.S_IFDIR | (0o770 if case == "writable_directory" else 0o550))
+                if path == directory
+                else stat.S_IFREG | 0o440
+            )
+            fields[4] = 995 if case == "wrong_owner" else 0
+            if path != directory and case in {"plain_0600", "plain_0400"}:
+                fields[0] = stat.S_IFREG | (0o600 if case == "plain_0600" else 0o400)
+            return os.stat_result(fields)
+        return value
+
+    def acl(path, name):
+        assert name == "system.posix_acl_access"
+        permission = 5 if path == directory else 4
+        entries = [
+            (1, permission, 0xFFFFFFFF),
+            (2, permission, 995 if case == "wrong_user" else 994),
+            (4, 4 if case == "group_read" else 0, 0xFFFFFFFF),
+            (16, permission, 0xFFFFFFFF),
+            (32, 4 if case == "other_read" else 0, 0xFFFFFFFF),
+        ]
+        if case == "extra_user":
+            entries.append((2, 4, 996))
+        raw = struct.pack("<I", 99 if case == "bad_version" else 2) + b"".join(
+            struct.pack("<HHI", *entry) for entry in entries
+        )
+        return b"invalid" if case == "invalid_acl" else raw[:-1] if case == "truncated" else raw
+
+    monkeypatch.setattr(Path, "stat", metadata)
+    if case == "symlink":
+        monkeypatch.setattr(Path, "is_symlink", lambda path: path.parent == directory)
+    monkeypatch.setattr(
+        module,
+        "os",
+        SimpleNamespace(
+            name="posix",
+            geteuid=lambda: 994,
+            getxattr=acl,
+            environ={
+                "CREDENTIALS_DIRECTORY": str(
+                    tmp_path / "other" if case == "wrong_directory" else directory
+                )
+            },
+        ),
+    )
+    if case in {"valid", "plain_0600", "plain_0400"}:
+        credentials = module.load_demo_credentials(directory)
+        assert credentials.key == "test-key" and credentials.secret == "test-secret"
+    else:
+        with pytest.raises(
+            module.DemoUnavailable,
+            match="invalid_credential_file" if case == "symlink" else "credential_permissions",
+        ):
+            module.load_demo_credentials(directory)

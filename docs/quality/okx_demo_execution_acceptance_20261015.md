@@ -226,3 +226,29 @@ canary-v2.json，保留第一次失败；BTC最小0.01张约8.16 USDT，普通�
 原设止损/TP1 closeFraction1 OCO、触发后1个退出子订单终态与仓位归零通过。最终0普通单/
 0条件单/0仓位，共4 fills/4 bills（含前次），未遇部分成交，不声称该路径已实测。
 两次helper验收不伪装成正式分析/生产Worker完成的自然订单，正式首单仍需独立观察。
+
+
+## 2026-10-15 systemd credential ACL 启动兼容
+
+OCO修复bf0c1b6固定发布，安装前原3库逻辑、14238文件、47依赖保持，315成员逐字节一致，
+9项隔离Linux检查通过。备份pa-agent-20261014T182316Z，控制暂停44；Demo无入场。
+启动只读Worker时暴露第二个真实环境差异：LoadCredential文件为root-owned0440，
+不是group可读，而是ACL mask反映为组位。实际euid994，ACL为root:r/user994:r/group:none/
+mask:r/other:none，父credential目录0550且仅root/user994可遍历。旧mode&077误拒绝。
+已停止重试；账户空仓，Host仍暂停、entry=false，不用复制秘密或chmod绕过。
+
+修复仅在CREDENTIALS_DIRECTORY精确匹配的root非symlink目录/普通文件，且模式分别为
+0550/0440时识别Linux POSIX ACL；必须v2、恰五条(root和当前UID读/遍历、groupobj0、
+mask相符、other0)，拒绝重复/额外授权、坏版本、截断、错误UID、非root owner、可写目录及symlink。
+0600/0400原路径保留。源凭据仍root0600，systemd只读挂载不变，Codex/Dashboard权限不扩大。
+
+公开load接口先复现合法ACL误拒，再增加14种正反形态测试；候选在真实systemd service
+身份下成功加载并完成GET snapshot：net_mode、BTC isolated3、覆盖全true；临时源码已清理。
+该验证不冒称已安装修复/服务已激活。参考官方
+[systemd credential ACL兼容记录](https://github.com/systemd/systemd/issues/29435)与
+[服务凭据说明](https://github.com/systemd/systemd/blob/main/docs/CREDENTIALS.md)。
+
+
+ACL兼容最终本地回归：1873 passed / 7 deselected，87.48s；静态关键错误与diff检查通过。
+同一独立审阅者安全三角色复核及客户端/Worker CLI 29项通过。真实候选systemd GET通过
+仅作为修复证据，下一步固定版本安装后再验收Worker，不将暂存候选冒称上线。

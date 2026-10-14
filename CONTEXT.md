@@ -18,6 +18,10 @@ Demo 账本、退出子订单、消费回执独立；未知请求不补发，旧
 OKX Algo实测回报可同时含空clOrdId和正确algoClOrdId：OCO身份仅核对algoClOrdId，
 普通entry/emergency仅核对clOrdId；禁止跨字段fallback，避免误报后紧急平仓或错误身份被掩盖。
 真实canary失败与后续验收分开保存，不能以重跑覆盖；详见上述Demo验收报告末节。
+Linux systemd credential可能以root0440文件/root0550目录呈现私有服务用户ACL，组位是mask。
+不能仅凭mode组位判泄露：仅在CREDENTIALS_DIRECTORY与精确root+当前UID私有ACL契约通过
+时允许，实际group/other/额外用户授权仍拒绝；不得复制凭据或chmod放宽服务保护。
+
 
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读

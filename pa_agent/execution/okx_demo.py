@@ -8,6 +8,7 @@ import hmac
 import os
 import re
 import stat
+import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,13 +47,53 @@ class OkxDemoCredentials:
     passphrase: str = field(repr=False)
 
 
+def _private_systemd_acl(path: Path, permission: int) -> bool:
+    """A group mode bit can be an ACL mask, with no actual group access."""
+    try:
+        metadata = path.stat()
+        expected_type = stat.S_ISDIR if permission == 5 else stat.S_ISREG
+        if path.is_symlink() or metadata.st_uid != 0 or not expected_type(metadata.st_mode):
+            return False
+        if stat.S_IMODE(metadata.st_mode) != (0o550 if permission == 5 else 0o440):
+            return False
+        raw = os.getxattr(path, "system.posix_acl_access")
+        if len(raw) != 44 or struct.unpack("<I", raw[:4])[0] != 2:
+            return False
+        entries = [struct.unpack("<HHI", raw[i : i + 8]) for i in range(4, 44, 8)]
+        undefined = 0xFFFFFFFF
+        expected = [
+            (1, permission, undefined),
+            (2, permission, os.geteuid()),
+            (4, 0, undefined),
+            (16, permission, undefined),
+            (32, 0, undefined),
+        ]
+        return sorted(entries) == sorted(expected)
+    except (OSError, AttributeError, ValueError, struct.error):
+        return False
+
+
+def _systemd_credential_permissions(path: Path, directory: Path) -> bool:
+    configured = os.environ.get("CREDENTIALS_DIRECTORY")
+    return bool(
+        configured
+        and Path(configured).resolve() == directory.resolve()
+        and _private_systemd_acl(directory, 5)
+        and _private_systemd_acl(path, 4)
+    )
+
+
 def load_demo_credentials(directory: Path) -> OkxDemoCredentials:
     values = []
     for name in ("okx-demo-key", "okx-demo-secret", "okx-demo-passphrase"):
         path = directory / name
         if path.is_symlink() or not path.is_file() or path.stat().st_size > 4096:
             raise DemoUnavailable("invalid_credential_file")
-        if os.name != "nt" and stat.S_IMODE(path.stat().st_mode) & 0o077:
+        if (
+            os.name != "nt"
+            and stat.S_IMODE(path.stat().st_mode) & 0o077
+            and not _systemd_credential_permissions(path, directory)
+        ):
             raise DemoUnavailable("credential_permissions")
         value = path.read_text(encoding="utf-8").strip()
         if not value or any(c in value for c in "\r\n"):
