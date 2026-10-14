@@ -1,0 +1,44 @@
+[Unit]
+Description=PA Agent OKX Demo reconciliation and protected execution
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=pa-agent-execution
+Group=pa-agent-execution
+SupplementaryGroups=pa-agent-execution-spool
+WorkingDirectory=/opt/pa-agent
+Environment=PA_AGENT_EXECUTION_HOME=/var/lib/pa-agent-execution
+Environment=PA_AGENT_DEMO_CONFIG=/etc/pa-agent-demo/config.json
+EnvironmentFile=-/etc/pa-agent-demo/demo.env
+LoadCredential=okx-demo-key:/etc/pa-agent/okx-demo-key
+LoadCredential=okx-demo-secret:/etc/pa-agent/okx-demo-secret
+LoadCredential=okx-demo-passphrase:/etc/pa-agent/okx-demo-passphrase
+ExecStartPre=/opt/miniconda3/envs/pa-agent/bin/pa-agent-okx-demo --check
+ExecStart=/opt/miniconda3/envs/pa-agent/bin/pa-agent-okx-demo
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=180s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/var/lib/pa-agent-execution/intents /etc/pa-agent-demo /opt/pa-agent
+ReadWritePaths=/var/lib/pa-agent-execution/state /var/lib/pa-agent-execution/receipts /var/lib/pa-agent-execution/projection
+
+[Install]
+WantedBy=multi-user.target

@@ -33,6 +33,7 @@ from pa_agent.operations.runtime_state import (
     control_state_to_dict,
 )
 from pa_agent.operations.trading import safe_trading_projection
+from pa_agent.operations.demo_settings import DemoExecutionPolicy, validate_demo_settings
 
 _MAX_BODY_BYTES = 4096
 _SESSION_COOKIE = "pa_agent_dashboard_session"
@@ -291,6 +292,27 @@ def _profile_projection(control: Any, runtime: dict[str, Any] | None) -> dict[st
     }
 
 
+def _demo_settings_projection(control, runtime):
+    applied = None
+    raw = (runtime or {}).get("applied_demo_execution_policy")
+    try:
+        if isinstance(raw, dict) and set(raw) == set(DemoExecutionPolicy.model_fields):
+            applied = DemoExecutionPolicy.model_validate(raw)
+    except (TypeError, ValueError):
+        pass
+    desired = control.demo_execution_policy
+    return {
+        "supported": applied is not None,
+        "control_generation": control.generation,
+        "desired": desired.model_dump(mode="json"),
+        "desired_fingerprint": desired.fingerprint,
+        "applied": applied.model_dump(mode="json") if applied is not None else None,
+        "pending": applied != desired,
+        "updated_at_ms": control.demo_execution_updated_at_ms,
+        "actor": control.demo_execution_actor,
+    }
+
+
 def _safe_paper_projection(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -321,6 +343,7 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
     paper = _safe_paper_projection((runtime or {}).get("paper"))
     control_view = control_state_to_dict(control)
     profile_view = _profile_projection(control, runtime)
+    demo_view = _demo_settings_projection(control, runtime)
     applied_generation = runtime_view.get("applied_control_generation")
     expected_service_state = "paused" if control.desired_state == "paused" else "running"
     control_view["applied"] = (
@@ -336,6 +359,9 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
         == control.desired_backend
         and runtime_view.get("applied_codex_fast_mode", False) == control.codex_fast_mode
         and not profile_view["pending"]
+        and (not demo_view["pending"] or (
+            not demo_view["supported"] and control.demo_execution_policy == DemoExecutionPolicy()
+        ))
     )
     return {
         "schema_version": 1,
@@ -345,6 +371,7 @@ def build_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None = None) -
         "control": control_view,
         "capabilities": analysis_capabilities(),
         "profile": profile_view,
+        "demo_execution_settings": _demo_settings_projection(control, runtime),
         "recent_runs": recent,
         "analysis_summary": [
             _select_fields(item, _ANALYSIS_SUMMARY_FIELDS)
@@ -370,6 +397,7 @@ def build_trading_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None =
         "health": _health(runtime, now_ms=current_ms),
         "runtime": _safe_runtime_projection(runtime),
         "trading": safe_trading_projection((runtime or {}).get("trading")),
+        "demo_execution_settings": _demo_settings_projection(RuntimeControlStore(paths.runtime_control_path).read(), runtime),
     }
 
 
@@ -556,7 +584,7 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
             path = urlsplit(self.path).path
             if path != "/api/login" and not self._authorized():
                 return
-            if path not in {"/api/login", "/api/logout", "/api/control", "/api/profile", "/api/run-once", "/api/fast-mode"}:
+            if path not in {"/api/login", "/api/logout", "/api/control", "/api/profile", "/api/run-once", "/api/fast-mode", "/api/demo-execution-settings"}:
                 self._json(404, {"error": "not_found"})
                 return
             if self.headers.get("X-PA-Agent-Control") != "1":
@@ -594,6 +622,9 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 return
             if path == "/api/profile":
                 self._profile(body)
+                return
+            if path == "/api/demo-execution-settings":
+                self._demo_settings(body)
                 return
             if path == "/api/fast-mode":
                 self._fast_mode(body)
@@ -707,6 +738,37 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 202,
                 {"ok": True, "applied": False, "control": control_state_to_dict(state)},
             )
+
+        def _demo_settings(self, body: dict[str, Any]) -> None:
+            if set(body) != {"expected_generation", "settings"}:
+                self._json(400, {"error": "invalid_demo_settings_request"})
+                return
+            expected = body["expected_generation"]
+            try:
+                if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
+                    raise ValueError("invalid_generation")
+                validate_demo_settings(body["settings"])
+            except (TypeError, ValueError):
+                self._json(400, {"error": "invalid_demo_settings_request"})
+                return
+            runtime = RuntimeStatusStore(paths.runtime_status_path).read()
+            current = control_store.read()
+            if current.error:
+                self._json(503, {"error": "control_state_unavailable"})
+                return
+            if (runtime is None or _health(runtime, now_ms=int(time.time()*1000))["state"] not in {"running", "paused"}
+                    or not _demo_settings_projection(current, runtime)["supported"]):
+                self._json(503, {"error": "runtime_settings_unavailable"})
+                return
+            try:
+                state = control_store.set_demo_execution_settings(body["settings"], expected_generation=expected, actor="dashboard")
+            except RuntimeControlConflict:
+                self._json(409, {"error": "generation_conflict"})
+                return
+            except OSError:
+                self._json(503, {"error": "control_state_unavailable"})
+                return
+            self._json(202, {"ok": True, "applied": False, "control": control_state_to_dict(state)})
 
         def _fast_mode(self, body: dict[str, Any]) -> None:
             if set(body) != {"expected_generation", "enabled"}:

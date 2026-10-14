@@ -30,6 +30,11 @@ Codex Agentic Analysis 是待验证的分析 Backend，不是新的交易系统�
 
 AGENTS 固化不可变 authority、no-lookahead、Evidence grounding、阶段协议与停止条件。Role Skills 只编码 Stage 1、普通/联合 Stage 2、VPA、旧研究 Joint Arbiter 和 pointer repair 的操作程序；Brooks/VPA 领域知识仍由 PA Agent 按 Context/Router 管理，Skills 不得成为第二份领域知识库。
 
+2026-10-15用户授权的面板执行设置仅限OKX Demo单笔总价值和限价有效期，默认500 USDT / 3h。
+它们由Host在任务接收时冻结，与模型/Codex/AnalysisProfile、Snapshot/cohort和cutover身份
+分离；不修改模型建议的entry/stop/TP1，不授予Dashboard或Codex交易凭据和下单权限。
+具体控制、兼容与发布边界见ADR-0023的同日增补和Demo本地验收报告。
+
 ## Frozen Evidence 与角色隔离
 
 一个 Frozen Snapshot 是完整分析的唯一事实边界。Evidence-on-demand 在该边界内替换一次性拼接全部 Prompt：Codex 只读当前 Job、role allowlist、call/byte budget 内的事实与知识，并把每次读取写入审计。它不读取未来 K 线、实时行情、Web、数据库、外部 App、Plugin 或未授权文件。

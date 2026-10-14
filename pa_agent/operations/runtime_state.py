@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -20,6 +20,8 @@ from pa_agent.operations.analysis_profile import (
 from pa_agent.operations.analysis_profile import (
     profile_fingerprint as analysis_profile_fingerprint,
 )
+
+from pa_agent.operations.demo_settings import DemoExecutionPolicy, validate_demo_settings
 
 DesiredState = Literal["running", "paused"]
 AnalysisBackendMode = Literal["deepseek_only", "auto", "codex_only"]
@@ -35,7 +37,7 @@ _FORBIDDEN_STATUS_KEYS = (
 
 @dataclass(frozen=True)
 class RuntimeControlState:
-    schema_version: int = 4
+    schema_version: int = 5
     desired_state: DesiredState = "running"
     desired_backend: AnalysisBackendMode = "deepseek_only"
     codex_fast_mode: bool = False
@@ -44,6 +46,9 @@ class RuntimeControlState:
     profile_generation: int = 0
     profile_updated_at_ms: int = 0
     profile_actor: str = "default"
+    demo_execution_policy: DemoExecutionPolicy = DemoExecutionPolicy()
+    demo_execution_updated_at_ms: int = 0
+    demo_execution_actor: str = "default"
     run_once_generation: int = 0
     generation: int = 0
     updated_at_ms: int = 0
@@ -113,6 +118,7 @@ def control_state_to_dict(state: RuntimeControlState) -> dict[str, Any]:
     """Return the sole credential-free JSON projection of control state."""
     payload = asdict(state)
     payload["analysis_profile"] = state.analysis_profile.model_dump(mode="json")
+    payload["demo_execution_policy"] = state.demo_execution_policy.model_dump(mode="json")
     return payload
 
 
@@ -132,7 +138,7 @@ class RuntimeControlStore:
             if not isinstance(raw, dict):
                 raise TypeError("control state must be an object")
             schema_version = int(raw.get("schema_version", 1))
-            if schema_version not in {1, 2, 3, 4}:
+            if schema_version not in {1, 2, 3, 4, 5}:
                 raise ValueError("unsupported control schema")
             desired = str(raw["desired_state"])
             if desired not in {"running", "paused"}:
@@ -163,9 +169,27 @@ class RuntimeControlStore:
                 profile_generation = 0
                 profile_updated_at_ms = 0
                 profile_actor = "migration"
-            codex_fast_mode = raw["codex_fast_mode"] if schema_version == 4 else False
+            codex_fast_mode = raw["codex_fast_mode"] if schema_version >= 4 else False
             if not isinstance(codex_fast_mode, bool):
                 raise ValueError("codex_fast_mode must be a boolean")
+            if schema_version >= 5 and (
+                not isinstance(raw.get("demo_execution_policy"), dict)
+                or set(raw["demo_execution_policy"]) != set(DemoExecutionPolicy.model_fields)
+            ):
+                raise ValueError("incomplete demo execution policy")
+            demo_policy = (
+                DemoExecutionPolicy.model_validate(raw["demo_execution_policy"])
+                if schema_version >= 5
+                else DemoExecutionPolicy()
+            )
+            demo_updated = int(raw["demo_execution_updated_at_ms"]) if schema_version >= 5 else 0
+            demo_actor = (
+                str(raw["demo_execution_actor"] or "unknown")[:64]
+                if schema_version >= 5
+                else "migration"
+            )
+            if demo_updated < 0:
+                raise ValueError("negative demo settings metadata")
             generation = int(raw.get("generation", 0))
             run_once_generation = int(raw.get("run_once_generation", 0))
             updated_at_ms = int(raw.get("updated_at_ms", 0))
@@ -178,7 +202,7 @@ class RuntimeControlStore:
             ):
                 raise ValueError("negative control metadata")
             return RuntimeControlState(
-                schema_version=4,
+                schema_version=5,
                 desired_state=desired,  # type: ignore[arg-type]
                 desired_backend=desired_backend,  # type: ignore[arg-type]
                 codex_fast_mode=codex_fast_mode,
@@ -187,6 +211,9 @@ class RuntimeControlStore:
                 profile_generation=profile_generation,
                 profile_updated_at_ms=profile_updated_at_ms,
                 profile_actor=profile_actor,
+                demo_execution_policy=demo_policy,
+                demo_execution_updated_at_ms=demo_updated,
+                demo_execution_actor=demo_actor,
                 run_once_generation=run_once_generation,
                 generation=generation,
                 updated_at_ms=updated_at_ms,
@@ -214,6 +241,9 @@ class RuntimeControlStore:
                 profile_generation=current.profile_generation,
                 profile_updated_at_ms=current.profile_updated_at_ms,
                 profile_actor=current.profile_actor,
+                demo_execution_policy=current.demo_execution_policy,
+                demo_execution_updated_at_ms=current.demo_execution_updated_at_ms,
+                demo_execution_actor=current.demo_execution_actor,
                 run_once_generation=current.run_once_generation,
                 generation=current.generation + 1,
                 updated_at_ms=int(self._now_ms()),
@@ -241,6 +271,9 @@ class RuntimeControlStore:
                 profile_generation=current.profile_generation,
                 profile_updated_at_ms=current.profile_updated_at_ms,
                 profile_actor=current.profile_actor,
+                demo_execution_policy=current.demo_execution_policy,
+                demo_execution_updated_at_ms=current.demo_execution_updated_at_ms,
+                demo_execution_actor=current.demo_execution_actor,
                 run_once_generation=current.run_once_generation,
                 generation=current.generation + 1,
                 updated_at_ms=int(self._now_ms()),
@@ -270,6 +303,9 @@ class RuntimeControlStore:
                 profile_generation=current.profile_generation + 1,
                 profile_updated_at_ms=int(self._now_ms()),
                 profile_actor=(str(actor).strip() or "unknown")[:64],
+                demo_execution_policy=current.demo_execution_policy,
+                demo_execution_updated_at_ms=current.demo_execution_updated_at_ms,
+                demo_execution_actor=current.demo_execution_actor,
                 run_once_generation=current.run_once_generation,
                 generation=current.generation + 1,
                 updated_at_ms=int(self._now_ms()),
@@ -297,6 +333,9 @@ class RuntimeControlStore:
                 profile_generation=current.profile_generation,
                 profile_updated_at_ms=current.profile_updated_at_ms,
                 profile_actor=current.profile_actor,
+                demo_execution_policy=current.demo_execution_policy,
+                demo_execution_updated_at_ms=current.demo_execution_updated_at_ms,
+                demo_execution_actor=current.demo_execution_actor,
                 run_once_generation=current.run_once_generation + 1,
                 generation=current.generation + 1,
                 updated_at_ms=int(self._now_ms()),
@@ -327,9 +366,33 @@ class RuntimeControlStore:
                 profile_generation=current.profile_generation,
                 profile_updated_at_ms=current.profile_updated_at_ms,
                 profile_actor=current.profile_actor,
+                demo_execution_policy=current.demo_execution_policy,
+                demo_execution_updated_at_ms=current.demo_execution_updated_at_ms,
+                demo_execution_actor=current.demo_execution_actor,
                 run_once_generation=current.run_once_generation,
                 generation=current.generation + 1,
                 updated_at_ms=int(self._now_ms()),
+                actor=(str(actor).strip() or "unknown")[:64],
+            )
+            _atomic_write_json(self._path, control_state_to_dict(state))
+            return state
+
+    def set_demo_execution_settings(self, settings, *, expected_generation: int, actor: str):
+        validated = validate_demo_settings(settings)
+        with self._lock, _exclusive_control_lock(self._path):
+            current = self.read()
+            if current.error or current.generation != expected_generation:
+                raise RuntimeControlConflict("control generation changed")
+            now = int(self._now_ms())
+            state = replace(
+                current,
+                demo_execution_policy=validated.model_copy(
+                    update={"generation": current.demo_execution_policy.generation + 1}
+                ),
+                demo_execution_updated_at_ms=now,
+                demo_execution_actor=(str(actor).strip() or "unknown")[:64],
+                generation=current.generation + 1,
+                updated_at_ms=now,
                 actor=(str(actor).strip() or "unknown")[:64],
             )
             _atomic_write_json(self._path, control_state_to_dict(state))

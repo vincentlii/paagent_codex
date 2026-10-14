@@ -75,6 +75,15 @@ def encode_task(task: AnalysisTask) -> tuple[str, str]:
     }
     if payload.execution_policy is not None:
         value["payload"]["execution_policy"] = payload.execution_policy
+    if payload.demo_execution_policy is not None:
+        from pa_agent.operations.demo_settings import DemoExecutionPolicy
+        if payload.execution_target != "okx_demo":
+            raise ValueError("demo_settings_require_demo_binding")
+        value["payload"]["demo_execution_policy"] = DemoExecutionPolicy.model_validate(dict(payload.demo_execution_policy)).model_dump(mode="json")
+    if payload.execution_target is not None or payload.execution_epoch is not None:
+        if payload.execution_target != "okx_demo" or not payload.execution_epoch:
+            raise ValueError("invalid frozen execution binding")
+        value["payload"].update(execution_target=payload.execution_target, execution_epoch=payload.execution_epoch)
     encoded = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -89,6 +98,15 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
     source = value["payload"]
     if source.get("execution_policy") not in {None, "limit_3bar_v1"}:
         raise ValueError("unknown frozen execution policy")
+    target, epoch = source.get("execution_target"), source.get("execution_epoch")
+    demo_policy = source.get("demo_execution_policy")
+    if demo_policy is not None:
+        from pa_agent.operations.demo_settings import DemoExecutionPolicy
+        if target != "okx_demo":
+            raise ValueError("demo_settings_require_demo_binding")
+        demo_policy = DemoExecutionPolicy.model_validate(demo_policy).model_dump(mode="json")
+    if (target is not None or epoch is not None) and (target != "okx_demo" or not isinstance(epoch, str) or not epoch):
+        raise ValueError("invalid frozen execution binding")
     htf = source["htf_context"]
     if isinstance(htf.get("frame"), dict):
         htf["frame"] = _frame_from_dict(htf["frame"])
@@ -106,6 +124,9 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
         analysis_profile_fingerprint=source["analysis_profile_fingerprint"],
         analysis_profile_identity=source["analysis_profile_identity"],
         execution_policy=source.get("execution_policy"),
+        execution_target=target,
+        execution_epoch=epoch,
+        demo_execution_policy=demo_policy,
     )
     task = AnalysisTask.create(
         source=identity["source"], venue=identity["venue"],

@@ -547,6 +547,9 @@ def build_trading_projection(
 
 def safe_trading_projection(value: Any, *, include_versions: bool = True) -> dict[str, Any]:
     """Dashboard allowlist: no database paths, arbitrary JSON or raw model output."""
+    if isinstance(value, dict) and value.get("schema_version") == 2:
+        from pa_agent.operations.demo_trading import safe_composed_projection
+        return safe_composed_projection(value)
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         return {}
 

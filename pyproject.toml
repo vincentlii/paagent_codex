@@ -83,6 +83,7 @@ dev = [
 ]
 
 [project.scripts]
+pa-agent-okx-demo = "pa_agent.execution.demo_worker:main"
 pa-agent = "pa_agent.main:main"
 pa-agent-headless = "pa_agent.headless:main"
 pa-agent-dashboard = "pa_agent.dashboard:main"

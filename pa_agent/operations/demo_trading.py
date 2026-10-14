@@ -1,0 +1,346 @@
+"""Bounded Demo projection. Dashboard never opens the execution ledger."""
+
+from __future__ import annotations
+
+import math
+import json
+from decimal import Decimal, InvalidOperation
+
+from pa_agent.execution.demo_contracts import DemoIntent, DemoOrderRequest
+
+NUMERIC_FIELDS = frozenset(
+    "equity available_balance unrealized_pnl margin_used planned_stop_loss reserved_margin "
+    "entry stop tp1 quantity filled average_fill_price notional target_notional pos upl imr margin lever fillPx fillSz fee net_pnl fees funding external_flows pnl".split()
+)
+
+
+def _mapping(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _select(value, keys):
+    if not isinstance(value, dict):
+        return {}
+    result = {
+        k: (v[:2400] if isinstance(v, str) else v)
+        for k, v in value.items()
+        if k in keys
+        and (v is None or isinstance(v, (str, int, float, bool)))
+        and not (isinstance(v, float) and not math.isfinite(v))
+    }
+    for key in result.keys() & NUMERIC_FIELDS:
+        try:
+            parsed = Decimal(str(result[key]))
+            if (
+                isinstance(result[key], bool)
+                or not parsed.is_finite()
+                or abs(parsed) > Decimal("1e30")
+            ):
+                raise ValueError("invalid_number")
+        except (InvalidOperation, ValueError):
+            result[key] = None
+    return result
+
+
+def safe_demo_projection(value):
+    if (
+        not isinstance(value, dict)
+        or value.get("environment") != "okx_demo_v1"
+        or value.get("schema_version") != 1
+    ):
+        return {
+            "schema_version": 1,
+            "environment": "okx_demo_v1",
+            "account_label": "OKX 模拟盘",
+            "state": "unavailable",
+        }
+    result = _select(
+        value,
+        (
+            "schema_version",
+            "environment",
+            "account_label",
+            "generated_at_ms",
+            "exchange_observed_at_ms",
+            "reconciled_through_ms",
+            "ledger_start_ms",
+            "state",
+            "reason",
+            "total_decisions",
+            "total_orders",
+            "total_active_trades",
+            "outside_orders",
+        ),
+    )
+    result["account"] = _select(
+        value.get("account"),
+        (
+            "equity",
+            "available_balance",
+            "unrealized_pnl",
+            "margin_used",
+            "planned_stop_loss",
+            "reserved_margin",
+        ),
+    )
+    result["coverage"] = {
+        k: v
+        for k, v in _mapping(value.get("coverage")).items()
+        if k in {"account", "orders", "algos", "positions", "fills", "bills", "contracts", "ledger"}
+        and isinstance(v, bool)
+    }
+    row_fields = {
+        "orders": (
+            "task_id",
+            "run_id",
+            "symbol",
+            "side",
+            "entry",
+            "stop",
+            "tp1",
+            "quantity",
+            "filled",
+            "average_fill_price",
+            "notional",
+            "target_notional",
+            "limit_validity_hours",
+            "execution_settings_generation",
+            "expires_at_ms",
+            "entry_state",
+            "protection",
+            "trade_state",
+            "reason",
+            "created_at_ms",
+        ),
+        "decisions": ("task_id", "run_id", "symbol", "disposition", "reason", "created_at_ms"),
+        "positions": ("instId", "pos", "upl", "imr", "margin", "mgnMode", "lever"),
+        "fills": (
+            "instId",
+            "ordId",
+            "tradeId",
+            "side",
+            "fillPx",
+            "fillSz",
+            "fee",
+            "feeCcy",
+            "ts",
+            "fillTime",
+        ),
+    }
+    for key, fields in row_fields.items():
+        raw = value.get(key)
+        result[key] = (
+            [_select(row, fields) for row in raw[: 150 if key != "positions" else 3]]
+            if isinstance(raw, list)
+            else []
+        )
+    result["periods"] = {}
+    for key in ("all", "7d", "30d"):
+        raw = _mapping(value.get("periods")).get(key, {})
+        result["periods"][key] = _select(
+            raw, ("net_pnl", "fees", "funding", "external_flows", "scope")
+        )
+        curve = raw.get("curve") if isinstance(raw, dict) else None
+        result["periods"][key]["curve"] = (
+            [_select(row, ("bar_ts", "pnl")) for row in curve[-180:]]
+            if isinstance(curve, list)
+            else []
+        )
+    return result
+
+
+def build_demo_projection(store, snapshot, *, now_ms):
+    rows = store.projection_rows(now_ms=now_ms)
+    orders, decisions = [], []
+    stop_risk = Decimal(0)
+    for row in rows["intents"]:
+        i = DemoIntent.model_validate_json(row["body"])
+        decisions.append(
+            dict(
+                task_id=i.task_id,
+                run_id=i.run_id,
+                symbol=i.inst_id,
+                disposition=i.disposition,
+                reason=row["reason"],
+                created_at_ms=i.generated_at_ms,
+            )
+        )
+        if row["request"]:
+            request = DemoOrderRequest.model_validate_json(row["request"])
+            entry = next((l for l in store.legs(i.content_digest) if l["leg"] == "entry"), None)
+            average_fill = json.loads(entry["response"]).get("avgPx") if entry else None
+            orders.append(
+                dict(
+                    task_id=i.task_id,
+                    run_id=i.run_id,
+                    symbol=i.inst_id,
+                    side=i.side,
+                    entry=str(i.entry),
+                    stop=str(i.stop),
+                    tp1=str(i.tp1),
+                    quantity=str(request.sz),
+                    filled=row["filled"],
+                    average_fill_price=average_fill or None,
+                    notional=str(request.notional),
+                    target_notional=(
+                        str(i.demo_execution_policy.notional_usdt)
+                        if i.demo_execution_policy
+                        else "500"
+                    ),
+                    limit_validity_hours=(
+                        i.demo_execution_policy.limit_validity_hours
+                        if i.demo_execution_policy
+                        else None
+                    ),
+                    execution_settings_generation=(
+                        i.demo_execution_policy.generation if i.demo_execution_policy else None
+                    ),
+                    expires_at_ms=i.expires_at_ms,
+                    entry_state=row["entry_state"],
+                    protection=row["protection"],
+                    trade_state=row["trade_state"],
+                    reason=row["reason"],
+                    created_at_ms=i.generated_at_ms,
+                )
+            )
+            if row["trade_state"] == "active":
+                stop_risk += request.notional * abs(request.px - request.stop) / request.px
+    periods = {}
+    for key, days in (("all", None), ("7d", 7), ("30d", 30)):
+        start = max(
+            rows.get("ledger_start_ms") or 0, 0 if days is None else now_ms - days * 86400000
+        )
+        pnl, fees, funding, flows = (Decimal(0) for _ in range(4))
+        curve = []
+        complete = snapshot.coverage.get("bills", False) and rows.get("ledger_complete", True)
+        # Account trading bills are the sole monetary source. Fill fees are displayed,
+        # never added again to bill fees or position.realizedPnl (which already includes costs).
+        for bill in sorted(rows["bills"], key=lambda b: int(b.get("ts", "0"))):
+            try:
+                ts = int(bill.get("ts", "0"))
+                if ts < start or ts > now_ms:
+                    continue
+                if bill.get("ccy", "USDT") != "USDT":
+                    complete = False
+                    continue
+                kind = bill.get("type")
+                if kind == "2":
+                    if not bill.get("pnl") or not bill.get("fee"):
+                        complete = False
+                        continue
+                    trade_pnl, fee = Decimal(bill["pnl"]), Decimal(bill["fee"])
+                    pnl += trade_pnl + fee
+                    fees += fee
+                elif kind == "8":
+                    payment = Decimal(bill["balChg"])
+                    pnl += payment
+                    funding += payment
+                elif kind == "1":
+                    flows += Decimal(bill["balChg"])
+                else:
+                    complete = False  # Unclassified bills are not silently called profit/transfer.
+                if not all(x.is_finite() for x in (pnl, fees, funding, flows)):
+                    complete = False
+                    break
+                curve.append({"bar_ts": ts, "pnl": str(pnl)})
+            except (ValueError, InvalidOperation, KeyError):
+                complete = False
+        periods[key] = {
+            "scope": "demo_account_bills",
+            "net_pnl": str(pnl) if complete else None,
+            "fees": str(fees) if complete else None,
+            "funding": str(funding) if complete else None,
+            "external_flows": str(flows) if complete else None,
+            "curve": curve[-180:] if complete else [],
+        }
+    positions = list(snapshot.positions)
+
+    def position_sum(key):
+        try:
+            values = [Decimal(p[key]) for p in positions if Decimal(p.get("pos", "0")) != 0]
+            return str(sum(values, Decimal(0))) if all(v.is_finite() for v in values) else None
+        except (KeyError, InvalidOperation):
+            return None
+
+    return safe_demo_projection(
+        dict(
+            schema_version=1,
+            environment="okx_demo_v1",
+            account_label="OKX 模拟盘",
+            generated_at_ms=now_ms,
+            exchange_observed_at_ms=snapshot.observed_at_ms,
+            reconciled_through_ms=(
+                snapshot.observed_at_ms if all(snapshot.coverage.values()) else None
+            ),
+            state="ready" if all(snapshot.coverage.values()) else "reconciliation_gap",
+            coverage=dict(snapshot.coverage),
+            account={
+                "equity": str(snapshot.equity) if snapshot.equity is not None else None,
+                "available_balance": (
+                    str(snapshot.available) if snapshot.available is not None else None
+                ),
+                "unrealized_pnl": position_sum("upl"),
+                "margin_used": position_sum("margin"),
+                "planned_stop_loss": str(stop_risk),
+                "reserved_margin": str(store.reserved_margin()),
+            },
+            orders=orders,
+            decisions=decisions,
+            positions=positions,
+            fills=list(rows["fills"])[-150:],
+            periods=periods,
+            ledger_start_ms=rows.get("ledger_start_ms"),
+            total_decisions=rows["total_decisions"],
+            total_orders=rows.get("total_orders", len(orders)),
+            total_active_trades=len(store.pending_intents()),
+            outside_orders=len(snapshot.orders) + len(snapshot.algos),
+        )
+    )
+
+
+def compose_trading_projection(paper, demo, *, selected_backend, now_ms):
+    from pa_agent.operations.trading import safe_trading_projection
+
+    if selected_backend == "paper":
+        return safe_trading_projection(dict(paper))
+    clean = safe_demo_projection(demo)
+    observed = clean.get("exchange_observed_at_ms")
+    if clean.get("state") != "unavailable" and (
+        not isinstance(observed, int) or not 0 <= now_ms - observed <= 30000
+    ):
+        clean["state"] = "stale"
+    legacy = safe_trading_projection(dict(paper)) if paper.get("schema_version") == 1 else {}
+    return {
+        "schema_version": 2,
+        "selected_backend": "okx_demo",
+        "generated_at_ms": now_ms,
+        "demo": clean,
+        "paper_versions": {"paper_latency_v4": legacy, **legacy.get("execution_versions", {})},
+        "analysis": {
+            "source": "host_records",
+            "available": legacy.get("analysis_available"),
+            "analyses": legacy.get("analyses", []),
+            "periods": legacy.get("periods", {}),
+        },
+    }
+
+
+def safe_composed_projection(value):
+    from pa_agent.operations.trading import safe_trading_projection
+
+    raw_versions = value.get("paper_versions")
+    versions = raw_versions if isinstance(raw_versions, dict) else {}
+    raw = _mapping(versions.get("paper_latency_v4"))
+    paper = safe_trading_projection(raw) if raw.get("schema_version") == 1 else {}
+    if _mapping(versions.get("paper_latency_v3")).get("schema_version") == 1:
+        paper["execution_versions"] = {
+            "paper_latency_v3": safe_trading_projection(versions["paper_latency_v3"])
+        }
+    stamp = value.get("generated_at_ms")
+    result = compose_trading_projection(
+        paper,
+        value.get("demo"),
+        selected_backend="okx_demo",
+        now_ms=stamp if type(stamp) is int else 0,
+    )
+    return result

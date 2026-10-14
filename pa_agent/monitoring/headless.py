@@ -117,6 +117,8 @@ class HeadlessMonitor:
         self._applied_control_generation = 0
         self._applied_backend = "deepseek_only"
         self._applied_codex_fast_mode = False
+        from pa_agent.operations.demo_settings import DemoExecutionPolicy
+        self._applied_demo_execution_policy = DemoExecutionPolicy()
         self._applied_profile = AnalysisProfile()
         self._applied_profile_fingerprint = profile_fingerprint(self._applied_profile)
         self._applied_profile_generation = 0
@@ -328,6 +330,8 @@ class HeadlessMonitor:
         error = getattr(control, "error", None)
         if error:
             return True, str(error)
+        desired_demo_policy = getattr(control, "demo_execution_policy", self._applied_demo_execution_policy)
+        demo_policy_pending = desired_demo_policy != self._applied_demo_execution_policy
         desired_profile = self._desired_profile(control)
         profile_pending = desired_profile is not None and (
             int(getattr(control, "profile_generation", 0))
@@ -340,7 +344,7 @@ class HeadlessMonitor:
         )
         backend_pending = desired_backend != self._applied_backend
         fast_mode_pending = desired_fast_mode != self._applied_codex_fast_mode
-        identity_pending = profile_pending or backend_pending or fast_mode_pending
+        identity_pending = profile_pending or backend_pending or fast_mode_pending or demo_policy_pending
         profile_applied = False
         backend_applied = False
 
@@ -349,7 +353,7 @@ class HeadlessMonitor:
                 return True, (
                     "analysis_profile_pending"
                     if profile_pending
-                    else "backend_switch_draining"
+                    else "demo_execution_settings_pending" if demo_policy_pending else "backend_switch_draining"
                 )
             if verify_latest and not self._control_is_latest(
                 control,
@@ -360,7 +364,7 @@ class HeadlessMonitor:
                 return True, (
                     "analysis_profile_pending"
                     if profile_pending
-                    else "backend_switch_pending"
+                    else "demo_execution_settings_pending" if demo_policy_pending else "backend_switch_pending"
                 )
             if profile_pending:
                 assert desired_profile is not None
@@ -400,6 +404,12 @@ class HeadlessMonitor:
                 self._clear_prepared_tasks()
             if fast_mode_pending:
                 self._applied_codex_fast_mode = desired_fast_mode
+                self._clear_prepared_tasks()
+            if demo_policy_pending:
+                apply_settings = getattr(self._paper_execution, "apply_execution_settings", None)
+                if callable(apply_settings):
+                    apply_settings(desired_demo_policy)
+                self._applied_demo_execution_policy = desired_demo_policy
                 self._clear_prepared_tasks()
         self._applied_control_generation = int(getattr(control, "generation", 0))
         run_once_generation = int(getattr(control, "run_once_generation", 0) or 0)
@@ -570,6 +580,8 @@ class HeadlessMonitor:
         )
         if not backend_matches:
             return False
+        if getattr(control, "demo_execution_policy", self._applied_demo_execution_policy) != self._applied_demo_execution_policy:
+            return False
         if bool(getattr(control, "codex_fast_mode", False)) != self._applied_codex_fast_mode:
             return False
         desired_profile = self._desired_profile(control)
@@ -620,6 +632,7 @@ class HeadlessMonitor:
             ),
             "applied_control_generation": self._applied_control_generation,
             "applied_codex_fast_mode": self._applied_codex_fast_mode,
+            "applied_demo_execution_policy": self._applied_demo_execution_policy.model_dump(mode="json"),
             "applied_profile": self._applied_profile.model_dump(mode="json"),
             "applied_profile_fingerprint": self._applied_profile_fingerprint,
             "applied_profile_generation": self._applied_profile_generation,
@@ -664,13 +677,20 @@ class HeadlessMonitor:
                     codex_worker_status_path=self._codex_worker_status_path,
                 )
                 self._review_projection_at_ms = now_ms
+            publish_control = getattr(self._paper_execution, "publish_control", None)
+            if callable(publish_control):
+                publish_control(running=not paused and service_state not in {"stopping", "stopped"})
+            review = dict(self._review_projection)
+            compose = getattr(self._paper_execution, "compose_projection", None)
+            if callable(compose):
+                review["trading"] = compose(review.get("trading", {}))
             self._status_store.write({
                 **self.runtime_snapshot(
                     paused=paused,
                     control_error=control_error,
                     service_state=service_state,
                 ),
-                **self._review_projection,
+                **review,
             })
         except (OSError, TypeError, ValueError):
             logger.exception("Runtime status publication failed")
@@ -737,10 +757,14 @@ class HeadlessMonitor:
         if paper_submission is not None:
             record, spec, task_id = paper_submission
             try:
+                extra = ({"execution_payload": completion.task.payload,
+                          "execution_snapshot_hash": completion.task.snapshot_hash}
+                         if callable(getattr(self._paper_execution, "bind_task", None)) else {})
                 self._paper_execution.submit_official(
                     record,
                     spec,
                     task_id=task_id,
+                    **extra,
                 )
             except Exception:
                 self._paper_reconcile_needed = True
@@ -1070,6 +1094,9 @@ class HeadlessMonitor:
             # submit may deliver completion synchronously. Reserve ownership first,
             # as recovery does, so that callback cannot be lost or re-registered.
             try:
+                bind = getattr(self._paper_execution, "bind_task", None)
+                if callable(bind):
+                    task = bind(task)
                 submission = self._service.submit(task)
             except Exception:
                 if self._task_to_state.get(task.task_id) is state:

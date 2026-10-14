@@ -1,0 +1,21 @@
+[Unit]
+Description=Consistent backup of PA Agent Demo ledger only
+
+[Service]
+Type=oneshot
+User=pa-agent-execution
+Group=pa-agent-execution
+SupplementaryGroups=pa-agent-execution-spool
+Environment=PA_AGENT_EXECUTION_HOME=/var/lib/pa-agent-execution
+Environment=PA_AGENT_DEMO_CONFIG=/etc/pa-agent-demo/config.json
+ExecStart=/opt/miniconda3/envs/pa-agent/bin/pa-agent-okx-demo --backup /var/backups/pa-agent-demo
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+CapabilityBoundingSet=
+ReadOnlyPaths=/var/lib/pa-agent-execution
+# The own-state lock needs a writable mount; SQLite source remains mode=ro in code.
+ReadWritePaths=/var/lib/pa-agent-execution/state /var/backups/pa-agent-demo

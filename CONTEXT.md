@@ -1,5 +1,21 @@
 # PA Agent Domain Context
 
+OKX 模拟执行接入前必须阅读
+`docs/superpowers/specs/2026-10-15-okx-demo-execution-design.md`、
+`docs/quality/okx_demo_execution_acceptance_20261015.md`。设计及实施计划已获用户批准；
+本地代码默认禁用，真实账户、保护能力及 VPS 发布须分别验收，不改 PA/VPA authority。
+Demo 只消费 Host 已持久化且 audit_ok 的正式结果；Host task 的执行代次不进入 Codex Job、
+Prompt 或市场 hash。默认500 USDT名义金额、3小时挂单有效期；面板仅可配置这两项，
+通过 Runtime control v5 / CAS / idle apply，按新接收任务冻结设置及代次。有效期从源 K1
+收盘起算，不从实际挂单或重启起算；已有任务无新字段时保留原500/原expiry。金额、TTL
+不进入 AnalysisProfile、Codex、行情/cohort身份或 cutover 指纹；原 entry/stop/TP1 不改。
+TTL只支持1–24整数小时，金额为最多8位小数的有限正数且不超过1e9（输入表示上界，
+不是风险许可）；余额、合约上下限及原执行保护继续检查。普通限价之外拒绝。
+Demo 账本、退出子订单、消费回执独立；未知请求不补发，旧 Paper 只继续观察既有订单。
+模拟盘主视图不可用时保持未知，不回退 Paper。新库备份必须持有 Worker 排他锁，
+运行中拒绝备份；回退不允许旧代码接管仍有活动 Demo 订单的服务。新Worker可读旧Intent，
+旧Worker不能读新增policy字段，Host/Worker必须整包协调停启，不能混版本运行。
+
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
 `docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0024`。
 

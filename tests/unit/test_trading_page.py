@@ -97,9 +97,49 @@ assert.ok(nodes.notice.textContent.includes('connection failed'));
 vm.runInContext("render({health:{state:'offline'},trading:{}})",context);
 assert.ok(nodes.notice.textContent.includes('尚未发布'));
 assert.equal(nodes.balance.textContent,'—');
+context.data={health:{state:'running'},runtime:{},trading:{schema_version:2,selected_backend:'okx_demo',
+  demo:{schema_version:1,environment:'okx_demo_v1',state:'ready',generated_at_ms:Date.now(),
+    exchange_observed_at_ms:Date.now(),account:{equity:'10000',available_balance:'9000'},
+    periods:{all:{net_pnl:'7',fees:'-1',funding:'-2',external_flows:'10000',curve:[]}},orders:[],positions:[],
+    fills:[{instId:'BTC-USDT-SWAP',side:'buy',fillPx:'50000',fillSz:'0.4',fee:'-0.1',feeCcy:'USDT',ts:String(Date.now())}]},
+  paper_versions:{paper_latency_v4:{schema_version:1,account:{settled_balance:99999},periods:{all:{assets:[]}}}},
+  analysis:{analyses:[],periods:{all:{assets:[]}}}}};
+vm.runInContext('render(data)',context);
+assert.equal(nodes['execution-version'].value,'okx_demo');
+assert.ok(nodes.balance.textContent.includes('10,000'));
+assert.ok(nodes.version.textContent.includes('OKX 模拟盘'));
+assert.ok(!nodes.version.textContent.includes('funding 未建模'));
+assert.ok(nodes['demo-fills'].textContent.includes('BTC-USDT-SWAP'));
+assert.ok(nodes['demo-fills'].textContent.includes('-0.1 USDT'));
+nodes['execution-version'].value='paper_latency_v4';nodes['execution-version'].events.change();
+assert.ok(nodes.balance.textContent.includes('99,999'));
+vm.runInContext('render(data)',context);assert.equal(nodes['execution-version'].value,'paper_latency_v4');
+nodes['execution-version'].value='okx_demo';nodes['execution-version'].events.change();
+vm.runInContext('render({trading:{schema_version:1,account:{settled_balance:99999}}})',context);
+assert.equal(nodes.balance.textContent,'—');assert.ok(nodes.notice.textContent.includes('不回退'));
 assert.equal(calls.length,1);assert.equal(calls[0].url,'/api/trading');
 assert.equal(calls[0].options.method,undefined);
-console.log('Trading rendering, empty states, review and read-only fetch: OK');
+context.data.health={state:'running'};
+context.data.demo_execution_settings={supported:true,control_generation:8,pending:false,
+  desired:{notional_usdt:'500',limit_validity_hours:3,generation:0},
+  applied:{notional_usdt:'500',limit_validity_hours:3,generation:0}};
+vm.runInContext('render(data)',context);
+assert.equal(nodes['demo-notional'].value,'500');
+assert.equal(nodes['save-demo-settings'].disabled,false);
+assert.ok(nodes['demo-settings-status'].textContent.includes('Host 已生效'));
+nodes['demo-notional'].value='750';nodes['demo-notional'].events.input();
+nodes['demo-validity'].value='6';nodes['demo-validity'].events.input();
+context.data.demo_execution_settings.desired.notional_usdt='900';
+vm.runInContext('render(data)',context);
+assert.equal(nodes['demo-notional'].value,'750'); // polling preserves unsaved edits
+assert.equal(calls.length,1); // viewing/editing never saves automatically
+nodes['save-demo-settings'].events.click();
+assert.equal(calls.length,2);assert.equal(calls[1].url,'/api/demo-execution-settings');
+assert.equal(calls[1].options.method,'POST');
+assert.equal(calls[1].options.headers['X-PA-Agent-Control'],'1');
+assert.deepEqual(JSON.parse(calls[1].options.body),{expected_generation:8,
+  settings:{notional_usdt:'750',limit_validity_hours:6}});
+console.log('Trading rendering and explicit audited settings save: OK');
 """
     result = subprocess.run(
         [node, "-e", harness],

@@ -44,6 +44,9 @@ class FrozenAnalysisPayload:
     analysis_profile_fingerprint: str = ""
     analysis_profile_identity: Mapping[str, Any] = field(default_factory=dict)
     execution_policy: str | None = None
+    execution_target: str | None = None
+    execution_epoch: str | None = None
+    demo_execution_policy: Mapping[str, Any] | None = None
 
 
 class IndependentAnalysisHandler:

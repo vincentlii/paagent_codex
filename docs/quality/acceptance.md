@@ -47,6 +47,11 @@
 25. Paper 覆盖已消费历史 OHLC 或改写历史 rejected/订单/收益的次数为 0。用户授权的
     历史冲突隔离只能在跨账户无潜在 pending/open 依赖时进行；隔离不成为 accepted
     revision，延迟新订单不得回放隔离棒，其他冲突仍回滚整批，独立未来订单可继续。
+26. OKX Demo 执行必须遵守 `okx_demo_execution_acceptance_20261015.md`：固定500 USDT总价值，
+    原 entry/stop/TP1 不改，tick不符拒绝；HTTP ACK不当成交、50004不当明确拒绝，unknown不补发。
+    部分成交先保护，OCO触发子订单未终态或仓位覆盖不足不得closed/释放品种。默认不启用、
+    未验收品种不得入场，Host冻结代次隔离旧任务。模拟盘/旧Paper/真实收益分离，未知不计零。
+    新库及回执备份需持有Demo Worker排他锁；Dashboard仅消费Host脱敏JSON。
 
 ## 结构与鲁棒性
 
@@ -115,3 +120,10 @@
 - 重启恢复、连续棒未触价到期/后续触价、首棒和中间棒缺失均须验证；缺棒不可确认成交或未成交，不确定不计零。
 - nullable schema 新列不得回填或改写旧字段、事件、结果；发布前验证一致备份，迁移后比较旧行并 quick_check。回退必须支持 v4 和 quarantine。
 - v3/v4 收益、曲线与订单独立展示；共同资本/风险明确标注，范围外活跃订单可见。VPA 显示 applicability 不改 canonical enum，不新增模型调用或订单权限。
+
+## OKX Demo 面板执行设置
+
+- 默认500 USDT / 3h，金额和TTL只冻结于新接收的Demo Host任务/Intent，不进入模型、行情/cohort或切换证书；其他控制写入必须保留设置。
+- 新旧任务同时存在、旧Intent摘要/客户ID、重试/重启均保持原金额及绝对到期时间；Worker只能消费冻结值。
+- 鉴权、Origin/header、严格字段与数值校验、CAS冲突、Host idle确认和旧Host不支持写入须验证；浏览或编辑不自动保存。
+- 合约向下取整、原entry/stop/TP1、杠杆及Paper协议不变；到期撤余量，撤单ACK不是终态。版本升级须协调Host/Worker，不混跑旧Worker。

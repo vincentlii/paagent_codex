@@ -26,7 +26,7 @@ if [ ! -x "$CONDA_EXE" ]; then
   exit 2
 fi
 
-for service in pa-agent.service pa-agent-codex-worker.service pa-agent-dashboard.service; do
+for service in pa-agent.service pa-agent-codex-worker.service pa-agent-dashboard.service pa-agent-demo-worker.service; do
   if systemctl is-active --quiet "$service"; then
     printf '%s\n' "Stop PA Agent services before installing: $service is active." >&2
     exit 2
@@ -34,6 +34,17 @@ for service in pa-agent.service pa-agent-codex-worker.service pa-agent-dashboard
 done
 
 cd "$APP_DIR"
+
+if ! getent group pa-agent-execution-spool >/dev/null 2>&1; then
+  groupadd --system pa-agent-execution-spool
+fi
+if ! getent group pa-agent-execution >/dev/null 2>&1; then
+  groupadd --system pa-agent-execution
+fi
+if ! id pa-agent-execution >/dev/null 2>&1; then
+  useradd --system --gid pa-agent-execution --home-dir /nonexistent --shell /usr/sbin/nologin pa-agent-execution
+fi
+usermod --append --groups pa-agent-execution-spool pa-agent-execution
 
 if ! getent group "$CONTROL_GROUP" >/dev/null 2>&1; then
   groupadd --system "$CONTROL_GROUP"
@@ -51,6 +62,7 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
   useradd --system --home-dir "$STATE_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
 usermod --append --groups "$CONTROL_GROUP" "$SERVICE_USER"
+usermod --append --groups pa-agent-execution-spool "$SERVICE_USER"
 usermod --append --groups "$CODEX_GROUP" "$SERVICE_USER"
 if ! id "$CODEX_USER" >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/pa-agent-codex --shell /usr/sbin/nologin \
@@ -125,6 +137,21 @@ if [ ! -f "$CONTROL_PATH" ]; then
 fi
 install -d -o root -g "$SERVICE_USER" -m 0750 "$CONFIG_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 /var/backups/pa-agent
+install -d -o root -g pa-agent-execution-spool -m 0750 /var/lib/pa-agent-execution
+install -d -o "$SERVICE_USER" -g pa-agent-execution-spool -m 2750 /var/lib/pa-agent-execution/intents
+install -d -o pa-agent-execution -g pa-agent-execution-spool -m 2750 \
+  /var/lib/pa-agent-execution/receipts /var/lib/pa-agent-execution/projection
+install -d -o pa-agent-execution -g pa-agent-execution -m 0700 \
+  /var/lib/pa-agent-execution/state /var/backups/pa-agent-demo
+install -d -o root -g pa-agent-execution-spool -m 0750 /etc/pa-agent-demo
+if [ ! -f /etc/pa-agent-demo/config.json ]; then
+  install -o root -g pa-agent-execution-spool -m 0640 \
+    "$APP_DIR/deploy/systemd/pa-agent-demo.config.example.json" /etc/pa-agent-demo/config.json
+fi
+if [ ! -f /etc/pa-agent-demo/demo.env ]; then
+  install -o root -g pa-agent-execution-spool -m 0640 \
+    "$APP_DIR/deploy/systemd/pa-agent-demo.env.example" /etc/pa-agent-demo/demo.env
+fi
 
 if [ ! -f "$STATE_DIR/config/settings.json" ]; then
   install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$STATE_DIR/config"
@@ -167,6 +194,9 @@ install -o root -g root -m 0644 \
   "$APP_DIR/deploy/pa-agent-logrotate" \
   /etc/logrotate.d/pa-agent
 systemd-tmpfiles --create /etc/tmpfiles.d/pa-agent.conf
+for unit in pa-agent-demo-worker.service pa-agent-demo-backup.service; do
+  install -o root -g root -m 0644 "$APP_DIR/deploy/systemd/$unit" "/etc/systemd/system/$unit"
+done
 systemctl daemon-reload
 
 printf '%s\n' "Installed without starting the service."

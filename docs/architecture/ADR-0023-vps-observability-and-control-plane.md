@@ -21,6 +21,22 @@ USD-M、1h/4h 的 V1 Headless 范围；默认仍单黄金、并发 1、balanced�
 
 ## 决策
 
+### 2026-10-15：Demo 两项执行设置增补
+
+用户明确授权在交易总览配置单笔订单总价值与限价有效期，默认500 USDT / 3小时。
+Dashboard仅经既有鉴权、Origin/header、正文白名单和CAS修改Runtime control v5，
+不直接读写执行库、凭据或发送交易所请求，也不修改启用开关、杠杆、账户和品种白名单。
+金额为有限正Decimal（最多8位小数、不超过1e9），有效期为1–24整数小时；数量仍按目标
+lot向下取整，不足最小数量或保证金则拒绝，不通过调价或加仓满足。
+
+Host空闲边界确认生效，后续新任务冻结完整设置及代次，意图和执行账本保留自身值；
+已有任务、挂单、持仓与Paper协议不变。TTL从分析K1收盘起算，到期撤未成交余量，
+不延长决策新鲜度，不改变止损/TP1。请求保存与Host生效分别显示。
+设置不属于模型身份、市场hash或cutover证书。旧control v1–v4默认迁入500/3h，保留Fast；
+无参数的旧Intent仅省略新增optional字段参与摘要，不改变旧合法null字段摘要。
+兼容只保证新Worker读旧数据，发布和回退必须协调Host/Worker版本。详见
+[Demo验收](../quality/okx_demo_execution_acceptance_20261015.md)。
+
 VPS Dashboard 是独立进程和独立 Unix 用户，不导入分析编排器，不持有 LLM 或交易所
 凭据，也不直接调用 PA、VPA、Paper 或数据源对象。Headless 使用 SQLite `mode=ro`
 读取审计索引和 Paper 账本，再通过原子 JSON 发布版本化、白名单化的完整运行投影；

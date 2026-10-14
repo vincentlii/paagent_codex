@@ -1,0 +1,12 @@
+{
+  "enabled": false,
+  "entry_enabled": false,
+  "execution_target": "paper",
+  "notional_usdt": "500",
+  "leverage": "3",
+  "symbols": ["BTC-USDT-SWAP"],
+  "accepted_symbols": [],
+  "account_key": "",
+  "cutover_id": "",
+  "cutover_started_at_ms": 0
+}

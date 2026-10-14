@@ -360,6 +360,19 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
         paths.paper_trading_db_path,
         settings.paper_trading,
     )
+    from pa_agent.execution.demo_dispatch import OfficialExecutionDispatcher, load_demo_config
+    from pa_agent.execution.demo_contracts import resolve_demo_paths
+    from pa_agent.execution.demo_spool import DemoSpool
+    import os
+    import time
+    demo_config = load_demo_config()
+    if demo_config.execution_target == "okx_demo":
+        from pa_agent.execution.demo_dispatch import require_cutover
+        require_cutover(resolve_demo_paths(paths, environ=os.environ), demo_config)
+        paper_execution = OfficialExecutionDispatcher(
+            paper_execution, DemoSpool(resolve_demo_paths(paths, environ=os.environ)), demo_config,
+            now_ms=lambda: int(time.time() * 1000), task_lookup=scheduler_audit.load_task,
+        )
     def service_factory(on_completion):
         monitoring = settings.monitoring
         return MultiAssetAnalysisService(

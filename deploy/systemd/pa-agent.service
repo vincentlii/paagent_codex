@@ -13,7 +13,9 @@ WorkingDirectory=/opt/pa-agent
 Environment=PA_AGENT_HOME=/var/lib/pa-agent
 Environment=PA_AGENT_OPERATION_DIR=/var/lib/pa-agent-control
 Environment=PA_AGENT_PROMPT_DIR=/opt/pa-agent/prompt_engineering
-SupplementaryGroups=pa-agent-control
+SupplementaryGroups=pa-agent-control pa-agent-execution-spool
+Environment=PA_AGENT_EXECUTION_HOME=/var/lib/pa-agent-execution
+Environment=PA_AGENT_DEMO_CONFIG=/etc/pa-agent-demo/config.json
 EnvironmentFile=-/etc/pa-agent/pa-agent.env
 EnvironmentFile=-/etc/pa-agent/pa-agent-codex.env
 LoadCredential=pa_agent_api_key:/etc/pa-agent/api_key
@@ -42,6 +44,8 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 ReadWritePaths=/var/lib/pa-agent /var/lib/pa-agent-control/status
 ReadWritePaths=/var/lib/pa-agent-codex/jobs /var/lib/pa-agent-codex/inbox /var/lib/pa-agent-codex/results
+ReadWritePaths=/var/lib/pa-agent-execution/intents
+ReadOnlyPaths=/var/lib/pa-agent-execution/receipts /var/lib/pa-agent-execution/projection
 ReadOnlyPaths=/var/lib/pa-agent-control/control
 ReadOnlyPaths=/opt/pa-agent /opt/miniconda3/envs/pa-agent
 

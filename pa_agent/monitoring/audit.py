@@ -319,6 +319,15 @@ class SchedulerAuditStore:
             logger.exception("Scheduler persisted-result reconciliation failed")
             return False
 
+    def load_task(self, task_id: str):
+        """Read the original Host envelope, including inactive completed deliveries."""
+        from pa_agent.monitoring.frozen_task_codec import decode_task
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json,payload_digest FROM monitoring_frozen_tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+        return decode_task(row[0], row[1]) if row else None
+
     def was_successful(self, task_id: str) -> bool:
         """Return whether this exact frozen task completed successfully before."""
         try:

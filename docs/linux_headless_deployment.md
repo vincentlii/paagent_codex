@@ -1,7 +1,8 @@
 # Linux VPS Headless 部署
 
 本部署用于持续拉取 Binance USD-M 的 XAU 永续行情，自动运行 PA/VPA
-分析并进行本地 paper trading。当前代码没有私有交易所 API，也不会提交真实订单。
+分析并进行本地 paper trading。OKX Demo私有执行是独立、默认禁用的可选链路，
+不是实盘；启用/验收边界见末节与 `docs/quality/okx_demo_execution_acceptance_20261015.md`。
 
 ## 1. 目录与前提
 
@@ -465,7 +466,68 @@ manifest；旧数据、冻结回执与登录凭据不得随版本替换删除。
   收盘边界冻结，纽约时区包含 DST；官方 2026-09-15 规则之前保持历史时段未知，
   未接权威假日日历时不猜测公共假日。不据该背景增加 Gate 或重标旧快照。
 - VPA 不创建 Setup、不翻转 PA 方向、不修改主观胜率；其增量价值需由配对研究验证。
-- 当前只有 paper execution。接入真实交易前必须另做私有 API、幂等订单、持仓同步、
+- VPS当前仍为 paper execution；本地新增OKX Demo不等于已接通账户。接入真实交易前必须另做私有 API、幂等订单、持仓同步、
   kill switch、时钟偏差、精度和异常恢复审计。
 - ChatGPT auth、rate limit、模型可用性和 Codex CLI flag 仍须在目标 VPS 实测；本地静态检查不等于
   真实账号或长期运行已验证。
+
+## 9. 可选 OKX Demo（本地实现，VPS待验收）
+
+先读[接入验收](quality/okx_demo_execution_acceptance_20261015.md)。安装器仅创建独立用户、
+目录及服务，不自动启动Worker或启用订单；默认配置保留Paper。
+
+| 路径 | 所有者与权限 |
+| --- | --- |
+| `/var/lib/pa-agent-execution` | root / pa-agent-execution-spool，0750，仅共享组可遍历 |
+| `intents` | pa-agent / pa-agent-execution-spool，2750；Host写、Worker读 |
+| `receipts`、`projection` | pa-agent-execution / pa-agent-execution-spool，2750；Worker写、Host读 |
+| `state`、`/var/backups/pa-agent-demo` | pa-agent-execution专属，0700 |
+| `/etc/pa-agent-demo/config.json` | root / pa-agent-execution-spool，0640；只含非敏感配置及账户hash |
+| `/etc/pa-agent/okx-demo-key`、`okx-demo-secret`、`okx-demo-passphrase` | root管理的0600源文件，systemd LoadCredential注入Worker；不用聊天、Git或普通env传递 |
+
+Host新文件显式0640后原子替换，不能指望0077 umask自动共享；Codex和Dashboard不加入
+execution-spool组，也不增加对生产records、执行state或secret的访问权限。
+
+本地离线入口 `pa-agent-okx-demo --check` 不读credential、不访问网络。显式`--probe`才读取
+systemd credential并仅GET账户、余额、品种、模式、杠杆及敞口，输出脱敏账户hash供配置固定；
+不改账户模式/杠杆、不验证下单或OCO能力。Global域名固定；若账号需要区域域名，先停止另审，
+不在认证失败后尝试其他地区或实盘。按以下顺序另行验收，不用旧分析补单：
+
+1. 将模拟凭据直接配置到VPS，运行私有只读probe，核对专用账户无其他订单/仓位；把账户hash写入配置。
+2. 受控BTC最小合法数量订单需独立授权；验证原价普通限价、部分成交、close-all OCO、退出子订单、重启和费用。
+3. 将对应通过品种加入accepted_symbols；自然订单默认总价值500 USDT，可在交易总览保存金额及有效期；仅后续新任务采用。ETH/XAU必须各自通过，不随BTC自动开放。
+4. 准备新cutover_id与时间，enabled=true、entry_enabled=false。先以禁入场Worker启动，只读对账/发布投影；此时不要求切换证书，避免首次启动循环依赖。
+5. 保持Host当前Paper配置并Pause，等待Host/Codex队列空且无恢复阻塞。为目标okx_demo配置保留独立文件，作为Host用户显式设置PA_AGENT_DEMO_CONFIG指向该文件，执行`pa-agent-okx-demo --prepare-cutover`；它只读Host/Worker状态并写证书。
+6. Host和Worker改用相同目标配置，Host只接受配置指纹匹配的证书。新任务冻结执行代次；旧未绑定任务不能获得Demo资格。先确认面板主视图/数据时点，再按授权开放entry并恢复自然分析。
+
+Worker入场还要求Host control新鲜且running；Pause/停止新入场不停止既有保护/对账。
+受控验证通过前accepted_symbols保持空，不能把MockTransport测试当交易所支持证据。
+
+升级前暂停新入场、等待对账并停止Demo Worker，再运行独立的`pa-agent-demo-backup.service`
+或Worker用户的`pa-agent-okx-demo --backup /var/backups/pa-agent-demo`。备份取得同一排他锁，
+运行中直接拒绝；备份service只放开自身state的锁/WAL辅助文件及备份目录写权限，数据库源
+连接仍mode=ro。另外保留Host inputs/cutover和非敏感配置；不要单独恢复未来回执而丢失对应账本。
+恢复/回退先禁止新入场，保留兼容Worker保护活动单，不能自动用旧Paper接管Demo。
+
+安装器会拒绝覆盖仍在运行的Demo Worker安装包。四服务的停止/启动和新库备份应单独核验，
+不把原三库备份服务扩权为读取Demo凭据或状态。发布前实际运行runuser文件权限检查、服务
+namespace检查及备份quick_check；本地资产文本检查不能替代这些Linux实测。
+
+
+### Demo面板参数与兼容发布
+
+交易总览的“模拟执行设置”可保存单笔总价值（默认500 USDT，非保证金）与挂单有效期
+（默认3小时、允许1–24整数小时）。不会开启Demo交易、修改杠杆或品种许可。
+金额最多8位小数、不超过1e9，仅为输入上界；合约取整、可用保证金和全部执行安全继续约束。
+保存使用Runtime control v5的CAS及独立设置代次；等待Host空闲确认后，仅后续新任务冻结
+新值。旧任务/挂单不重定价、不延长有效期，TTL从源K1收盘起算，下一收盘新鲜度不变。
+更早的有效新分析/No Trade仍可替代旧挂单。到期由Worker撤未成交余量并查询终态；
+网络或交易所异常可能延迟实际撤单，面板不会把撤单请求当成已撤销。
+
+升级前备份控制JSON、原Host任务/输入及独立Demo账本（按上文Worker锁流程），保留完整
+安装包与证书。Host、Demo Worker、Dashboard须使用同一安装包，协调停止后覆盖安装再启；
+新Worker可读旧无参数Intent，但旧Worker会拒绝新增policy字段，禁止热混跑/旧代码接管新单。
+Runtime control v1–v4读取时默认迁入500/3h且保留Fast，首次控制写入才落盘v5，不改历史任务。
+回退须保留支持新Intent/活动单的保护和对账进程，并恢复匹配控制协议；不得仅恢复旧控制文件
+来改变已有订单或绕过代次校验。核验面板“Host已生效”和各订单自身到期时间，不能以已保存
+代替已生效。无需数据库schema迁移或历史回填。
