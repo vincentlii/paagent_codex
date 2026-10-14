@@ -14,7 +14,7 @@ from typing import Callable, Mapping, Sequence
 from uuid import uuid4
 
 from pa_agent.agent_runtime.execution_contract import SKILL_NAMES
-from pa_agent.agent_runtime.runtime_assets import load_codex_runtime_assets
+from pa_agent.agent_runtime.runtime_assets import GUIDANCE_PATHS, load_codex_runtime_assets
 
 _RESOURCE_PATHS = {
     "AGENTS.md": None,
@@ -27,9 +27,13 @@ _RESOURCE_PATHS = {
     "skills/vpa_evidence/SKILL.md": "vpa_evidence",
     "skills/joint_arbiter/SKILL.md": "joint_arbiter",
     "skills/draft_pointer_repair/SKILL.md": "draft_pointer_repair",
+    **{path: None for path in GUIDANCE_PATHS.values()},
 }
 _SKILL_NAMES = SKILL_NAMES
 _REQUIRED_RULES = {
+    "guidance/role_contracts.toml": ("result_draft_only", "analysis_role_stop_v1", "unrepairable", "fixed"),
+    "guidance/stage_challenge.md": ("host_stage_challenge_v1", "resources", "子意见是待核解释"),
+    "guidance/layered_stage2.md": ("layered_stage2_research_v1", "on_demand_sections", "完整原文"),
     "AGENTS.md": (
         "Brooks Price Action 是 Primary Market Framework",
         "Frozen Snapshot",
@@ -153,6 +157,9 @@ def _resource_documents(root: Path | None = None) -> dict[str, str]:
             result[name] = assets.rules_text
         elif name == "pa_challenger.toml":
             result[name] = assets.challenger_text
+        elif name in GUIDANCE_PATHS.values():
+            key = next(key for key, path in GUIDANCE_PATHS.items() if path == name)
+            result[name] = assets.guidance_documents[key]
         else:
             result[name] = assets.skill_documents[str(role)]
     return result

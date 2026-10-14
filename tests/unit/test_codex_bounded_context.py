@@ -630,6 +630,8 @@ def test_new_stage1_child_and_pointer_repair_keep_their_independent_scope_and_bu
             job, tuple(asdict(event) for event in child.audit_events),
         )
     repaired = replace(job, repair_findings={"editable_pointers": ["/field"]},
+                       core_context={key: value for key, value in job.core_context.items()
+                                     if key != "runtime_guidance_policy"},
                        runtime={**job.runtime, "skills": {"draft_pointer_repair": "frozen repair skill"}})
     repair_gateway = FrozenEvidenceGateway(repaired)
     repair_gateway.get_repair_findings()
@@ -758,6 +760,11 @@ def test_new_mcp_argument_accounting_preserves_other_frozen_scopes(tmp_path, sco
         job = replace(job, repair_findings={"editable_pointers": ["/field"]})
     elif scope == "stage2":
         job = replace(job, manifest=replace(job.manifest, role="stage2"))
+    if scope in {"repair", "stage2"}:
+        # Artificial role overrides exercise pre-guidance scope accounting;
+        # marked current Jobs reject this unbound role change in dedicated tests.
+        job = replace(job, core_context={key: value for key, value in job.core_context.items()
+                                         if key != "runtime_guidance_policy"})
     gateway = FrozenEvidenceGateway(job, child_budget=AgentJobBudget() if scope == "child" else None)
     server = EvidenceMcpServer(gateway, job_digest=job.manifest.job_digest)
     with pytest.raises(KeyError):

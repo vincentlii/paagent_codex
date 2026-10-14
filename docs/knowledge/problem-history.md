@@ -270,3 +270,33 @@ issue_status: monitoring
 5. 修复后记录回归证据；可接受的 LLM 专业偏差不伪装成代码 bug。
 
 继续阅读：[运行与排障](operations-and-debugging.md) · [原则与边界](principles-and-boundaries.md) · [维护手册](maintenance.md)
+
+### PH-20 多假设知识覆盖与跨层指令口径漂移
+
+- `issue_status`：本地交付/契约修复已验证，未发布；真实模型质量与成本待观察。此前研究/候选记录保留原日期。
+- **症状/风险：**完整 alternatives 在交接中保留，但旧 Router 只读第一个替代周期并沿用主方向；同一组替代假设换序可能改变知识覆盖。VPA 数据可用时“至少有增量”的Prompt压力与neutral空报告合法状态不完全一致；逆向订单反馈要求重做Stage 1，与Joint/repair冻结上游矛盾。
+- **证据：**[2026-10-13判断空间审查](../quality/v1_runtime_failure_paper_audit_20261012.md)。50项相关测试通过；纯函数复现，不代表已证明自然误判或收益损失。
+- **错误修法：**删全部知识、放宽事实/引用/方向Gate、自动重跑上游、强迫VPA改变订单，或借pointer修复重新分析交易。
+- **建议：**先统一可用/有诊断性及失败反馈的口径；再逐条映射当前角色指令并去重。多假设知识路由须同时处理替代方向及后续过滤，以唯一Router和版本化同快照对照验证，不自动扩大执行权限。
+- **复发检查：**两项替代假设顺序与知识覆盖、上游重做字样是否进入repair、数据可用但无增量是否允许中性/空观察、旧Frozen Job资源是否仍冻结。
+
+- **2026-10-13离线候选：**方向冲突仍拒绝，仅统一反馈；Direct/协议/Skill/mandatory core同时允许已读无增量，不掩盖未读或失败。旧Frozen Skill/协议/知识不改写；模型质量和收益未验。验收与未发布边界见同一报告的“前两项离线候选实施”。
+
+- **2026-10-13进一步研究（未实施）：**VPA知识selector同样只读旧第一项替代周期；聚合窗口selector遍历全部hypotheses，但不收challenging_fact_refs的独有窗口。完整覆盖必须同时核对Router、方向过滤、VPA知识/实值与冻结manifest，不以完整handoff或允许搜索证明材料齐全。Runtime现已单次AGENTS注入；建议稳定common AGENTS、现有Skill/protocol按marker冻结交付当前说明，保持完整发布身份及Job实际资源身份。按role动态替换AGENTS不是首选：role-specific identity会影响严格续接，共同variants身份虽可相等，CLI正文切换仍未验。设计与验证边界见同一报告末节，不代表已优化或提高收益。
+
+- **2026-10-14本地实施：**公共AGENTS保持稳定，当前角色合同及原policy适用的研究扩展
+  经`role_guidance_v1`冻结；未知policy、角色/模式或交付副本错配拒绝，旧Job不迁移，PA续接
+  共同身份不变。唯一Router遍历全部合法替代枚举，Direct/Codex投影保留review原文与用途/来源；
+  VPA selector同步全部周期及catalog已有支持/挑战窗口，不扩大Setup/方向/Gate权限。
+  先完整备份，清理不适用常驻说明和两个无调用helper，完整教材/历史契约保留。
+- **复发检查补充：**实际Orchestrator→Publisher→MCP的mandatory summary也要携带用途/来源；
+  修复/fixed测试走真实发布流程，不能直接给新普通Job改模式而遗漏冻结合同。检查
+  0/1/2替代、换序、同周期反方向、挑战独有/缺失窗口、正常/repair/研究与旧无marker行为。
+  完整验收和未发布边界见同一报告2026-10-14节；字节减少和本地测试不证明token或收益改善。
+
+- **真实单次配对边界：**2026-10-14同一旧快照旧/新各一次完整Joint均首稿通过且wait，
+  token略降、耗时增加；只有一项区间内替代，实际教材集合相同，未验证新增教材分支的模型
+  增益。Warning要回到原值及匹配源码：HTF文字中的周期/引用数字被宽范围匹配误当EMA差值
+  是解析风险，“此前区间低点”可有正确实值但范围表述不足；不把所有warning当成已证实
+  事实错误，也不按一个样本继续叠Prompt规则。新版原Draft杂字保留，不能用首稿成功冒充
+  零质量问题。完整指标/原件边界见同一报告的“旧快照单次配对结果”。

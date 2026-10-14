@@ -915,7 +915,8 @@ def test_stage2_cannot_reverse_stage1_direction_on_same_snapshot() -> None:
 
     errors = validate_stage2_coherence(stage2, VALID_STAGE1, kline_frame=make_frame())
 
-    assert any("回到阶段一重做方向诊断" in error for error in errors)
+    assert any("违反冻结方向权限" in error for error in errors)
+    assert not any("回到阶段一重做" in error for error in errors)
 
 
 def test_stage2_owns_concrete_setup_when_stage1_hint_is_empty() -> None:

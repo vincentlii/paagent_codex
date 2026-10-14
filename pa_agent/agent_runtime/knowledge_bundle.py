@@ -20,6 +20,7 @@ def build_knowledge_bundle(
     role: str,
     joint_stage2: bool = False,
     layered_stage2_research: bool = False,
+    knowledge_selection: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load only selected documents and publish searchable immutable sections."""
     if layered_stage2_research and (role != "stage2" or not joint_stage2):
@@ -74,6 +75,7 @@ def build_knowledge_bundle(
                 "knowledge_module_id": raw_id,
                 "framework": framework,
                 "role_allowlist": [role],
+                **((knowledge_selection or {}).get(raw_id, {})),
                 # The allowlist has already been narrowed by Stage 1 or the
                 # Brooks Router.  In the semantic-parity release every selected
                 # module is mandatory; later experiments may demote modules to

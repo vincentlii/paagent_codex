@@ -47,11 +47,14 @@ def build_vpa_knowledge_context(
     if not isinstance(stage1, dict):
         return VpaKnowledgeContext(frozenset(), frozenset(), tuple(modules))
 
-    cycles = frozenset(
-        str(stage1.get(key) or "").strip().lower()
-        for key in ("cycle_position", "alternative_cycle_position")
-        if str(stage1.get(key) or "").strip()
-    )
+    hypotheses = stage1.get("market_hypotheses")
+    alternatives = hypotheses.get("alternatives") if isinstance(hypotheses, dict) else None
+    cycle_values = [stage1.get("cycle_position")]
+    if isinstance(alternatives, list):
+        cycle_values.extend(item.get("cycle_position") for item in alternatives if isinstance(item, dict))
+    else:
+        cycle_values.append(stage1.get("alternative_cycle_position"))
+    cycles = frozenset(str(value).strip().lower() for value in cycle_values if value)
     patterns = frozenset(normalize_detected_patterns(stage1.get("detected_patterns")))
 
     if cycles & _TREND_CYCLES or patterns & _TREND_PATTERN_KEYS:

@@ -10,13 +10,21 @@ from pa_agent.agent_runtime.evidence import FrozenEvidenceGateway
 from pa_agent.agent_runtime.evidence_mcp import EvidenceMcpServer
 from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from pa_agent.agent_runtime.publisher import CodexJobPublisher
+from pa_agent.agent_runtime.repair_contract import append_repair_context
 from tests.integration.conftest import make_frame
 from tests.unit.test_codex_job_publisher import _request
 
 
-def _published(tmp_path, role="stage1"):
-    publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path, job_root=tmp_path / "jobs")
-    path = publisher(_request(role, {"task_id": "analysis-execution"}), 1)
+def _published(tmp_path, role="stage1", *, identity=None, repair=False):
+    publisher = CodexJobPublisher(frame=make_frame(), prompt_dir=tmp_path, job_root=tmp_path / "jobs",
+                                 runtime_identity=identity)
+    request = _request(role, {"task_id": "analysis-execution"})
+    if repair:
+        request = replace(request, messages=[{"role": "user", "content": append_repair_context(
+            "Repair field representation only.", original_draft='{"field":"before"}',
+            findings=["field"], editable_pointers=["/field"],
+        )}])
+    path = publisher(request, 2 if repair else 1)
     return FrozenAgentJobStore(path.parent).open(path.name)
 
 
@@ -93,12 +101,11 @@ def test_baseline_navigation_does_not_mistake_index_or_upstream_refs_for_deliver
 
 
 def test_repair_tools_remain_bounded_and_fixed_jobs_do_not_offer_optional_investigation(tmp_path):
-    job = _published(tmp_path)
-    repaired = replace(job, repair_findings={"editable_pointers": ["/field"]})
+    repaired = _published(tmp_path / "repair", repair=True)
     names = FrozenEvidenceGateway(repaired).available_tool_names()
     assert set(names) == {"get_repair_findings", "get_facts", "get_pa_evidence",
                          "get_htf_evidence", "read_allowed_knowledge"}
-    fixed = replace(job, runtime={**job.runtime, "backend_runtime_identity": {"investigation_policy": "fixed"}})
+    fixed = _published(tmp_path / "fixed", identity={"investigation_policy": "fixed"})
     names = FrozenEvidenceGateway(fixed).available_tool_names()
     assert "get_stage1_decision_packet" in names
     assert "get_pa_evidence" not in names

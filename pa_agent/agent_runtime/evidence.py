@@ -83,8 +83,11 @@ class FrozenEvidenceGateway:
         self._audit: list[EvidenceAuditEvent] = []
         self._core_context = self._extract_core_context()
         try:
+            from pa_agent.agent_runtime.runtime_guidance import validate_runtime_guidance
+
+            validate_runtime_guidance(job)
             self._stage1_investigation = stage1_investigation_enabled(job, actor=self._actor)
-        except InvestigationPolicyViolation as exc:
+        except (InvestigationPolicyViolation, ValueError) as exc:
             raise EvidenceAccessDenied(str(exc)) from exc
 
     @property

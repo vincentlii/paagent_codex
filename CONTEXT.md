@@ -54,6 +54,10 @@ PA Agent 对同一份冻结行情快照完成高质量 Brooks Price Action 与 W
   已通过首稿校验的 PA Stage 1 可受控续接 PA Stage 2。VPA、Joint 与 repair 始终独立。
 - `AgentRuntimeFingerprint`：一次 Agent 调用实际使用的 Codex CLI、model、reasoning profile、
   AGENTS、Skills、Evidence interface 与知识清单身份；必须进入 record/cohort。
+- 新发布的 Codex Job 使用 `runtime_guidance_policy=role_guidance_v1`：公共 Runtime AGENTS
+  在同一发布版本及 PA 续接会话内保持稳定，当前角色入口、输出/失败模式与显式研究扩展在
+  packet/baseline/repair findings 中冻结交付。完整资产 digest 包含全部扩展原文，Job digest
+  绑定实际选中内容；历史无标记 Job 保留原契约，不迁移或跨版本续接。
 
 ## 权限边界
 
@@ -102,6 +106,17 @@ manifest 为权限依据，不把聊天历史当作可信事实。VPA、Joint �
 Codex 输出仍先进入现有 Provider Draft/materializer/Validator 链。
 
 这是一条信息依赖链，不代表 VPA 从属于 PA，也不允许形成第二套 Strategy Router。
+
+唯一 Brooks Router 同时读取已验证主背景和全部真实 alternatives 的显式 cycle/direction，
+复用同一套选择规则，不从 thesis 推断标签或替替代假设补 spike_stage/patterns。知识 manifest
+标记 `primary`、`review` 或 `primary_and_review` 及来源 hypothesis IDs；`review` 只用于竞争解释、
+风险和等待，不独立授予 Setup 或反向订单权限。共享知识去重，主路径保留；无结构化替代假设
+的旧调用保留原文件顺序。Direct 和 Codex 均保留被明确选中的反向复核教材。
+
+VPA 知识 selector 覆盖全部已声明假设的周期；有限事实选择同时纳入支持与挑战引用中当前
+catalog 已存在的窗口，不补造缺失聚合或修改 catalog。完整原文、案例、锚点和 mandatory
+读取要求保留。两项本地实现与未发布边界见
+`docs/quality/v1_runtime_failure_paper_audit_20261012.md` 的 2026-10-14 验收。
 
 ## 失败契约
 

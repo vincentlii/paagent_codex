@@ -1,0 +1,10 @@
+[output]
+patch_envelope = "需要新判断、越权或缺少修复依据时返回 unrepairable，空 patch；不套 result。"
+result_draft_only = '只输出 {"result": <当前 Stage 2 Draft>}；工具、预算或必读失败不伪造 Draft，由 Host fail-closed。'
+result_draft_or_stop = '成功为 {"result": <当前角色 Draft>}；真实执行缺件/预算拒绝返回 result 内的 analysis_role_stop_v1（status=incomplete），身份矛盾为 review_required。停止不含交易、价格或概率；evidence_refs 只填真实可核验 PA fact ID，否则 []。'
+research_draft = "只提交冻结研究 Schema 规定的原 Draft；不增加 result 封套或生产决策。"
+
+[investigation]
+repair = "只修复已授权 pointer，不重新读取全图、全模块或测量。"
+fixed = "完整基线之后不做可选调查或挑战。"
+agentic = "完整基线之后只调查能改变判断的证据缺口，遵守当前 Skill 与冻结预算。"

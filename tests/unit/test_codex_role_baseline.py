@@ -98,7 +98,10 @@ def test_baseline_does_not_bypass_resource_budget_or_repair_scope(tmp_path):
     job = FrozenAgentJobStore(path.parent).open(path.name)
     for limited in (
         replace(job, budget=replace(job.budget, max_evidence_calls=1)),
-        replace(job, repair_findings={"editable_pointers": ["/field"]}),
+        # This artificial legacy repair tests scope, not current role rebinding.
+        replace(job, repair_findings={"editable_pointers": ["/field"]},
+                core_context={key: value for key, value in job.core_context.items()
+                              if key != "runtime_guidance_policy"}),
     ):
         gateway = FrozenEvidenceGateway(limited)
         server = EvidenceMcpServer(gateway, job_digest=path.name)

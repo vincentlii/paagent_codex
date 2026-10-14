@@ -50,6 +50,7 @@ class CodexJobPublisher:
         self._runtime_identity = dict(runtime_identity or {})
         assets = load_codex_runtime_assets()
         self._skills = assets.skill_documents
+        self._guidance = assets.guidance_documents
         self._builder = FrozenAgentJobBuilder(
             runtime_version=assets.runtime_version,
             agents_text=assets.agents_text,
@@ -148,6 +149,18 @@ class CodexJobPublisher:
         allowed_ids = tuple(
             dict.fromkeys(str(item) for item in context.pop("allowed_knowledge_ids", ()))
         )
+        selection = context.get("knowledge_selection")
+        if selection is not None:
+            from pa_agent.ai.router import route_strategy_knowledge
+
+            if request.role != "stage2" or not isinstance(selection, dict):
+                raise ValueError("knowledge selection requires Stage 2 Router context")
+            expected = {
+                name: source for name, source in route_strategy_knowledge(context["stage1_diagnosis"]).items()
+                if name in context["router_manifest"]
+            }
+            if selection != expected:
+                raise ValueError("knowledge selection does not match validated Router context")
         role_evidence = context.pop("role_evidence", None)
         if request.role in {"vpa_evidence", "joint_arbiter"} and isinstance(role_evidence, dict):
             from pa_agent.ai.vpa_measurements import validate_frozen_vpa_catalog
@@ -181,6 +194,7 @@ class CodexJobPublisher:
             role=request.role,
             joint_stage2=joint,
             layered_stage2_research=layered,
+            knowledge_selection=selection,
         )
         if context.get("knowledge_delivery_policy") == INLINE_MANDATORY_KNOWLEDGE_POLICY and any(
             item.get("loading_policy") != "mandatory"
@@ -196,6 +210,14 @@ class CodexJobPublisher:
             repair_context["validator_feedback"] = strip_repair_context(
                 str(request.messages[-1].get("content") or "")
             )
+        from pa_agent.agent_runtime.runtime_guidance import RUNTIME_GUIDANCE_POLICY, freeze_runtime_guidance
+
+        guidance = freeze_runtime_guidance(request.role, context, repair=repair_context is not None,
+                                           documents=self._guidance)
+        context["runtime_guidance_policy"] = RUNTIME_GUIDANCE_POLICY
+        context["role_protocol"] = {**context["role_protocol"], "runtime_guidance": guidance}
+        if repair_context is not None:
+            repair_context["runtime_guidance"] = guidance
         task_id = str(context.get("task_id") or "").strip()
         if not task_id:
             raise ValueError("agent_context requires task_id")

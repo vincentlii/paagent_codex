@@ -176,7 +176,10 @@ def test_actual_joint_frozen_baseline_delivers_consistent_role_schema_and_all_kn
     schema_digest = hashlib.sha256(json.dumps(request.schema, ensure_ascii=False,
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     assert core["role_protocol"]["provider_contract_digest"] == schema_digest
-    assert core["role_protocol"] == request.agent_context["role_protocol"]
+    guidance = job.core_context["role_protocol"]["runtime_guidance"]
+    assert core["role_protocol"] == {**request.agent_context["role_protocol"], "runtime_guidance": guidance}
+    assert guidance["role"] == "stage2"
+    assert guidance["output_mode"] == "result_draft_only"
 
     delivered = {item["arguments"]["knowledge_id"]: item["payload"]
                  for item in baseline["resources"] if item["operation"] == "read_knowledge_module"}

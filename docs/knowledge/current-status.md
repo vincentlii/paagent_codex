@@ -4,8 +4,8 @@ capability: paper-observation-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-13
-核验提交: 59605db351c143bced2db65756ffa5a780c0ab98（运行 Python 与资源；后续发布证据提交仅更新文档）
+最后核验: 2026-10-14（本地候选；VPS发布证据仍为2026-10-13）
+核验提交: 本地工作区未提交；VPS运行59605db351c143bced2db65756ffa5a780c0ab98（后续发布证据提交仅更新文档）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -20,6 +20,54 @@ verification_scope:
 ---
 
 # 当前状态
+
+## 2026-10-14 同一旧快照真实配对（一次工程观察，未发布）
+
+用户授权将指定旧行情/教材/指令发送到Codex模型服务后，实施前备份与当前固定副本各完成
+一次独立gpt-6-luna/xhigh全量Joint链。相同XAUUSDT快照、CLI、settings、知识原文和预算规则，
+不刷新数据、不接旧Draft、不操作VPS或Paper；共6次首稿validated、0 repair/fallback/Evidence denied。
+两臂均为中性区间＋一项偏空趋势型区间替代，最终wait。总token526158→514223（-2.27%），
+全链233.891→284.672秒（+21.71%），非缓存输入仅-1.34%，美元费用unknown。
+
+旧新版各2个warning finding；新版另有Stage1原Draft末尾杂字，依法被Stage2继承，未清洗原件。
+本快照的实际策略/VPA教材集合相同，未触发第二替代或额外反向模块覆盖，不能用这一次
+证明扩大知识提高判断或整体非劣。指标完整但无总体质量、提速、成本或收益结论。
+已保留协议、原始record/Job/usage及固定源码，删除本实验auth副本；未commit或部署。
+详见[配对结果](../quality/v1_runtime_failure_paper_audit_20261012.md)末节。
+
+## 2026-10-14 Runtime 分层与全部假设覆盖（已本地实施，未发布）
+
+清理前完整备份683个项目文件及差异/逐文件hash，保存在既有忽略的
+`docs/changelog/backups/20261014-runtime-knowledge-before/`；ICT既有四文件逐字节保留。
+公共Runtime AGENTS从17571减至5408 bytes，稳定authority/因果/完整必读/失败边界保留；
+当前角色入口、输出/失败模式按`role_guidance_v1`冻结交付，研究详细说明只在原显式policy下
+提供，repair不继承研究扩展。所有源文进入asset digest，实际选择进入job_digest，旧Job不迁移，
+PA共同身份及受控续接不变。清理不适用常驻说明、两个无调用helper及本轮临时目录。
+
+唯一Router覆盖全部真实alternatives各自的cycle/direction，标明primary/review/共享用途与
+hypothesis IDs；Direct/Codex保留明确选中的反向复核全文。review不独立授予Setup或反向交易。
+VPA覆盖全部假设周期及catalog存在的支持/挑战窗口；不造缺失事实、不改目录身份或交易Gate。
+完整教材、案例、锚点、mandatory及旧兼容/历史证据保留。
+
+新增28项针对性合同/交付测试，安装wheel的306个代码/教材成员逐字节匹配源码，13项Runtime
+资源及Headless无Qt smoke通过；Headless非live回归1774 passed / 7 deselected，critical Ruff与
+diff检查通过，Qt GUI/E2E及Linux/VPS未验。详细结果见
+[实施验收](../quality/v1_runtime_failure_paper_audit_20261012.md)末节。
+候选asset digest为f2957d56...；VPS仍59605db/4ab1384c...。无模型实验、commit、推送或部署，
+不宣称净token/延迟/专业质量/收益改善。增加相关知识可能增加成本，需另作同快照分开对照。
+
+## 2026-10-13 Runtime分层与完整假设覆盖研究（未实施）
+
+源码/纯函数确认：PA Router与VPA知识selector均沿用第一项替代周期，交换两项alternatives会改变教材覆盖；Stage 2还会过滤主方向相反的识别/策略文件。VPA聚合窗口仅收支持fact_refs，独有challenging窗口可能未交付。完整hypotheses本身仍在Codex交接中保留，不是全论证丢失。
+
+建议稳定公共AGENTS、当前Skill/protocol及显式mode扩展分层，保留两层冻结身份与同快照PA续接；唯一Router/既有VPA selector覆盖全部真实假设及可用反证窗口，区分知识复核与执行授权。当前已为单次AGENTS注入，不能误称仍双份。详细设计、理论依据、风险和分开验证路径见[专项研究](../quality/v1_runtime_failure_paper_audit_20261012.md)末节。仅追加研究文档，未实现两项方案、调用模型或改变VPS；前一节离线候选仍未发布。
+
+## 2026-10-13 指令一致性候选（仅本地，未发布）
+
+方向错误反馈删除“重做Stage 1”指令，逆向订单检查与修复授权不变。VPA Direct Prompt、Codex协议、Skill和mandatory core统一区分数据可用与有诊断性增量：完整读取后无增量可明确中性/空观察，反证、引用和缺件失败规则保留。旧Frozen Job资源不迁移。
+
+本地候选asset digest 826f32fa...；VPS运行提交仍59605db、asset 4ab1384c...。候选通过1752项Headless非live回归（9 deselected）、旧资源冻结及wheel资源核对，详细验收见[候选验收](../quality/v1_runtime_failure_paper_audit_20261012.md)。无真实模型同快照比较、token或收益改善结论；未commit、推送或部署。多假设Router覆盖和Runtime指令去重仍未实施。
+
 
 ## 2026-10-13 本轮优化（已发布 VPS）
 

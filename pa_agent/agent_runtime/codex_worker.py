@@ -142,8 +142,11 @@ class CodexCliWorker:
         published = Path(published_job).resolve()
         job = FrozenAgentJobStore(published.parent).open(published.name)
         try:
+            from pa_agent.agent_runtime.runtime_guidance import validate_runtime_guidance
+
+            validate_runtime_guidance(job)
             stage1_investigation_enabled(job)
-        except InvestigationPolicyViolation as exc:
+        except (InvestigationPolicyViolation, ValueError) as exc:
             raise CodexWorkerOutputError(str(exc)) from exc
         self._validate_session_options(
             job,
@@ -1410,6 +1413,9 @@ class CodexCliWorker:
         if any(event.get("actor", "parent") != "parent" for event in events):
             raise CodexWorkerOutputError("parent mandatory audit contains non-parent reads")
         try:
+            from pa_agent.agent_runtime.runtime_guidance import validate_runtime_guidance
+
+            validate_runtime_guidance(job)
             if stage1_investigation_enabled(job):
                 validate_stage1_investigation(events)
         except InvestigationPolicyViolation as exc:
@@ -1417,6 +1423,8 @@ class CodexCliWorker:
                 raise CodexWorkerStopped(AnalysisRoleStop(
                     role="stage1", status="incomplete", reason=str(exc),
                 )) from exc
+            raise CodexWorkerOutputError(str(exc)) from exc
+        except ValueError as exc:
             raise CodexWorkerOutputError(str(exc)) from exc
         for event in events:
             if event.get("status") == "denied" and "budget_exceeded" in str(event.get("reason")):

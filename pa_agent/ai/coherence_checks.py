@@ -341,7 +341,8 @@ def validate_stage2_coherence(
         )
         if conflicts:
             errors.append(
-                "order_direction 与阶段一 direction 相反；同一快照必须回到阶段一重做方向诊断"
+                "order_direction 与已验证 Stage 1 direction 相反，违反冻结方向权限；"
+                "本轮不得重跑或改写 Stage 1，只能在既有修复授权和语义保护范围内处理"
             )
     errors.extend(_validate_stage2_bar_references(stage2, kline_frame))
     errors.extend(_validate_explicit_bar_price_claims(stage2, kline_frame))

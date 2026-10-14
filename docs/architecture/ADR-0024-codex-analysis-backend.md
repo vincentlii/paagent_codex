@@ -177,3 +177,32 @@ Codex 晋级必须通过历史 replay、故障注入、至少 20 个独立 Snaps
 - Backend control 只在安全边界 applied，Dashboard 继续不读生产 DB/config。
 - Backend A/A/B/B 保留 missing/failed arm、ITT、A/A、B/B、cohort 和独立 Snapshot 口径。
 - 完整非 live 回归、wheel resource smoke、Linux shell/systemd 静态检查与 `git diff --check` 通过。
+
+## 2026-10-14 Runtime 与知识覆盖增补（仅本地实现）
+
+用户在研究方案之后授权完整优化及备份后清理。本增补不授权新的交易方向、Gate、
+真实交易、模型研究调用或 VPS 发布；当前生产能力以知识库最新状态及 ADR-0025 为准，
+本文早期 research-only/Joint 限制不用于否定已独立授权的显式新版 pipeline。
+
+Runtime AGENTS 保留稳定的 authority、冻结事实、完整必读、会话、权限及失败原则。
+当前 Role Skill 与冻结 `runtime_guidance` 承接本 Job 的入口、输出及停止语义；
+Host challenge 和 layered knowledge 的详细步骤只在原有显式研究 policy 适用时交付，
+repair 不继承研究扩展。新 Job 标记 `role_guidance_v1`，Gateway 与 Worker共同校验
+角色/模式及交付副本；无标记旧 Job 使用原冻结文本，不以当前文案比较历史文案。
+
+所有基础 Skills、条件说明及角色合同源文参与同一个发布资产 digest；每个 Job 的实际
+Skill/protocol 另由资源 hash 与 job_digest 绑定。共同 backend_runtime_identity 比较规则
+不变，PA Stage 1→Stage 2 不动态替换共同 AGENTS 或引入 role-specific 共同身份。
+不新增 MCP 工具或并行规则引擎。
+
+唯一 Router 复用既有枚举规则，按所有已验证 alternatives 各自的 cycle/direction 补齐
+复核知识；不推断缺失阶段/形态。选中文件冻结 purpose 与 hypothesis IDs，Direct/Codex
+后续投影保留明确选中的相反方向复核原文。`review` 不独立授权 Setup、翻转订单方向或
+改 Gate；最终候选仍依冻结主背景与既有 PA 执行契约。VPA selector 同步覆盖全部周期及
+当前 catalog 存在的支持/挑战窗口，不增加解释、概率或 Gate。
+
+完整教材、锚点、案例、mandatory、materializer 与交易校验保留；增加相关教材可能增加
+成本，公共指令字节减少不能证明净 token、延迟或质量改善。历史兼容实现、研究产物和
+旧 Frozen Job 留存；只清理新任务常驻说明中的不适用细节及已确认无调用的旧 helper。
+备份、逐条承接映射、自动化验收及未验证边界见
+[实施验收](../quality/v1_runtime_failure_paper_audit_20261012.md)末节。

@@ -400,3 +400,379 @@ next_confirmation 可承载这些内容，不要求所有位置强制给结论�
 曾因构建器选中系统 Python 的旧 setuptools 而打包失败；在安装前定位，显式使用既有发布环境 Python 后离线成功，未改 pyproject 或依赖。没有触发额外 Run Once、付费 canary 或旧失败重跑；新版本自然完整模型链、预算停止率、token 和限价收益仍待观察，发布不证明这些指标改善。旧模糊订单仍保留。
 
 回退不可让 v4/quarantine 不兼容的旧 Paper reader 接管现库；普通代码回退和恢复旧数据是不同操作。备份/正式 wheel 已保留，本次 VPS 发布暂存目录、本地测试目录、发布 bundle/wheel 和新构建目录已清理；正式备份及发布 wheel 保留，历史其他任务产物未处理。
+
+## 2026-10-13 判断空间与指令负担审查（proposal-only）
+
+基于运行提交 59605db 和本地文档收据 3191e46，审查当前 Headless pa_vpa_joint；不修改代码、Frozen Job、Schema、Router、预算、历史结果或 VPS 状态。既有 ICT 工作区改动保留。复用一名只读协作者核验 VPA/Joint，主审核验交接、Router 和反馈。下述静态/纯函数证据证明可达边界，不能证明已造成自然模型误判、少交易或收益损失。
+
+### 1. 过早限制判断：部分存在于知识路由和权限边界
+
+Provider Draft 的 market_hypotheses 包含 primary 和最多两项可为空的 alternatives，每项有 thesis、支持/挑战引用、确认与反证条件（pa_provider_contracts.py:142）。materializer 深拷贝这些字段，compile_pa_handoff 完整复制全部 alternatives；Joint 同时收到已验证 Stage 1、完整冻结价格/HTF 和报告。不存在将整份市场论证丢弃、只传一个枚举的行为。
+
+具体限制：materialize_stage1_draft 仅把 alternatives[0].cycle_position 投影到旧 alternative_cycle_position（pa_provider_contracts.py:649）；route_strategy_files 读取该单字段，并为替代周期沿用 primary.direction（router.py:105-111），不直接遍历完整 alternatives。stage2 策略知识投影默认过滤与主方向相反的通道/Spike 文件（prompt_assembler.py:463-497）；VPS 对应配置未覆盖默认 false。Joint 不得改变 Stage 1/Router，逆向订单由 coherence hard reject；专业分歧可保留并合法等待。后者是当前明确的权限设计，不应未经授权当作 bug 放开。
+
+纯函数复现：合法 Draft primary=normal_channel/bullish，alternative1=normal_channel/bearish，alternative2=trading_range/neutral；交接保留两项，但 Router 没有区间文件或空头通道文件。仅交换两项 alternatives 顺序，区间文件加入。集合与论证未变，第一项的旧投影却改变知识覆盖。这是多假设契约与旧单替代 Router 的覆盖不充分风险。
+
+建议：先在独立候选版本中，让唯一 Router 按完整、已验证的 alternatives 的 cycle/direction 选择争议所需知识，区分诊断复核知识与执行授权；不得从自由文本推断、让 VPA 新建 Setup 或自动翻转交易方向。必须同时核对后续 opposite-file 过滤，单改 Router 不足。以相同冻结行情的旧/新版本、盲评和预算指标验证；保留旧 Job。允许后续角色改变主假设、重跑 Stage 1 或改 Gate 属于另一项架构/策略授权，当前不建议直接实现。
+
+### 2. 补丁规则冲突：发现一处可达反馈矛盾及重复负担
+
+coherence_checks.py:344 在主方向与订单相反时返回“同一快照必须回到阶段一重做方向诊断”；JsonValidator 将原信息加入 s2 invalid_fields（json_validator.py:944-950），build_retry_feedback 原样保留，同时禁止修改 Stage 1。当前 Joint Skill 明确不得重跑/改写 Stage 1，pointer repair 只处理授权字段，不做新市场判断（draft_pointer_repair/SKILL.md:8-18）。用 bullish Stage 1 与做空限价构造 coherence finding，再生成实际 retry feedback，确认两种指令同现。该矛盾不证明某次真实失败由此导致。
+
+第一步建议仅修改反馈：说明“违反冻结方向权限；不得重跑/改写上游。仅在原指针授权和语义保护内修复，若需要新的市场判断则 unrepairable”。正常 Joint 分析阶段仍可在 Router 内合法等待；不得据修复文案让 repair 擅自改变 trade 为 wait、改价格或意图。方向门禁和失败分类保留。
+
+当前 Runtime AGENTS 原文112行/17571 UTF-8 bytes，Worker 将全文写入每个角色工作区（codex_worker.py:771-779）。其中同时解释子 Agent 研究、旧/新交付、Stage 2停止特例、全部角色与兼容路径，Role Skill/role_protocol 又重复部分交付和输出要求。这是可确认的指令负担，字节数不是实测token，尚未证明对质量或耗时的净影响。历史产物和新合同显式分版本，不把所有条件化条款误判为同时生效的矛盾；本轮没有证实更多必须放宽的 hard check。
+
+第二步建议按角色与冻结 policy 投影运行指令：公共 authority/因果/安全规则保留，Host 交付回执统一说明当前入口、输出模式、继承与停止条件，当前 Skill 只保留当前任务操作。off 子 Agent和旧协议说明留在 Host兼容实现/对应旧Frozen Job，避免新普通任务每次阅读。仍保留完整mandatory知识、案例和反证，不以压缩替代semantic parity；先逐条规则映射与契约/失败注入测试，再同快照评估。
+
+### 3. 强迫产生结论：无硬性交易强迫，有轻度措辞压力
+
+VPA Schema observations无minItems；validate_vpa_evidence 对空观察/无独立增量只记 warning（role_validator.py:949），每个假设恰好一项是覆盖要求，允许 neutral/insufficient_data。next_confirmation允许not_applicable/null；独立VPA无订单或概率字段。Joint非空support/challenge等字段可以说明未发现/不适用，空VPA引用符合Schema；当前Skill25已明确无相关证据不强求影响。前置无Entry Attempt仍用insufficient_data，不是数据不可用或禁止背景分析。
+
+纯函数复核：完整同源catalog、compile_pa_handoff(stage1,None)、observations=[]、各假设neutral且空evidence_ids、next_confirmation=not_applicable/null，完整VPA Validator接受，仅有no-independent-finding/no-contextual-observations warnings。协作者亦确认Joint support/challenge等理由写“未发现相关依据”、VPA不改变方案和空引用通过Schema。因此不存在必须每位置有结论、必须supports/challenges、必须下一棒确认或每次影响订单的hard Gate。
+
+残留压力：_VPA_ROLE_PROTOCOL（two_stage.py:194）要求Available data must add genuine information；Direct VPA Prompt（prompt_assembler.py:1276）要求“数据可用时至少给出一项信息增量”。数据可读并不保证有诊断性增量，这与合法neutral空报告的口径不完全一致。建议改为“存在有诊断性、可引用的量价证据时说明；否则明确未发现增量，允许neutral/insufficient及空观察”。保留完整读证据、反证搜索、引用和不足提示，避免‘无增量’成为未读资源的借口；不机械要求VPA改变入场。Joint可再说明不存在支持/挑战时直说，不必凑双边论据；等待时价格事项可说明不适用，无需放松Schema。
+
+### 优先级与验证边界
+
+先做VPA可用/诊断性区分和方向错误反馈一致性（仅指令/反馈，低权限风险）；再做当前角色指令去重；多假设知识覆盖作为需对照的独立候选。当前方向、Gate、价格几何、引用、单一materializer和执行权限继续保留。
+
+本轮50项既有handoff/packet/role/Router非live测试通过；三个纯函数场景独立确认Router顺序影响、VPA中性空报告合法及矛盾反馈可达。VPS只读确认当前仍pa_vpa_joint/running，未开启全策略库；最近新成功报告同时存在neutral/supports背景及wait，不能以No Trade本身证明被约束或强迫。没有模型调用、付费重跑或策略质量实验；审查文档未commit，本轮临时测试目录已清理。
+
+## 2026-10-13 前两项离线候选实施（未发布）
+
+用户授权仅离线完成两项，沿用上节设计：方向错误反馈一致性，以及VPA数据可用/有诊断性增量区分。没有授权扩大Router、精简Runtime AGENTS、修改Schema、放宽校验、自动重跑或发布。本地基线3191e46，既有ICT与上节审查记录保留，不纳入其他任务修改。
+
+### 实际改动
+
+- coherence_checks 的方向冲突判定表达式不变，仅将“回到阶段一重做方向诊断”改为“违反冻结方向权限；不得重跑/改写Stage 1，仅在既有修复授权与语义保护内处理”。错误类别、数量、字段目标和原始Draft均不变。Direct反馈不要求Codex Patch Envelope，现有pointer Skill在需要新判断时仍unrepairable；不因文案授权改方向、三价或交易意图。
+- Direct VPA Prompt、Codex _VPA_ROLE_PROTOCOL、当前VPA Skill和mandatory core知识原句同时条件化：完整读取必读后，有可引用诊断性证据则说明增量并评估反证；无增量明确说明，允许空observations和按实际证据neutral/insufficient_data。未读、工具失败和缺件不能伪装无增量。core chapter-009及所有知识anchor身份/顺序保留，其他教材/规则不删减。
+- 复核发现core原文也有无条件“at least one finding”，新增完整Direct及Frozen Gateway knowledge交付测试先复现，再同步该句；避免只改Skill仍给模型相反指令。
+
+### 自动化验收与限制
+
+新增用例核验两个主方向的逆向订单仍产生同类拒绝、生成feedback不再重做上游且原字段目标集合不变；读取完整Direct/冻结Codex资源中无旧强制增量句；通过实际Gateway读取core正文；旧Job的Skill、role_protocol、知识及整个bundle逐字节不变。合法中性空报告、原supports/challenges报告均被完整Validator接受；unknown引用和缺少必读资源仍拒绝，空观察warning不删除。
+
+首轮方向与Direct文案断言因原问题失败后通过；知识交付新增断言先复现残留旧句，修复后候选/知识12项通过。323项相关Prompt、Role、retry、Publisher、MCP、订单回归通过。最终Headless非live回归1752 passed / 9 deselected，耗时86.35s；Qt GUI排除，不调用真实Provider或行情。关键静态检查与diff检查通过。
+
+一次长临时路径全量运行1750 passed、2 failed，失败路径262字符、父目录存在；短路径复核相同两项通过，确认Windows路径长度原因，不添加无关Worker补丁。最终回归使用短临时路径。外部tvDatafeed两项既有DeprecationWarning单独记录。
+
+本地wheel构建通过，302个代码/资源与源码逐字节一致；Runtime asset audit通过，候选asset digest为826f32fa83b4b0d6a3627bf2b464dcea7deb5f57abfdd362111bb1a44b4910c5。该身份只用于后续新本地冻结任务，不修改已有Job；VPS仍是59605db/4ab1384c...的已发布身份。
+
+三角色：PA方向与Router权属保留；VPA无新增Setup/Gate/概率且反证仍必要；软件层仅契约措辞修订、失败与审计不放宽。协作者审查了三个压力场景并指出core遗漏，随后因额度限制未完成第二次终审；主审核验完整修订及自动化，不把协作者失败记为通过。没有真实模型同快照对照、token/延迟或交易效果证据；本次只交付可验证候选，不宣称有效减少幻觉、中性偷懒或增加收益。不commit、不推送、不部署。
+
+本轮临时测试目录、短路径复验目录和候选wheel已清理。自动安全审查拒绝包含build目录的递归删除，原因为该目录未明确属于本轮；采用安全替代只清理具名本轮目录，build保留。既有ICT修改和此前审查记录保留。当前源码/测试/验收文档作为本地未提交候选，生产发布身份不变。
+
+## 2026-10-13 Runtime 指令分层与完整假设知识覆盖研究（未实施）
+
+### 结论、目标与证据等级
+
+两项都值得优化，但理由不同。Runtime 分层可以减少当前任务不适用的指令和多处维护的口径漂移；尚无证据证明17571 bytes的AGENTS是模型耗时或判断错误的主要原因。完整假设知识覆盖已有可复现的选择缺口，应优先建立确定性覆盖标准。增加知识访问不等于扩大下单权限。
+
+本研究的设计目标是在现有authority、冻结方向/Gate、因果输入和有界预算内，让模型获得足够的竞争解释与反证，同时只承担当前角色的专业判断。该目标可以用于比较设计优劣；不存在脱离模型、行情与预算的通用最优Prompt。现有生产候选为gpt-6-luna/xhigh，不能将针对更强模型的简化经验直接当作它的效果证据。
+
+本轮只读取源码、契约和第一手资料，并执行不调用模型、不落盘的纯函数探针；没有修改Runtime、Router、Schema、预算或执行行为，没有模型实验、commit或VPS操作。前节未发布的指令一致性候选及既有ICT改动保留。研究结论是后续设计依据，不是发布授权或效果验收。
+
+### 完整数据流与实际缩窄点
+
+| 位置 | 当前行为与权威源码 | 研究判断 |
+| --- | --- | --- |
+| 冻结输入 | Host冻结同源价格、HTF、量价目录、知识和运行身份；Codex只读当前Job（ADR-0024/0026/0027、publisher.py） | 保留。去掉该边界会改变任务本身，模型能力不能代替因果与来源保证 |
+| Stage 1 | Draft保留primary及最多两项可为空的alternatives；每项含自己的cycle、direction、thesis、支持/挑战引用与确认/反证条件（pa_provider_contracts.py:100-149） | 表达能力已有，不先扩大Schema或强迫输出两项 |
+| 物化/交接 | hypotheses深拷贝；旧alternative_cycle_position仅映第一项；compile_pa_handoff逐项保留全部替代解释（pa_provider_contracts.py:614-652；pa_handoff.py:254-390） | 第一项镜像可保留兼容，但不能充当完整假设集合 |
+| PA知识选择 | 唯一Router只读主周期、主方向和旧单替代周期；替代周期沿用主方向，周期相同则不追加；后续PromptAssembler过滤主方向相反的通道/Spike文件（router.py:95-165；prompt_assembler.py:463-516） | 完整假设与知识覆盖不匹配；仅修Router会被下游过滤抵消 |
+| VPA知识选择 | context只读取cycle_position和alternative_cycle_position，决定trend/range/breakout等模块（vpa_context_profile.py:44-86） | 第二项替代周期可能漏掉相应量价教材，需要一起处理 |
+| VPA事实选择 | pa_window_fact_refs遍历全部alternatives，但仅收fact_refs；challenging_fact_refs中的独有窗口不参与vpa-w选择（vpa_measurements.py:1446-1501） | 知识范围之外还需检查反证窗口的实值覆盖；不补造目录中没有的测量 |
+| 冻结/读取 | Publisher按allowed_knowledge_ids保存原文、锚点、顺序和digest；搜索仅遍历当前Job已选知识（publisher.py:152-189；knowledge_bundle.py:23-99；evidence.py:729-801） | 漏选的模块无法靠“模型自己搜索”获得；修正必须发生在冻结前 |
+| 联合决策 | Codex Stage 2收到完整validated Stage 1、Router、完整handoff和accepted VPA；VPA逐假设覆盖校验。Joint不能改方向/Gate、重做上游或越权读取raw VPA（two_stage.py:1855-1869/2000-2043；role_validator.py:658-676；joint_stage2 Skill；ADR-0025） | 判断材料应充分，执行权限仍冻结。反证占优时允许有依据的等待，不据此反向下单 |
+| 校验/执行 | 唯一materializer、Validator、Trader Equation、Risk与execution_disposition继续拥有确定性校验和执行权限 | 两项优化均不能另建判断器、Router或订单物化器 |
+
+当前Headless Codex的Stage 2 context直接复制完整Stage 1；Direct的compact投影另有较窄字段集合。本方案研究当前Headless链，不能把Direct投影问题误报为当前Codex丢失假设；如后续共享知识选择有变，仍须单独验证Direct行为与身份。
+
+纯函数探针通过Draft及canonical Schema并完成实际materialize/handoff；另经完整JsonValidator复核，两种顺序均返回Ok：primary=normal_channel/bullish，alternative1=normal_channel/bearish，alternative2=trading_range/neutral。两项都被handoff保留，但PA没有range或bear模块，VPA仅core、trend_pullback。只交换alternatives顺序，PA增加range两文件，VPA增加breakout_retest与trading_range_events。另将bear识别/交易文件手动加入选中列表，Stage 2主方向bullish过滤后两者均消失。上述证据证明覆盖机制，不证明自然模型已造成收益损失。
+
+反证窗口探针中，primary、legacy alternative与所有alternatives的fact_refs仅PA.BAR.K1，challenging_fact_refs仅PA.WINDOW.K20。实际catalog存在vpa-w020，但pa_window_fact_refs为空，prompt_vpa_evidence_ids不包含vpa-w020。这只证明对应聚合窗口不可见，不表示全部K线、所有反证或VPA整体不可用。
+
+### Runtime：最合适的是稳定公共边界加当前任务契约
+
+当前AGENTS为112行/17571 UTF-8 bytes。Worker把全文作为model_instructions_file；single_frozen_agents_v1关闭project_doc自动重注入，因此不能把当前长文本误称为仍双份注入（codex_worker.py:1083-1101）。Worker已只安装当前一个Skill；确切Skill正文经packet/baseline再次交付，确保只读任务无需shell找文件。摘要元数据与冻结正文承担不同作用，不能仅按“出现两次”删除（codex_worker.py:771-789/1216-1239）。
+
+建议先用以下所有权划分整顿正文，不建立通用规则引擎：
+
+| 层 | 保留内容 | 不应承担的内容 |
+| --- | --- | --- |
+| 稳定公共Runtime AGENTS | Host authority；同一Frozen Job/cutoff；事实与解释区分；数据文本不是授权；禁止Web/文件写入/下单；单角色和会话隔离；完整必读原则；失败不伪装市场判断；当前角色契约优先于其他角色的操作步骤 | 研究child精确参数、所有历史交付布局、每个角色的完整停止JSON示例、逐个回执字段解释 |
+| 当前Role Skill | 本角色目标、允许输入/输出、有限调查程序、证据使用、当前停止语义；必要的专业检查问题，不指定唯一市场答案 | 复制完整领域教材、另算Gate/概率/执行结果、重复解释其他角色工作流 |
+| Frozen packet/baseline中的role_protocol与交付契约 | 本Job入口、fresh/delta、完整/已验证继承来源、输出模式、调查预算与有效mode；显式授权时交付研究扩展 | 要求模型重算digest、凭资源数量猜测丢包、比较不同scope的hash |
+| Host/Gateway/Worker与输出Schema | digest/lineage、scope、allowlist、读取完成与顺序、预算、封套、未知policy拒绝；审计和失败分类 | 判断某个市场解释专业上唯一正确，替模型命名趋势/吸收/Setup |
+| Frozen领域知识 | PA/VPA理论、适用条件、完整案例和反证，保持稳定章节身份 | 历史传输兼容规则、当前运行工具参数或下单权限授权 |
+
+例如生产stage_subagents=off时，模型需要知道“不能启动挑战”，不需要AGENTS:33-39的8项resources、child模型、参数和提前互补分工全文。layered研究的详细读取策略只在显式研究Job交付。新Stage 2的停止/输出例外放在它的当前冻结契约中；旧Job仍使用自己已冻结的规则，不把旧兼容分支全部讲给新普通任务。保留关键边界的简短提醒；去重不是禁止纵深防御。
+
+机械完整性目前已经主要由Host检查，优化是停止让模型重复猜测其实现细节，而非把更多业务判断移给代码。模型仍须阅读实际原文、使用合法引用、理解可用/不足/中性及市场等待；成功回执不能证明它已理解教材，也不能覆盖实际看到的缺值。工具故障由当前角色既有停止/Host拒收机制处理，不能删除该语义后要求模型凑Draft。
+
+特别限制：Publisher续接要求完整backend_runtime_identity相等（publisher.py:373-435），Worker在同一PA工作目录替换当前Skill并受控resume。故首选**同一发布版本、同一PA会话内稳定公共AGENTS**，阶段差异继续经已冻结Role Skill/role_protocol交付。把role-specific digest放入严格比较的共同identity会拒绝续接；使用variants完整包的共同digest则不必然失败，但当前真实CLI探针仅验证两阶段同一AGENTS全文与正确delta，没有验证resume替换AGENTS后CLI采用新正文、旧正文还是两者（scripts/check_codex_delivery.py:280）。因此不把动态替换model_instructions_file作为第一步。若以后采用mode专属核心，两PA阶段须使用同一字节身份，并先扩展明确的冻结与兼容合同。换Skill也不会抹去旧会话内容，必须显式说明当前阶段的任务，而非假设旧指令消失。
+
+可沿用现有两层身份：完整发布asset_digest/runtime_version覆盖公共AGENTS、所有基础Skills、条件扩展原文、rules与配置；每个Job的runtime.json/core_context资源hash再绑定实际选择和组装的Skill/protocol/marker，进入job_digest（runtime_assets.py:33-64；frozen_job.py:276/389）。Job构建前按marker确定性组装，不需新增MCP工具、平行规则引擎或将role摘要塞入backend_runtime_identity。所有新增片段必须纳入发布包digest，Gateway交付的role_skill仍须逐字等于job.runtime.skills。目前仅有承载接口，没有已实现这项条件装配；该建议不能写成现有能力。
+
+实施前逐条建立“原条款→当前适用条件→新唯一所有者→模型仍看到的语义→Host验证→回归场景”的映射。没有承接位置的关键规则不得删除。以权限/失败语义覆盖为验收，不预定删掉多少行或宣称token降低比例。
+
+### 知识路由：保留全部真实竞争解释，但区分理解与行动
+
+建议仍由唯一Router及现有VPA知识selector完成选择；从validated的primary和全部alternatives读取显式枚举，不从thesis、价格指标或自然语言推断cycle、pattern与方向。现有最多两项alternative已是自然上界，暂不增加数量。空alternatives有效，不为“均衡”补造相反观点。
+
+1. 保留既有主路径与授权规则，补充每项真实替代假设所需的识别、适用条件、反例和风险知识。每个替代使用自己的cycle/direction；同cycle不同direction也可能需不同识别教材。primary的spike_stage不能自动视为某个alternative的独立阶段；只使用已明确归属或共享的字段，不猜测缺失标签。
+2. 将选择用途随现有manifest冻结，说明模块是当前执行依据、竞争解释复核，或两者共有；复核知识可用于挑战候选和决定等待，不因读到反向策略便获得反向订单权限。这是知识选择元数据，不是第二套路由、概率分数或额外市场Gate。初步候选保留现有执行权限，不改Stage 1/Gate/Router判断规则。
+3. 后续PromptAssembler必须保留明确标记的复核知识，不能按primary.direction无差别删除。普通PA仍price-only；VPA知识不经这项扩展进入普通PA。VPA selector同时汇集完整假设集合的显式周期，加载所需trend/range/breakout模块；不能只修PA一路。
+4. 同时核对VPA实值覆盖：支持和挑战的已声明、当前catalog可用的窗口都进入同一有限证据选择。引用缺失、聚合不存在或来源不可比时明确未知/不足，不能造新目录或从知识推回事实。改的是可见证据，不允许程序替VPA给出解释。
+5. 冻结前形成完整选择集合、来源与purpose，stable dedup，共享模块只交付一次。原主路径装载顺序尽量保持，补充模块采用确定顺序。交换alternatives不应使同一语义集合的模块覆盖变化；保留各假设ID/顺序与摘要以追踪原始输出，不能宣称整个Job digest随换序不变。新增模块也不能删除原来必要模块。
+6. 新选择的完整模块按当前semantic-parity方式交付；原锚点、案例、反证和mandatory不压缩。以后是否将纯复核策略章节按需交付，必须独立研究，不能顺带复用尚未晋级的layered策略。相关内容较多时，先准确测量新增交付与剩余预算，不静默截断或因模型自称熟悉而省略。
+7. Joint比较主解释与影响当前候选的实质竞争解释。反证支持不足可保持原判断；实质挑战可影响入场位置、候选、等待及未校准主观先验。若继续交易必须改写冻结方向/Gate，则本轮有依据地等待，不直接选反向交易或自动重跑Stage 1。新方向由后续新冻结分析正常重新诊断。无需新增每个假设固定篇幅、打分表或“必须影响交易”的格式任务。
+
+该设计修复“有假设但相关教材/反证窗口不可见”，并保持可审计行动边界。它不能消除Stage 1未想到某个解释的风险，也不能让当前Joint自由重选主方向。将诊断彻底延迟到联合决策、允许同快照改Gate/方向是另一项策略架构选择，不能借“扩大知识”偷偷实现。若要评估这种自由度，需要新的authority、协议及独立实验。
+
+不建议直接打开全策略库：它会把缺口变成每次读全库，增加无关情景和预算压力。也不建议将所有替代教材只做可选索引：现有基线未证明模型可靠补读，且Frozen allowlist本身可能不含漏选模块。首个候选应补齐真实已声明的假设，不扩成整个可能性空间。
+
+### 为什么在原理上成立，以及不能承诺什么
+
+Brooks作者术语将context定义为支持或反对某Setup的历史背景，并区分趋势延续、区间演化和反转；相同局部动作需要背景判断，而不是由单一枚举替代全部推理。Wyckoff方法强调Effort/Result与对已有波段的比较。因此竞争解释、反证及相应原值是分析材料，交易方向仍可由产品另设明确权限。这里的路由设计是根据上述理论与本项目合同作出的工程推论，来源没有证明此改动会提高本产品收益。[Brooks术语表](https://www.brookstradingcourse.com/price-action-trading-terms-glossary/)、[Wyckoff方法](https://www.wyckoffanalytics.com/wyckoff-method/)。
+
+OpenAI建议推理模型使用清楚直接的目标与约束；Skills采用渐进披露，把不适用的程序移出常驻上下文；同时明确指出有益于Sol/Luna的指导可能对Astra过度约束。因此应减少无关工作流与重复维护，保留本项目特有的因果、权限及必要专业材料，不能据“模型更强”删掉所有规则。[Reasoning best practices](https://developers.openai.com/api/docs/guides/reasoning-best-practices)、[Build skills](https://learn.chatgpt.com/docs/build-skills)、[Rethinking skills and prompts](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)。
+
+官方准确性指南区分检索错误与模型拿到正确材料后仍使用错误；过多无关上下文也可能干扰。故“指令更少、相关证据更完整”在逻辑上相容，但追加模块会增加读取成本，不能把AGENTS节省预先抵扣为净token收益。实际最优需要分别量化检索覆盖、专业使用、权限错误与全链成本。[Optimizing LLM Accuracy](https://developers.openai.com/api/docs/guides/optimizing-llm-accuracy)。
+
+### 推荐实施顺序和完整验收
+
+1. **先冻结验收标准与当前基线。** 将本地尚未发布的文案修订视为共同基线或明确单独对照，不与两项研究混为一个处理效应。记录发布版本、模型、Prompt、预算、输入与全部失败；不调用模型也能先完成逐条规则映射和完整知识覆盖测试设计。
+2. **Runtime分层单独做候选。** 先稳定common AGENTS、把不适用研究/旧协议细节移入显式冻结扩展，Role Skill与role_protocol对齐当前步骤；保持同快照PA续接与全部领域原文。不要先开发动态规则引擎或改身份比较。
+3. **完整假设覆盖另做候选。** 一起检查唯一Router、方向过滤、VPA selector、窗口可见性、Publisher、manifest与读取回执；不能只把文件名列表变长。无需先改Provider hypothesis Schema。
+4. **离线合同/失败注入先行。** Runtime覆盖fresh/resume、PA-only/Joint/VPA/repair、off/fixed/研究marker、缺件/denied/未知policy/错误封套/来源漂移、旧Job逐字节回放；knowledge覆盖0/1/2替代、换序、同cycle反向、第二项独有周期、重复模块、仅反证窗口、不存在的窗口、共享与独有理论。确认权限、现有主路径与Direct隔离/共享语义无意外变化。
+5. **同模型同快照分开评估。** 先分别对比旧/分层指令、旧/完整路由，必要时才做2×2检验交互。运行前新cohort登记，保留独立重复、顺序平衡和失败/missing，不把同一行情重复当多张样本；不能冒用旧PA/VPA增量研究身份。覆盖趋势、区间、过渡、反转风险和真实订单/等待，盲评主替代解释、最强反证、结构入场/失效/TP1、VPA位置与引用。交易率、文字长度或某次获利不是质量标准。
+6. **按质量与边界决定晋级。** 先看事实、权限、重大专业错误和基线覆盖，再看首稿/repair/超时、工具成本、input/cached/output/reasoning实际用量及全链p50/p95。若规则完整但模型更常跳必读/混角色，Runtime候选不晋级；若材料更全却预算失败或反向越权增加，调整交付/用途边界后重新独立验证，不能自动放宽安全。Paper效果另作前向观察，不能以Prompt实验冒充收益证明。发布前Host/Worker排空，旧Job不跨版本续接，不回写历史。
+
+三角色设计判断：PA保留唯一Brooks框架、反证和冻结行动权限；VPA保留独立量价角色、同源实值与中性/不足，不新增Setup或投票Gate；软件/量化保留单一选择/物化/校验、因果与完整失败分母。本轮唯一只读协作者完成Runtime交付、同快照续接、两层冻结身份与Linux发布边界复核，并认可完整合法假设/反证覆盖不扩张authority；专业三角色仍是实现者自审，不是三位独立专家认证。本节未实施两项方案；探针不生成持久测试产物，现有build目录与其他任务文件未动。后续实现须按上述映射、合同与同快照评估独立验收。
+
+## 2026-10-14 Runtime 分层与完整假设覆盖实施（仅本地）
+
+用户授权完整实施上节方案并先备份再清理。完成标准是：当前角色规则和失败语义完整，
+不交付未启用研究的详细步骤；全部真实替代假设的相关教材和现有反证窗口可见；
+执行权限、完整教材、旧冻结契约及同快照 PA 续接保留。此前方向反馈/VPA增量文案候选
+作为共同基线保留，既有 ICT 文件不修改。不调用模型、不更改运行数据、不 commit 或发布。
+
+### 备份与可恢复清理
+
+清理前将当时全部 tracked/non-ignored untracked 文件保存到
+`docs/changelog/backups/20261014-runtime-knowledge-before/source.zip`，共683个文件、
+2,755,645 bytes，SHA256为
+`875045f5d4846e910ab9d6d3133818b7e917c548c624177ee4ebe11156aa09c6`。
+同目录包含每个文件的 SHA256/长度及 branch/HEAD manifest、`working-tree.patch` 和原状态。
+逐个ZIP条目验证hash，并确认四个既有ICT文件与备份逐字节一致。备份使用既有忽略目录保留，
+不进入Runtime知识或发布资产；没有复制、删除或迁移凭据/数据库/订单状态。
+
+恢复时按manifest取出需要的源码/文档，先比较当前差异再逐文件恢复；不得覆盖后续独立工作。
+恢复源码不等于回退VPS或恢复运行数据，也不能给旧Job补标或跨版本续接。本轮只清理：
+
+- 普通新任务常驻AGENTS/四个基础Skill中不适用的研究细节、历史交付解释和重复操作条款，
+  按下表迁移；完整研究原文在条件资产内保留。
+- 搜索确认无调用的Router `_ALL_VALID_FILES` 和PromptAssembler `_directional_channel_files`。
+- 本轮具名测试/打包暂存目录。原有build、egg-info、其他任务暂存目录及正式备份保留。
+
+旧兼容代码、旧Frozen Job、知识案例/反证/锚点和历史研究报告有重放/审计价值，不当作无用内容删除。
+前文“未实施”是当日历史状态，本节记录当前本地实现，不改写历史证据。
+
+### Runtime 规则承接与身份
+
+| 原常驻内容 | 当前所有者与模型所见语义 | 校验/覆盖 |
+| --- | --- | --- |
+| authority、事实/解释、因果、price-only/独立VPA/显式Joint、只读、注入防护、中文、完整mandatory | 公共AGENTS保留；只执行当前冻结role/Skill/protocol | Runtime资源审计、原权限/因果/输出回归 |
+| 每个角色的入口、输出封套及停止特例 | `guidance/role_contracts.toml`源文；Publisher确定性冻结当前`runtime_guidance`并经packet/baseline/repair交付 | 四角色正常/repair、错role/模式、未知policy、副本错配拒绝 |
+| fresh/delta/完整原值与读取次序的详细操作 | 当前Role Skill及既有Host交付/Worker校验；公共层保留“索引不等于原值/继承须Host确认” | 真实Publisher→MCP必读、缺读拒绝、PA受控resume |
+| Host challenge的精确resources、参数与互补程序 | `guidance/stage_challenge.md`保留原说明；仅agentic且原policy授权当前role时冻结交付，repair不带 | 授权角色/mode矩阵、缺扩展拒绝、既有研究/预算回归 |
+| layered Stage2研究详细读取步骤 | `guidance/layered_stage2.md`保留原说明；仅已有显式研究marker，repair不带 | 实际研究baseline及缺扩展拒绝、正式全量必读回归 |
+| 修复不能重做市场/上游，工具失败不转NoTrade | 公共简短原则＋当前输出合同/repair Skill | 原pointer/失败语义及此前方向反馈测试 |
+| 完整领域知识、案例、反证、锚点与章节身份 | 现有知识原文/切片继续交付，不搬进Skill、不压缩 | 全原文/冻结资源比较、mandatory审计 |
+
+新Job显式标记`runtime_guidance_policy=role_guidance_v1`。Gateway与Worker检查角色、入口、
+输出模式、适用扩展及packet/repair副本一致；旧无marker Job保持原冻结文本，不用新版文案
+重新比较/解释它。没有新增市场Gate、MCP工具或规则引擎。先调用现有入口，再按返回合同分析，
+不要求模型先读取尚未取得的字段。
+
+完整发布asset_digest包含公共AGENTS、所有基础Skills、三个条件资产源文、配置和rules；
+Job资源hash/job_digest再绑定实际选择。角色差异不加入共同backend_runtime_identity，
+同发布PA Stage1→Stage2的公共AGENTS逐字相同，既有续接条件不变。
+当前asset digest为`f2957d56a69acef229425b46c93df4531a9ea177c4bdb93e57042492193643f3`。
+
+公共AGENTS由17571减至5408 UTF-8 bytes；Stage1 Skill 5212→4581、Stage2 5782→5998、
+Joint 7315→6435、VPA 5432→5065。Stage2为必要用途说明略增，不能宣称所有Skill都减少。
+字节数不是Provider token，研究模式仍完整取得其详细说明。
+
+### 全部真实假设与反证的交付
+
+唯一Router新增`route_strategy_knowledge`返回有序选择元数据；原`route_strategy_files`继续返回
+同一选择的文件列表。两者复用一套§11枚举规则。主路径不变，全部structured alternatives
+各用自己的cycle/direction，不沿用主方向、不补spike_stage/patterns；补充模块确定排序并去重。
+无structured alternatives的旧调用保留旧alternative_cycle_position及原文件顺序。
+
+用途为`primary`、`review`、`primary_and_review`，同时保留来源hypothesis IDs。
+Orchestrator、PromptAssembler和Publisher引用同一Router计划，Publisher核对实际Router列表中的
+元数据；manifest、真实MCP mandatory_modules及Direct/Codex协议都交付用途/来源。
+明确选中的review教材不被主方向过滤删除，Direct compact同时保留完整market_hypotheses。
+`review`只复核竞争解释、风险/等待，不独立授予Setup、翻转订单方向或改Gate。
+
+VPA知识selector覆盖全部显式周期；pa_window_fact_refs同时收集支持/挑战窗口，
+prompt证据选择仅使用当前catalog已存在的窗口，不生成缺失聚合、不修改catalog身份。
+所有新选教材仍是完整mandatory原文，不把本轮等同于尚未晋级的layered研究。
+
+新增5项覆盖测试，包括合法同周期反方向/第二替代周期/换序、Direct完整交付、
+VPA第二周期及挑战独有窗口/缺失窗口、实际Orchestrator→Joint请求→Publisher→MCP全链。
+新增23项Runtime合同测试，涵盖正常/repair四角色、研究授权矩阵、fresh/resume、
+缺读/缺扩展/未知policy/副本错配拒绝及历史无marker契约。原工具/Prompt合同测试改用
+真实repair/fixed发布或显式历史fixture，不放宽生产检查。
+
+### 验证与明确边界
+
+已验证Runtime资源审计13项、critical Ruff及`git diff --check`。
+离线构建wheel后用已有Python/pip安装到本轮隔离目录：306个代码/知识成员与当前源码逐字节一致，
+三个条件资产完整、安装后13项资源审计通过、asset digest相同、Headless import不加载Qt。
+没有新增依赖或改pyproject/lock；构建显式使用本轮TMP/TEMP和既有setuptools vendor wheel。
+
+首轮沙箱内SDK测试阻塞在Python asyncio的Windows socketpair初始化，堆栈已定位；
+允许本机回环的执行环境中真实SDK/序列化测试通过，不修改应用或SDK绕过测试。
+扩大回归时另有一次既有HTTP安全测试出现WinError10053连接中断，单独复验通过，
+未据此修改无关Dashboard代码。完整最终结果见下方验收补充。
+
+三角色自审：PA保留完整背景/反证与唯一Router和冻结行动权限；VPA仍Evidence-first、
+独立/可中性、不新建Setup/概率/Gate；软件层保留单一选择/物化、两层冻结身份、因果、失败和审计。
+复用唯一只读协作者完成设计与两轮代码复核，最终未发现剩余阻断；其独立审查不冒充独立测试
+或三位外部专家认证。CONTEXT、ADR-0024及知识库同步本地实现，ICT原文保留。
+
+没有真实模型matched replay/盲评、token/延迟、Paper收益或Linux/VPS验收。增加相关知识可能
+增加成本，不能将公共指令节省预先抵扣为净token收益；测试通过只证明契约及交付覆盖。
+未commit、推送或部署，VPS仍为59605db/4ab1384c...。实际分析效果须另用新身份同快照对照，
+发布前仍须排空Host/Worker并禁止跨版本恢复旧会话。
+
+最终离线验收：1774 passed / 7 deselected，87.35s；既有tvDatafeed两条正则转义
+DeprecationWarning保留，不属于本轮改动。范围为unit/integration/property的`not live`，
+包含Headless、只读Dashboard、PA、VPA off/Shadow、Joint及A/A/B/B研究、HTF、订单数学、
+records/audit和Runtime契约。按用户范围排除Qt图表/面板/线程GUI文件及Qt E2E，
+不宣称全GUI或全平台CI通过。新28项测试计入上述总数，不重复相加。
+
+可复验命令为项目Python运行`pytest tests/unit tests/integration tests/property -m "not live"
+-q -o addopts= -p no:cacheprovider`，使用本轮独立basetemp；排除文件为
+`test_chart_skip_redraw.py`、`test_chart_widget_no_lines_when_not_trading.py`、
+`test_chart_fit_view.py`、`test_debug_widget_masks_key.py`、`test_decision_panel.py`、
+`test_future_trend_panel.py`、`test_gui_worker_lifecycle.py`、`test_order_opportunity.py`、
+`test_overlay_lines.py`、`test_support_resistance_chart.py`、`test_thread_lifecycle.py`、
+`test_token_indicator_thresholds.py`（unit），`test_next_bar_prediction.py`、
+`test_switch_mid_analysis.py`（integration）及`test_next_bar_prediction_perf.py`（property）。
+使用允许本机回环通信的环境，不调用外部行情、模型或交易所。
+
+## 2026-10-14 旧快照单次配对试验（已登记，模型调用待审批）
+
+用户要求优化前后各一次对照。采用已保存的2026-10-09 XAUUSDT/1h 100根与4h 60根，
+原`as_of_ms=1791476486366`、market hash
+`a32b6b37181924e7caadce91c3137218c8c4e8eab30806cd2edc9f71b0fcaf70`。
+旧快照完整性、闭盘、HTF及原VPA catalog校验通过，不更新价格或混入旧模型结论。
+
+对照版本取本轮实施前source.zip（包含此前离线文案候选），处理版本取当前源码固定副本。
+两边完整知识原文digest相同；实际选择是处理的一部分。共同CLI为0.162.0-alpha.17.2，
+固定gpt-6-luna/xhigh、标准tier、pa_vpa_joint、agentic、stage_subagents=off。
+默认Publisher预算分配函数AST相同：Stage1 300s、VPA 180s、Stage2 300s、repair 180s，
+整链共享600s；字节/调用预算沿共同材料量分配规则，实际值须随Job记录，不能宣称均数值相等。
+
+实验新身份`runtime_knowledge_single_pair_v1`及两次assignment在调用前已固定，
+顺序before→after由原evidence SHA256前8位奇偶决定。独立源码/import/进程/home/jobs/outbox/state，
+关闭Paper、monitoring、experience和fallback，不延长旧Job expiry。新Job TTL使用当前墙钟，
+市场仍保持旧cutoff/as-of，结果不能用来执行当前订单。每臂一个完整fresh链、只允许既有一次
+定向repair，失败保留不重跑；单样本及合并处理不估非劣、方差、各改动独立作用或收益。
+
+原件及协议保存于既有忽略目录
+`docs/changelog/experiments/20261014-runtime-knowledge-pair-01/`，protocol digest
+`55bc5d37d1a3f0a2fab45775890b254b39d2241a336ff655666e3653414d82eb`。
+预检两臂登录状态healthy、输入/知识/CLI/settings一致；截至此节没有start、role checkpoint
+或Host输出，模型调用数为0。自动审批拒绝首次真实调用，要求明确授权该行情/知识/指令包发送
+到OpenAI Codex服务；已请求该具体授权，待答复。该拒绝不是模型运行失败，不登记为已执行arm。
+
+## 2026-10-14 旧快照单次配对结果（两臂已完成，未发布）
+
+用户随后明确回复“允许按上述范围发送并执行”，两臂按原登记before→after执行完毕。
+期间用户中断过工具调用；先核查两臂均无start/role checkpoint再启动，因此没有重复模型运行。
+没有改预算或输入、没有失败重跑。每臂3次首稿调用均validated，0 repair、0 fallback、
+0 Evidence denied。Host均为`completed_with_warnings`、`official_path=joint`，最终`wait`。
+没有Paper数据库或订单创建，不操作VPS；代码未commit/推送。
+
+### 本次实际指标
+
+| 指标 | 实施前备份版本 | 优化后固定副本 | 观察差异 |
+| --- | ---: | ---: | ---: |
+| Host全链秒数 | 233.891 | 284.672 | +21.71% |
+| Provider实报总token | 526158 | 514223 | -2.27% |
+| 输入token | 500281 | 483673 | -3.32% |
+| 缓存输入token（输入子集） | 235776 | 222720 | -5.54% |
+| 非缓存输入token | 264505 | 260953 | -1.34% |
+| completion/output token | 25877 | 30550 | +18.06% |
+| 正式角色调用/repair | 3 / 0 | 3 / 0 | 相同 |
+| Warning finding数 | 2（均VPA） | 2（Stage1及VPA各1） | 不可据此判质量改善 |
+| 无语义normalization事件 | 2 | 1 | 不是repair或质量评分 |
+| Host Evidence访问/真实MCP调用 | 20 / 3 | 20 / 3 | 相同 |
+| Evidence传输bytes | 430087 | 430271 | +184 |
+
+| 阶段 | 旧秒数 | 新秒数 | 旧token | 新token |
+| --- | ---: | ---: | ---: | ---: |
+| Stage1 | 107.609 | 152.890 | 118211 | 112519 |
+| VPA | 59.672 | 55.890 | 65587 | 55577 |
+| Joint Stage2 | 65.812 | 75.125 | 342360 | 346127 |
+
+用量来自每次Worker的Provider计数和Host版本化metrics，均`usage_coverage_complete=true`；
+每臂使用两个独立会话：PA Stage1→Joint Stage2在本臂同快照受控续接，VPA独立；
+Stage2用量先扣除已记录的Stage1会话累计基线，再汇总增量，不重复计数或跨臂续接。总token包含输入/输出，
+cached是输入子集不能再次相加；completion未单列reasoning，不据此推断最终文本长度。
+美元费用3次均unknown，不能把token比例当账单节省比例。更短公共指令只减少一部分上下文；
+Stage2仍占主要token，阶段推理、缓存及服务延迟的随机差异不能由单次拆分归因。
+此次不存在统计p50/p95、置信区间、质量非劣或总体成本效果结论。
+
+两臂record重算market hash与原登记相同；原evidence文件SHA256未变，代码指纹从预检到
+运行结束未变，实际各call均gpt-6-luna/xhigh。Stage2及VPA实际选中模块的ID、sha256、字节数
+也完全相同，完整mandatory交付成功；新用途/来源标记实际冻结并经基线送达。
+
+### 专业内容与实际覆盖
+
+两臂主假设同为`trading_range/neutral`，均只声明一项`trending_tr/bearish`替代解释。
+共同判断K1有近端空压，但未获得区间外接受及之后闭盘跟随；都保留HTF偏空作为风险而非Gate。
+Stage1置信度66→64属于主观未校准判断，不作为质量评分或效果指标。
+
+旧VPA以宽/中/短窗口分歧给主假设neutral、偏空备选supports；新VPA以中期推进减弱给
+主假设supports、偏空备选neutral，同时保留K2→K1卖压。两种解释都有同一目录证据，
+不能仅因relation枚举不同断言一方正确。Joint两臂均使用上述反证选择等待、不造入场/止损/TP1/胜率。
+新Joint明确“没有Entry Attempt的insufficient_data不代表背景/位置数据不可用”；旧Joint对此
+表述较含混，这是可观察的说明差异，不是交易质量已提高。
+
+本快照没有产生第二项替代周期或需要额外通道/反向教材的组合；旧新Router实际均选择
+区间识别、区间策略、铁丝网3个文件，VPA教材也一致。因此真实测试没有触发“额外教材补齐”
+这一分支，不能用它宣称完整假设路由已提升模型判断；该机制覆盖证据仍是前节离线合同测试。
+支持/挑战所需已存在窗口没有造成不同的VPA教材目录或新增可选调查。
+
+### 警告及保留问题
+
+- 旧VPA两条warning涉及将窗口记号/数值写进解释及同句多selector的比较绑定；不升级为
+  已证实价格错误。旧模型把不存在Entry Attempt称为“入场时机数据不足”，仍合法但解释较弱。
+- 新Stage1的“EMA slope number”warning由宽文本数字匹配触发；原句没有报告具体EMA差值，
+  包含“4小时”、EMA20及HTF.H#引用。冻结HTF的EMA delta5=-7.078607、delta10=-19.740034，
+  “整体走低”的方向与事实相符；此warning不是已证明的EMA数字造假，不在实验中修改checker。
+- 新VPA的“unbounded new-high/new-low”warning来自“低点仍高于此前区间低点”这样的范围措辞。
+  原vpa-e001已有prior5/prior20比较，K1低点4115.79高于prior5低点4114.64及prior20低点4106.39；
+  方向有依据，但正文可明确窗口，避免“此前区间”模糊。它没有证明模型报错方向或数据。
+- 新Stage1原Draft的diagnosis_confidence_reasoning末尾含`הש代谢`杂字，Stage2依法完整继承。
+  原始outbox、Stage1及Stage2均可核验，不是normalizer拼接或编码修复产生。它是本次真实输出
+  的文案质量缺陷，保留原件不洗掉；不能因为交易结果相同就说新版本零质量问题。
+
+结论：新版本完整真实链可运行，本样本总token略降但耗时更长，专业质量未证明优于旧版。
+保留确定性的知识覆盖/权限修复理由，不宣称性能或收益改善，不据一次杂字/warning继续堆Prompt规则。
+原始证据、两个固定源码、jobs/outbox/checkpoint/record、注册协议和comparison.json保存在上述
+隔离实验目录；辅助run_arm.py/compare.py为本次一次性驱动，不是生产功能或新研究框架。
+模型调用结束后删除两份本实验复制的auth.json，原独立凭据home不改，正式研究证据保留。
+
+唯一只读协作者复核后确认两臂全部市场对象（含完整VPA catalog）与original-evidence逐对象
+相同，支持上述Warning分类及杂字来自原Draft的判断。实际VPA窗口引用由旧K8换为新K10，
+均来自各自Stage1的支持引用，不能归因于新增challenging引用覆盖。
+此次复核是基于产物的专业/事实核对，不是独立盲评分、重复模型试验或统计认证。

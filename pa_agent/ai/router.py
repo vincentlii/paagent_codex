@@ -1,6 +1,6 @@
 """Strategy file router — maps Stage 1 diagnosis to strategy file list.
 
-Implements 使用说明 §11 routing table exactly.
+Uses the §11 context rules for the primary and every declared hypothesis.
 This is a pure function: no side effects, no external state.
 """
 from __future__ import annotations
@@ -50,65 +50,59 @@ _FINAL_FLAG_FILE = "文件24-最终旗形与趋势末端.txt"
 _TRIANGLE_FILE = "文件27-三角形与收敛形态.txt"
 _DOUBLE_TOP_BOTTOM_FILE = "文件28-双重顶底与微型结构.txt"
 
-# All valid file names (used for dedup validation)
-_ALL_VALID_FILES: frozenset[str] = frozenset([
-    "提示词大纲_人设与思维方式.txt",
-    "市场诊断框架.txt",
-    "文件16-K线信号识别.txt",
-    "文件17-止损和止盈与仓位管理.txt",
-    "文件23-MeasuredMove与结构目标.txt",
-    "上涨通道分析识别.txt",
-    "上涨通道交易策略.txt",
-    "文件13-窄通道与宽通道策略.txt",
-    "下跌通道分析识别.txt",
-    "下跌通道交易策略.txt",
-    "极速上涨分析识别.txt",
-    "极速上涨交易策略.txt",
-    "极速下跌分析识别.txt",
-    "极速下跌交易策略.txt",
-    "震荡区间分析识别.txt",
-    "震荡区间交易策略.txt",
-    "文件14-楔形形态分析交易.txt",
-    "文件15-二次入场机会.txt",
-    "文件18-突破失败与突破测试.txt",
-    "文件19-H1H2-L1L2计数.txt",
-    "文件20-AlwaysIn与20GB.txt",
-    "文件21-铁丝网与无交易环境.txt",
-    "文件22-信号失败后的磁力位.txt",
-    "文件24-最终旗形与趋势末端.txt",
-    "文件25-主要趋势反转MTR.txt",
-    "文件27-三角形与收敛形态.txt",
-    "文件28-双重顶底与微型结构.txt",
-])
-
 _CHANNEL_STATES = frozenset(["micro_channel", "tight_channel", "normal_channel", "broad_channel"])
 _RANGE_STATES = frozenset(["trading_range", "trending_tr"])
 _SKIP_STATES = frozenset(["extreme_tr", "unknown"])
 
 
 def route_strategy_files(stage1_json: dict[str, Any]) -> list[str]:
-    """Return the ordered, deduplicated list of strategy files for Stage 2.
+    """Project selected knowledge to the existing list interface; never a Gate."""
+    return list(route_strategy_knowledge(stage1_json))
 
-    Args:
-        stage1_json: The validated Stage 1 diagnosis JSON object.
 
-    Returns:
-        List of file names to load, in the order they should appear in the
-        Stage 2 system prompt. Always a subset of the known prompt files.
-        An empty list only means no context-specific strategy file is loaded;
-        it is not a trading decision or gate.
-    """
+def route_strategy_knowledge(stage1_json: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Select full context knowledge and freeze its purpose, not trading permission."""
+    selection = {
+        name: {"purpose": "primary", "hypothesis_ids": ["pa-primary"]}
+        for name in _strategy_files_for_context(stage1_json)
+    }
+    hypotheses = stage1_json.get("market_hypotheses")
+    alternatives = hypotheses.get("alternatives") if isinstance(hypotheses, dict) else None
+    if not isinstance(alternatives, list):
+        cycle = stage1_json.get("alternative_cycle_position")
+        # Preserve the old single-alternative ordering and coverage for legacy inputs.
+        files = _strategy_files_for_context(stage1_json, alternative_cycle=cycle)
+        return {
+            name: (selection[name] if name in selection else
+                   {"purpose": "review", "hypothesis_ids": ["pa-alternative"]})
+            for name in files
+        }
+    declared = [
+        (str(item.get("cycle_position", "unknown")), str(item.get("direction", "neutral")),
+         str(item.get("hypothesis_id") or f"pa-alternative-{index}"))
+        for index, item in enumerate(alternatives, start=1) if isinstance(item, dict)
+    ]
+    for cycle, direction, hypothesis_id in sorted(declared):
+        # Top-level spike_stage and patterns are not this hypothesis's labels.
+        for name in _strategy_files_for_context({"cycle_position": cycle, "direction": direction}):
+            source = selection.setdefault(name, {"purpose": "review", "hypothesis_ids": []})
+            if source["purpose"] == "primary":
+                source["purpose"] = "primary_and_review"
+            source["hypothesis_ids"] = sorted(set((*source["hypothesis_ids"], hypothesis_id)))
+    return selection
+
+
+def _strategy_files_for_context(stage1_json: dict[str, Any], *, alternative_cycle: Any = None) -> list[str]:
+    """The single §11 rule implementation, using explicit enums and pattern keys."""
     cp = stage1_json.get("cycle_position", "unknown")
     direction = stage1_json.get("direction", "neutral")
     patterns = normalize_detected_patterns(stage1_json.get("detected_patterns"))
     spike_stage = stage1_json.get("spike_stage")
-    alternative_cp = stage1_json.get("alternative_cycle_position")
 
     files: list[str] = []
     files.extend(_base_files_for_cycle(cp, direction, spike_stage=spike_stage))
-
-    if alternative_cp and alternative_cp != cp:
-        files.extend(_base_files_for_cycle(str(alternative_cp), direction, spike_stage=None))
+    if alternative_cycle and alternative_cycle != cp:
+        files.extend(_base_files_for_cycle(str(alternative_cycle), direction, spike_stage=None))
 
     # ── Pattern overlays ──────────────────────────────────────────────────────
     if "wedge" in patterns:

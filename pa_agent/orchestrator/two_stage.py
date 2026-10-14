@@ -191,7 +191,7 @@ _VPA_ROLE_PROTOCOL = {
         "Use PA-defined structural locations to assess volume-conditioned acceptance, rejection, tests and counterevidence; do not create levels or order prices.",
         "No Entry Attempt means timing is not applicable, not that available background/location evidence is unusable; express concrete unresolved location conditions in existing observations and next_confirmation.",
         "next_confirmation is pending_closed_bar only for a concrete unresolved VPA competition; otherwise not_applicable.",
-        "Available data must add genuine Effort/Result, sequence, acceptance/rejection or timing information, not paraphrase PA.",
+        "Usable data does not imply a diagnostic increment. After reading all mandatory evidence, report genuine Effort/Result, sequence, acceptance/rejection or timing information when supported by citable evidence; otherwise explicitly state no diagnostic increment and allow neutral or insufficient_data with empty observations. Assess relevant counterevidence; unread evidence or tool failure must follow the stop contract, not a neutral report.",
     ],
 }
 
@@ -1862,6 +1862,12 @@ class TwoStageOrchestrator:
             strategy_files = self._router(stage1_for_stage2)
         else:
             strategy_files = self._router.route(stage1_for_stage2)
+        from pa_agent.ai.router import route_strategy_knowledge
+
+        knowledge_selection = {
+            name: source for name, source in route_strategy_knowledge(stage1_for_stage2).items()
+            if name in strategy_files
+        }
 
         # ── Step 11: Load experience entries ──────────────────────────────────
         cycle_position: str = stage1_for_stage2.get("cycle_position", "unknown")
@@ -2002,6 +2008,7 @@ class TwoStageOrchestrator:
             "timeframe": frame.timeframe,
             "stage1_diagnosis": copy.deepcopy(stage1_for_stage2),
             "router_manifest": list(strategy_files),
+            "knowledge_selection": copy.deepcopy(knowledge_selection),
             "decision_stance": record.meta.decision_stance,
             "higher_timeframe": serialize_agent_higher_timeframe_evidence(htf_context),
             "experience_entries": [
@@ -2021,6 +2028,9 @@ class TwoStageOrchestrator:
                 direction=direction,
                 load_full_strategy_library=bool(
                     getattr(prompt_cfg, "stage2_load_full_strategy_library", False)
+                ),
+                review_knowledge_ids=frozenset(
+                    name for name, source in knowledge_selection.items() if "review" in source["purpose"]
                 ),
             ),
         }

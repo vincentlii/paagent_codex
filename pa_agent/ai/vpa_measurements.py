@@ -1461,13 +1461,14 @@ def pa_window_fact_refs(pa_hypotheses: Mapping[str, Any] | None) -> set[str]:
     for section in sections:
         if not isinstance(section, Mapping):
             continue
-        refs = section.get("fact_refs")
-        if not isinstance(refs, list):
-            continue
-        for value in refs:
-            fact_id = str(value).upper()
-            if fact_id.startswith("PA.WINDOW.K") and fact_id[11:].isdigit():
-                result.add(fact_id)
+        for field in ("fact_refs", "challenging_fact_refs"):
+            refs = section.get(field)
+            if not isinstance(refs, list):
+                continue
+            for value in refs:
+                fact_id = str(value).upper()
+                if fact_id.startswith("PA.WINDOW.K") and fact_id[11:].isdigit():
+                    result.add(fact_id)
     return result
 
 

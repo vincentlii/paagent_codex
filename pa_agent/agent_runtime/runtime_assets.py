@@ -17,6 +17,11 @@ _SKILL_PATHS = {
     "joint_arbiter": "skills/joint_arbiter/SKILL.md",
     "draft_pointer_repair": "skills/draft_pointer_repair/SKILL.md",
 }
+GUIDANCE_PATHS = {
+    "role_contracts": "guidance/role_contracts.toml",
+    "stage_challenge": "guidance/stage_challenge.md",
+    "layered_knowledge": "guidance/layered_stage2.md",
+}
 
 
 @dataclass(frozen=True)
@@ -28,6 +33,7 @@ class CodexRuntimeAssets:
     config_text: str
     rules_text: str
     challenger_text: str
+    guidance_documents: Mapping[str, str]
 
 
 def load_codex_runtime_assets() -> CodexRuntimeAssets:
@@ -40,12 +46,15 @@ def load_codex_runtime_assets() -> CodexRuntimeAssets:
         role: root.joinpath(path).read_text(encoding="utf-8")
         for role, path in _SKILL_PATHS.items()
     }
+    guidance = {key: root.joinpath(path).read_text(encoding="utf-8")
+                for key, path in GUIDANCE_PATHS.items()}
     payload = {
         "AGENTS.md": agents_text,
         "config.toml": config_text,
         "rules/pa-agent.rules": rules_text,
         "pa_challenger.toml": challenger_text,
         **{path: skills[role] for role, path in _SKILL_PATHS.items()},
+        **{path: guidance[key] for key, path in GUIDANCE_PATHS.items()},
     }
     encoded = json.dumps(
         payload,
@@ -62,4 +71,5 @@ def load_codex_runtime_assets() -> CodexRuntimeAssets:
         config_text=config_text,
         rules_text=rules_text,
         challenger_text=challenger_text,
+        guidance_documents=MappingProxyType(guidance),
     )

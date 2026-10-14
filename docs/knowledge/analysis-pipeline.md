@@ -22,6 +22,10 @@ verification_scope: not-verified
 
 本页描述当前链路的输入、操作、判断权、输出和失败边界。字段级行为以源码、Provider Contract 和 [CONTEXT.md](../../CONTEXT.md) 为准。
 
+2026-10-14 对下述 Runtime 指令与多假设知识覆盖补充本地实现；没有重新验收本页其他
+历史能力或发布到 VPS。当前部署/授权状态以[当前状态](current-status.md)为准，
+下文旧能力标签不撤销新版显式 pipeline 的有限 Paper 授权。
+
 ## 1. AnalysisRequest 与身份解析
 
 | 项目 | 内容 |
@@ -97,6 +101,12 @@ PA Stage 2 受控续接。Stage 2 同时必须读取冻结的结构化 Stage 1 h
 原 Direct 人设文件不改，Codex 在知识投影时把普通 Stage 1／Stage 2 的“裸 JSON”措辞改为
 服从冻结输出 Schema／`result` 封套；仅显式联合 Stage 2 投影 VPA 权限，Stage 1 与普通 Stage 2 仍 price-only。
 
+新 Job 的 `role_guidance_v1` 将当前角色入口、输出/失败模式冻结进 role_protocol；Stage 1
+packet 与 repair findings 各自携带一致副本，其他角色经 baseline 读取。公共 AGENTS 在
+同版本及 PA 续接中稳定；研究 child/layered 的详细说明仅在原有显式 policy 下交付，repair
+没有这些扩展。全部说明原文纳入发布资产 digest，实际选择纳入 Job digest；Gateway/Worker
+拒绝未知 marker、角色/模式错配或副本不一致，无 marker 的历史 Job 不迁移。
+
 PA Stage 1/2 的 `bars.json` 在 Job 构建时删除 `volume/amount/volume_state`；完整价格帧只组合 OHLC 与
 确定性 indicator/geometry measurements。VPA 原始量价证据保留在独立角色目录中，防止 Brooks 主分析
 因工具读取绕过 VPA Shadow 边界。
@@ -141,6 +151,11 @@ DeepSeek client；`auto` 只在 Codex availability 故障时从 Stage 1 冷启�
 | 失败 | 可修复契约问题最多一次定向修复；仍不可信为 `invalid_model_output` |
 
 Gate 不通过时短路 Stage 2。Brooks Router 只读取已验证枚举和 pattern keys，不从自由文本或程序指标反推策略。
+
+Router 的知识选择覆盖主背景及全部真实 alternatives 各自的 cycle/direction，原主路径
+保留，复核模块稳定去重；manifest 标记 purpose 与来源 hypothesis IDs。`review` 只供竞争
+解释、风险及等待，不独立授予 Setup/反向交易或改变 Gate；Direct/Codex 都保留这些被选中
+的复核原文。旧无结构化 alternatives 调用保持原列表顺序，完整教材与 mandatory 不变。
 
 ## 5. PA Stage 2 Draft
 
@@ -190,6 +205,10 @@ Paper 或未来执行器只读取 effective execution semantics。TP2 是可选�
 | 失败 | 保留有效 PA，固定记录 `completed_with_warnings` 与 VPA 失败角色 |
 
 VPA 不是审批 Gate。它不能创建 Setup、翻转方向、修改 `cycle_position`/`gate_result`、订单价格或 `estimated_win_rate`。正式结果仍是 PA Stage 2。
+
+知识 selector 同时覆盖全部已声明假设的周期；有限证据选择收集支持及挑战引用中 catalog
+已经存在的窗口。缺失窗口不补造，事实目录/身份不改写。与 Runtime/Router 变更一起的
+本地验收、备份和未验证边界见[实施验收](../quality/v1_runtime_failure_paper_audit_20261012.md)末节。
 
 ## 9. 隔离 A/A/B/B 与 Joint
 

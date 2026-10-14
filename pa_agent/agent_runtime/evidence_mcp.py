@@ -499,6 +499,7 @@ class EvidenceMcpServer:
                             "knowledge_module_id": item["knowledge_module_id"],
                             "sha256": item["sha256"],
                             "load_order": item["load_order"],
+                            **{key: item[key] for key in ("purpose", "hypothesis_ids") if key in item},
                         }
                         for item in self._job.knowledge_manifest.get("modules", [])
                         if item.get("loading_policy") == "mandatory"

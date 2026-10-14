@@ -23,6 +23,7 @@ from pa_agent.ai.market_features import (
     inject_market_features_section,
 )
 from pa_agent.ai.pa_theory import render_pa_theory_rule_catalog
+from pa_agent.ai.router import route_strategy_knowledge
 from pa_agent.ai.pattern_routing import (
     STAGE1_DETECTED_PATTERNS_GUIDE,
     STAGE1_PATTERN_BRIEFS_BLOCK,
@@ -452,18 +453,12 @@ def stage1_prompt_txt_files() -> list[str]:
     ]
 
 
-def _directional_channel_files(direction: str) -> list[str]:
-    key = str(direction or "").strip().lower()
-    if key in _CHANNEL_FILE_GROUPS:
-        return list(_CHANNEL_FILE_GROUPS[key])
-    return []
-
-
 def stage2_user_task_txt_files(
     strategy_files: list[str] | None = None,
     *,
     direction: str = "",
     load_full_strategy_library: bool = False,
+    review_knowledge_ids: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Return .txt filenames loaded into the Stage 2 user turn only."""
     routed = [f for f in (strategy_files or []) if f]
@@ -489,7 +484,7 @@ def stage2_user_task_txt_files(
         core = [
             f
             for f in routed
-            if f not in skip
+            if f not in skip or f in review_knowledge_ids
         ]
         core.extend(STAGE2_BASE_PROMPT_TXT_FILES)
     return list(dict.fromkeys([*core]))
@@ -500,6 +495,7 @@ def stage2_prompt_txt_files(
     *,
     direction: str = "",
     load_full_strategy_library: bool = False,
+    review_knowledge_ids: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Return all .txt files relevant to Stage 2 (system common + user task), for UI/debug."""
     return [
@@ -509,6 +505,7 @@ def stage2_prompt_txt_files(
             strategy_files,
             direction=direction,
             load_full_strategy_library=load_full_strategy_library,
+            review_knowledge_ids=review_knowledge_ids,
         ),
     ]
 
@@ -1273,10 +1270,13 @@ class PromptAssembler:
 验证条件时可写 `not_applicable`。该字段是证据观察项，不是 Brooks Entry Attempt 的审批 Gate。
 当 `VPA_ANALYSIS_ENVELOPE.entry_attempt.applicable=false` 时，不存在可被 VPA 评价的当前入场尝试，
 必须写 `entry_timing_relation=insufficient_data`；仍可输出独立的背景观察和后续证据条件。
-数据可用时，
-至少给出一项真正的 Effort/Result、序列比较、Acceptance/Rejection 或
-Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并明确写
-`insufficient_data`。"""
+完整读取必读证据后，再判断是否存在可引用、有诊断价值的量价信息。
+数据可用不等于存在诊断性量价增量；存在时说明真正的 Effort/Result、序列比较、
+Acceptance/Rejection 或 Timing 增量，并评估相关反证，不能只复述 PA。
+没有诊断性增量时明确写“未发现诊断性增量”，允许 `observations=[]`，按实际证据
+选择 `neutral` 或 `insufficient_data`，不强凑观察或支持/挑战结论。
+未读证据或工具失败不能以“无增量”或中性报告掩盖，须遵守当前角色停止协议。
+已完整读取但证据不足时仍完整输出，并明确写 `insufficient_data`。"""
         )
         return [
             {"role": "system", "content": _VPA_EVIDENCE_ANALYST_SYSTEM},
@@ -1786,6 +1786,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
                     "不得输出会话总结、菜单式追问、Markdown 摘要或保存文件提示。"
                     "仅提交当前 Provider Contract 指定的 JSON；外层封套以 Host 输出模式为准。"
                 ),
+                "Router manifest 是知识选择集合；review 不独立授予 Setup，只复核竞争解释、风险与等待；primary_and_review 是共享用途。复核知识不授予反向下单权限，最终候选仍依冻结 primary 与既有 PA 执行契约，不改方向/Gate。",
                 build_decision_stance_guidance(normalize_stance(decision_stance)),
                 continuity,
                 self._render_transition_guidance(stage1_json),
@@ -1981,17 +1982,28 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
         )
         continuity_block = render_continuity_prompt_block(continuity_ctx)
         transition_block = self._render_transition_guidance(stage1_json)
+        selection = {
+            name: source for name, source in route_strategy_knowledge(stage1_json).items()
+            if name in strategy_files
+        }
         stage2_parts = [
             self._decision_tree_stage2(include_global=not omit_kline_block),
             stance_block,
             continuity_block,
             transition_block,
+            ("## 知识用途与权限\n\n复核知识不授予反向下单权限；primary/review 仅标明知识用途。"
+             "review 不独立授予 Setup，只复核竞争解释、风险与等待；primary_and_review 是共享用途。"
+             "最终候选依冻结 primary 与既有 PA 执行契约，保持 Stage 1 方向、Gate 与执行边界。\n"
+             + json.dumps(selection, ensure_ascii=False)) if selection else "",
             *(
                 self._load(name)
                 for name in stage2_user_task_txt_files(
                     strategy_files,
                     direction=str(stage1_json.get("direction", "") or ""),
                     load_full_strategy_library=self._load_full_strategy_library(),
+                    review_knowledge_ids=frozenset(
+                        name for name, source in selection.items() if "review" in source["purpose"]
+                    ),
                 )
             ),
         ]
@@ -2102,6 +2114,7 @@ Timing 信息增量，不能只复述 PA。无证据也必须完整输出，并�
     ) -> dict:
         """Subset of Stage 1 fields needed for Stage 2 (reduces prompt noise)."""
         keys = (
+            "market_hypotheses",
             "cycle_position",
             "alternative_cycle_position",
             "direction",
