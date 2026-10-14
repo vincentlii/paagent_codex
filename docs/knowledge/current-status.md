@@ -4,8 +4,8 @@ capability: paper-observation-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-14（VPS固定提交安装、离线验收及恢复运行）
-核验提交: VPS运行e9f40d1604b187556bbd15ac3b84c0440c89a68d
+最后核验: 2026-10-15（Demo代码及面板配置能力发布、保持Paper运行）
+核验提交: VPS运行558c25560e024f44f44f6e1c4df20a5a6772c06a
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -20,6 +20,23 @@ verification_scope:
 ---
 
 # 当前状态
+
+## 2026-10-15 Demo代码与面板参数已发布，账户尚未接通
+
+49文件提交558c255已推送私有main并固定发布VPS，原三服务active/running、零重启。
+先暂停41→42、清空Host/Codex任务与恢复阻塞并一致备份，离线安装后3库逻辑、14198个原文件、
+47项依赖保持。315安装成员LF源码一致、13项Runtime资源/POSIX审计及9项Linux隔离检查通过。
+本地Headless1856 passed/7 deselected；Linux没有全量pytest或真实交易所订单验收结论。
+
+恢复running generation43（control v5），gpt-6-luna/xhigh、Fast、三品种/并发3/aggressive
+和Run Once5保留；三品种均connected。面板status/trading/health=200，未认证status=401；
+两项配置supported且已生效500 USDT/3h，仅未来完成Demo切换的新任务使用，当前Paper不改。
+
+VPS尚无三份OKX模拟credential，Demo默认禁用、Worker inactive且无真实执行DB；当前仍是
+Paper运行。代码及设置上线不等于模拟账户已接通；接入还需安全配置凭据、只读probe和
+受控生命周期验收。备份pa-agent-20261014T174228Z、新旧wheel/源码及发布凭证保留。
+详情见[发布验收](../quality/okx_demo_execution_acceptance_20261015.md)末节；下方“未部署”
+是实施阶段历史状态，不再代表当前代码版本，但账户尚未接通的边界继续有效。
 
 ## 2026-10-15 Demo面板金额/挂单时效（本地，未部署）
 

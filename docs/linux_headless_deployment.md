@@ -466,12 +466,12 @@ manifest；旧数据、冻结回执与登录凭据不得随版本替换删除。
   收盘边界冻结，纽约时区包含 DST；官方 2026-09-15 规则之前保持历史时段未知，
   未接权威假日日历时不猜测公共假日。不据该背景增加 Gate 或重标旧快照。
 - VPA 不创建 Setup、不翻转 PA 方向、不修改主观胜率；其增量价值需由配对研究验证。
-- VPS当前仍为 paper execution；本地新增OKX Demo不等于已接通账户。接入真实交易前必须另做私有 API、幂等订单、持仓同步、
+- VPS当前仍为 paper execution；OKX Demo代码已发布，默认禁用，不等于已接通账户。接入真实交易前必须另做私有 API、幂等订单、持仓同步、
   kill switch、时钟偏差、精度和异常恢复审计。
 - ChatGPT auth、rate limit、模型可用性和 Codex CLI flag 仍须在目标 VPS 实测；本地静态检查不等于
   真实账号或长期运行已验证。
 
-## 9. 可选 OKX Demo（本地实现，VPS待验收）
+## 9. 可选 OKX Demo（代码已发布，账户接入待验收）
 
 先读[接入验收](quality/okx_demo_execution_acceptance_20261015.md)。安装器仅创建独立用户、
 目录及服务，不自动启动Worker或启用订单；默认配置保留Paper。
@@ -531,3 +531,10 @@ Runtime control v1–v4读取时默认迁入500/3h且保留Fast，首次控制�
 回退须保留支持新Intent/活动单的保护和对账进程，并恢复匹配控制协议；不得仅恢复旧控制文件
 来改变已有订单或绕过代次校验。核验面板“Host已生效”和各订单自身到期时间，不能以已保存
 代替已生效。无需数据库schema迁移或历史回填。
+
+
+2026-10-15发布已验证558c255的安装、315成员LF字节一致、Runtime权限与隔离service namespace。
+目标VPS无`build`前端，可使用已安装的`setuptools.build_meta.build_wheel`离线构建，
+不为发布向生产环境新增dev依赖；构建后逐字节核对安装包与固定源码，再验证依赖不变。
+Demo默认禁用/无credential，原三服务已恢复；账户/模拟下单仍待单独验收。具体证据见
+[Demo发布验收](quality/okx_demo_execution_acceptance_20261015.md)末节。

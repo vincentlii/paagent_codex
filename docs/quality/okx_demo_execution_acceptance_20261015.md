@@ -3,8 +3,8 @@
 ## 范围与当前结论
 
 用户已批准2026-10-15设计及实施计划，主 Agent 实施、同一名只读协作者审阅。代码只提供
-OKX USDT永续模拟执行，不含实盘选项。本地实现与离线验收已完成；最终测试结果见文末。
-未访问网页API详情、凭据、私有账户或VPS；未调用模型、未生成交易所模拟订单，未commit。
+OKX USDT永续模拟执行，不含实盘选项。本地实现与离线验收已完成，代码558c255已固定发布VPS；发布证据见文末。
+发布保持原Paper运行，Demo默认禁用；未读取模拟盘凭据或访问交易所私有账户、未额外调用模型或生成模拟订单。
 本地测试与部署资产不等于已接通模拟账户或已验证交易所保护能力。
 
 权威设计：[设计](../superpowers/specs/2026-10-15-okx-demo-execution-design.md)、
@@ -147,3 +147,48 @@ Runtime 13份资源及digest保持
 `f2957d56a69acef229425b46c93df4531a9ea177c4bdb93e57042492193643f3`。
 四份既有ICT文件与备份逐字节一致；本轮临时pytest和安装目录已清理，保留有用验证证据。
 尚未commit/部署，VPS仍为先前版本；以上不代表模拟账户已连接或真实撤单时延已验收。
+
+
+## 2026-10-15 固定提交发布VPS
+
+用户授权commit及VPS发布。49个代码/文档/测试文件提交为
+`558c25560e024f44f44f6e1c4df20a5a6772c06a`并推送私有main；4份既有ICT文件仍留在本地，
+与此前备份字节相同，未纳入提交。沿用用户此前指定的SSH密钥，仅操作PA Agent，
+实际VPS登录账户为ubuntu（root登录被拒，未改SSH或授权配置）。唯一审阅者再次通过
+PA/VPA/量化架构发布方案，发布定义为代码能力及面板设置上线，不是已接通OKX。
+
+发布前VPS为e9f40d1、checkout干净、原三服务正常、Demo Worker inactive。控制running
+41→paused 42，确认Host/Codex队列、inbox及恢复阻塞为空后停三服务。备份
+`/var/backups/pa-agent/pa-agent-20261014T174228Z`共14191文件，manifest及3库quick_check通过。
+另存原控制、3库逻辑摘要、14198个原记录/配置/认证/冻结交付文件摘要、47项依赖、旧源码及unit。
+
+增量Git bundle经摘要核验后快进固定558c255。VPS无build前端模块，首次构建明确报缺失后，
+改用pyproject已指定且已安装的setuptools PEP517后端，离线构建新旧wheel，没有新增依赖或改产品代码。
+新wheel SHA256：`15d0855486393c475e0132aacef518f8cf3e3721f7c0db180f35c98f9dfa20b0`。
+315个安装成员与固定源码LF原文逐字节相同；13份Runtime资源digest仍为
+`f2957d56a69acef229425b46c93df4531a9ea177c4bdb93e57042492193643f3`。
+安装前后3库逻辑、14198个原文件及47项非项目依赖完全一致。
+
+只执行安装器新增的用户/组/目录/unit步骤，不执行conda环境更新或覆盖原配置。
+新增Demo配置原本不存在，安装默认enabled=false、entry_enabled=false、target=paper；
+VPS三份OKX credential源文件均不存在。无真实执行DB、不启动Demo Worker，不写交易所配置。
+真实Unix用户验证Host/Worker双向spool权限和0640原子文件、Codex/Dashboard不可读Demo
+state/config/输入；原Runtime POSIX审计通过。systemd-analyze验证新unit，使用同等backup
+namespace完成隔离DB锁/WAL与备份检查；安装包旧Intent摘要、可配置金额、隔离HTTP的202/409
+及pending验证通过，合计9项Linux隔离检查。所有隔离状态/哨兵文件已清理。
+
+原Host/Codex/Dashboard重新启动后先验证paused/idle，再恢复running generation43，控制写入
+升级v5。原Profile generation4、gpt-6-luna/xhigh、Fast、aggressive、三品种、并发3及Run Once5
+保持。三服务active/running、Result=success、NRestarts=0、ExecMainStatus=0；XAU/BTC/ETH
+均connected，恢复阻塞为空。面板health/status/trading=200、未认证status=401；两项设置
+supported=true/pending=false、有效500 USDT/3h，交易页HTML含两输入，原Paper schema1仍为主。
+新设置不会应用到当前Paper，只有后续显式完成Demo切换的新任务才使用。
+
+Linux生产环境未安装pytest，证据是安装/权限/namespace/隔离协议及实际服务验收，
+不能替代本地1856项Headless回归或真实模拟订单生命周期验收。没有额外Run Once或模型调用；
+恢复自然调度后后续分析仍按原计划运行。Demo待安全配置凭据、只读预检及单独受控订单验收，
+不能把代码发布冒充模拟盘已接通，也不把MockTransport当成交易所支持证据。
+
+新旧wheel、源码归档、原control及发布凭证保留在
+`/var/backups/pa-agent/release-558c255`；临时源码staging及上传bundle已清理，VPS checkout干净。
+源码运行身份固定558c255，后续文档收据提交与该运行身份分别记录。
