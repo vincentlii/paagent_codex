@@ -174,6 +174,41 @@ def test_unknown_submit_survives_restart_without_second_post(tmp_path):
     restored.close()
 
 
+@pytest.mark.parametrize("algo_identity", ["correct", "wrong", "empty"])
+def test_protection_identity_uses_algo_field_even_when_other_field_is_valid(
+    tmp_path, algo_identity
+):
+    worker, exchange, store, _ = setup(tmp_path)
+    original = exchange.get_algo
+
+    def real_response_shape(inst, cid):
+        response = original(inst, cid)
+        if response:
+            response = dict(response, clOrdId="" if algo_identity == "correct" else cid)
+            if algo_identity != "correct":
+                response["algoClOrdId"] = "" if algo_identity == "empty" else "pad" + "f" * 29
+        return response
+
+    exchange.get_algo = real_response_shape
+    try:
+        worker.tick()
+        entry = exchange.calls[0][1]
+        exchange.orders[entry.client_id].update(state="filled", accFillSz="1")
+        exchange.position = "1"
+        worker.tick()
+        if algo_identity != "correct":
+            assert store.row(intent().content_digest)["protection"] == "protection_failed"
+            assert any(call[0] == "emergency" for call in exchange.calls)
+        else:
+            assert store.row(intent().content_digest)["protection"] == "protected"
+            assert not any(call[0] == "emergency" for call in exchange.calls)
+            worker.tick()
+            assert store.row(intent().content_digest)["protection"] == "protected"
+            assert len([call for call in exchange.calls if call[0] == "oco"]) == 1
+    finally:
+        worker.close()
+
+
 def test_protection_failure_does_not_claim_safe_exit(tmp_path):
     worker, exchange, store, _ = setup(tmp_path)
     worker.tick()

@@ -192,3 +192,37 @@ Linux生产环境未安装pytest，证据是安装/权限/namespace/隔离协议
 新旧wheel、源码归档、原control及发布凭证保留在
 `/var/backups/pa-agent/release-558c255`；临时源码staging及上传bundle已清理，VPS checkout干净。
 源码运行身份固定558c255，后续文档收据提交与该运行身份分别记录。
+
+
+## 2026-10-15 模拟账户预检与真实 OCO 回报修复
+
+用户要求启动模拟盘并自行完成OKX凭据查看验证，随后通过本地一次性输入页提供API
+Passphrase。Key/Secret从可见字段按标签读取并使用VPS一次性RSA公钥加密，经SSH解密
+至root0600三份systemd credential源文件；没有明文聊天/本地凭据文件或认证日志。
+一次性导入私钥已移除。API权限未扩大，不改实盘或共享给Codex/Dashboard。
+
+第一次严格GET预检因账户持仓模式拒绝；脱敏诊断确认API身份/余额/所有覆盖正常、
+账户为Futures mode(acctLv2)，但posMode=long_short_mode，BTC逐仓long/short均3倍。
+账户无挂单/条件单/持仓。用户明确授权后切为net_mode，并重新核验BTC net逐仓3倍、
+完整覆盖及空账户，未根据猜测改Schema或放宽预检。
+
+首次受控canary在专用模拟账户使用BTC最小0.01张、约8.16 USDT独立测试，先落盘请求与
+永久客户ID，再POST；普通限价/撤单终态、主动限价成交和closeFraction1 OCO创建及
+按algoClOrdId读取均通过。真实Algo回报同时含clOrdId=''和正确algoClOrdId；旧
+_leg_query优先使用clOrdId，会误报身份不符并触发紧急平仓，属于确定的API字段选择缺陷。
+canary停止并撤保护/只减仓退出，最终0普通单/0条件单/0仓位、2 fills/2 bills已对账。
+失败结果保留在VPS独立canary.json，不写生产分析/Paper，不用新测试覆盖该失败。
+
+修复仅按leg类型选择身份字段：OCO核对algoClOrdId，普通entry/emergency核对clOrdId。
+保留旧缺失None兼容，空/错误目标字段仍拒绝，不能让另一个字段救活错误身份。
+公开tick回归先复现合法真实形态protection_failed，再验证修复为protected且无emergency；
+额外错误/空Algo ID+正确普通CID仍失败。PA/VPA理论/价格/方向/概率、原stop/TP1、杠杆、
+冻结设置与Paper不变；无DB迁移或历史回填。独立审阅与最终回归/发布/激活结果续记于后文。
+
+
+该身份修复全量Headless not-live回归1859 passed / 7 deselected，106.67s；关键静态和diff通过，
+同一独立审阅者的Worker/客户端/整链37项复核通过。第二次独立真实canary使用新客户ID及
+canary-v2.json，保留第一次失败；BTC最小0.01张约8.16 USDT，普通撤单确认、限价成交、
+原设止损/TP1 closeFraction1 OCO、触发后1个退出子订单终态与仓位归零通过。最终0普通单/
+0条件单/0仓位，共4 fills/4 bills（含前次），未遇部分成交，不声称该路径已实测。
+两次helper验收不伪装成正式分析/生产Worker完成的自然订单，正式首单仍需独立观察。

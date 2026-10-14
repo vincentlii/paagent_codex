@@ -15,6 +15,10 @@ Demo 账本、退出子订单、消费回执独立；未知请求不补发，旧
 模拟盘主视图不可用时保持未知，不回退 Paper。新库备份必须持有 Worker 排他锁，
 运行中拒绝备份；回退不允许旧代码接管仍有活动 Demo 订单的服务。新Worker可读旧Intent，
 旧Worker不能读新增policy字段，Host/Worker必须整包协调停启，不能混版本运行。
+OKX Algo实测回报可同时含空clOrdId和正确algoClOrdId：OCO身份仅核对algoClOrdId，
+普通entry/emergency仅核对clOrdId；禁止跨字段fallback，避免误报后紧急平仓或错误身份被掩盖。
+真实canary失败与后续验收分开保存，不能以重跑覆盖；详见上述Demo验收报告末节。
+
 
 本文件定义项目长期使用的领域语言与责任边界。修改分析链路前，同时阅读
 `docs/wyckoff_vpa_integration.md` 与 `docs/architecture/ADR-0001` 至 `ADR-0024`。

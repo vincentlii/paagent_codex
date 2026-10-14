@@ -162,7 +162,8 @@ class DemoWorker:
         if result:
             if result.get("instId") != intent.inst_id:
                 raise DemoUnavailable("order_identity_mismatch")
-            if result.get("clOrdId", result.get("algoClOrdId")) not in (None, leg["client_id"]):
+            identity_field = "algoClOrdId" if leg["leg"] == "oco" else "clOrdId"
+            if result.get(identity_field) not in (None, leg["client_id"]):
                 raise DemoUnavailable("order_client_identity_mismatch")
             self.store.update_leg(leg["client_id"], result.get("state", "unknown"), result)
             if leg["leg"] == "oco":
