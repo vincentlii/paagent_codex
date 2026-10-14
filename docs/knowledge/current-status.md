@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 最后核验: 2026-10-14（本地候选；VPS发布证据仍为2026-10-13）
-核验提交: 本地工作区未提交；VPS运行59605db351c143bced2db65756ffa5a780c0ab98（后续发布证据提交仅更新文档）
+核验提交: 本地候选e9f40d1604b187556bbd15ac3b84c0440c89a68d；VPS最后已知运行59605db351c143bced2db65756ffa5a780c0ab98（本轮未连通复核）
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -20,6 +20,17 @@ verification_scope:
 ---
 
 # 当前状态
+
+## 2026-10-14 已提交/推送，VPS发布等待SSH授权
+
+用户授权发布后，本轮38个文件提交为e9f40d1并推送私有main；四个既有ICT文件保留未提交。
+最新Headless非live回归1774 passed / 7 deselected，固定提交wheel的306成员字节核验、13项
+Runtime资源/无Qt smoke及关键静态检查通过；配对会话说明已校正，token总数不变。
+
+专用SSH密钥加密且没有可用的非交互解锁；另一个既有密钥的使用被自动审批拒绝，要求明确
+授权其来源，已提问等待答复。VPS未暂停/停服/安装或恢复，当前运行提交尚不能重新确认；
+不把源码推送或本地wheel验收当作发布成功。正式交付包、备份及原始研究证据保留，临时
+密钥副本和本轮构建/测试目录已清理。具体边界见[发布准备](../quality/v1_runtime_failure_paper_audit_20261012.md)末节。
 
 ## 2026-10-14 同一旧快照真实配对（一次工程观察，未发布）
 

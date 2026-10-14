@@ -776,3 +776,32 @@ Stage1置信度66→64属于主观未校准判断，不作为质量评分或效�
 相同，支持上述Warning分类及杂字来自原Draft的判断。实际VPA窗口引用由旧K8换为新K10，
 均来自各自Stage1的支持引用，不能归因于新增challenging引用覆盖。
 此次复核是基于产物的专业/事实核对，不是独立盲评分、重复模型试验或统计认证。
+
+## 2026-10-14 授权提交与发布准备（SSH授权待确认，VPS未改）
+
+用户明确要求最近优化commit并发布。运行候选已提交为
+`e9f40d1604b187556bbd15ac3b84c0440c89a68d`并推送私有`vincentlii/paagent_codex`的main，
+共38文件；四个既有ICT文件仍在工作区，未纳入。修正了上述配对会话说明：Stage2采用本臂
+PA受控续接并按增量计用量，不是三个fresh session；原指标数值没有改变。
+
+发布前重新执行Headless非live回归：1774 passed / 7 deselected，118.87s，critical Ruff及diff
+检查通过。唯一只读协作者复核未发现代码发布阻断；仍需VPS排空、一致备份及Linux安装验收。
+从固定提交Git archive构建wheel并隔离安装，306个包内代码/知识成员与提交逐字节相同，
+13项Runtime审计通过、Headless无Qt，asset仍为f2957d56...。既有GUI dark.qss不在当前wheel
+打包规则内，不属于本轮新增遗漏或Headless资源缺失，GUI未验。依赖/pyproject/lock未变。
+
+固定源码archive SHA256为
+`1521a4e30e9084a5e2c4d52304d87a22598043c292c82342f02ad676574e96bd`；本地wheel SHA256为
+`edcf6ff1a97a43cb736b6044a5eb389ea025bcd961a88916e12bd232cf55e0cf`。
+以历史部署59605db为前提的增量bundle verify通过。它只是已准备的交付包，尚未读取或更新
+VPS checkout、安装环境或运行身份；服务器当前提交不能用历史记录冒充刚刚核验。
+
+SSH预检遇到两份同名专用密钥的公钥不同、旧文件Windows访问权限及加密口令限制；
+原密钥未修改，暂存副本已经删除，没有输出私钥或口令。尝试使用另一个既有、名称属于
+其他项目的密钥时被自动审批拒绝，理由是用户未明确授权该凭据来源；没有执行该SSH命令。
+已向用户请求使用指定既有密钥、仅发布PA Agent的明确授权，或提供专用密钥解锁方式。
+
+截至本节VPS没有暂停、停止、备份、覆盖安装或恢复调度操作，没有额外模型调用。
+当前提交/推送完成，VPS发布待连接授权；不报告已上线。固定archive、bundle、wheel及本地
+验收收据保存在`docs/changelog/releases/20261014-runtime-knowledge/`；具名测试、构建/安装
+暂存及临时SSH副本已清理，正式源码备份和原始配对研究证据保留。
