@@ -10,7 +10,7 @@ from pa_agent.execution.demo_contracts import DemoIntent, DemoOrderRequest
 
 NUMERIC_FIELDS = frozenset(
     "equity available_balance unrealized_pnl margin_used planned_stop_loss reserved_margin "
-    "entry stop tp1 quantity filled average_fill_price notional target_notional pos upl imr margin lever fillPx fillSz fee net_pnl fees funding external_flows pnl".split()
+    "entry stop tp1 quantity filled exited_quantity remaining_quantity average_fill_price notional target_notional pos upl imr margin lever fillPx fillSz fee net_pnl fees funding external_flows pnl".split()
 )
 
 
@@ -100,6 +100,8 @@ def safe_demo_projection(value):
             "tp1",
             "quantity",
             "filled",
+            "exited_quantity",
+            "remaining_quantity",
             "average_fill_price",
             "notional",
             "target_notional",
@@ -169,6 +171,8 @@ def build_demo_projection(store, snapshot, *, now_ms):
             request = DemoOrderRequest.model_validate_json(row["request"])
             entry = next((l for l in store.legs(i.content_digest) if l["leg"] == "entry"), None)
             average_fill = json.loads(entry["response"]).get("avgPx") if entry else None
+            independent = i.schema_version == "okx_demo_intent_v2"
+            exposure = store.plan_exposure(i.content_digest) if independent else None
             orders.append(
                 dict(
                     task_id=i.task_id,
@@ -180,6 +184,12 @@ def build_demo_projection(store, snapshot, *, now_ms):
                     tp1=str(i.tp1),
                     quantity=str(request.sz),
                     filled=row["filled"],
+                    exited_quantity=(
+                        str(exposure.exited) if exposure and not exposure.uncertain else None
+                    ),
+                    remaining_quantity=(
+                        str(exposure.remaining) if exposure and not exposure.uncertain else None
+                    ),
                     average_fill_price=average_fill or None,
                     notional=str(request.notional),
                     target_notional=(
@@ -204,7 +214,24 @@ def build_demo_projection(store, snapshot, *, now_ms):
                 )
             )
             if row["trade_state"] == "active":
-                stop_risk += request.notional * abs(request.px - request.stop) / request.px
+                quantity = request.sz
+                if exposure is not None:
+                    if exposure.uncertain:
+                        stop_risk = None
+                        continue
+                    quantity = exposure.remaining + (
+                        max(Decimal(0), request.sz - exposure.entered)
+                        if row["entry_state"] not in {"filled", "canceled", "rejected"}
+                        else Decimal(0)
+                    )
+                if stop_risk is not None:
+                    stop_risk += (
+                        request.notional
+                        * abs(request.px - request.stop)
+                        / request.px
+                        * quantity
+                        / request.sz
+                    )
     periods = {}
     for key, days in (("all", None), ("7d", 7), ("30d", 30)):
         start = max(
@@ -281,7 +308,7 @@ def build_demo_projection(store, snapshot, *, now_ms):
                 ),
                 "unrealized_pnl": position_sum("upl"),
                 "margin_used": position_sum("margin"),
-                "planned_stop_loss": str(stop_risk),
+                "planned_stop_loss": str(stop_risk) if stop_risk is not None else None,
                 "reserved_margin": str(store.reserved_margin()),
             },
             orders=orders,
@@ -310,12 +337,26 @@ def compose_trading_projection(paper, demo, *, selected_backend, now_ms):
     ):
         clean["state"] = "stale"
     legacy = safe_trading_projection(dict(paper)) if paper.get("schema_version") == 1 else {}
+    versions = {"paper_latency_v4": legacy, **legacy.get("execution_versions", {})}
+    for version in versions.values():
+        version["history_frozen"] = True
+        account = version.get("account", {})
+        for key in ("open_risk", "pending_risk", "unrealized_pnl", "marks_known"):
+            account[key] = None
+        for order in version.get("orders", []):
+            if order.get("status") in {"open", "pending"}:
+                order.update(
+                    unrealized_pnl=None,
+                    mark_close=None,
+                    mark_closed_at_ms=None,
+                    mark_status="history_frozen",
+                )
     return {
         "schema_version": 2,
         "selected_backend": "okx_demo",
         "generated_at_ms": now_ms,
         "demo": clean,
-        "paper_versions": {"paper_latency_v4": legacy, **legacy.get("execution_versions", {})},
+        "paper_versions": versions,
         "analysis": {
             "source": "host_records",
             "available": legacy.get("analysis_available"),

@@ -19,7 +19,7 @@ def test_host_binding_is_optional_and_does_not_change_task_identity():
         )
 
 
-def test_demo_dispatch_skips_old_tasks_and_still_observes_old_paper(tmp_path):
+def test_demo_dispatch_skips_old_tasks_and_never_observes_old_paper(tmp_path):
     from pa_agent.execution.demo_contracts import DemoConfig, DemoPaths
     from pa_agent.execution.demo_dispatch import OfficialExecutionDispatcher
     from pa_agent.execution.demo_spool import DemoSpool
@@ -44,7 +44,9 @@ def test_demo_dispatch_skips_old_tasks_and_still_observes_old_paper(tmp_path):
     result = dispatcher.submit_official(object(), object(), task_id="old")
     assert result.status == "skipped_cutover"
     dispatcher.observe_official(None)
-    assert paper.calls == ["observe"]
+    assert paper.calls == []
+    assert dispatcher.expire_pending() == 0
+    assert dispatcher.active_market_keys() == set()
 
 
 def test_host_codec_preserves_binding_and_legacy_bytes_without_changing_market_identity(tmp_path):

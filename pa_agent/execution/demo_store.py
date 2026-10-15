@@ -16,6 +16,7 @@ from pa_agent.execution.demo_contracts import (
     digest,
     client_id,
 )
+from pa_agent.execution.demo_exposure import plan_exposure
 
 ENTRY_TERMINAL = frozenset({"filled", "canceled", "rejected"})
 LEG_TERMINAL = frozenset({"effective", "canceled", "order_failed", "rejected", "filled"})
@@ -103,7 +104,8 @@ class DemoStore:
                 return DemoReceipt.model_validate_json(old["receipt"])
             key = canonical([intent.source_identity, intent.inst_id, intent.timeframe])
             row = db.execute("SELECT bar_ms FROM watermarks WHERE key=?", (key,)).fetchone()
-            stale = row is not None and intent.source_bar_ms <= row[0]
+            legacy = intent.schema_version == "okx_demo_intent_v1"
+            stale = legacy and row is not None and intent.source_bar_ms <= row[0]
             receipt = DemoReceipt(
                 intent_digest=intent.content_digest,
                 task_id=intent.task_id,
@@ -123,7 +125,7 @@ class DemoStore:
                     "rejected" if stale else "active",
                 ),
             )
-            if not stale:
+            if not stale and legacy:
                 db.execute(
                     "INSERT INTO watermarks VALUES(?,?) ON CONFLICT(key) DO UPDATE SET bar_ms=excluded.bar_ms",
                     (key, intent.source_bar_ms),
@@ -172,10 +174,23 @@ class DemoStore:
                 "SELECT generation,status FROM legs WHERE intent_id=? AND leg=? ORDER BY generation DESC LIMIT 1",
                 (intent_id, leg),
             ).fetchone()
+            independent = intent.schema_version == "okx_demo_intent_v2"
             if generation > 1 and (
-                previous is None or previous[0] != generation - 1 or previous[1] not in LEG_TERMINAL
+                previous is None
+                or previous[0] != generation - 1
+                or (not independent and previous[1] not in LEG_TERMINAL)
             ):
                 raise ValueError("previous_leg_not_terminal")
+            if independent and leg != "entry":
+                exposure = self._exposure(db, intent_id)
+                quantity = Decimal(params["quantity"])
+                if (
+                    not quantity.is_finite()
+                    or quantity <= 0
+                    or exposure.inconsistent
+                    or quantity > exposure.remaining - exposure.reserved_exit
+                ):
+                    raise ValueError("exit_budget_unavailable")
             db.execute(
                 "INSERT INTO legs(client_id,intent_id,leg,generation,params) VALUES(?,?,?,?,?)",
                 (cid, intent_id, leg, generation, canonical(params)),
@@ -191,6 +206,23 @@ class DemoStore:
                 )
             ]
 
+    @staticmethod
+    def _exposure(db, intent_id):
+        legs = [dict(r) for r in db.execute("SELECT * FROM legs WHERE intent_id=?", (intent_id,))]
+        children = [
+            dict(r)
+            for r in db.execute(
+                "SELECT t.* FROM triggered_orders t JOIN legs l ON l.client_id=t.parent_client_id WHERE l.intent_id=?",
+                (intent_id,),
+            )
+        ]
+        entry = next((l for l in legs if l["leg"] == "entry"), None)
+        return plan_exposure(entry, legs, children)
+
+    def plan_exposure(self, intent_id):
+        with self.connect() as db:
+            return self._exposure(db, intent_id)
+
     def update_leg(self, cid, status, response=None):
         with self.connect() as db:
             previous = db.execute(
@@ -199,11 +231,21 @@ class DemoStore:
             if previous and previous["status"] in LEG_TERMINAL and status not in LEG_TERMINAL:
                 return
             body = json.loads(previous["response"]) if previous else {}
-            body.update(response or {})
+            body = self._merge_observation(body, response or {})
             db.execute(
                 "UPDATE legs SET status=?,response=? WHERE client_id=?",
                 (status, canonical(body), cid),
             )
+
+    @staticmethod
+    def _merge_observation(old, new):
+        body = old | new
+        if "accFillSz" in old and "accFillSz" in new:
+            a, b = Decimal(old["accFillSz"]), Decimal(new["accFillSz"])
+            if not a.is_finite() or not b.is_finite() or min(a, b) < 0:
+                raise ValueError("invalid_fill")
+            body["accFillSz"] = str(max(a, b))
+        return body
 
     def register_triggered(self, parent_client_id, inst_id, order_ids):
         with self.connect() as db:
@@ -227,7 +269,7 @@ class DemoStore:
     def observe_triggered(self, parent_client_id, order_id, response):
         with self.connect() as db:
             old = db.execute(
-                "SELECT state FROM triggered_orders WHERE parent_client_id=? AND order_id=?",
+                "SELECT state,body FROM triggered_orders WHERE parent_client_id=? AND order_id=?",
                 (parent_client_id, order_id),
             ).fetchone()
             state = str(response.get("state", "unknown"))
@@ -235,7 +277,12 @@ class DemoStore:
                 return
             db.execute(
                 "UPDATE triggered_orders SET state=?,body=? WHERE parent_client_id=? AND order_id=?",
-                (state, canonical(response), parent_client_id, order_id),
+                (
+                    state,
+                    canonical(self._merge_observation(json.loads(old[1]) if old else {}, response)),
+                    parent_client_id,
+                    order_id,
+                ),
             )
 
     def row(self, intent_id):
@@ -291,9 +338,13 @@ class DemoStore:
                 (intent_id, kind, canonical(payload), observed_at_ms),
             )
 
-    def apply_snapshot(self, snapshot):
+    def apply_snapshot(self, snapshot, *, started_at_ms=None):
         self.pin_account(snapshot.account_key)
         with self.connect() as db:
+            db.execute(
+                "INSERT INTO metadata VALUES('snapshot_started_at_ms',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(started_at_ms if started_at_ms is not None else snapshot.observed_at_ms),),
+            )
             db.execute(
                 "INSERT OR IGNORE INTO metadata VALUES('ledger_start_ms',?)",
                 (str(snapshot.observed_at_ms),),
@@ -336,6 +387,11 @@ class DemoStore:
 
     def unreflected_margin(self, snapshot):
         total = Decimal(0)
+        with self.connect() as db:
+            start = db.execute(
+                "SELECT value FROM metadata WHERE key='snapshot_started_at_ms'"
+            ).fetchone()
+        snapshot_started = int(start[0]) if start else snapshot.observed_at_ms
         for intent in self.pending_intents():
             row = self.row(intent.content_digest)
             if row["request"]:
@@ -343,6 +399,20 @@ class DemoStore:
                 # Only this balance snapshot can prove exchange-side reservation;
                 # a later GET acknowledging a live order does not prove availBal saw it.
                 reflected = any(o.get("clOrdId") == request.client_id for o in snapshot.orders)
+                if not reflected and intent.schema_version == "okx_demo_intent_v2":
+                    entry = next(
+                        (l for l in self.legs(intent.content_digest) if l["leg"] == "entry"), None
+                    )
+                    observed = json.loads(entry["response"]) if entry else {}
+                    fill_time = int(observed.get("_fill_observed_at_ms", 0))
+                    if fill_time and snapshot_started > fill_time:
+                        if row["entry_state"] not in ENTRY_TERMINAL:
+                            total += request.margin * max(
+                                Decimal(0), 1 - Decimal(row["filled"]) / request.sz
+                            )
+                    elif row["entry_state"] not in ENTRY_TERMINAL or Decimal(row["filled"]) > 0:
+                        total += request.margin
+                    continue
                 if not reflected and row["entry_state"] not in ENTRY_TERMINAL:
                     position = next(
                         (p for p in snapshot.positions if p.get("instId") == intent.inst_id), {}

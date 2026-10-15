@@ -59,6 +59,9 @@ class DemoWorker:
         self.lock = WorkerLock(paths.state_db.parent / "worker.lock")
         self.snapshot = None
         self.error = "not_reconciled"
+        from pa_agent.execution.demo_independent import IndependentPlanManager
+
+        self.independent = IndependentPlanManager(self)
 
     def _control_ready(self):
         try:
@@ -73,11 +76,12 @@ class DemoWorker:
             return False
 
     def reconcile(self):
+        started_at_ms = self.now_ms()
         bill_cursor, fill_cursors = self.store.sync_cursors()
         snapshot = self.client.snapshot(since_bill_id=bill_cursor, since_fill_ids=fill_cursors)
         if not self.config.account_key or snapshot.account_key != self.config.account_key:
             raise DemoUnavailable("account_identity_mismatch")
-        self.store.apply_snapshot(snapshot)
+        self.store.apply_snapshot(snapshot, started_at_ms=started_at_ms)
         self.snapshot = snapshot
         return snapshot
 
@@ -166,6 +170,10 @@ class DemoWorker:
             identity_field = "algoClOrdId" if leg["leg"] == "oco" else "clOrdId"
             if result.get(identity_field) not in (None, leg["client_id"]):
                 raise DemoUnavailable("order_client_identity_mismatch")
+            if intent.schema_version == "okx_demo_intent_v2" and leg["leg"] == "entry":
+                previous = json.loads(leg.get("response", "{}"))
+                if Decimal(result.get("accFillSz", "0")) > Decimal(previous.get("accFillSz", "0")):
+                    result = result | {"_fill_observed_at_ms": self.now_ms()}
             self.store.update_leg(leg["client_id"], result.get("state", "unknown"), result)
             if leg["leg"] == "oco":
                 ids = json.loads(result.get("child_order_ids", "[]"))
@@ -265,7 +273,11 @@ class DemoWorker:
 
     def _emergency(self, intent, request, quantity):
         legs = [l for l in self.store.legs(intent.content_digest) if l["leg"] == "emergency"]
-        if legs and legs[-1]["status"] not in LEG_TERMINAL:
+        if (
+            intent.schema_version == "okx_demo_intent_v1"
+            and legs
+            and legs[-1]["status"] not in LEG_TERMINAL
+        ):
             self._leg_query(intent, legs[-1])
             return  # Unknown submit is never resent.
         generation = max((l["generation"] for l in legs), default=0) + 1
@@ -421,6 +433,14 @@ class DemoWorker:
         row = self.store.row(intent.content_digest)
         if row["request"]:
             return
+        if intent.inst_id in self.config.independent_accepted_symbols or any(
+            i.inst_id == intent.inst_id
+            and i.schema_version == "okx_demo_intent_v2"
+            and self.store.row(i.content_digest)["request"]
+            for i in self.store.pending_intents()
+        ):
+            self._finish(intent, "legacy_intent_not_accepted")
+            return
         if not self.store.is_latest(intent):
             self._finish(intent, "superseded_before_submit")
             return
@@ -463,6 +483,9 @@ class DemoWorker:
         if intent.inst_id not in self.config.accepted_symbols:
             self._finish(intent, "instrument_not_live_accepted")
             return
+        self._submit_limit(intent, snapshot)
+
+    def _submit_limit(self, intent, snapshot):
         if Decimal(snapshot.leverage.get(intent.inst_id, "0")) != self.config.leverage:
             self._finish(intent, "leverage_mismatch")
             return
@@ -525,12 +548,22 @@ class DemoWorker:
         self.error = ""
         try:
             snapshot = self.reconcile()
+            # Gather all per-plan fills before comparing them with a shared net position.
             for intent in self.store.pending_intents():
-                self._manage(intent, snapshot)
+                if intent.schema_version == "okx_demo_intent_v2":
+                    self.independent.observe(intent)
+            for intent in self.store.pending_intents():
+                if intent.schema_version == "okx_demo_intent_v2":
+                    self.independent.manage(intent, snapshot)
+                else:
+                    self._manage(intent, snapshot)
             for intent in self.spool.pending():
                 self.spool.ack(self._accept(intent, snapshot))
             for intent in self.store.pending_intents():
-                self._start(intent, snapshot)
+                if intent.schema_version == "okx_demo_intent_v2":
+                    self.independent.start(intent, snapshot)
+                else:
+                    self._start(intent, snapshot)
             self.error = self.error or self._account_block(snapshot)
         except (DemoUnavailable, DemoRequestUnknown, DemoRequestRejected) as exc:
             self.error = str(exc)
@@ -568,7 +601,9 @@ def _backup_locked(paths, directory: Path, *, now_ms: int):
         raise ValueError("demo_database_missing")
     destination = Path(directory) / f"demo-{now_ms}"
     destination.mkdir(parents=True, exist_ok=False, mode=0o700)
-    with closing(sqlite3.connect(paths.state_db.resolve().as_uri() + "?mode=ro", uri=True)) as source:
+    with closing(
+        sqlite3.connect(paths.state_db.resolve().as_uri() + "?mode=ro", uri=True)
+    ) as source:
         if source.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             raise ValueError("demo_database_corrupt")
         with closing(sqlite3.connect(destination / "execution.sqlite3")) as target:

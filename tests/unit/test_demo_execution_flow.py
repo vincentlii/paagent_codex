@@ -36,6 +36,7 @@ def config():
         cutover_started_at_ms=T + H,
         account_key="private-account",
         accepted_symbols=("BTC-USDT-SWAP",),
+        independent_accepted_symbols=("BTC-USDT-SWAP",),
     )
 
 

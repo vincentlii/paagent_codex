@@ -1,5 +1,14 @@
 # PA Agent Domain Context
 
+独立Demo多计划及Paper历史冻结的已确认设计见
+`docs/superpowers/specs/2026-10-15-independent-demo-plans-design.md`。
+用户已批准规格与实施计划`docs/superpowers/plans/2026-10-15-independent-demo-plans.md`。
+本地实施及验收状态见`docs/quality/independent_demo_acceptance_20261015.md`，修改相关执行链前须读。
+正式Headless不构造Paper写引擎；新v2计划不淘汰旧单，按自身累计成交减退出数量，定量OCO
+与未知退出共享同一预算；旧v1活动计划继续旧管理且不得混入同合约v2。
+新`independent_accepted_symbols`默认空，不将旧close-all OCO验收复用于定量保护；未发布，
+须另行Demo双计划canary及新代次证书后启用。不得让只识别v1的旧Worker接管v2活动计划。
+
 调整叙述质量校验、Prompt 语言或阶段交接表述前，先读
 `docs/quality/narrative_warning_scope_20261015.md`：不适用、无法可靠核对与可复算矛盾分开；
 否定、条件、混合周期或多对象不伪造事实冲突。accepted 不等于专业解释已被逐句证明，
@@ -19,7 +28,8 @@ Prompt 或市场 hash。默认500 USDT名义金额、3小时挂单有效期；�
 不进入 AnalysisProfile、Codex、行情/cohort身份或 cutover 指纹；原 entry/stop/TP1 不改。
 TTL只支持1–24整数小时，金额为最多8位小数的有限正数且不超过1e9（输入表示上界，
 不是风险许可）；余额、合约上下限及原执行保护继续检查。普通限价之外拒绝。
-Demo 账本、退出子订单、消费回执独立；未知请求不补发，旧 Paper 只继续观察既有订单。
+Demo 账本、退出子订单、消费回执独立；未知请求不补发。独立v2版本的正式Headless停止旧Paper推进，
+旧Paper只读历史；此前版本“继续观察”仅属于历史发布协议。
 模拟盘主视图不可用时保持未知，不回退 Paper。新库备份必须持有 Worker 排他锁，
 运行中拒绝备份；回退不允许旧代码接管仍有活动 Demo 订单的服务。新Worker可读旧Intent，
 旧Worker不能读新增policy字段，Host/Worker必须整包协调停启，不能混版本运行。

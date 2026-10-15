@@ -49,6 +49,8 @@ def test_host_to_signed_http_partial_protection_exit_and_dashboard(tmp_path):
                     tp1=Decimal(payload["tpTriggerPx"]),
                     client_id=payload["algoClOrdId"],
                 )
+                exchange.algos[payload["algoClOrdId"]].update({k: str(v).lower() if isinstance(v, bool) else str(v) for k,v in payload.items()})
+                exchange.algos[payload["algoClOrdId"]]["closeFraction"] = ""
                 rows = [response | {"sCode": "0"}]
             elif path.endswith("/cancel-order"):
                 rows = [{"sCode": "0", "ordId": "entry"}]
@@ -150,7 +152,8 @@ def test_host_to_signed_http_partial_protection_exit_and_dashboard(tmp_path):
         ]
         protection = posts[1][1]
         assert protection["slTriggerPx"] == "49000" and protection["tpTriggerPx"] == "52000"
-        assert protection["closeFraction"] == "1" and protection["reduceOnly"] is True
+        assert protection["sz"] == "0.4" and "closeFraction" not in protection
+        assert protection["reduceOnly"] is True
         orders[cid]["state"] = "canceled"
         clock[0] += 1
         worker.tick()

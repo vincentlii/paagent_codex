@@ -82,6 +82,7 @@ def compile_demo_intent(
     if available < config.cutover_started_at_ms:
         raise ValueError("skipped_cutover")
     values = dict(
+        schema_version="okx_demo_intent_v2",
         cutover_id=config.cutover_id,
         task_id=task_id,
         run_id=_field(meta, "run_id"),

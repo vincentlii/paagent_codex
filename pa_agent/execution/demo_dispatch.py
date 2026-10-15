@@ -39,7 +39,10 @@ def apply_execution_cutover(*, paused, host_idle, worker_idle, recovery_blocked,
 
 
 def cutover_fingerprint(config):
-    return digest(config.model_dump(mode="json", exclude={"enabled", "entry_enabled"}))
+    excluded = {"enabled", "entry_enabled"}
+    if not config.independent_accepted_symbols:
+        excluded.add("independent_accepted_symbols")
+    return digest(config.model_dump(mode="json", exclude=excluded))
 
 
 def require_cutover(paths, config):
@@ -65,7 +68,7 @@ class OfficialExecutionDispatcher:
 
     @property
     def enabled(self):
-        return self.demo_selected or self.paper.enabled
+        return self.demo_selected or bool(self.paper and self.paper.enabled)
 
     def bind_task(self, task):
         existing = self.task_lookup(task.task_id) if self.task_lookup is not None else None
@@ -98,12 +101,12 @@ class OfficialExecutionDispatcher:
             )
 
     def compose_projection(self, paper):
-        if not self.demo_selected:
+        if not self.demo_selected and self.paper is not None:
             return paper
         from pa_agent.operations.demo_trading import compose_trading_projection
 
         try:
-            demo = read_json(self.spool.paths.projection)
+            demo = read_json(self.spool.paths.projection) if self.demo_selected else None
         except (OSError, ValueError):
             demo = None
         return compose_trading_projection(
@@ -114,7 +117,11 @@ class OfficialExecutionDispatcher:
         self, record, spec, *, task_id, execution_payload=None, execution_snapshot_hash=None
     ):
         if not self.demo_selected:
-            return self.paper.submit_official(record, spec, task_id=task_id)
+            return (
+                self.paper.submit_official(record, spec, task_id=task_id)
+                if self.paper
+                else SimpleNamespace(status="execution_disabled", reason="demo_not_selected")
+            )
         payload = execution_payload
         if payload is None and self.task_lookup is not None:
             task = self.task_lookup(task_id)
@@ -157,7 +164,7 @@ class OfficialExecutionDispatcher:
 
     def reconcile_official(self, successful_jobs, records_dir):
         if not self.demo_selected:
-            return self.paper.reconcile_official(successful_jobs, records_dir)
+            return self.paper.reconcile_official(successful_jobs, records_dir) if self.paper else ()
         # Trust remains the original Host persisted-success/audit path, plus frozen epoch.
         from pa_agent.records.analysis_history import list_record_paths, load_record
         from pa_agent.execution.plans import instrument_spec_from_record
@@ -182,10 +189,22 @@ class OfficialExecutionDispatcher:
         return tuple(actions)
 
     def observe_official(self, *args, **kwargs):
-        return self.paper.observe_official(*args, **kwargs)
+        return (
+            self.paper.observe_official(*args, **kwargs)
+            if self.paper and not self.demo_selected
+            else 0
+        )
 
     def expire_pending(self, *args, **kwargs):
-        return self.paper.expire_pending(*args, **kwargs)
+        return (
+            self.paper.expire_pending(*args, **kwargs)
+            if self.paper and not self.demo_selected
+            else 0
+        )
 
     def active_market_keys(self, *args, **kwargs):
-        return self.paper.active_market_keys(*args, **kwargs)
+        return (
+            self.paper.active_market_keys(*args, **kwargs)
+            if self.paper and not self.demo_selected
+            else set()
+        )

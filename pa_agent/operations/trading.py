@@ -575,6 +575,7 @@ def safe_trading_projection(value: Any, *, include_versions: bool = True) -> dic
         value,
         (
             "schema_version",
+            "history_frozen",
             "generated_at_ms",
             "analysis_available",
             "paper_available",

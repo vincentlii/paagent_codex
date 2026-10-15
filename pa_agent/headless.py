@@ -307,7 +307,6 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
         build_codex_backend_factory,
     )
     from pa_agent.data.factory import create_data_source
-    from pa_agent.execution.coordinator import PaperExecutionCoordinator
     from pa_agent.monitoring.analysis_runner import IndependentAnalysisHandler
     from pa_agent.monitoring.audit import SchedulerAuditStore
     from pa_agent.monitoring.headless import HeadlessMonitor
@@ -356,10 +355,6 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
         row["asset_key"] for row in scheduler_audit.list_unresolved_tasks()
         if row["task_id"] in blocked_ids
     )
-    paper_execution = PaperExecutionCoordinator(
-        paths.paper_trading_db_path,
-        settings.paper_trading,
-    )
     from pa_agent.execution.demo_dispatch import OfficialExecutionDispatcher, load_demo_config
     from pa_agent.execution.demo_contracts import resolve_demo_paths
     from pa_agent.execution.demo_spool import DemoSpool
@@ -369,8 +364,8 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
     if demo_config.execution_target == "okx_demo":
         from pa_agent.execution.demo_dispatch import require_cutover
         require_cutover(resolve_demo_paths(paths, environ=os.environ), demo_config)
-        paper_execution = OfficialExecutionDispatcher(
-            paper_execution, DemoSpool(resolve_demo_paths(paths, environ=os.environ)), demo_config,
+    paper_execution = OfficialExecutionDispatcher(
+            None, DemoSpool(resolve_demo_paths(paths, environ=os.environ)), demo_config,
             now_ms=lambda: int(time.time() * 1000), task_lookup=scheduler_audit.load_task,
         )
     def service_factory(on_completion):

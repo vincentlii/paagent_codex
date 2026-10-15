@@ -78,6 +78,19 @@ def test_timeout_is_unknown_and_never_retried():
     assert len(calls) == 1 and caught.value.__cause__ is None
 
 
+def test_quantity_oco_sends_sz_without_close_fraction():
+    from decimal import Decimal
+    calls=[]
+    c=client(lambda req:(calls.append(req) or httpx.Response(200,json={'code':'0','data':[{'sCode':'0','algoId':'1'}]})))
+    try:
+        c.place_oco(inst_id='BTC-USDT-SWAP',side='sell',stop=Decimal('49000'),tp1=Decimal('52000'),client_id='plan',quantity=Decimal('.4'))
+        body=json.loads(calls[0].content)
+        assert body['sz']=='0.4' and 'closeFraction' not in body
+        assert body['reduceOnly'] is True and body['posSide']=='net'
+    finally:
+        c.close()
+
+
 def test_oco_uses_both_original_triggers_reduce_only_and_close_all():
     calls = []
     c = client(

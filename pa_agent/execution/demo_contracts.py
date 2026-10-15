@@ -43,12 +43,16 @@ class DemoConfig(StrictModel):
     # Must be pinned by explicit private read-only preflight, never inferred on entry.
     account_key: str = ""
     accepted_symbols: tuple[str, ...] = ()
+    independent_accepted_symbols: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def check(self) -> Self:
         if self.notional_usdt != 500 or self.leverage != 3:
             raise ValueError("fixed_500_leverage_3_protocol")
-        if any(s not in MAPPINGS.values() for s in self.symbols + self.accepted_symbols):
+        if any(
+            s not in MAPPINGS.values()
+            for s in self.symbols + self.accepted_symbols + self.independent_accepted_symbols
+        ):
             raise ValueError("unsupported_instrument")
         if self.entry_enabled and (
             not self.enabled
@@ -92,7 +96,7 @@ def resolve_demo_paths(paths: object, *, environ: Mapping[str, str]) -> DemoPath
 
 
 class DemoIntent(StrictModel):
-    schema_version: Literal["okx_demo_intent_v1"] = "okx_demo_intent_v1"
+    schema_version: Literal["okx_demo_intent_v1", "okx_demo_intent_v2"] = "okx_demo_intent_v1"
     cutover_id: str = Field(min_length=1, max_length=160)
     task_id: str = Field(min_length=1, max_length=160)
     run_id: str = Field(min_length=1, max_length=160)

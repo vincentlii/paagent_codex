@@ -27,6 +27,7 @@ def test_trading_page_ids_are_unique_and_all_script_targets_exist():
     assert len(page.ids) == len(set(page.ids))
     assert set(re.findall(r"\$\('([^']+)'\)", TRADING_HTML)) <= set(page.ids)
     assert 'href="/trading" aria-current="page"' in TRADING_HTML
+    assert '<optgroup label="历史模拟记录">' in TRADING_HTML
 
 
 def test_trading_script_renders_unknown_empty_and_review_without_writes():
@@ -113,6 +114,13 @@ assert.ok(nodes['demo-fills'].textContent.includes('BTC-USDT-SWAP'));
 assert.ok(nodes['demo-fills'].textContent.includes('-0.1 USDT'));
 nodes['execution-version'].value='paper_latency_v4';nodes['execution-version'].events.change();
 assert.ok(nodes.balance.textContent.includes('99,999'));
+context.data.trading.paper_versions.paper_latency_v4.history_frozen=true;
+vm.runInContext('render(data)',context);
+assert.ok(nodes['backend-label'].textContent.includes('历史模拟记录'));
+assert.ok(nodes.notice.textContent.includes('不再观察行情'));
+assert.equal(nodes.unrealized.textContent,'—');
+assert.equal(nodes.risk.textContent,'—');
+assert.ok(!nodes.notice.textContent.includes('尚有'));
 vm.runInContext('render(data)',context);assert.equal(nodes['execution-version'].value,'paper_latency_v4');
 nodes['execution-version'].value='okx_demo';nodes['execution-version'].events.change();
 vm.runInContext('render({trading:{schema_version:1,account:{settled_balance:99999}}})',context);

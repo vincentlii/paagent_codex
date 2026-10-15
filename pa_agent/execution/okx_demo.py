@@ -242,7 +242,9 @@ class OkxDemoClient:
             "/api/v5/trade/cancel-order", {"instId": inst_id, "clOrdId": client_id}, "ordId"
         )
 
-    def place_oco(self, *, inst_id, side, stop, tp1, client_id):
+    def place_oco(self, *, inst_id, side, stop, tp1, client_id, quantity=None):
+        if quantity is not None and (not quantity.is_finite() or quantity <= 0):
+            raise ValueError("invalid_exit_quantity")
         return self._post(
             "/api/v5/trade/order-algo",
             dict(
@@ -253,7 +255,7 @@ class OkxDemoClient:
                 ordType="oco",
                 algoClOrdId=client_id,
                 reduceOnly=True,
-                closeFraction="1",
+                **({"closeFraction": "1"} if quantity is None else {"sz": str(quantity)}),
                 slTriggerPx=str(stop),
                 tpTriggerPx=str(tp1),
                 slOrdPx="-1",
