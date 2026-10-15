@@ -123,23 +123,22 @@ _KLINE_INDICATOR_NOTE = (
     "指标可能略有差异，勿逐点对比。"
 )
 
-# ── Language (both stages, thinking + final output) ───────────────────────────
+# ── Language (user-visible output in both stages) ────────────────────────────
 
 _LANGUAGE_ZH_RULE = """
 ## 语言要求（阶段一、阶段二均必须遵守）
 
-- **思考过程**：扩展思考、内部推理、以及写入 JSON 的 `reason`、`diagnosis_confidence_reasoning`、`trade_confidence_reasoning`、`estimated_win_rate_reasoning` 等说明，**全程使用简体中文**。禁止用英文写推理段落或中英混杂的长句（常见缩写如 HH、HL、Spike、TR 可保留）。
 - **最终输出**：阶段一诊断 JSON、阶段二决策 JSON 中所有面向用户的字符串（含 `reasoning`、`key_factors`、`risk_assessment`、`watch_points`、`gate_trace`/`decision_trace` 的 `question` 与 `reason` 等）**一律使用简体中文**。
 - **仅允许英文或固定英文枚举**：JSON 字段名（schema 键名）、规定的枚举取值（如 `proceed`、`wait`、`bullish`、`bearish`）、策略文件名、K 线序号格式（如 `K1`、`K42-K1`）。
-- **价格行为术语**：思考与 JSON 说明中优先使用下列简体中文 PA 术语（见下节），避免自造词或仅用英文描述。
+- **价格行为术语**：面向用户的 JSON 说明优先使用下列简体中文 PA 术语（见下节），常见缩写如 HH、HL、Spike、TR 可保留。
 """.strip()
 
 _PA_TERMINOLOGY_ZH = """
-## 价格行为常用术语（简体中文，思考与 JSON 说明中优先使用）
+## 价格行为常用术语（面向用户的 JSON 说明优先使用）
 
 | 术语 | 含义 / 用法提示 |
 |------|----------------|
-| 信号棒 | 触发入场计划的 K 线；订单须严格位于极点外，真实 tick size 由执行接口确认 |
+| 信号棒 | 触发入场计划的 K 线；以其极点触发的突破入场须在极点外，真实 tick size 由执行接口确认；计划型限价依 §9.0P，stop 依结构失效 |
 | 入场棒 | 实际触发入场的 K 线；须在信号棒之后 |
 | 确认棒 / 跟随 | 信号或入场后 1–2 根同向延续；无跟随则信号易失败 |
 | 突破 | 价格越过结构位、通道线、区间边界或信号棒极点 |
@@ -616,6 +615,8 @@ _STAGE2_OUTPUT_CONTRACT_TEMPLATE = """
 可选的结构延伸 TP2、{prior_label}主观胜率先验及最终 `trade|wait|reject` 意图；程序复算价格几何、RR、Breakeven、Expectancy
 和 Trader Equation，并执行订单安全检查。
 {role_scope}
+上游“已通过校验/accepted”表示指定协议、引用及确定性检查已通过，不表示专业解释已被逐句证明。
+Frozen Snapshot 中的事实不可改写；冻结的 Stage 1 是本轮权限依据，专业解释仍须结合反证，必要时在 Router 边界内合法等待。
 
 字段形状、必填项、类型和枚举只以紧随其后的自动生成 Provider Contract 为准。
 不要输出 Stage 1 冻结字段、`gate_shortcircuited`、静态 trace 字段、§10.3、

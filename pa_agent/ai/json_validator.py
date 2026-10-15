@@ -601,7 +601,9 @@ class JsonValidator:
         pa_draft = copy.deepcopy(draft)
         joint_analysis = pa_draft.pop("joint_analysis")
         pa_draft["protocol_version"] = "pa_draft_v2"
-        result = self.validate("stage2", json.dumps(pa_draft, ensure_ascii=False), **kwargs)
+        result = self.validate(
+            "stage2", json.dumps(pa_draft, ensure_ascii=False), _joint_stage2=True, **kwargs
+        )
         if isinstance(result, Ok):
             result.provider_obj = copy.deepcopy(draft)
             result.obj["joint_analysis"] = copy.deepcopy(joint_analysis)
@@ -628,6 +630,7 @@ class JsonValidator:
         analysis_fact_catalog: Any = None,
         joint_vpa_report: Any = None,
         joint_vpa_catalog: dict[str, Any] | None = None,
+        _joint_stage2: bool = False,
     ) -> Result:
         """Validate *raw_text* against the schema for *stage*.
 
@@ -960,6 +963,7 @@ class JsonValidator:
             kline_frame=kline_frame,
             stage1_json=stage1_json,
             htf_context=htf_context,
+            joint_stage2=_joint_stage2,
         )
         if not errors and not missing and not invalid and not provider_contract_issues:
             return Ok(
@@ -1055,6 +1059,7 @@ class JsonValidator:
         kline_frame: Any,
         stage1_json: dict[str, Any] | None,
         htf_context: dict[str, Any] | None,
+        joint_stage2: bool = False,
     ) -> list[ValidationWarning]:
         messages: list[tuple[str, str]] = []
         if stage == "stage1":
@@ -1068,6 +1073,7 @@ class JsonValidator:
                 for message in collect_stage1_quality_warnings(
                     obj,
                     kline_frame=kline_frame,
+                    htf_context=htf_context,
                 )
             )
             messages.extend(
@@ -1082,6 +1088,7 @@ class JsonValidator:
                 for message in collect_stage2_quality_warnings(
                     obj,
                     kline_frame=kline_frame,
+                    joint_stage2=joint_stage2,
                 )
             )
         return [

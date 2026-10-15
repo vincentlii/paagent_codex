@@ -49,12 +49,13 @@ _DIRECTION_BRANCH_ALIASES = {
     "下跌": "bearish",
 }
 _EMA_SLOPE_WORD_RE = re.compile(
-    r"EMA\s*20.*?(?:上行|下行|走高|走低|斜率|slope|rising|falling)",
+    r"EMA\s*20\s*(?:自身|的)?\s*(?:大幅|持续|仍|正在|缓慢|明显|轻微)?\s*"
+    r"(?P<claim>上行|下行|走高|走低|斜率|slope|rising|falling|delta)"
+    r"\s*(?:为|是|=|:|：)?\s*(?P<number>[-+]?\d+(?:\.\d+)?)?",
     re.IGNORECASE,
 )
 _EMA_UP_RE = re.compile(r"上行|走高|rising|upward", re.IGNORECASE)
 _EMA_DOWN_RE = re.compile(r"下行|走低|falling|downward", re.IGNORECASE)
-_NUMBER_RE = re.compile(r"(?<![A-Za-z0-9])[-+]?\d+(?:\.\d+)?")
 _VAGUE_NUMERIC_LEG_COUNT_RE = re.compile(
     r"(?:反弹|回撤|上涨|下跌|推进|push|pullback|rally|decline).{0,12}"
     r"(?:超过|多于|more\s+than)\s*\d+\s*(?:根(?:K线)?|bars?)",
@@ -301,6 +302,7 @@ def collect_stage1_quality_warnings(
     stage1: dict[str, Any],
     *,
     kline_frame: Any = None,
+    htf_context: dict[str, Any] | None = None,
 ) -> list[str]:
     """Return non-safety prose and completeness findings without rejecting output."""
     warnings: list[str] = []
@@ -312,7 +314,7 @@ def collect_stage1_quality_warnings(
             warnings.append(
                 f"bar_by_bar_summary has {len(summary)} items; preferred {expected}"
             )
-    warnings.extend(_collect_stage1_narrative_warnings(stage1, kline_frame))
+    warnings.extend(_collect_stage1_narrative_warnings(stage1, kline_frame, htf_context))
     warnings.extend(_validate_stage1_narrative_geometry(stage1, kline_frame))
     warnings.extend(_validate_explicit_direction_runs(stage1, kline_frame))
     return warnings
@@ -354,6 +356,7 @@ def collect_stage2_quality_warnings(
     stage2: dict[str, Any],
     *,
     kline_frame: Any = None,
+    joint_stage2: bool = False,
 ) -> list[str]:
     """Return prose-level PA grounding findings without blocking a safe decision."""
     warnings: list[str] = []
@@ -361,7 +364,7 @@ def collect_stage2_quality_warnings(
         key: value for key, value in stage2.items() if key != "vpa_impact"
     }
     for path, text in _narrative_strings(price_only_stage2):
-        if _PA_VOLUME_RE.search(text):
+        if not joint_stage2 and _PA_VOLUME_RE.search(text):
             warnings.append(f"{path} violates the PA price-only evidence contract")
     warnings.extend(_validate_tick_claims(stage2, kline_frame))
     decision = stage2.get("decision")
@@ -763,6 +766,7 @@ def _geometry_claim_is_negated(text: str, match: re.Match[str]) -> bool:
 def _collect_stage1_narrative_warnings(
     stage1: dict[str, Any],
     frame: Any,
+    htf_context: dict[str, Any] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     evidence = stage1.get("pa_evidence")
@@ -843,7 +847,7 @@ def _collect_stage1_narrative_warnings(
                 )
         errors.extend(_validate_count_restatements(text, path=path))
         errors.extend(_validate_bar_break_claims(text, path=path, frame=frame))
-        errors.extend(_validate_ema_claim(text, path=path, frame=frame))
+        errors.extend(_validate_ema_claim(text, path=path, frame=frame, htf_context=htf_context))
     errors.extend(_validate_tick_claims(stage1, frame))
     return errors
 
@@ -932,6 +936,21 @@ def _validate_negated_window_extreme_claims(
 ) -> list[str]:
     if not claims:
         return []
+    # A summary row may describe another bar. Only an explicit predicate subject
+    # overrides its row; an ambiguous subject must not become a fact conflict.
+    subjects = {
+        int(match.group(1))
+        for match in re.finditer(
+            r"(?<![A-Za-z0-9_.])K\s*(\d+)\s*(?:并|仍|也|尚|还)?\s*"
+            r"(?:未|没有|没|did\s+not|has\s+not|does\s+not)",
+            text,
+            re.I,
+        )
+    }
+    if len(subjects) > 1:
+        return [f"{path} unverified negated extreme claim: subject is not unique"]
+    if subjects:
+        target_seq = next(iter(subjects))
     direct_pair = _direct_pair_relations(
         text,
         target_seq=target_seq,
@@ -983,7 +1002,7 @@ def _direct_pair_relations(
     fact_catalog: Any,
 ) -> dict[str, bool] | None:
     """Return exact target-vs-one-reference relations for a bounded pair claim."""
-    if target_seq is None or fact_catalog is None:
+    if target_seq is None or fact_catalog is None or K_RANGE_RE.search(text):
         return None
     references = {
         int(match.group(1)) for match in K_REFERENCE_RE.finditer(text)
@@ -1326,27 +1345,60 @@ def _validate_spike_transition_contract(
     return errors
 
 
-def _validate_ema_claim(text: str, *, path: str, frame: Any) -> list[str]:
-    if frame is None or not _EMA_SLOPE_WORD_RE.search(text):
-        return []
+def _validate_ema_claim(
+    text: str,
+    *,
+    path: str,
+    frame: Any,
+    htf_context: dict[str, Any] | None = None,
+) -> list[str]:
+    """Check direct EMA predicates, never other numbers or market direction."""
     from pa_agent.ai.market_features import compute_simple_market_features
 
-    facts = compute_simple_market_features(frame)
-    deltas = [value for value in (facts.ema_delta_5, facts.ema_delta_10) if value is not None]
     errors: list[str] = []
-    if deltas and all(value > 0 for value in deltas) and _EMA_DOWN_RE.search(text):
-        errors.append(f"{path} EMA slope direction conflicts with program EMA deltas")
-    if deltas and all(value < 0 for value in deltas) and _EMA_UP_RE.search(text):
-        errors.append(f"{path} EMA slope direction conflicts with program EMA deltas")
-
-    scrubbed = re.sub(r"EMA\s*20|K\s*\d+", "", text, flags=re.IGNORECASE)
-    stated = [float(match.group(0)) for match in _NUMBER_RE.finditer(scrubbed)]
-    for number in stated:
-        if not any(_approximately_equal(number, delta) for delta in deltas):
-            errors.append(
-                f"{path} EMA slope number is not one of the program EMA delta facts"
+    htf = (
+        (htf_context or {}).get("frame")
+        if (htf_context or {}).get("status") == "available"
+        else None
+    )
+    for match in _EMA_SLOPE_WORD_RE.finditer(text):
+        prefix = _FACT_CLAUSE_SPLIT_RE.split(text[: match.start()])[-1]
+        periods = list(re.finditer(r"(\d+)\s*(小时|分钟|[hm])", prefix, re.I))
+        source = htf if path == "htf_context" or "HTF.H" in prefix.upper() else frame
+        if re.search(r"(?:若|如果|假如|一旦|等待|\bif\b)", prefix, re.I):
+            errors.append(f"{path} unverified EMA slope claim: conditional predicate")
+            continue
+        if periods:
+            timeframes = {
+                p[1] + {"小时": "h", "分钟": "m"}.get(p[2], p[2].lower()) for p in periods
+            }
+            source = next(
+                (f for f in (frame, htf) if f is not None and timeframes == {f.timeframe}), None
             )
-            break
+        if source is None:
+            errors.append(f"{path} unverified EMA slope claim: timeframe evidence unavailable")
+            continue
+        number_is_duration = bool(
+            match["number"] is not None
+            and re.match(r"\s*(?:小时|分钟|根|棒|[hm]\b)", text[match.end() :], re.I)
+        )
+        if number_is_duration:
+            errors.append(f"{path} unverified EMA slope claim: duration is not a delta window")
+            continue
+        facts = compute_simple_market_features(source)
+        deltas = [v for v in (facts.ema_delta_5, facts.ema_delta_10) if v is not None]
+        if not deltas:
+            errors.append(f"{path} unverified EMA slope claim: program deltas unavailable")
+            continue
+        claim = match["claim"]
+        if (all(v > 0 for v in deltas) and _EMA_DOWN_RE.search(claim)) or (
+            all(v < 0 for v in deltas) and _EMA_UP_RE.search(claim)
+        ):
+            errors.append(f"{path} EMA slope direction conflicts with program EMA deltas")
+        if match["number"] is not None and not any(
+            _approximately_equal(float(match["number"]), delta) for delta in deltas
+        ):
+            errors.append(f"{path} EMA slope number is not one of the program EMA delta facts")
     return errors
 
 

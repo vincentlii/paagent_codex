@@ -1,5 +1,11 @@
 # PA Agent Domain Context
 
+调整叙述质量校验、Prompt 语言或阶段交接表述前，先读
+`docs/quality/narrative_warning_scope_20261015.md`：不适用、无法可靠核对与可复算矛盾分开；
+否定、条件、混合周期或多对象不伪造事实冲突。accepted 不等于专业解释已被逐句证明，
+冻结上游约束权限但仍允许 Router 内保留反证及合法等待。原硬检查、Schema、交易规则不变。
+该报告仅为本地实施验收，不能当作 VPS 发布或模型质量改善证据。
+
 OKX 模拟执行接入前必须阅读
 `docs/superpowers/specs/2026-10-15-okx-demo-execution-design.md`、
 `docs/quality/okx_demo_execution_acceptance_20261015.md`。设计及实施计划已获用户批准；

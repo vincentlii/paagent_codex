@@ -11,7 +11,7 @@ description: Use when the Host selects price-only PA Stage 2 after Brooks routin
 取证以能改变候选资格、结构价格或等待条件的问题为准；已交付的确定性测量直接引用。
 必要证据齐备后提交当前结论，不为修饰文案追加取证；证据不足的合法等待与执行失败分开。
 
-目标是在已验证 Stage 1 artifact 与 Brooks Router manifest 内形成交易决策 Provider Draft。
+目标是在已验证 Stage 1 artifact 与 Brooks Router manifest 内形成交易决策 Provider Draft。校验通过不证明专业解释唯一正确；保留反证及合法等待，不改写冻结上游或扩大 Router 权限。
 
 调用下面的唯一入口后，先阅读随包交付角色协议的 `runtime_guidance`；调查限制和唯一输出/失败模式以本次冻结合同为准。扩展未交付时不采用其流程。
 1. 首先调用一次 `get_role_baseline`。定位基线末尾的 `stage2_handoff_receipt`：`stage2_handoff_receipt.read_plan_complete` 和 `stage2_handoff_receipt.terminal_resource` 确认本轮读取已结束，精确路径指向 Provider Contract、角色协议、Role Skill、validated Stage 1 与 Router；按路径读取实际值，再按 resources 顺序阅读其余材料。不要在最后一个模块结束处臆测后面还有未交付内容。cycle、direction、Gate 与既有PA执行契约是不可扩张边界；router_manifest 是知识选择集合，不等于所有文件均授予交易策略。有冻结经验时完整阅读随包交付的 experience_entries，保持反锚定。`mandatory_baseline_v1` 是 fresh 全量基线；`mandatory_pa_delta_v1` 只可用于 Host 已验证的同 Snapshot PA resume，并必须给出 parent job 与继承清单。版本或机械身份不合由 Host fail-closed，模型不复审投影或继承授权。

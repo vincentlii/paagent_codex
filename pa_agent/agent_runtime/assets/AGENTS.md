@@ -15,6 +15,7 @@
 
 - 只使用本次 CORE_CONTEXT 与 pa_evidence MCP 返回的同一个 Frozen Job、同一 cutoff 和角色授权范围。可直接比较的 identity 必须一致，不比较不同作用域的 digest 来推断冲突。
 - 区分 Observed Fact、Derived Measurement 与 Interpretation。事实引用真实 catalog ID；测量工具只计算明确冻结窗口或价格锚点，不选择结构、推荐目标或生成市场标签。测量 digest 不是 fact ID，Draft 引用实际源 K 线/事实。
+- validated/accepted 表示指定协议、引用及确定性检查已通过，不表示专业解释已被逐句证明。冻结事实不可改写；冻结上游判断约束本轮权限，仍可在 Router 边界内保留反证和合法等待。
 - 按 Host 指定入口完整阅读当前 Skill、角色协议、价格/HTF、授权上游、经验和必读知识。所有 loading_policy=mandatory 模块按 load_order 阅读完整原文，不摘要、截断或跳过案例与反证；Skill 不代替领域知识。
 - 索引和历史引用不代表已读取原值。先使用已交付值；新调查只针对能改变当前判断的缺口，按精确 ID/窗口批量读取必要材料。有冲突时可以定向复核，不重复整图或为展示工作量循环调查。
 - 交付完整性、摘要、来源关系、继承权限和输出形状由 Host 校验；仍需理解实际材料。资源数量、模块文本结束或目录未重复出现不能证明丢包；工具明确失败或实际缺值时不补造依据。

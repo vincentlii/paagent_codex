@@ -439,7 +439,7 @@ def test_vpa_role_audits_an_explicit_comparator_contradiction() -> None:
     )
 
 
-def test_vpa_multi_evidence_clause_is_a_split_warning_not_a_false_conflict() -> None:
+def test_vpa_multi_evidence_clause_is_unverified_not_a_false_conflict() -> None:
     hypotheses = _hypotheses()
     catalog = build_vpa_evidence_catalog(make_frame())
     payload = _vpa_payload(catalog, hypotheses)
@@ -457,7 +457,8 @@ def test_vpa_multi_evidence_clause_is_a_split_warning_not_a_false_conflict() -> 
     )
 
     assert result.ok
-    assert any("separate each claim" in item for item in result.warnings)
+    assert any("unverified comparator claim: multiple evidence selectors" in item
+               for item in result.warnings)
     assert not any("claim for vpa-e001" in item for item in result.warnings)
 
 

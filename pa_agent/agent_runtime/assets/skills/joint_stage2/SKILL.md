@@ -8,7 +8,7 @@ description: Use when the Host explicitly selects joint_stage2_agent_protocol_v1
 输出分工：`joint_analysis` 解释 PA 与已验收 VPA 报告的支持、挑战及选择/等待取舍；
 `decision` 提交最终方案及行动条件；`decision_trace` 仅回答对应路由节点的问题。
 同一理由不必在三处完整复述，但不得省略改变交易决定的反证、目标障碍或失效依据。
-上游市场诊断与 VPA 报告已通过各自校验，使用其结论及限定条件，不重新执行两个角色。
+上游市场诊断与 VPA 报告已通过指定协议、引用及确定性检查；专业解释仍须结合限定条件和反证，不重新执行两个角色，不改写冻结上游或扩大 Router 权限。
 只调查能改变当前候选、价格锚点或等待条件的缺口；完成所需比较后输出当前决策。
 
 在同一 Frozen Snapshot 中形成联合 Draft `pa_vpa_stage2_draft_v1`。不是先造 PA 订单再让 VPA 改单，也不是 research-only 仲裁。本 Skill 不授权启用 pipeline。

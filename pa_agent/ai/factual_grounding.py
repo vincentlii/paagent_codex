@@ -216,7 +216,7 @@ _EXPLICIT_VOLUME_COMPARATOR_RE = re.compile(
 )
 _FUTURE_CLOSED_BAR_RE = re.compile(
     r"\b(?:next|future)\s+(?:fully\s+)?closed\s+(?:bar|candle)\b|"
-    r"(?:下一根|未来|后续).{0,8}?(?:已收盘|收盘后|闭合|闭盘)(?:的)?"
+    r"(?:下一根|未来|后续).{0,8}?(?:已收盘|收盘(?!前)|闭合|闭盘)(?:后|的)?"
     r"(?:\s*K\s*线|棒|bar)?",
     re.IGNORECASE,
 )
@@ -279,6 +279,16 @@ _VPA_CAPABILITY_NEGATION_AFTER_RE = re.compile(
 )
 _VPA_CLAUSE_SPLIT_RE = re.compile(r"[\u3002\uFF01\uFF1F!?;\uFF1B\n]+|\.\s+")
 
+
+def _comparator_pattern(pattern: str) -> re.Pattern[str]:
+    # A relation cannot cross punctuation, another comparator or a negation.
+    gap = (
+        r"(?:(?!(?:above|below|higher|lower|高于|低于|强于|弱于|多于|少于|"
+        r"更高|更低|偏高|偏低|并非|不是))[^,，;；。!?！？\n]){0,40}?"
+    )
+    return re.compile(pattern.replace(".*?", gap), re.IGNORECASE)
+
+
 _RELATION_CLAIMS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
     (
         "net close progress direction",
@@ -306,44 +316,40 @@ _RELATION_CLAIMS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
         "causal baseline",
         "volume_vs_baseline_relation",
         "below",
-        re.compile(
+        _comparator_pattern(
             r"(?:below|lower\s+than).*?(?:causal|rolling)?\s*baseline|"
             r"(?:causal|rolling)?\s*baseline.*?(?:below|lower)|"
             r"(?:低于|弱于|少于).*?(?:因果|滚动)?基线|(?:因果|滚动)?基线.*?(?:更低|偏低)",
-            re.IGNORECASE,
         ),
     ),
     (
         "causal baseline",
         "volume_vs_baseline_relation",
         "above",
-        re.compile(
+        _comparator_pattern(
             r"(?:above|higher\s+than).*?(?:causal|rolling)?\s*baseline|"
             r"(?:causal|rolling)?\s*baseline.*?(?:above|higher)|"
             r"(?:高于|强于|多于).*?(?:因果|滚动)?基线|(?:因果|滚动)?基线.*?(?:更高|偏高)",
-            re.IGNORECASE,
         ),
     ),
     (
         "previous bar",
         "volume_vs_previous_relation",
         "below",
-        re.compile(
+        _comparator_pattern(
             r"(?:below|lower\s+than).*?(?:previous|prior)\s+bar|"
             r"(?:previous|prior)\s+bar.*?(?:below|lower)|"
             r"(?:低于|弱于|少于).*?前(?:一)?(?:根|棒)|前(?:一)?(?:根|棒).*?(?:更低|偏低)",
-            re.IGNORECASE,
         ),
     ),
     (
         "previous bar",
         "volume_vs_previous_relation",
         "above",
-        re.compile(
+        _comparator_pattern(
             r"(?:above|higher\s+than).*?(?:previous|prior)\s+bar|"
             r"(?:previous|prior)\s+bar.*?(?:above|higher)|"
             r"(?:高于|强于|多于).*?前(?:一)?(?:根|棒)|前(?:一)?(?:根|棒).*?(?:更高|偏高)",
-            re.IGNORECASE,
         ),
     ),
 )
@@ -720,6 +726,34 @@ def validate_vpa_window_transition_narrative(
     return list(dict.fromkeys(errors))
 
 
+def _vpa_comparator_relation(
+    facts: dict[str, Any],
+    fact_key: str,
+    prefix: str,
+) -> str | None:
+    """Bind a window baseline only to an explicitly identified window."""
+    if fact_key == "net_close_progress_direction_relation":
+        return net_close_progress_direction_relation(facts)
+    if fact_key in facts:
+        return str(facts[fact_key] or "")
+    if fact_key != "volume_vs_baseline_relation":
+        return None
+    # Require a unique local window subject, not a guess about the paragraph.
+    local = _VPA_COMMA_SPLIT_RE.split(prefix)[-1]
+    scopes: set[str] = set()
+    for scope, words in (
+        ("current", r"较新|当前窗口|本窗|current|newer"),
+        ("prior", r"较早|前窗|prior|previous\s+window|earlier"),
+    ):
+        window = str(facts.get(f"{scope}_window") or "")
+        if re.search(words, local, re.I) or (window and re.search(re.escape(window), local, re.I)):
+            scopes.add(scope)
+    if len(scopes) != 1:
+        return None
+    scope = next(iter(scopes))
+    return str(facts.get(f"{scope}_volume_vs_causal_baseline_relation") or "")
+
+
 def classify_vpa_comparator_narrative(
     text: object,
     *,
@@ -739,9 +773,7 @@ def classify_vpa_comparator_narrative(
     errors: list[str] = []
     warnings: list[str] = []
     if _AMBIGUOUS_VOLUME_RE.search(value) and not _EXPLICIT_VOLUME_COMPARATOR_RE.search(value):
-        warnings.append(
-            f"{path} uses relative-volume language without an explicit comparator"
-        )
+        warnings.append(f"{path} uses relative-volume language without an explicit comparator")
 
     by_bar: dict[int, list[dict[str, Any]]] = {}
     by_id: dict[str, dict[str, Any]] = {}
@@ -796,47 +828,59 @@ def classify_vpa_comparator_narrative(
         clause = clause.strip()
         if not clause:
             continue
-        claims = [claim for claim in _RELATION_CLAIMS if claim[3].search(clause)]
+        claims = [
+            (label, key, expected, match)
+            for label, key, expected, pattern in _RELATION_CLAIMS
+            for match in pattern.finditer(clause)
+        ]
         if not claims:
             continue
 
         mentioned_ids = _mentioned_vpa_evidence_ids(clause, by_id)
         selectors: dict[str, list[dict[str, Any]]]
         if mentioned_ids:
-            selectors = {
-                evidence_id: [by_id[evidence_id]] for evidence_id in mentioned_ids
-            }
+            selectors = {evidence_id: [by_id[evidence_id]] for evidence_id in mentioned_ids}
         else:
-            bars = sorted(
-                {int(match.group(1)) for match in K_REFERENCE_RE.finditer(clause)}
-            )
+            bars = sorted({int(match.group(1)) for match in K_REFERENCE_RE.finditer(clause)})
             selectors = {f"K{bar}": by_bar.get(bar, []) for bar in bars}
         if not selectors:
+            warnings.append(f"{path} unverified comparator claim: evidence subject unavailable")
             continue
 
         if len(selectors) > 1:
             warnings.append(
-                f"{path} binds comparator language to multiple evidence selectors; "
-                "separate each claim into its own clause"
+                f"{path} unverified comparator claim: multiple evidence selectors "
+                "cannot be bound uniquely"
             )
             continue
 
-        for label, fact_key, expected, _ in claims:
+        for label, fact_key, expected, match in claims:
+            prefix = clause[: match.start()]
+            if re.search(
+                r"(?:并非|不是|未|不|没有|\bnot\b|\bnever\b)", prefix + match.group(0), re.I
+            ) or re.search(r"(?:若|如果|假如|一旦|\bif\b)", prefix, re.I):
+                warnings.append(
+                    f"{path} unverified {label} claim: negated or conditional predicate"
+                )
+                continue
             for selector, candidates in selectors.items():
                 relations = {
-                    (
-                        net_close_progress_direction_relation(
-                            candidate.get("facts") or {}
-                        )
-                        if fact_key == "net_close_progress_direction_relation"
-                        else str((candidate.get("facts") or {}).get(fact_key) or "")
-                    )
+                    _vpa_comparator_relation(candidate.get("facts") or {}, fact_key, prefix)
                     for candidate in candidates
                 }
-                if expected not in relations:
+                known_relations = (
+                    {"same", "opposite"}
+                    if fact_key == "net_close_progress_direction_relation"
+                    else {"above", "below", "equal"}
+                )
+                if len(relations) != 1 or not relations <= known_relations:
+                    warnings.append(
+                        f"{path} unverified {label} claim for {selector}: "
+                        "comparator facts or window binding unavailable"
+                    )
+                elif expected not in relations:
                     errors.append(
-                        f"{path} {label} claim for {selector} conflicts with "
-                        "program relation"
+                        f"{path} {label} claim for {selector} conflicts with " "program relation"
                     )
     return errors, warnings
 

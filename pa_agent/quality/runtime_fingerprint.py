@@ -6,7 +6,7 @@ import hashlib
 import marshal
 from pathlib import Path
 
-VALIDATION_POLICY_VERSION = "structured-hard-prose-warning-v1"
+VALIDATION_POLICY_VERSION = "structured-hard-scoped-prose-warning-v2"
 
 
 def analysis_runtime_fingerprint(

@@ -21,6 +21,14 @@ verification_scope:
 
 # 当前状态
 
+## 2026-10-15 叙述警告与阶段交接优化（仅本地，未发布）
+
+本地已修复 EMA 周期/数字作用域、极值主语、VPA 单棒/窗口比较器、否定与条件、未来闭盘措辞
+及显式 Joint 的 PA-only 误报。无法可靠绑定时标明 `unverified`，不自动重试或改写 Draft。
+Prompt/Skills 只澄清可见语言、Host 执行及 accepted/frozen 的含义；Schema、Router、阶段与
+交易规则未改。独立三角色审查通过，完整 Headless 回归 1912 项通过；测试与未验证边界见
+[专项报告](../quality/narrative_warning_scope_20261015.md)。VPS 仍运行下方已发布版本。
+
 ## 2026-10-15 OKX Demo正式激活（仅BTC）
 
 固定运行代码fe9574f已安装VPS并启用Demo Worker，Host恢复running generation47。
