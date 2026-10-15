@@ -252,3 +252,23 @@ mask相符、other0)，拒绝重复/额外授权、坏版本、截断、错误UI
 ACL兼容最终本地回归：1873 passed / 7 deselected，87.48s；静态关键错误与diff检查通过。
 同一独立审阅者安全三角色复核及客户端/Worker CLI 29项通过。真实候选systemd GET通过
 仅作为修复证据，下一步固定版本安装后再验收Worker，不将暂存候选冒称上线。
+
+## 2026-10-15 正式切换状态读取修复
+
+ACL修复b1d7fc2已固定安装：315个wheel成员与源码一致，原3库、14238文件及47依赖保持，
+9项Linux隔离检查通过。安装wheel SHA256为
+109da2e4e2e879d5368ad635621e3afd37a34bdc15485762cdfd6f9f2563ab92；
+备份pa-agent-20261014T183216Z。真实systemd Worker首次正常启动，完整对账ready，
+NRestarts=0；此时Host仍paused45、target=paper、entry=false，不宣称正式切换完成。
+
+切换前置检查发现Host status为287233 bytes，超过demo_spool.read_json的256KiB限制。
+这是使用错误读取接口，不是状态损坏；未删除历史或截断投影。合法大状态回归先红，
+修复为既有RuntimeStatusStore读取并验证Host状态，symlink或无效状态拒绝；调度计数必须
+严格int，False/0.0/缺失均拒绝，paused/新鲜度/恢复阻塞及原Worker条件保留。
+订单spool及Worker投影的256KiB限制不变，不加并行status协议，不改交易判断或数据。
+
+同一独立审阅者完成PA、VPA、量化架构三角色复核，35项聚焦测试通过。全量回归、
+固定发布及真实证书/激活结果另续记，不能把大状态本地测试冒充已切换模拟盘。
+
+切换读取修复最终Headless not-live回归1883 passed / 7 deselected，104.40s；
+关键静态与差异检查通过。仅有既有tvDatafeed第三方转义弃用警告，不影响本次验收。

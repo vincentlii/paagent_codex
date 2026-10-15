@@ -21,6 +21,9 @@ OKX Algo实测回报可同时含空clOrdId和正确algoClOrdId：OCO身份仅核
 Linux systemd credential可能以root0440文件/root0550目录呈现私有服务用户ACL，组位是mask。
 不能仅凭mode组位判泄露：仅在CREDENTIALS_DIRECTORY与精确root+当前UID私有ACL契约通过
 时允许，实际group/other/额外用户授权仍拒绝；不得复制凭据或chmod放宽服务保护。
+切换证书的Host状态必须由RuntimeStatusStore读取/校验，不得套用订单spool的256KiB上限。
+Host状态可包含完整近期分析与交易投影；大小不表示非空闲。Schema、新鲜度、paused、
+恢复阻塞及非bool整数的调度计数继续严格检查，Worker投影和订单spool上限不变。
 
 
 

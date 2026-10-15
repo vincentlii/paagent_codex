@@ -606,16 +606,21 @@ def _backup_locked(paths, directory: Path, *, now_ms: int):
 
 def _prepare_cutover(config, paths, *, now_ms):
     from pa_agent.execution.demo_dispatch import apply_execution_cutover, cutover_fingerprint
+    from pa_agent.operations.runtime_state import RuntimeStatusStore
 
     host_path = Path(
         os.environ.get("PA_AGENT_HOST_STATUS", "/var/lib/pa-agent-control/status/status.json")
     )
-    host = read_json(host_path)
+    if host_path.is_symlink():
+        raise ValueError("cutover_host_invalid")
+    host = RuntimeStatusStore(host_path).read()
+    if host is None:
+        raise ValueError("cutover_host_invalid")
     worker = read_json(paths.projection)
     if not 0 <= now_ms - int(host.get("updated_at_ms", 0)) <= 30000:
         raise ValueError("cutover_host_stale")
     scheduler = host.get("scheduler", {})
-    if not {"running", "queued", "unfinished"} <= set(scheduler):
+    if any(type(scheduler.get(k)) is not int for k in ("running", "queued", "unfinished")):
         raise ValueError("cutover_scheduler_unknown")
     if not 0 <= now_ms - int(worker.get("exchange_observed_at_ms", 0)) <= 30000:
         raise ValueError("cutover_worker_stale")

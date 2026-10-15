@@ -98,6 +98,7 @@ def test_prepared_cutover_requires_fresh_paused_host_and_idle_worker(tmp_path, m
     monkeypatch.setattr("time.time", lambda: 1800003600.5)
     now = 1800003600500
     host = {
+        "schema_version": 1,
         "service_state": "running",
         "updated_at_ms": now,
         "scheduler": {"running": 0, "queued": 0, "unfinished": 0},
