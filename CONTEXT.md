@@ -9,6 +9,8 @@
 OKX 模拟执行接入前必须阅读
 `docs/superpowers/specs/2026-10-15-okx-demo-execution-design.md`、
 `docs/quality/okx_demo_execution_acceptance_20261015.md`。设计及实施计划已获用户批准；
+备份必须在显式关闭 SQLite 源/目标连接后生成 manifest；事务 context manager 不等于关闭。
+须核验退出后的全部成员和哈希，不能把临时 WAL/SHM 写进 manifest 或只凭服务 success 验收。
 本地代码默认禁用，真实账户、保护能力及 VPS 发布须分别验收，不改 PA/VPA authority。
 Demo 只消费 Host 已持久化且 audit_ok 的正式结果；Host task 的执行代次不进入 Codex Job、
 Prompt 或市场 hash。默认500 USDT名义金额、3小时挂单有效期；面板仅可配置这两项，

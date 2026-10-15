@@ -313,3 +313,12 @@ Linux安装/权限与正式服务/证书分别列证，不将某一层通过替�
 三段过期的Demo当前状态已先备份再合并；四份既有ICT改动保持原字节、不纳入提交。
 本地恢复副本位于docs/changelog/backups/20261015-okx-demo-release（ignored，未上传Git）；
 VPS发布与激活凭证分别保留在/var/backups/pa-agent和/var/backups/pa-agent-demo。
+
+## 2026-10-15 发布前备份 manifest 修复
+
+叙述校验更新的真实备份核验发现：旧 Demo backup 连接未显式关闭，manifest 收录了退出后
+消失的目标 WAL/SHM，服务 success 不代表备份有效。修复用 closing 关闭两端连接后再封存，
+不改 WorkerLock、源 mode=ro、备份格式或交易逻辑，旧失败备份原样保留。
+两个新增回归先红后绿，独立备份测试4项及Demo聚焦23项通过；包含该修复的完整Headless
+回归 **1914 passed / 7 deselected，91.43s**。实际固定发布与官方服务复验须另记，不能用本地
+通过替代真实manifest核验。根因及发布证据见叙述校验专项报告。

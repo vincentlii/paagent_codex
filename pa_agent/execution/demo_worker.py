@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
 
@@ -567,10 +568,10 @@ def _backup_locked(paths, directory: Path, *, now_ms: int):
         raise ValueError("demo_database_missing")
     destination = Path(directory) / f"demo-{now_ms}"
     destination.mkdir(parents=True, exist_ok=False, mode=0o700)
-    with sqlite3.connect(paths.state_db.resolve().as_uri() + "?mode=ro", uri=True) as source:
+    with closing(sqlite3.connect(paths.state_db.resolve().as_uri() + "?mode=ro", uri=True)) as source:
         if source.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             raise ValueError("demo_database_corrupt")
-        with sqlite3.connect(destination / "execution.sqlite3") as target:
+        with closing(sqlite3.connect(destination / "execution.sqlite3")) as target:
             source.backup(target)
             if target.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise ValueError("demo_backup_corrupt")

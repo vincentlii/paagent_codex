@@ -76,3 +76,18 @@ Provider/canonical Schema、知识锚点和案例、mandatory 读取范围、Rou
 审阅者确认 PA/VPA/量化架构边界可进入发布验收。新鲜 Headless 回归为 **1912 passed /
 7 deselected，105.92s**，全仓关键静态检查及差异检查通过。VPS 发布前四服务正常，
 Host 队列为空，Demo 对账 ready、无活跃订单或持仓；这些是发布前状态，不是新版本上线证据。
+
+## 发布检查发现的 Demo 备份连接缺陷
+
+原版本备份服务返回 success，但真正核对 manifest 时发现 `execution.sqlite3-wal/-shm` 已不存在。
+`with sqlite3.connect(...)` 只控制事务，不关闭连接；原实现取文件清单时目标 WAL/SHM 仍存在，
+函数返回或进程退出后关闭连接才 checkpoint/清理，导致 manifest 失效。失败备份原样保留。
+
+修复仅用 `contextlib.closing` 显式关闭源和目标连接，全部关闭后再生成 manifest；不手动删除
+sidecar、不改备份格式、WorkerLock、源 `mode=ro` 或交易逻辑。新增同进程 GC、跨进程退出后
+逐成员存在/哈希核验、目标 quick_check、源/目标完整 iterdump 一致测试；原实现两项先红，
+修复后 23 项 Demo 聚焦回归通过。发现问题后未覆盖安装，先恢复旧四服务并保持 Host paused48，
+以继续对账保护；后续须用修复版本生成可核验备份再安装，不能靠重写旧 manifest 消除失败。
+
+同一独立审阅者三角色复审通过，独立备份测试4项通过。包含修复的完整Headless回归为
+**1914 passed / 7 deselected，91.43s**；关键静态及差异检查通过，无真实模型调用。
