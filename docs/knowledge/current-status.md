@@ -1,11 +1,11 @@
 ---
 lifecycle: active
-capability: paper-observation-limited
+capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-15（Demo代码及面板配置能力发布、保持Paper运行）
-核验提交: VPS运行558c25560e024f44f44f6e1c4df20a5a6772c06a
+最后核验: 2026-10-15（OKX Demo已激活；仅BTC）
+核验提交: VPS运行fe9574f8f6ca49d50275aba912dbd40bb7e97bb2
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,47 +21,31 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-15 Demo代码与面板参数已发布，账户尚未接通
+## 2026-10-15 OKX Demo正式激活（仅BTC）
 
-49文件提交558c255已推送私有main并固定发布VPS，原三服务active/running、零重启。
-先暂停41→42、清空Host/Codex任务与恢复阻塞并一致备份，离线安装后3库逻辑、14198个原文件、
-47项依赖保持。315安装成员LF源码一致、13项Runtime资源/POSIX审计及9项Linux隔离检查通过。
-本地Headless1856 passed/7 deselected；Linux没有全量pytest或真实交易所订单验收结论。
+固定运行代码fe9574f已安装VPS并启用Demo Worker，Host恢复running generation47。
+四服务active/running、Result=success、NRestarts=0；面板交易主视图selected_backend=okx_demo、
+账户投影ready，status/trading/health=200、未认证status=401，旧任务没有补发。
 
-恢复running generation43（control v5），gpt-6-luna/xhigh、Fast、三品种/并发3/aggressive
-和Run Once5保留；三品种均connected。面板status/trading/health=200，未认证status=401；
-两项配置supported且已生效500 USDT/3h，仅未来完成Demo切换的新任务使用，当前Paper不改。
+模拟账户已按用户授权切为net_mode，BTC逐仓3倍；每笔目标总价值默认500 USDT，
+合约张数向下取整且不超过目标。限价有效期默认源K1收盘后3h，Worker到期撤未成交余量
+并核对终态。面板可配置金额和1–24整数小时，仅后续新任务采用；原entry/stop/TP1不改、
+TP1全平，普通限价之外拒绝。XAU/ETH继续原分析，未经逐品种验收不开放Demo下单。
+原gpt-6-luna/xhigh、Fast、三品种/并发3/aggressive、Profile4及Run Once5保持。
 
-VPS尚无三份OKX模拟credential，Demo默认禁用、Worker inactive且无真实执行DB；当前仍是
-Paper运行。代码及设置上线不等于模拟账户已接通；接入还需安全配置凭据、只读probe和
-受控生命周期验收。备份pa-agent-20261014T174228Z、新旧wheel/源码及发布凭证保留。
-详情见[发布验收](../quality/okx_demo_execution_acceptance_20261015.md)末节；下方“未部署”
-是实施阶段历史状态，不再代表当前代码版本，但账户尚未接通的边界继续有效。
+真实最小BTC canary已验证限价/撤单、成交、原设OCO及触发子订单归零；第一次失败保留。
+实测暴露并修复OCO客户ID字段选择、systemd私有credential ACL误拒及Host完整状态误用
+spool大小限制。最终Headless 1883 passed / 7 deselected、315安装成员源码一致、
+Runtime权限及9项Linux隔离检查通过；fe9574f停服安装前后四库逻辑、14239文件和47依赖保持，
+激活后Demo账本按真实对账继续更新。
 
-## 2026-10-15 Demo面板金额/挂单时效（本地，未部署）
-
-新增交易总览两项设置，默认500 USDT / 3h；Runtime control v5使用CAS、独立代次与idle apply。
-旧v1–v4控制默认迁入且保留Fast，旧任务/Intent和已有订单保留自身金额/绝对expiry，不进入
-Codex或市场/cohort/cutover身份。新Worker可读旧Intent，旧Worker不支持新policy字段，
-发布须协调Host/Worker整包停启。无DB迁移、模型调用或真实账户操作；验证边界见
-[Demo验收](../quality/okx_demo_execution_acceptance_20261015.md)同日参数增补。
-
-## 2026-10-15 OKX Demo本地接入完成（默认禁用，未部署）
-
-用户已批准[设计](../superpowers/specs/2026-10-15-okx-demo-execution-design.md)和
-[实施计划](../superpowers/plans/2026-10-15-okx-demo-execution.md)，主 Agent实施、最多一名审阅者。
-本地新增独立Demo客户端/账本/Worker与Host交接及主视图；默认每笔500 USDT总价值，面板可配置金额和挂单有效期，按新任务冻结；原
-entry/stop/TP1不改、TP1全平，普通限价之外拒绝。首次只开放BTC候选，真实验收前仍禁止入场。
-
-新Host task绑定执行代次，不改变Codex Job、Prompt、市场hash或旧任务。未知提交只查询，
-部分成交先保护再撤余量，OCO触发子订单未终态不能释放交易；旧Paper继续观察活动单。
-Demo主视图含实际账户资金/交易/账单，缺失或陈旧不回退Paper。原分析和研究权限保持。
-
-默认enabled/entry_enabled=false、accepted_symbols为空。未读凭据或私有账户，未发交易所
-请求、模型调用或部署；VPS仍运行下节e9f40d1。Headless离线1842 passed / 7 deselected、
-wheel314成员与13项Runtime资源审计及唯一审阅者终审通过。最终测试、限制与下一步见
-[本地验收](../quality/okx_demo_execution_acceptance_20261015.md)。修改接入前必须先读该报告
-及CONTEXT；四份既有ICT文件保持原字节，不纳入本轮改动。当前未commit。
+首笔自然策略订单及真实部分成交尚未观察；不把helper验收冒充自然策略成交或盈利证据。
+模拟数据、旧Paper和真实结果分离，未知不计零；账户不可用不回退Paper。
+凭据仅root0600源文件/systemd私有注入，不交给Codex或Dashboard。
+完整备份、新旧wheel、切换证书及canary/激活记录保留；已移除一次性发布staging。
+详情见[Demo验收](../quality/okx_demo_execution_acceptance_20261015.md)末节及
+[部署手册](../linux_headless_deployment.md#9-可选-okx-demo)。
+本次替换了本页三段已过期的“账户未接通/未部署”阶段状态，旧原文已备份且Git历史可查。
 
 ## 2026-10-14 Runtime/知识覆盖优化已发布VPS
 

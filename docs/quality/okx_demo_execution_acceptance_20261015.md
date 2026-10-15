@@ -272,3 +272,44 @@ NRestarts=0；此时Host仍paused45、target=paper、entry=false，不宣称正�
 
 切换读取修复最终Headless not-live回归1883 passed / 7 deselected，104.40s；
 关键静态与差异检查通过。仅有既有tvDatafeed第三方转义弃用警告，不影响本次验收。
+
+## 2026-10-15 最终固定发布、正式激活及清理
+
+fe9574f8f6ca49d50275aba912dbd40bb7e97bb2已提交并推送私有main，VPS停服前保持paused46、
+空队列与无恢复阻塞，停止Demo Worker并持排他锁创建自身账本/回执备份，再备份原Host数据。
+原备份为pa-agent-20261015T020703Z；Demo独立备份位于release-fe9574f目录。
+停服安装前后4库逻辑、14239个原文件及47个非项目依赖相同，无数据迁移或历史回填。
+315安装成员与固定源码一致，wheel SHA256为
+b31a78017171154e20639206fb865650b7a1a5a02b69d29748c8d3b7a94f5a09；
+13项Runtime资源digest保持f2957d56a69acef229425b46c93df4531a9ea177c4bdb93e57042492193643f3，
+POSIX权限和9项Linux隔离检查通过。激活后Demo数据库正常随对账更新，不要求冻结业务数据。
+
+真实安装Worker完整对账ready后，以Host用户对最终target=okx_demo配置执行官方
+--prepare-cutover。读取516799-byte真实Host状态、确认paused/idle及Worker新鲜完整覆盖，
+成功签发匹配配置证书。切换时间1792030112633ms；entry开关不改变证书指纹。
+Host/Worker读取相同配置，面板确认schema2/selected_backend=okx_demo后才开启entry，
+再恢复自然调度running generation47。没有用缩减状态文件或旧分析补单，没有额外Run Once。
+
+四服务pa-agent、pa-agent-codex-worker、pa-agent-dashboard、pa-agent-demo-worker均
+active/running、Result=success、NRestarts=0、ExecMainStatus=0；Demo Worker已enable开机启动。
+HTTP status/trading/health为200，未认证status为401。面板settings supported=true、pending=false，
+已生效500 USDT/3h，原Profile4、Fast、三品种/并发3/aggressive和Run Once5保留。
+账户net_mode、BTC isolated3；仅BTC获执行许可，ETH/XAU继续原分析但不开放模拟下单。
+截止收尾账户无普通/条件挂单、无持仓，Demo total_decisions=0，未回填canary为正式策略单。
+模拟账户余额为9074.1386370783 USDT；canary历史成交/费用可在交易所账单对账，
+不据此宣称PA策略收益。正式首笔自然订单及真实部分成交仍未观察。
+
+三角色独立审阅通过；最终1883项Headless回归、签名HTTP模拟链路、真实最小canary、
+Linux安装/权限与正式服务/证书分别列证，不将某一层通过替代另一层或保证未来零故障。
+缺网、unknown POST、部分成交、保护失败、退出子订单未终态、重启与到期撤余量均有
+自动回归；真实交易所部分成交及首笔策略单不是已完成的live证据。
+
+用户要求清理后：VPS仅删除发布解包source/rollback-source与上传bundle，共6231文件、
+70986210 bytes；原consistent备份、新旧wheel/源码tar、失败和成功canary、切换/激活记录保留。
+本地build、egg-info、测试/Ruff/Hypothesis缓存及__pycache__共35目录、844文件、
+8364821 bytes先归档后删除；清理后Headless无Qt导入、包metadata和默认离线check正常。
+本轮一次性发布/导入/诊断脚本与原始验收输出归档后移出工作目录，长期维护入口仍是部署
+手册、CONTEXT和正式测试。未发现需要为清理而删除的正式执行模块，不强行改写代码。
+三段过期的Demo当前状态已先备份再合并；四份既有ICT改动保持原字节、不纳入提交。
+本地恢复副本位于docs/changelog/backups/20261015-okx-demo-release（ignored，未上传Git）；
+VPS发布与激活凭证分别保留在/var/backups/pa-agent和/var/backups/pa-agent-demo。

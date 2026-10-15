@@ -5,8 +5,8 @@ verification_scope:
   - local
   - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-10-12
-核验提交: 227e1979ae7b4d7eebb5fe797e5c39c4aaf71d1e（运行代码与资源；后续发布证据提交仅更新文档）
+最后核验: 2026-10-15
+核验提交: fe9574f8f6ca49d50275aba912dbd40bb7e97bb2（Demo运行代码；历史Paper修复身份见对应章节）
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -15,6 +15,23 @@ issue_status: monitoring
 ---
 
 # 运行与排障
+
+## OKX Demo运行与维护
+
+2026-10-15已在VPS激活BTC模拟执行，当前代码fe9574f；配置、验收边界及后续版本以
+[当前状态](current-status.md)和[Demo验收](../quality/okx_demo_execution_acceptance_20261015.md)为准。
+先分别核对Host running/控制代次、Demo Worker ready/对账时间/覆盖、切换证书以及
+intent→receipt→entry/OCO→触发子订单终态；HTTP成功和模型trade都不代表实际成交。
+新任务只绑定当前cutover及当时金额/TTL，禁止用旧成功record补发模拟单。
+
+三类实测根因：OCO按algoClOrdId核对身份，不从空clOrdId fallback；systemd root0440
+凭据先检查精确私有ACL，不能chmod放宽或复制密钥；切换时Host完整状态使用
+RuntimeStatusStore，不能套订单spool的256KiB限制或删除历史来通过检查。
+
+发布前暂停并等待Host/Codex队列清空，禁止跨版本续接；Demo已启用后另外停止并一致备份
+自身账本/回执，再整体安装匹配版本。活动订单的保护不能交给旧Paper，回退需兼容Worker。
+一次性导入和诊断脚本、构建解包、测试缓存可备份后移除；长期步骤维护在部署手册和正式
+测试，避免保留多份替换提交号的临时发布脚本。凭据、业务记录和失败canary不得随清理删除。
 
 ## 自然失败与 trade 未挂单
 
