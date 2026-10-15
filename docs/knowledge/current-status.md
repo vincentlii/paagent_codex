@@ -4,8 +4,8 @@ capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-15（叙述校验及Demo备份修复已发布；仅BTC执行）
-核验提交: VPS运行c0637bab00b3df6de0328c2712d15d261eaf4804
+最后核验: 2026-10-16（独立数量Demo双计划实测及发布；仅BTC执行）
+核验提交: VPS运行代码4dcb3b93b8426029dc2270472259e50b5bcb0d1a
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,12 +21,25 @@ verification_scope:
 
 # 当前状态
 
+## 2026-10-16 独立Demo双计划已实测并启用
+
+固定代码4dcb3b9已推送私有main及发布VPS。两笔BTC最小0.01张分别获得原合成价sz OCO；
+A真实退出子单成交0.01后，B仍持0.01且原保护字段不变。只读故障与同账本重启无重复退出，
+最终全部测试单/保护/仓位清理完毕；真实部分成交未出现，不宣称已验证。
+
+仅BTC新增独立数量许可，生成新cutover证书；Host paused50→running51，原500 USDT/3h、
+net/逐仓3倍、模型/Fast/Profile/Run Once保持。四服务active/running且零重启，Demo完整对账；
+默认OKX视图、Paper历史冻结、HTTP200/未认证401通过。停服安装四库/17741文件/47依赖保持。
+既有ICT四文件未纳入提交。真实canary是合成执行验收，不是自然PA/VPA建议或收益证据；
+原账单为账户口径，可能包含测试费用。备份、切换/回退边界和完整证据见
+[专项验收](../quality/independent_demo_acceptance_20261015.md)文末。
+
 ## 2026-10-15 独立Demo计划与冻结Paper历史：本地实施
 
 2026-10-16复核补齐真实历史账本零写入验证，修复旧live保护查询未知仍沿用缓存并允许新单的问题；
-查询未知持久占用原退出预算，停止新增且不重复退出。新模式仍未发布/未canary，细节见同份专项报告。
+查询未知持久占用原退出预算，停止新增且不重复退出。当时尚未发布/未canary，后续实测以上节为准。
 
-用户批准本地实施，尚未commit或发布。正式Headless已切断Paper写引擎/观察/到期调用；
+当时用户仅批准本地实施，尚未commit或发布；后续发布以上节为准。正式Headless已切断Paper写引擎/观察/到期调用；
 历史v3/v4只读分层展示。新v2计划不按水位替换旧单，允许同向，以计划真实成交量和独立
 退出预算管理；反向预约及旧v1同合约活动计划阻止新增。默认新许可为空，不复用旧BTC
 close-all保护验收；须另行双计划Demo canary和切换证书后启用。完整证据与未验收边界见

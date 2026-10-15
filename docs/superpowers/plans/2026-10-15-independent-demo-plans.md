@@ -122,7 +122,7 @@ Store 增加 `plan_exposure(intent_id: str) -> PlanExposure` 读取已持久化�
 - [x] **2. 完整回归**：依项目 Headless 排除清单运行 unit/integration/property 的 `not live` 全集，覆盖 PA/VPA off/Shadow/Joint/AABB/HTF/订单数学/records/audit；命令及明确排除文件写入验收报告，失败原样保留。
 - [x] **3. 静态/包检查**：`.venv/Scripts/ruff.exe check pa_agent tools tests --select E9,F63,F7,F82 --no-cache`、`git diff --check`；wheel 内容/Headless 无Qt/旧 Job与v1 Intent可读。依赖锁不变，旧ICT原字节不变。
 - [x] **4. 记录与清理**：更新知识入口，注明“仅本地/新数量模式未真实验收/未发布”；保存 red/green、独立审阅及非敏感摘要，清理本次临时fixture/build目录；只移除本次产生的孤儿代码，不删历史账本或隔离研究实现。
-- [ ] **5. 另行启用条件（尚未执行）**：后续明确授权后，暂停排空并验证当前无旧活动计划；备份/回退兼容Worker。按官方精确sz协议执行最小Demo双计划canary，验证A退出不误平B、原stop/TP1及部分/未知恢复，再给品种新增独立模式许可和对应cutover证书。此步骤不属于本地完成，也不以mock或旧BTC全仓验收替代。
+- [x] **5. 后续授权的启用阶段（2026-10-16完成）**：暂停排空及旧活动计划核对、备份、真实Demo双计划sz保护、A退出/B不受影响、读取故障及重启恢复均通过；新增仅BTC独立许可、新证书并恢复运行。真实部分成交未观察，该项不宣称通过；详情见专项验收文末。
 
 ## 计划自审
 
@@ -131,4 +131,5 @@ Store 增加 `plan_exposure(intent_id: str) -> PlanExposure` 读取已持久化�
 新接口只供上述消费者调用；沿用已有数据表及单一串行Worker，不引入并行下单者或第二套收益账本。
 每个任务遵循红/绿/审阅；本轮没有commit授权，因此完成后保留可审阅工作区，不执行任务间提交。
 
-本地完成记录见`docs/quality/independent_demo_acceptance_20261015.md`；Task 6.5仅列出后续启用条件，真实canary本轮未执行。
+本地及后续发布记录见`docs/quality/independent_demo_acceptance_20261015.md`；原本地阶段未执行真实canary，
+2026-10-16新授权后完成Task 6.5所述启用阶段，保留真实部分成交未验收边界。

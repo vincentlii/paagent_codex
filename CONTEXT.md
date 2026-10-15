@@ -6,8 +6,9 @@
 本地实施及验收状态见`docs/quality/independent_demo_acceptance_20261015.md`，修改相关执行链前须读。
 正式Headless不构造Paper写引擎；新v2计划不淘汰旧单，按自身累计成交减退出数量，定量OCO
 与未知退出共享同一预算；旧v1活动计划继续旧管理且不得混入同合约v2。
-新`independent_accepted_symbols`默认空，不将旧close-all OCO验收复用于定量保护；未发布，
-须另行Demo双计划canary及新代次证书后启用。不得让只识别v1的旧Worker接管v2活动计划。
+新`independent_accepted_symbols`源码默认空，不将旧close-all OCO验收复用于定量保护。
+2026-10-16固定代码4dcb3b9已发布，BTC真实双计划canary及新代次证书通过后启用；
+ETH/XAU未新增执行许可，真实部分成交及自然策略结果未验收。不得让旧v1 Worker接管v2活动计划。
 
 调整叙述质量校验、Prompt 语言或阶段交接表述前，先读
 `docs/quality/narrative_warning_scope_20261015.md`：不适用、无法可靠核对与可复算矛盾分开；

@@ -2,8 +2,9 @@
 
 ## 范围
 
-用户已批准设计、计划及本地实施。本轮没有commit、VPS发布、交易所请求或模型调用。
-旧VPS仍运行原版本；下述变化不能当作线上已启用或交易盈利证明。
+用户先批准设计、计划及本地实施，2026-10-16后续明确授权实际Demo双计划验证、启用、commit和VPS发布。
+固定代码`4dcb3b9`已发布，BTC独立数量模式已通过真实Demo canary并启用，详细证据见文末。
+此前本地阶段没有交易所请求或模型调用；真实canary不证明分析正确或交易盈利。
 
 权威规格：[设计](../superpowers/specs/2026-10-15-independent-demo-plans-design.md)、
 [计划](../superpowers/plans/2026-10-15-independent-demo-plans.md)。后续相关任务须先读本报告。
@@ -107,8 +108,55 @@ Windows本地回环测试需要沙箱网络许可；受限运行的WinError10013
 
 新定量模式默认禁入，mock不证明真实交易所行为。后续授权后须暂停排空Host/Worker、备份，
 确认无旧v1活动计划；用最小Demo双计划canary验证精确sz、原止损/TP1、A退出不影响B、
-部分成交及未知恢复，再新增品种许可和cutover证书。REST轮询仍存在成交至保护确认的时间窗。
+未知读取及重启恢复，再新增品种许可和cutover证书。部分/迟到成交已离线覆盖；最小数量canary
+没有观察到真实部分成交，该真实路径单独保持未验收，不以离线测试或本次启用冒充通过。
+REST轮询仍存在成交至保护确认的时间窗。
 已有v2活动计划时不得回退仅识别v1的旧Worker；须保留兼容管理进程直至退出核清。
 
 四份既有ICT文件独立保留，不纳入本次变更。清理仅限本轮临时测试、打包和预览产物，
 不删除旧账本、认证、原始分析、历史结果或隔离研究实现。
+
+## 2026-10-16 真实Demo双计划及固定发布
+
+- 代码提交`4dcb3b93b8426029dc2270472259e50b5bcb0d1a`已推送私有`vincentlii/paagent_codex`的main，
+  四份既有ICT改动没有纳入。提交前64项执行/历史/面板聚焦通过，沿用最终1955项离线全量证据。
+- VPS原Git HEAD为`3e1b5c1`，四服务正常，Host队列及恢复阻塞空，Demo完整对账且无敞口。
+  控制从running49暂停至50，排空后停四服务。Host备份`pa-agent-20261015T162429Z`、
+  Demo备份`demo-1792081486282`均通过manifest及quick_check/逻辑一致性；旧源码另行归档。
+- 固定增量包安装完成，316个安装成员与源码逐字节一致；四库、17741个原文件及47个非项目依赖
+  由独立进程复核完全相同，无迁移、历史回填或认证替换。首次依赖比对在导入构建器的进程中失败，
+  已定位为setuptools向该进程加入10个vendor发行版并遮蔽packaging/wheel版本；实际安装依赖未变。
+  旧失败日志保留，未通过忽略差异来放行。增量包最初HEAD引用名不匹配时停在安装前，修正为包内实际HEAD。
+- Linux wheel SHA256为`493e3729ef6f038fa973e0bedfc9edc39b015670b6ea6c2faf632eeb1d107ae9`。
+  13项Runtime资产及POSIX权限审计通过，asset仍为`401d952ea8cc91cd15ef785b7897234755a1711a91d96f861ed2689757ea6247`。
+
+实测运行在唯一的独立canary服务、专属账本和永久客户ID中；正式执行Worker停机，凭据仍由systemd
+LoadCredential注入专用执行用户，不传回本地。合成计划不伪装成PA/VPA模型建议，不写正式分析或Paper。
+每笔BTC `0.01`张，测试目标总价值`8.213252 USDT`；两笔合计`0.02`张。测试价在提交前固定，未改价：
+
+| 合成计划 | entry | stop | TP1 |
+| --- | --- | --- | --- |
+| A | 82132.52 | 82102.52 | 82162.52 |
+| B | 82132.52 | 81132.52 | 83132.52 |
+
+1. 两笔实际限价成交，并分别查到live定量OCO；校验原价、sz、reduceOnly/net、last触发及市价退出，
+   不发送closeFraction。净仓`0.02`，不是两份全仓保护。
+2. 只注入B的读取故障，原退出预算不释放、保护变unknown；重启沿用同账本和客户ID，恢复读取后确认
+   保护，无重复退出腿或额外平仓请求。清理前禁新入场，未提交意图先收尾，避免清理循环开仓。
+3. A的OCO真实effective，其实际退出子单`4012420659611275264`累计成交`0.01`；A剩余0，
+   净仓仅余B的`0.01`。B原algo `4012420633048158208`保持live，原stop/TP1及数量等字段不变。
+   此证据不将触发类型猜成TP或SL，也不以手动平仓冒充A的OCO触发。
+4. B清理先核对原保护取消终态及零保留预算，再用持久化reduce-only退出自身剩余量。最终完整覆盖下
+   普通单0、algo0、仓位0，独立账本活跃计划0，canary服务success后停止。真实部分成交未观察，不宣称已实测。
+
+真实canary通过后才将BTC加入`independent_accepted_symbols`；ETH/XAU没有新增执行许可。
+新代次`okx-demo-independent-20261016-1792081957579`及证书已建立。正式Worker先禁入场只读对账，
+签证书后协调四服务加载同一版本，再恢复running51；旧任务不重新绑定，不补旧订单。
+原500 USDT/3h、3倍net/逐仓、Profile/Fast/模型/Run Once保持；未额外触发单次模型分析。
+
+恢复时四服务active/running、Result=success、NRestarts=0；Demo ready/完整覆盖、无未决敞口。
+面板status/trading/health及页面HTTP200，未认证status401；默认OKX、Paper历史冻结标记通过。
+canary是真实模拟账户交易，因此其成交/费用可能出现在账户口径的OKX账单，不伪造成逐计划策略PnL。
+收据、原失败日志及脚本归档在忽略的`docs/changelog/backups/20261016-independent-release/`；
+VPS证据与回退源码在`/var/backups/pa-agent/releases/independent-20261016/`，独立canary账本保留。
+这不是自然策略首单、持续运行收益或真实部分成交验收；已有v2活动计划不得由旧v1 Worker接管。
