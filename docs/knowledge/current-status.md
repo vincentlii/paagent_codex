@@ -4,8 +4,8 @@ capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-15（OKX Demo已激活；仅BTC）
-核验提交: VPS运行fe9574f8f6ca49d50275aba912dbd40bb7e97bb2
+最后核验: 2026-10-15（叙述校验及Demo备份修复已发布；仅BTC执行）
+核验提交: VPS运行c0637bab00b3df6de0328c2712d15d261eaf4804
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,13 +21,23 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-15 叙述警告与阶段交接优化（仅本地，未发布）
+## 2026-10-15 叙述警告、阶段交接及Demo备份修复已发布
 
 本地已修复 EMA 周期/数字作用域、极值主语、VPA 单棒/窗口比较器、否定与条件、未来闭盘措辞
 及显式 Joint 的 PA-only 误报。无法可靠绑定时标明 `unverified`，不自动重试或改写 Draft。
 Prompt/Skills 只澄清可见语言、Host 执行及 accepted/frozen 的含义；Schema、Router、阶段与
-交易规则未改。独立三角色审查通过，完整 Headless 回归 1912 项通过；测试与未验证边界见
-[专项报告](../quality/narrative_warning_scope_20261015.md)。VPS 仍运行下方已发布版本。
+交易规则未改。发布核验另发现旧Demo备份在连接关闭前封存WAL/SHM，导致manifest失效；
+已显式关闭连接后再封存，保留旧失败备份。独立三角色审查通过，完整Headless回归1914项通过。
+
+6de6b47和补充修复c0637ba已推送私有main，VPS固定安装c0637ba。Host paused48完全排空后
+停四服务，验证新Demo及Host备份；停服安装前后四库逻辑、17385个文件和47依赖保持一致。
+315个安装成员与源码一致，13项Runtime资源与9项Linux隔离检查通过；安装后的官方Demo
+备份再次核验完整manifest和quick_check通过。新asset摘要401d952e…，四服务active/running、
+NRestarts=0，HTTP健康/状态/交易200、未认证401，Demo ready/全覆盖；恢复running49。
+原Profile4、Fast、Run Once5、BTC许可、500 USDT/3h及entry开关保持，不重做cutover、不补旧单。
+
+新版本自然模型质量及交易结果尚未验收；没有额外Run Once或测试订单。细节与备份位置见
+[专项报告](../quality/narrative_warning_scope_20261015.md)末节。四份既有ICT改动仍未纳入提交。
 
 ## 2026-10-15 OKX Demo正式激活（仅BTC）
 

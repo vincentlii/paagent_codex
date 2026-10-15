@@ -1,7 +1,7 @@
 # 叙述校验作用域与阶段交接边界
 
-本次只修复离线代码与 Runtime/Prompt 文本，未 commit、未发布、未调用真实模型或交易所。
-VPS 运行版本仍以 `docs/knowledge/current-status.md` 的发布记录为准。
+本报告分开记录离线实施、发布前检查和随后用户授权的固定提交 VPS 发布。
+当前运行版本以末节及 `docs/knowledge/current-status.md` 的发布记录为准。
 
 ## 长期原则
 
@@ -91,3 +91,34 @@ sidecar、不改备份格式、WorkerLock、源 `mode=ro` 或交易逻辑。新�
 
 同一独立审阅者三角色复审通过，独立备份测试4项通过。包含修复的完整Headless回归为
 **1914 passed / 7 deselected，91.43s**；关键静态及差异检查通过，无真实模型调用。
+
+## 2026-10-15 固定发布验收
+
+- 本轮优化提交6de6b47、备份修复c0637ba均已推送私有main。VPS原HEAD为f9848f4（此前代码
+  与fe9574f相同），通过已验证增量Git bundle离线构建新旧wheel，固定安装
+  `c0637bab00b3df6de0328c2712d15d261eaf4804`；pyproject/uv.lock/部署单元无变化，no-deps安装。
+- 暂停47→48并确认Host queued/running/unfinished全0、Codex inbox/running及子进程为空，
+  无恢复阻塞。Demo对账新鲜完整、无活动订单/持仓及未决请求后才停四服务。
+- 首次旧官方Demo备份`demo-1792062762558`因失效sidecar manifest核验失败，原样保留；
+  此时没有安装，先恢复旧服务并保持暂停。修复后在同一WorkerLock下生成候选备份
+  `releases/warning-c0637ba/demo-backup/demo-1792063145707`，全部11成员hash与完整数据库
+  逻辑一致；Host新备份为`pa-agent-20261015T111905Z`，manifest及数据库quick_check通过。
+- 停服安装前后4库逐内容逻辑摘要、17385个原文件hash、47项非项目依赖完全一致；
+  无migration、回填、历史记录改写、配置或认证替换。315个已安装包成员与固定源码一致，
+  pip check、13项Runtime资源及POSIX权限、9项runuser隔离检查通过。
+- Linux wheel SHA256为`173e99f33eef2dc68987dabea37503c857b2a062363ac3561771b7a33e50eda1`；
+  新Runtime asset为`401d952ea8cc91cd15ef785b7897234755a1711a91d96f861ed2689757ea6247`。
+  安装后的官方Demo备份服务实际生成`demo-1792063285236`，11成员均存在/hash一致、
+  无临时WAL/SHM成员且quick_check通过，未将候选helper冒称官方服务验收。
+- 先启动Demo/Codex/Dashboard，再启动Host并核对paused状态：新Runtime/健康auth正确，
+  原Profile4/Fast/Run Once5与Demo配置保持；HTTP health/status/trading为200、未认证401，
+  交易面板从既有`trading`封套核验selected_backend=okx_demo。核验脚本曾误读顶层字段，
+  按既有JSON合同修正后通过，无产品改动。
+- 恢复原running为generation49后再次确认四服务active/running、Result=success、NRestarts=0，
+  Demo ready/完整覆盖、无恢复阻塞、源工作区干净。未重做cutover、补发旧任务、触发Run Once
+  或人工模型/测试订单；重启后的调度内存计数归零不代表账本删除。
+
+发布证据、新旧wheel、有效备份与原失败备份保留在VPS的`/var/backups/pa-agent`及
+`/var/backups/pa-agent-demo`；本地原文、增量包和脱敏收据在既有ignored备份目录。
+完整Linux/GUI CI、新版本自然模型链质量/Token及交易收益尚未验收，发布不证明这些改善。
+后续验收文档提交仅同步CONTEXT及本报告等说明，代码/安装包版本仍为c0637ba，不重启服务。

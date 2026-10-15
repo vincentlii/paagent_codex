@@ -322,3 +322,8 @@ VPS发布与激活凭证分别保留在/var/backups/pa-agent和/var/backups/pa-a
 两个新增回归先红后绿，独立备份测试4项及Demo聚焦23项通过；包含该修复的完整Headless
 回归 **1914 passed / 7 deselected，91.43s**。实际固定发布与官方服务复验须另记，不能用本地
 通过替代真实manifest核验。根因及发布证据见叙述校验专项报告。
+
+后续固定发布c0637ba已完成：候选持锁备份和安装后的官方服务备份均通过完整manifest、
+quick_check核验；旧失败manifest未改写。停服安装保持四库逻辑及所有原文件/依赖，Demo恢复
+ready/完整对账、Host恢复running49，既有cutover、品种许可和entry设置保持。固定包及收据位置
+见[叙述校验发布验收](narrative_warning_scope_20261015.md#2026-10-15-固定发布验收)。
