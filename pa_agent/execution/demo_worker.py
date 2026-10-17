@@ -122,6 +122,12 @@ class DemoWorker:
             return "external_order"
         if any(row.get("algoClOrdId") not in known for row in snapshot.algos):
             return "external_algo"
+        if any(
+            leg["leg"] == "entry" and leg["status"] == "observation_unknown"
+            for intent in self.store.pending_intents()
+            for leg in self.store.legs(intent.content_digest)
+        ):
+            return "entry_observation_unknown"
         managed = {
             i.inst_id
             for i in self.store.pending_intents()

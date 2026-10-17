@@ -126,6 +126,61 @@ def test_new_plan_and_no_trade_do_not_cancel_old_entry(runtime):
     assert store.row(a.content_digest)["trade_state"] == "active"
 
 
+def test_missing_entry_get_blocks_new_orders_and_protects_owned_fills(runtime, monkeypatch):
+    worker, exchange, store, spool = runtime
+    a = plan()
+    spool.publish(a)
+    worker.tick()
+    worker.tick()
+    exchange.fill(store, a)
+    entry = next(l for l in store.legs(a.content_digest) if l["leg"] == "entry")
+    original_snapshot, original_get = exchange.snapshot, exchange.get_order
+    monkeypatch.setattr(exchange, "snapshot", lambda **kw: original_snapshot(**kw).model_copy(update={
+        "fills": (dict(instId=a.inst_id, ordId=entry["client_id"], tradeId="actual-fill",
+                       side="buy", fillSz="1", fillPx="50000", fee="-0.1", feeCcy="USDT"),)
+    }))
+    monkeypatch.setattr(exchange, "get_order", lambda inst, cid=None, **kw:
+                        {} if cid == entry["client_id"] else original_get(inst, cid, **kw))
+    spool.publish(plan("second"))
+    projection = worker.tick()
+    assert projection["state"] == "blocked"
+    assert projection["reason"] == "entry_observation_unknown"
+    assert D(store.row(a.content_digest)["filled"]) == 1
+    assert store.plan_exposure(a.content_digest).protected == 1
+    assert len([c for c in exchange.calls if c[0] == "entry"]) == 1
+    assert len([c for c in exchange.calls if c[0] == "oco"]) == 1
+    worker.tick()
+    assert len([c for c in exchange.calls if c[0] == "oco"]) == 1
+    monkeypatch.setattr(exchange, "get_order", original_get)
+    assert worker.tick().get("reason") != "entry_observation_unknown"
+
+
+def test_lost_entry_ack_can_bind_exact_client_fill_without_reposting(runtime, monkeypatch):
+    from pa_agent.execution.okx_demo import DemoRequestUnknown
+
+    worker, exchange, store, spool = runtime
+    original_place = exchange.place_limit
+    def lose_ack(request):
+        original_place(request)
+        raise DemoRequestUnknown("entry")
+    monkeypatch.setattr(exchange, "place_limit", lose_ack)
+    a = plan()
+    spool.publish(a)
+    worker.tick()
+    entry = next(l for l in store.legs(a.content_digest) if l["leg"] == "entry")
+    exchange.fill(store, a)
+    original_snapshot = exchange.snapshot
+    monkeypatch.setattr(exchange, "snapshot", lambda **kw: original_snapshot(**kw).model_copy(update={
+        "fills": (dict(instId=a.inst_id, clOrdId=entry["client_id"], ordId=entry["client_id"],
+                       tradeId="actual-fill", side="buy", fillSz="1", fillPx="50000",
+                       fee="-0.1", feeCcy="USDT"),)
+    }))
+    monkeypatch.setattr(exchange, "get_order", lambda *args, **kw: {})
+    assert worker.tick()["state"] == "blocked"
+    assert store.plan_exposure(a.content_digest).protected == 1
+    assert len([c for c in exchange.calls if c[0] == "entry"]) == 1
+
+
 def test_each_plan_protects_its_quantity_and_one_exit_keeps_the_other(runtime):
     worker, exchange, store, spool = runtime
     a, b = plan(), plan("b", stop="48000", tp1="53000")

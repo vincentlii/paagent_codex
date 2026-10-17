@@ -7,6 +7,7 @@ import json
 from decimal import Decimal, InvalidOperation
 
 from pa_agent.execution.demo_contracts import DemoIntent, DemoOrderRequest
+from pa_agent.operations.demo_plan_view import plan_view, order_ids
 
 NUMERIC_FIELDS = frozenset(
     "equity available_balance unrealized_pnl margin_used planned_stop_loss reserved_margin "
@@ -113,6 +114,10 @@ def safe_demo_projection(value):
             "trade_state",
             "reason",
             "created_at_ms",
+            "display_status",
+            "pnl",
+            "sync_required",
+            "valuation_at_ms",
         ),
         "decisions": ("task_id", "run_id", "symbol", "disposition", "reason", "created_at_ms"),
         "positions": ("instId", "pos", "upl", "imr", "margin", "mgnMode", "lever"),
@@ -155,7 +160,7 @@ def build_demo_projection(store, snapshot, *, now_ms):
     rows = store.projection_rows(now_ms=now_ms)
     orders, decisions = [], []
     stop_risk = Decimal(0)
-    for row in rows["intents"]:
+    for row in rows["decisions"]:
         i = DemoIntent.model_validate_json(row["body"])
         decisions.append(
             dict(
@@ -167,9 +172,13 @@ def build_demo_projection(store, snapshot, *, now_ms):
                 created_at_ms=i.generated_at_ms,
             )
         )
+    for row in rows["intents"]:
+        i = DemoIntent.model_validate_json(row["body"])
         if row["request"]:
             request = DemoOrderRequest.model_validate_json(row["request"])
-            entry = next((l for l in store.legs(i.content_digest) if l["leg"] == "entry"), None)
+            legs = store.legs(i.content_digest)
+            children = store.triggered_orders(i.content_digest)
+            entry = next((l for l in legs if l["leg"] == "entry"), None)
             average_fill = json.loads(entry["response"]).get("avgPx") if entry else None
             independent = i.schema_version == "okx_demo_intent_v2"
             exposure = store.plan_exposure(i.content_digest) if independent else None
@@ -211,6 +220,12 @@ def build_demo_projection(store, snapshot, *, now_ms):
                     trade_state=row["trade_state"],
                     reason=row["reason"],
                     created_at_ms=i.generated_at_ms,
+                    **plan_view(
+                        i, request, row, legs, children,
+                        store.order_fills(i.inst_id, order_ids(legs, children),
+                                          client_id=entry["client_id"] if entry else None),
+                        snapshot.quotes.get(i.inst_id, {}), now_ms,
+                    ),
                 )
             )
             if row["trade_state"] == "active":

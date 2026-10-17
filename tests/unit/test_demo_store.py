@@ -54,6 +54,23 @@ def test_cumulative_fill_monotone_and_partial_reservation_not_double_counted(tmp
     assert abs(float(store.reserved_margin()) - 100) < 0.00001
 
 
+def test_late_smaller_fill_observation_preserves_paired_average_price(tmp_path):
+    from pa_agent.execution.demo_store import DemoStore
+    import json
+
+    store = DemoStore(tmp_path / "demo.sqlite3")
+    i = intent()
+    store.register_intent(i)
+    store.save_prepared(i, bind(i))
+    cid = store.prepare_leg(i.content_digest, "entry", {}, generation=1)
+    store.update_leg(cid, "live", {"accFillSz": "0.4", "avgPx": "50000", "fee": "-0.1"})
+    store.update_leg(cid, "live", {"accFillSz": "0.2", "avgPx": "49000", "fee": "-0.05"})
+    observation = json.loads(store.legs(i.content_digest)[0]["response"])
+    assert observation["accFillSz"] == "0.4"
+    assert observation["avgPx"] == "50000"
+    assert observation["fee"] == "-0.1"
+
+
 def test_leg_generation_cannot_reuse_consumed_protection(tmp_path):
     from pa_agent.execution.demo_store import DemoStore
 

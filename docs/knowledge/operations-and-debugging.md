@@ -18,6 +18,17 @@ issue_status: monitoring
 
 ## OKX Demo运行与维护
 
+2026-10-18流水/逐计划盈亏及三品种相关排障先读
+[本轮验收](../quality/demo_journal_three_asset_20261018.md)：精确关联fills、冻结合约单位、
+bid/ask新鲜度、手续费与资金费范围、entry GET未知及ACK丢失恢复。原下节只读审查报告
+属于修复前证据；是否已正式发布、ETH/XAU是否已启用，以本轮验收末节为准。
+
+排查“模拟盘实际成交与费用”与“订单流水”不一致、零成交显示已平仓或限价难触达时，
+先读[2026-10-18 对账与可达性审查](../quality/demo_runtime_reconciliation_20261018.md)：
+账户 fills 包含测试及入场/退出，正式计划与账户账单起点不同；先按 ordId 归属再比较。
+该报告记录尚未修复的状态分类/时间排序问题，以及入场 GET 未知时的离线保护缺口；
+不得把当前无敞口当作缺口已修复，也不因单笔未触达自动延长 TTL 或改价。
+
 2026-10-15已在VPS激活BTC模拟执行，当前代码fe9574f；配置、验收边界及后续版本以
 [当前状态](current-status.md)和[Demo验收](../quality/okx_demo_execution_acceptance_20261015.md)为准。
 先分别核对Host running/控制代次、Demo Worker ready/对账时间/覆盖、切换证书以及

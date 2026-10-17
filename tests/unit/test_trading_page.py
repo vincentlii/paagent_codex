@@ -28,6 +28,8 @@ def test_trading_page_ids_are_unique_and_all_script_targets_exist():
     assert set(re.findall(r"\$\('([^']+)'\)", TRADING_HTML)) <= set(page.ids)
     assert 'href="/trading" aria-current="page"' in TRADING_HTML
     assert '<optgroup label="历史模拟记录">' in TRADING_HTML
+    assert 'id="tabs"' not in TRADING_HTML
+    assert '<th>盈亏 · USDT</th>' in TRADING_HTML
 
 
 def test_trading_script_renders_unknown_empty_and_review_without_writes():
@@ -112,6 +114,20 @@ assert.ok(nodes.version.textContent.includes('OKX 模拟盘'));
 assert.ok(!nodes.version.textContent.includes('funding 未建模'));
 assert.ok(nodes['demo-fills'].textContent.includes('BTC-USDT-SWAP'));
 assert.ok(nodes['demo-fills'].textContent.includes('-0.1 USDT'));
+context.data.trading.demo.orders=['open','pending','closed','cancelled'].map((state,n)=>({
+  run_id:'plan-'+n,symbol:'BTC-USDT-SWAP',side:'buy',created_at_ms:Date.now()-n,
+  expires_at_ms:Date.now()+1000,entry:'50000',notional:'500',stop:'49000',tp1:'52000',
+  display_status:state,pnl:state==='open'?'3.25':state==='closed'?'-2.5':'0',sync_required:false}));
+vm.runInContext('render(data)',context);
+assert.equal(nodes.orders.children.length,4);
+for(const label of ['持仓中','挂单中','已平仓','已取消'])assert.ok(nodes.orders.textContent.includes(label));
+assert.ok(nodes.orders.textContent.includes('3.25'));
+assert.ok(!nodes.orders.textContent.includes('无活动保护'));
+context.data.trading.demo.orders[0].pnl='4.25';vm.runInContext('render(data)',context);
+assert.ok(nodes.orders.textContent.includes('4.25'));
+context.data.trading.demo.orders[0].sync_required=true;vm.runInContext('render(data)',context);
+assert.ok(nodes.notice.textContent.includes('正在同步'));
+assert.ok(!nodes.orders.textContent.includes('4.25'));
 nodes['execution-version'].value='paper_latency_v4';nodes['execution-version'].events.change();
 assert.ok(nodes.balance.textContent.includes('99,999'));
 context.data.trading.paper_versions.paper_latency_v4.history_frozen=true;

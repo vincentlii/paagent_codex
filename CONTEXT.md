@@ -1,5 +1,12 @@
 # PA Agent Domain Context
 
+2026-10-18用户授权三品种Demo及简化流水。相关实现、金额定义和安全边界须读
+`docs/quality/demo_journal_three_asset_20261018.md`：逐计划PnL只由自身入场/退出fills及冻结单位
+计算，扣已发生手续费，资金费保留账户口径；不按同向净仓均价分摊。四个主状态不取消内部
+未知/预算，缺事实显示同步及空金额；零成交撤单才为0。entry GET未知时仅按精确订单身份
+恢复确定成交保护，歧义阻断、不重发入场。本地1974项和ETH/XAU独立canary已过；正式启用
+以该报告末节为准，不能把隔离测试当生产发布。原PA/VPA、价格、金额/TTL权限不变。
+
 独立Demo多计划及Paper历史冻结的已确认设计见
 `docs/superpowers/specs/2026-10-15-independent-demo-plans-design.md`。
 用户已批准规格与实施计划`docs/superpowers/plans/2026-10-15-independent-demo-plans.md`。

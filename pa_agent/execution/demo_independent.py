@@ -102,6 +102,35 @@ class IndependentPlanManager:
             return
         for leg in self.store.legs(intent.content_digest):
             result = w._leg_query(intent, leg)
+            if not result and leg["leg"] == "entry" and leg["status"] not in ENTRY_TERMINAL:
+                # An empty GET is not evidence of zero fills. Recover only fills
+                # bound to the durable exchange order ID, never the net position.
+                previous = json.loads(leg["response"])
+                fills = self.store.order_fills(
+                    intent.inst_id, {previous["ordId"]} if previous.get("ordId") else set(),
+                    client_id=None if previous.get("ordId") else leg["client_id"],
+                )
+                identities = {f.get("ordId") for f in fills}
+                if fills and (len(identities) != 1 or not next(iter(identities))):
+                    raise DemoUnavailable("entry_fill_identity_ambiguous")
+                quantity = amount = Decimal(0)
+                for fill in fills:
+                    q, px = Decimal(fill["fillSz"]), Decimal(fill["fillPx"])
+                    if not q.is_finite() or not px.is_finite() or min(q, px) <= 0 or fill.get("side") != intent.side:
+                        raise DemoUnavailable("entry_fill_identity_or_value_mismatch")
+                    quantity += q
+                    amount += q * px
+                request = DemoOrderRequest.model_validate_json(row["request"])
+                if quantity > request.sz:
+                    raise DemoUnavailable("entry_fill_quantity_mismatch")
+                recovered = {"ordId": next(iter(identities))} if identities else {}
+                if quantity > Decimal(previous.get("accFillSz", "0")):
+                    recovered.update(accFillSz=str(quantity), avgPx=str(amount / quantity),
+                                     _fill_observed_at_ms=w.now_ms())
+                    self.store.update(intent.content_digest, filled=str(quantity))
+                self.store.update_leg(leg["client_id"], "observation_unknown", recovered)
+                self.store.update(intent.content_digest, entry_state="observation_unknown")
+                w.error = "entry_observation_unknown"
             if not result and leg["leg"] != "entry" and leg["status"] not in LEG_TERMINAL:
                 # Cached live is not a fresh verification. Retain the entire exit
                 # reservation, including across restart; never infer absence from GET.

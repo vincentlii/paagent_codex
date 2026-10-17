@@ -206,6 +206,22 @@ class DemoStore:
                 )
             ]
 
+    def order_fills(self, inst_id, order_ids, *, client_id=None):
+        if not order_ids and not client_id:
+            return []
+        conditions, params = [], [inst_id]
+        if order_ids:
+            conditions.append("json_extract(body,'$.ordId') IN (" + ",".join("?" for _ in order_ids) + ")")
+            params.extend(sorted(order_ids))
+        if client_id:
+            conditions.append("json_extract(body,'$.clOrdId')=?")
+            params.append(client_id)
+        with self.connect() as db:
+            return [json.loads(row[0]) for row in db.execute(
+                "SELECT body FROM fills WHERE json_extract(body,'$.instId')=? AND (" + " OR ".join(conditions) + ")",
+                params,
+            )]
+
     @staticmethod
     def _exposure(db, intent_id):
         legs = [dict(r) for r in db.execute("SELECT * FROM legs WHERE intent_id=?", (intent_id,))]
@@ -245,6 +261,13 @@ class DemoStore:
             if not a.is_finite() or not b.is_finite() or min(a, b) < 0:
                 raise ValueError("invalid_fill")
             body["accFillSz"] = str(max(a, b))
+            if b < a:
+                # Cumulative quantity and its price/cost observation are one fact.
+                for key in ("avgPx", "fee", "feeCcy", "fillPx", "fillSz", "fillTime", "tradeId"):
+                    if key in old:
+                        body[key] = old[key]
+                    else:
+                        body.pop(key, None)
         return body
 
     def register_triggered(self, parent_client_id, inst_id, order_ids):
@@ -439,13 +462,21 @@ class DemoStore:
                 "intents": [
                     dict(r)
                     for r in db.execute(
-                        "SELECT * FROM intents ORDER BY (trade_state='active') DESC,rowid DESC LIMIT 150"
+                        "SELECT * FROM intents WHERE request IS NOT NULL "
+                        "ORDER BY (trade_state='active') DESC,rowid DESC LIMIT 150"
                     )
                 ],
+                "decisions": [dict(r) for r in db.execute(
+                    "SELECT * FROM intents ORDER BY rowid DESC LIMIT 150"
+                )],
                 "fills": [
                     json.loads(r[0])
-                    for r in db.execute("SELECT body FROM fills ORDER BY rowid DESC LIMIT 150")
-                ][::-1],
+                    for r in db.execute(
+                        "SELECT body FROM fills ORDER BY "
+                        "CAST(COALESCE(NULLIF(json_extract(body,'$.fillTime'),''), "
+                        "json_extract(body,'$.ts'),0) AS INTEGER) DESC,rowid DESC LIMIT 150"
+                    )
+                ],
                 "bills": [
                     json.loads(r[0])
                     for r in db.execute("SELECT body FROM bills ORDER BY rowid LIMIT 20000")
