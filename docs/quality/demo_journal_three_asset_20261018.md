@@ -76,7 +76,25 @@ canary输出保存在VPS专属候选目录，发布与回退资料位于
 
 ## 正式发布与启用
 
-待正式切换核验；此时生产配置仍只许可BTC。BTC/ETH/XAU分析本来均已开启，
-本轮新增目标是ETH/XAU的模拟执行许可。原金额、TTL、模型、Fast和Profile保持。
-新许可需新cutover证书，旧任务不补发；历史v1/v2记录和Paper冻结保持。
-用户随后明确授权创建commit、完成VPS发布及三品种启用；下方继续登记实际验收。
+用户随后明确授权创建commit、完成VPS发布及三品种启用。代码提交
+`1b3ab1f7d769930fd29047bb7f3c69b6f4bb45d0`已推送既有私有仓库main并固定安装到VPS。
+源码从b905c0e仅快进，未纳入既有ICT四文件；四服务停止后备份正式四库，安装前后逻辑dump
+SHA256逐库一致，无迁移或回填。目标Linux按Git LF原文离线构建，318成员源码一致；
+安装包SHA256为`2254140745680c547d9f01edaf4fe31f1b1addf78a4c1863dc2d84f329511f56`。
+无依赖更新、Headless无Qt导入通过。此前Windows候选包与Linux包的字节身份分别保留。
+
+新增许可为BTC/ETH/XAU三个原生USDT永续，均有`independent_accepted_symbols`明确许可；
+新cutover为`okx-demo-three-assets-20261018-1792256948271`，entry_enabled=true。
+签证前曾因Host停机状态不是paused而被门禁拒绝；按原配置启动暂停Host刷新真实心跳，
+在新Worker只读对账、全覆盖且空账户后签证，再协调Host/Worker加载同一新配置，未绕过门禁。
+暂停52→恢复running53。模型、Fast、Profile、Run Once及500 USDT/3h逐项核验保持，旧任务不补发。
+
+最终北京时间2026-10-18 01:10:41核验：四服务active/running、Result=success、NRestarts=0；
+三品种行情connected，Host无恢复阻塞，Demo ready且全部覆盖、0活动计划/0持仓。
+`/healthz`、`/api/status`、`/api/trading`、`/trading`均200，未认证status401。
+页面无状态tabs，盈亏列存在；3个历史未成交撤单均已取消/0，唯一真实策略已平仓
+`-1.860999834 USDT`、sync_required=false。新增品种自然策略单及真实部分成交仍待观察。
+
+备份/目标wheel/原配置/证书/最终收据及canary报告保留在本轮release目录；旧Demo一致备份
+保持不动。回退仍须由支持v2定量计划的Worker管理现存订单，不能交给旧全仓或Paper执行。
+本轮只清理具名测试目录、已验证安装后的上传暂存和候选包副本；原始canary账本与失败日志保留。
