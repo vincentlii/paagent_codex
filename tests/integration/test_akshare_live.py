@@ -49,7 +49,7 @@ def test_live_stock_4h(akshare_available: None) -> None:
 
 
 def test_live_three_snapshots_stable(akshare_available: None) -> None:
-    """Three consecutive fetches (simulates RefreshLoop) without fallback."""
+    """Three consecutive snapshot fetches without fallback."""
     time.sleep(2)
     s = _source()
     s.subscribe("000001", "1h")

@@ -25,7 +25,7 @@ PA Agent 对同一份冻结行情快照进行 Brooks Price Action 分析，并�
 2. 让 OHLCV、时间、来源身份、指标、证据引用、订单数学和持久化事实可复算。
 3. 保留 LLM 对市场背景、Always-In、周期位置、Setup、结构失效和 VPA 多解语义的裁决权。
 4. 在与正式分析隔离的研究进程中，比较 PA-only 与 PA+VPA Joint 是否存在稳定、成本后的信息增量。
-5. 支持 Windows GUI 交互分析和 Linux VPS 无人值守 Paper 运行，并提供最小权限 Web 控制面。
+5. 支持 Headless 无人值守分析与独立执行进程，并提供最小权限 Web 控制面。旧 Qt 桌面端已退役。
 
 项目优先级是事实一致、权限清晰、失败可诊断、订单安全和研究可复现。盈利能力需要长期前向模拟盘验证，不能由设计或测试直接推导。
 
@@ -33,7 +33,6 @@ PA Agent 对同一份冻结行情快照进行 Brooks Price Action 分析，并�
 
 | 场景 | 入口 | 主要用途 |
 | --- | --- | --- |
-| Windows GUI | Qt GUI | 选择品种/周期、调整配置、查看 PA 与 VPA 摘要、人工复盘 |
 | Linux Headless | 非 Qt CLI/service | 多资产有界调度、冻结快照分析、Paper、records/audit 持久化 |
 | VPS Dashboard | 独立最小权限 Web 进程 | 查看脱敏状态、切换 `running/paused` desired state |
 | A/A/B/B 研究 | 独立研究 executor | 同一 Snapshot 下估计 PA-only 随机性、Joint 随机性和配对增量 |
@@ -79,7 +78,7 @@ PA Agent 对同一份冻结行情快照进行 Brooks Price Action 分析，并�
 - VPA 核心、趋势/回调、突破、区间事件和高潮模块按 PA Context 注入。
 - 多资产 FIFO 单飞、全局有界并发、任务去重和有界重试。
 - JSON records、audit、SQLite projection、Paper OHLC 反事实回放与恢复。
-- Windows GUI、Linux Headless、systemd 部署资源和隔离 Dashboard 控制面。
+- Headless、systemd 部署资源和隔离 Dashboard 控制面。
 - 持续 A/A/B/B、cohort 隔离、ITT/per-protocol 和样本晋级门禁。
 
 当前实现与验证范围见 [当前状态](current-status.md)。

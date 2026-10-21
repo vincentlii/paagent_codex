@@ -83,60 +83,6 @@ def test_prompt_token_delta_within_budget() -> None:
     assert 0 < token_delta <= 800
 
 
-def test_panel_render_time(qtbot) -> None:
-    """Rendering a decision with prediction stays below 50 ms per update."""
-    from pa_agent.gui.decision_panel import DecisionPanel
-    from pa_agent.gui.stage2_payload import merge_stage2_for_panels
-
-    panel = DecisionPanel()
-    qtbot.addWidget(panel)
-    stage2 = {
-        "decision": {
-            "order_type": "\u4e0d\u4e0b\u5355",
-            "order_direction": None,
-            "entry_price": None,
-            "take_profit_price": None,
-            "stop_loss_price": None,
-            "reasoning": "test",
-            "diagnosis_confidence": 40,
-            "diagnosis_confidence_reasoning": "test",
-            "trade_confidence": 30,
-            "trade_confidence_reasoning": "test",
-            "estimated_win_rate": None,
-            "estimated_win_rate_reasoning": "test",
-            "key_factors": [],
-            "watch_points": [],
-            "risk_assessment": "test",
-            "invalidation_condition": "test",
-        },
-        "decision_trace": [
-            {
-                "node_id": "10.3",
-                "question": "q",
-                "answer": "\u5426",
-                "reason": "r",
-                "bar_range": "K1",
-            }
-        ],
-        "terminal": {"node_id": "10.3", "outcome": "wait", "label": "test"},
-        "next_bar_prediction": {
-            "direction": "bullish",
-            "probabilities": {"bullish": 70, "bearish": 20, "neutral": 10},
-            "reasoning": "bullish structure" * 5,
-            "unpredictable": False,
-            "features_used": ["stage1_diagnosis"],
-        },
-    }
-    decision = merge_stage2_for_panels(stage2)
-    stage1 = {**_stage1(), "key_signals": []}
-    panel.set_decision(decision, stage1_diagnosis=stage1)
-
-    start = time.perf_counter()
-    for _ in range(20):
-        panel.set_decision(decision, stage1_diagnosis=stage1)
-    elapsed = (time.perf_counter() - start) / 20
-
-    assert elapsed < 0.05
 
 
 def test_stage2_prompt_assembly_overhead() -> None:

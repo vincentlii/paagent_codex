@@ -21,6 +21,13 @@ verification_scope:
 
 # 当前状态
 
+## 2026-10-21 旧 Qt 桌面版本地退役
+
+用户授权先备份后成套删除桌面端。当前源码移除旧GUI、专属Qt辅助和桌面安装入口，
+同步CI与测试；保留网页Dashboard、Headless、PA/VPA、Codex及OKX执行链路。
+备份、恢复边界及验收见[桌面退役记录](../quality/desktop_retirement_20261021.md)。
+本轮尚未commit或发布，不改变下方线上版本、PA默认或原有Demo fills覆盖缺口。
+
 ## 2026-10-21 可选固定盈亏比模式实现与发布
 
 新增PA / fixed_rr模式及1、1.5、2、2.5倍选择；默认保持PA，固定初值1.5。

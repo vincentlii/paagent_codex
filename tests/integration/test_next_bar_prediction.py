@@ -1,7 +1,7 @@
 """Integration tests for next_bar_prediction feature (T19).
 
 Covers: orchestrator pass-through, zero extra AI calls, short-circuit,
-logging, round-trip persistence, demo mode legacy, cancel, network error.
+logging, round-trip persistence, cancel, network error.
 """
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ import pytest
 from pa_agent.ai.router import route_strategy_files
 from pa_agent.config.settings import Settings
 from pa_agent.data.base import KlineFrame
-from pa_agent.gui.future_trend_panel import FutureTrendPanel
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 from tests.fixtures.validators import schema_test_validator
@@ -246,25 +245,6 @@ def test_save_full_round_trip(
     assert pred["direction"] == "bullish"
 
 
-def test_demo_mode_replays_legacy_record(
-    frame, pending_writer, assembler, exp_reader
-):
-    """Legacy record without prediction must not crash FutureTrendPanel (R10.1)."""
-    import sys
-
-    from PyQt6.QtWidgets import QApplication
-
-    app = QApplication.instance() or QApplication(sys.argv)
-    panel = FutureTrendPanel()
-
-    # Legacy: no next_bar_prediction key
-    legacy_s2 = json.loads(json.dumps(VALID_STAGE2))
-    # Ensure no prediction key
-    legacy_s2.pop("next_bar_prediction", None)
-
-    # Must not raise
-    panel.set_prediction(legacy_s2)
-    assert not panel._bar_group.isVisible()
 
 
 def test_cancel_no_prediction_required(

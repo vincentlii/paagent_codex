@@ -55,7 +55,7 @@ Stage2共用同一实现，无额外模型阶段。下述模型结构TP职责仍
 | 输出 | `AnalysisSnapshotBundle`、`DataQualityReport`、`market_snapshot_hash` |
 | 失败 | 缺少关键 K 线、同 timestamp OHLC 冲突、主周期/HTF 来源漂移时 `unavailable_input` |
 
-Snapshot 一旦排队即冻结；分析期间 GUI 暂停网络刷新，Headless 不重新抓取替换。
+Snapshot 一旦排队即冻结；Headless 不重新抓取或替换分析中的快照。
 
 ## 3. 确定性 Evidence Context
 

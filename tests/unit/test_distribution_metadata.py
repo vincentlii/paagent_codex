@@ -34,7 +34,10 @@ def test_runtime_dependency_groups_match_supported_install_profiles() -> None:
     assert "PyQt6" not in core
     assert "MetaTrader5" not in core
     assert "curl_cffi" in "\n".join(extras["vps"])
-    assert "pyqtgraph" in "\n".join(extras["desktop"])
+    assert "gui" not in extras and "desktop" not in extras
+    assert not any("qt" in dependency.lower() for dependency in extras["dev"])
+    assert "pa-agent" not in metadata["project"]["scripts"]
+    assert metadata["project"]["scripts"]["pa-agent-headless"] == "pa_agent.headless:main"
     assert "e6f6aaa7de439ac6e454d9b26d2760ded8dc4923" in "\n".join(
         extras["tradingview"]
     )

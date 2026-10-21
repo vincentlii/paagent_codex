@@ -88,37 +88,19 @@ def test_aabb_research_cli_import_does_not_load_qt() -> None:
     assert result.stdout.strip() == "False"
 
 
-def test_desktop_entry_module_can_be_imported_without_qt() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-B",
-            "-c",
-            (
-                "import sys; import pa_agent.main; "
-                "print(any(name.startswith('PyQt6') for name in sys.modules))"
-            ),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.stdout.strip() == "False"
 
 
-def test_packaging_exposes_headless_entry_and_keeps_qt_in_gui_extra() -> None:
+def test_packaging_exposes_only_supported_headless_entries() -> None:
     root = Path(__file__).resolve().parents[2]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
 
     core = config["project"]["dependencies"]
-    gui = config["project"]["optional-dependencies"]["gui"]
+    extras = config["project"]["optional-dependencies"]
     scripts = config["project"]["scripts"]
 
     assert not any(item.startswith(("PyQt6", "pyqtgraph")) for item in core)
-    assert any(item.startswith("PyQt6") for item in gui)
-    assert any(item.startswith("pyqtgraph") for item in gui)
+    assert "gui" not in extras and "desktop" not in extras
+    assert "pa-agent" not in scripts
     assert scripts["pa-agent-headless"] == "pa_agent.headless:main"
     assert scripts["pa-agent-paper-report"] == "pa_agent.execution.reporting:main"
     assert scripts["pa-agent-aabb"] == "pa_agent.experiments.cli:single_main"

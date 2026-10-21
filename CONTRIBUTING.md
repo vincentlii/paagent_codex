@@ -5,18 +5,18 @@
 ## 开发环境
 
 1. Windows 10/11、macOS 或 Linux，Python 3.11+
-2. 仅在需要 MT5 真实 K 线联调时，于 Windows 安装并登录 MetaTrader 5
+2. 当前开发入口为 Headless 与网页 Dashboard，不需要 Qt。可选数据源联调依照对应安装项配置。
 3. 克隆仓库后：
 
    ```cmd
    python -m venv .venv
    .venv\Scripts\activate
    python -m pip install uv==0.11.19
-   uv sync --frozen --extra desktop --extra dev
+   uv sync --frozen --extra vps --extra tradingview --extra cursor --extra dev
    copy config\settings.example.json config\settings.json
    ```
 
-4. 在 GUI **设置** 中配置 API Key，或仅跑不依赖网络的测试。
+4. 日常验证运行非 live 测试，不需要 API Key。实际服务配置及私有凭据按 [部署文档](docs/linux_headless_deployment.md) 管理，不写入聊天或源码。
 
 ## 提交代码前
 

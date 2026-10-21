@@ -26,7 +26,6 @@ from pa_agent.config.settings import load_settings, provider_api_key_configured
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.records.experience_reader import ExperienceReader
 from pa_agent.records.pending_writer import PendingWriter
-from pa_agent.util.event_bus import EventBus
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 from pa_agent.data.base import KlineBar, KlineFrame
 from pa_agent.data.snapshot import compute_indicators
@@ -163,12 +162,10 @@ def main() -> int:
         from pa_agent.ai.json_validator import JsonValidator
 
         validator = JsonValidator(settings)
-    event_bus = EventBus()
 
     with tempfile.TemporaryDirectory(prefix="pa_agent_smoke_") as tmp:
         pending_writer = PendingWriter(
             pending_dir=Path(tmp),
-            event_bus=event_bus,
             api_key=settings.provider.api_key,
         )
         orchestrator = TwoStageOrchestrator(

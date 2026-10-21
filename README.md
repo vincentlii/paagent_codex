@@ -44,7 +44,9 @@ uv run --frozen --extra vps pa-agent-headless --check
 | [Codex Analysis North Star](docs/knowledge/codex-analysis-north-star.md) | 长期架构和不可越过的边界 |
 | [知识库入口](docs/knowledge/README.md) | 架构、知识调用、研究及排障索引 |
 
-原桌面版安装 `.[desktop]` 后使用 `python -m pa_agent.main`，说明见 [桌面使用文档](PA_Agent使用文档.md)。Direct 与 Codex 不共享隐式认证；旧 off/shadow 与新版联合链不是同一协议。
+旧 Qt 桌面版已退役，当前保留 Headless 服务与网页 Dashboard；不再提供桌面入口或 gui/desktop 安装项。
+Direct 与 Codex 不共享隐式认证；旧 off/shadow 与新版联合链不是同一协议。备份、恢复边界与本地验证见
+[桌面版退役记录](docs/quality/desktop_retirement_20261021.md)。
 
 ## 仓库内容与维护
 

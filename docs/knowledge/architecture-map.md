@@ -15,6 +15,9 @@ verification_scope: not-verified
 
 本页是组件与决策入口，不定义字段级契约。当前行为以所链接的源码、[CONTEXT.md](../../CONTEXT.md) 和 [ADR](../architecture/) 为准。
 
+旧Qt桌面端于2026-10-21按用户授权本地退役，见[清理与恢复](../quality/desktop_retirement_20261021.md)。
+当前入口为Headless与网页Dashboard；下方旧Paper/研究图示的权限仍须对照后续ADR及当前状态。
+
 2026-10-10 本地运行增补复用既有 Profile、Headless、调度和 Paper Coordinator：
 白名单品种/并发/倾向只在 idle 应用，退订分析与持仓观察分离；会话保留由空闲
 spool Worker 管理，不进入模型执行链。黄金背景由 Host 冻结并进入原 Publisher/
@@ -30,7 +33,6 @@ VPA provenance，不增加策略模块或 Gate。见 [运行升级](../quality/v
 
 ```mermaid
 flowchart TD
-    GUI[Windows Qt GUI] --> REQ[AnalysisRequest]
     HEAD[Linux Headless] --> SCHED[Bounded multi-asset scheduler]
     SCHED --> REQ
     DATA[Market data adapter] --> IDENT[Resolved instrument identity]
@@ -69,7 +71,6 @@ flowchart TD
 
 | 组件 | 主要实现 | 拥有的职责 | 不拥有的职责 |
 | --- | --- | --- | --- |
-| GUI 入口与线程 | [`pa_agent/gui/`](../../pa_agent/gui/)、[`pa_agent/main.py`](../../pa_agent/main.py) | 人工配置、快照冻结期间交互、结果展示、线程生命周期 | 不重写分析结果，不把业务完成信号覆盖 `QThread.finished()` |
 | Headless 入口 | [`pa_agent/headless.py`](../../pa_agent/headless.py) | 配置预检、数据 probe、无人值守启动、信号处理 | 不导入 Qt，不管理 Dashboard 页面逻辑 |
 | 数据适配与身份 | [`pa_agent/data/`](../../pa_agent/data/) | provider/venue/symbol、合约规格、主周期/HTF、volume provenance | 不判断趋势、Setup 或 Wyckoff 事件 |
 | Snapshot | [`snapshot_bundle.py`](../../pa_agent/data/snapshot_bundle.py)、[`snapshot_identity.py`](../../pa_agent/data/snapshot_identity.py) | 同源冻结输入和稳定身份 | 不在排队或分析中静默刷新行情 |

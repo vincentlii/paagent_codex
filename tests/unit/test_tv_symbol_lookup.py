@@ -36,7 +36,7 @@ def test_resolve_tv_pair_by_name() -> None:
 
 
 def test_resolve_tv_fetch_pair_for_api_only() -> None:
-    # Auto exchange: keep user text; probe happens in RefreshLoop.
+    # Auto exchange: keep user text; the data consumer chooses when to probe.
     assert resolve_tv_fetch_pair("", "小米集团") == ("", "小米集团")
     assert resolve_tv_fetch_pair("HKEX", "1810") == ("HKEX", "1810")
     # Manual exchange + name: resolve for API only, UI text unchanged elsewhere.

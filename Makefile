@@ -1,8 +1,8 @@
 .PHONY: run test lint setup-secrets
 
-# 启动 GUI
+# 启动已配置的 Headless 服务
 run:
-	python -m pa_agent.main
+	python -m pa_agent.headless
 
 # 运行测试
 test:

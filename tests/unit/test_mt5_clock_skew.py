@@ -1,11 +1,22 @@
 """Unit tests: MT5 server clock skew vs local time in forming-bar countdown."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from pa_agent.data.bar_close_wait import seconds_until_bar_closes
+
+
+@pytest.fixture
+def mt5_sdk(monkeypatch):
+    sdk = SimpleNamespace(symbol_info_tick=MagicMock())
+    monkeypatch.setitem(sys.modules, "MetaTrader5", sdk)
+    return sdk
+
+
 def test_countdown_inflates_when_local_lags_server_by_3h() -> None:
     """Reproduce Hantec-style skew: bar ts from MT5, now from Windows 3h behind."""
     offset_ms = 3 * 3600 * 1000
@@ -22,7 +33,7 @@ def test_countdown_inflates_when_local_lags_server_by_3h() -> None:
     assert rem_local == rem_server
 
 
-def test_mt5_server_time_ms_prefers_time_msc() -> None:
+def test_mt5_server_time_ms_prefers_time_msc(mt5_sdk) -> None:
     from pa_agent.data.mt5 import MT5Source
 
     src = MT5Source()
@@ -33,11 +44,12 @@ def test_mt5_server_time_ms_prefers_time_msc() -> None:
     tick.time_msc = 1_700_000_123_456
     tick.time = 1_700_000_000
 
-    with patch("MetaTrader5.symbol_info_tick", return_value=tick):
-        assert src.server_time_ms() == 1_700_000_123_456
+    mt5_sdk.symbol_info_tick.return_value = tick
+    assert src.server_time_ms() == 1_700_000_123_456
+    mt5_sdk.symbol_info_tick.assert_called_once_with("XAUUSD")
 
 
-def test_mt5_server_time_ms_falls_back_to_time_seconds() -> None:
+def test_mt5_server_time_ms_falls_back_to_time_seconds(mt5_sdk) -> None:
     from pa_agent.data.mt5 import MT5Source
 
     src = MT5Source()
@@ -48,8 +60,9 @@ def test_mt5_server_time_ms_falls_back_to_time_seconds() -> None:
     tick.time_msc = 0
     tick.time = 1_700_000_000
 
-    with patch("MetaTrader5.symbol_info_tick", return_value=tick):
-        assert src.server_time_ms() == 1_700_000_000_000
+    mt5_sdk.symbol_info_tick.return_value = tick
+    assert src.server_time_ms() == 1_700_000_000_000
+    mt5_sdk.symbol_info_tick.assert_called_once_with("EURUSD")
 
 
 def test_mt5_server_time_ms_returns_none_when_disconnected() -> None:

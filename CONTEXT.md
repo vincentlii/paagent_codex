@@ -1,5 +1,11 @@
 # PA Agent Domain Context
 
+2026-10-21 用户授权备份后成套退役旧 Qt 桌面端；本地清理范围、恢复方法和验收见
+`docs/quality/desktop_retirement_20261021.md`。保留 Headless、网页 Dashboard、Codex、
+PA/VPA、共享取消/记录回放/模型用量及 OKX Demo，移除桌面入口、专属 Qt 模块和安装项。
+历史报告中的桌面能力仅描述当时版本；不因退役删除知识、历史审计或改写线上结果。
+本轮清理尚未commit或发布，VPS仍使用下方固定发布版本；原有Demo成交覆盖缺口不在本次清理范围。
+
 2026-10-21 用户授权可选固定盈亏比模式，本地设计见
 `docs/architecture/ADR-0027-selectable-fixed-risk-reward.md`，验收见
 `docs/quality/fixed_risk_reward_acceptance_20261021.md`。新 AnalysisProfile 可选 PA / fixed_rr，
@@ -216,8 +222,6 @@ catalog 已存在的窗口，不补造缺失聚合或修改 catalog。完整原�
 - VPS Dashboard 使用独立 Unix 用户，只能访问共享 operation directory。生产审计库与
   Paper 账本由 Headless 以 SQLite read-only 模式投影，Dashboard 不得直接打开数据库、
   配置目录或 Provider credential。
-- GUI 的业务结果与线程完成是两个事件。取消后保留 QThread 到真实退出；关闭窗口不得销毁仍在
-  运行的分析、准备、快照、刷新或追问线程。
 
 ## 实验边界
 

@@ -209,23 +209,11 @@ Headless 观察传递冻结 as-of；完成／恢复回调使用原记录 as-of�
 | `cancelled` | cancel source、thread/process shutdown | 用户/生命周期 |
 | `internal_error` | stack、persist state、task identity | 代码或环境内部错误 |
 
-## Windows GUI
+## 旧桌面版退役
 
-启动入口：
-
-```powershell
-python -m pa_agent.main
-```
-
-常见问题：
-
-| 症状 | 检查 | 正确处理 |
-| --- | --- | --- |
-| `No module named pyqtgraph` | 当前 Python/Conda 环境、包安装位置 | 激活安装项目依赖的同一环境；不要为 Headless 强装 Qt |
-| `pa_agent.gui` 不能直接执行 | 使用了包目录作为 module | 使用 `python -m pa_agent.main` 或安装后的 `pa-agent` |
-| 分析按钮后失败 | GUI validation detail、RunOutcome、records/audit | 按失败角色排查，不只看弹窗 |
-| 关闭窗口崩溃 | 是否仍有分析/刷新线程、是否调用 terminate/deleteLater | 协作取消并等待真实 `QThread.finished()` |
-| 行情与分析 K 线不同 | Snapshot 是否冻结、刷新是否在分析期间继续 | 分析以冻结 Snapshot 为准，UI 图表可稍后刷新 |
+2026-10-21旧Qt桌面代码、入口和依赖已按用户授权在本地退役，网页Dashboard保留。
+备份清单、恢复方法和无Qt验收见[桌面退役记录](../quality/desktop_retirement_20261021.md)。
+历史GUI排障和线程协议仅适用于原版本，不再指导当前安装；不要为Headless补装Qt。
 
 ## Linux Headless / VPS
 
