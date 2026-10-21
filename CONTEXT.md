@@ -9,7 +9,9 @@
 OKX tick经Worker只读投影到Host任务/cohort、Stage2 digest-bound协议及Intent；缺tick
 可执行候选明确失败，不猜价格；No Trade不受影响。旧任务/Intent/挂单/持仓不重算，
 默认PA指纹与旧摘要兼容。以下历史“原TP1不改/面板只有金额TTL”仅适用于PA模式和旧协议。
-本次尚未commit、发布或线上启用；不代表交易收益改善。
+代码6dfd048已commit、推送私有main并协调发布VPS；线上默认仍PA，原三品种/500 USDT/3h
+及模型设置保持，调度恢复running57。发布前即存在Demo fills覆盖缺口，发布后仍安全阻断新单，
+无活动计划或持仓；不能把四服务正常等同Demo可入场。发布回执见上述验收末节，不代表收益改善。
 
 2026-10-18用户授权三品种Demo及简化流水。相关实现、金额定义和安全边界须读
 `docs/quality/demo_journal_three_asset_20261018.md`：逐计划PnL只由自身入场/退出fills及冻结单位

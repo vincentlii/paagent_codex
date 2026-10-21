@@ -4,8 +4,8 @@ capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-21（固定盈亏比本地工程验收；线上状态沿用下方2026-10-18发布回执，本轮未远程核验）
-核验提交: 本轮未提交；VPS固定提交见2026-10-18条目
+最后核验: 2026-10-21（固定盈亏比协调发布；Demo原有fills覆盖缺口阻断新入场）
+核验提交: VPS固定代码6dfd0482bdad5a5d8e3999790fd8616209290b7e
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,15 +21,18 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-21 可选固定盈亏比模式本地实现
+## 2026-10-21 可选固定盈亏比模式实现与发布
 
 新增PA / fixed_rr模式及1、1.5、2、2.5倍选择；默认保持PA，固定初值1.5。
 两处网页入口复用Profile安全切换；模型按固定目标评估机会和主观概率，程序唯一物化
 TP1后执行原方程。OKX真实tick冻结入任务和cohort，已有计划不重算。
 本地工程验收、已知边界与发布状态见
 [固定盈亏比验收](../quality/fixed_risk_reward_acceptance_20261021.md)及
-[ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)。未commit、未发布、
-未改变线上默认，未开展新真实模型或交易所下单测试。桌面GUI不在本轮范围。
+[ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)。代码6dfd048已推送私有main并
+发布VPS，四服务active/零重启，接口及权限检查通过，调度恢复running57；保持PA默认、
+三品种/500 USDT/3h及模型配置。发布前已存在Demo reconciliation_gap（fills=false），
+发布后仍安全阻断新入场，活动计划及持仓为0；此问题尚未修复，不能称Demo完全正常。
+未开展新真实模型或交易所下单测试，固定模式尚未实际启用。桌面GUI不在本轮范围。
 
 ## 2026-10-18 全状态Demo流水、逐计划盈亏及三品种执行已发布
 

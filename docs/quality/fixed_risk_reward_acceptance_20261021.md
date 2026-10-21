@@ -6,8 +6,9 @@
 不在范围，网页控制面仍在范围。设计依据为
 [ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)。
 
-本轮没有 commit、推送、VPS 发布或线上配置变更，没有调用真实模型、提交模拟盘订单
-或修改历史。默认仍为 PA；固定模式初始倍数为 1.5。
+初次本地验收时没有 commit、推送、VPS 发布或线上配置变更；用户后续授权的提交与
+正式发布回执见末节。没有额外调用真实模型、提交测试订单或修改历史。默认仍为 PA；
+固定模式初始倍数为 1.5。
 
 ## 行为与权限
 
@@ -95,3 +96,40 @@ VPS 原源码为 `21d7db4`，四服务 active、NRestarts=0。发布前保存原
 旧版 Demo 此时已为 `blocked/reconciliation_gap`，原因投影为 `fills=false`，其他覆盖为真，
 活动计划/持仓/外部单为0。这是安装前状态，不能归因本次固定盈亏比改动。
 发布过程保留执行安全拒绝；发布后状态与固定提交回执另行追加。
+
+## 正式发布回执
+
+用户于2026-10-21明确授权 commit 和 VPS 发布。功能提交
+`6dfd0482bdad5a5d8e3999790fd8616209290b7e` 已推送既有私有仓库
+`vincentlii/paagent_codex` 的 main；未推送公共 origin，未纳入既有 ICT 四文件。
+VPS源码从21d7db4仅快进，停止四个加载包的服务后安装；未更新依赖锁、服务配置或依赖。
+
+Host一致备份位于 `/var/backups/pa-agent/pa-agent-20261021T020333Z`，Demo备份位于
+`/var/backups/pa-agent-demo/demo-1792548259940`；全部manifest核验通过，Demo共175成员。
+安装前后四库 quick_check 通过、逐库逻辑dump SHA256相同，没有数据库迁移、回填或删除。
+原控制、非敏感Demo配置、旧源码、发布bundle、构建/安装日志及回执保存在
+`/var/backups/pa-agent/releases/fixed-rr-20261021`。
+
+目标Linux离线构建wheel SHA256：
+`bcd8a0f5361dd1879c05d54527cec1da040e839af275b8caae95d2e9f4468972`。
+319个包资源逐字节匹配固定Git blob、源码及安装结果；48个已安装distribution的名称/版本
+保持一致，`pip check`通过。安装路径Headless导入无Qt、固定目标smoke通过，Runtime源/包
+身份与Linux权限审计通过。前文本地Windows候选wheel身份独立保留，不混作同一字节包。
+
+最终UTC时间2026-10-21 02:08:37（北京时间10:08:37）回执：四服务active/running、
+Result=success、NRestarts=0；Host恢复running57、无恢复阻塞或控制错误，公布
+`take_profit_policy_version=fixed_rr_v1`。认证后的 `/healthz`、`/api/status`、`/api/trading`、
+`/trading` 和首页均200，未认证status为401。接口真实返回两种模式、1/1.5/2/2.5四档，
+应用模式为PA。原BTC/ETH/XAU执行许可、500 USDT/3h、Fast及模型/Profile指纹保持，
+固定模式未被擅自启用，未发起额外付费模型或测试订单。三品种真实tick只读投影正常。
+
+**未解决的独立运行问题：** 旧版本发布前已为Demo `blocked/reconciliation_gap`，
+`coverage.fills=false`；其他账户、订单、保护、持仓、账单、合约覆盖为真。
+发布后此状态保持，活动计划、持仓和外部单均为0，执行器继续禁止新入场。
+只读检查发现最新存储成交及对应fill游标距检查时约81.11小时；现有`/trade/fills`
+分页要求找到原游标，否则按原设计判覆盖缺口。这为后续排障提供时间边界线索，尚未进行
+交易所历史端点补齐或证明缺口根因，不得删除/重置游标、将未知当完整或放宽执行门禁。
+本次发布成功不等于此既有问题已修复，也不等于模拟盘新单可正常运行。
+
+临时上传bundle在发布归档后移除；本轮测试目录已清理。原配置、账本、备份、失败日志
+及正式证据保留。新版PA/null或fixed_rr Intent产生后，都不能由旧strict Worker直接接管。
