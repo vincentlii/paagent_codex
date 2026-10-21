@@ -201,7 +201,7 @@ def test_production_factory_does_not_share_mutable_model_state(
     monkeypatch.setattr(production, "PromptAssembler", create_assembler)
     validator_paths = []
 
-    def create_validator(_settings, *, prompt_dir=None):
+    def create_validator(_settings, *, prompt_dir=None, take_profit_policy=None):
         validator_paths.append(prompt_dir)
         return object()
 

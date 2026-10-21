@@ -243,13 +243,14 @@ def _stage2_output_contract(
     *,
     decision_tree_path: Path | None = None,
     joint_stage2: bool = False,
+    take_profit_policy=None,
 ) -> str:
     from pa_agent.ai.pa_provider_contracts import render_provider_draft_contract
 
     return (
-        f"{_stage2_output_rules(joint_stage2=joint_stage2)}\n\n"
+        f"{_stage2_output_rules(joint_stage2=joint_stage2, take_profit_policy=take_profit_policy)}\n\n"
         "## Exact Stage 2 provider contract\n"
-        f"{render_provider_draft_contract('stage2', decision_tree_path=decision_tree_path, joint_stage2=joint_stage2)}"
+        f"{render_provider_draft_contract('stage2', decision_tree_path=decision_tree_path, joint_stage2=joint_stage2, take_profit_policy=take_profit_policy)}"
     )
 
 
@@ -611,8 +612,7 @@ ANALYSIS_FACT_CATALOG；alternatives 可为空，禁止复制 primary 伪造不�
 
 _STAGE2_OUTPUT_CONTRACT_TEMPLATE = """
 ## {contract_title}
-只输出裸 JSON。Stage 2 负责 Brooks Setup、信号与入场时机、entry、结构 stop、TP1、
-可选的结构延伸 TP2、{prior_label}主观胜率先验及最终 `trade|wait|reject` 意图；程序复算价格几何、RR、Breakeven、Expectancy
+只输出裸 JSON。Stage 2 负责 Brooks Setup、信号与入场时机、entry、结构 stop、{target_scope}{prior_label}主观胜率先验及最终 `trade|wait|reject` 意图；程序复算价格几何、RR、Breakeven、Expectancy
 和 Trader Equation，并执行订单安全检查。
 {role_scope}
 上游“已通过校验/accepted”表示指定协议、引用及确定性检查已通过，不表示专业解释已被逐句证明。
@@ -624,24 +624,30 @@ Frozen Snapshot 中的事实不可改写；冻结的 Stage 1 是本轮权限依�
 `decision_trace` 不要输出 `question/section/bar_range`、§10.3 或 `terminal`。
 Trace protocol: `node_id` must be an exact question ID; section heading `11` is invalid,
 so choose the applicable `11.1`-`11.4`. Every executable order must include node `14`.
-若 `order_type=不下单`，方向、三价、交易置信度和胜率必须按 contract 置 null。
+若 `order_type=不下单`，方向、{no_order_prices}、交易置信度和胜率必须按 contract 置 null。
 `next_bar_prediction` 是启用时由 LLM 提供的辅助判断，不参与订单授权。
 模型仍需判断 §10.1/§10.2、Setup 是否成立、信号质量和是否执行；
 不得为了让方程通过而调整结构价格或胜率。{prior_scope}
 先基于本轮 Background、Location、Setup、信号与反证形成定性概率排序，再给数值；
 教学材料中的通用频率不得复制为本轮胜率，Breakeven 也不得反推胜率。
-{joint_analysis_rule}TP1 是执行目标和 Trader Equation 唯一回报基础；仅在存在可核对的独立远端结构目标时填写 TP2，
-否则 `take_profit_price_2=null`，不得为满足字段或美化收益凭空投射。
+{joint_analysis_rule}{target_policy}
 """.strip()
 
 
-def _stage2_output_rules(*, joint_stage2: bool = False) -> str:
+def _stage2_output_rules(*, joint_stage2: bool = False, take_profit_policy=None) -> str:
     return _STAGE2_OUTPUT_CONTRACT_TEMPLATE.format(
         contract_title=(
             "Joint Stage 2 Provider Draft (`pa_vpa_stage2_draft_v1`)"
             if joint_stage2 else "Stage 2 Provider Draft v2"
         ),
         prior_label="联合" if joint_stage2 else "PA ",
+        no_order_prices="三价" if take_profit_policy is None else "entry/stop",
+        target_scope="TP1、\n可选的结构延伸 TP2、" if take_profit_policy is None else "",
+        target_policy=(
+            "TP1 是执行目标和 Trader Equation 唯一回报基础；仅在存在可核对的独立远端结构目标时填写 TP2，\n"
+            "否则 `take_profit_price_2=null`，不得为满足字段或美化收益凭空投射。"
+            if take_profit_policy is None else take_profit_policy.guidance()
+        ),
         role_scope=(
             "联合 Stage 2 在已验证 PA/Router 边界内结合 Host 已验收 VPA 报告，独立选择最终方案；"
             "不得重写上游诊断、创造边界外 Setup 或让 VPA 单独定义概率。"
@@ -682,12 +688,18 @@ class PromptAssembler:
         prompt_settings: Any = None,
         vpa_evidence_catalog: dict[str, Any] | None = None,
         analysis_fact_catalog: AnalysisFactCatalog | None = None,
+        take_profit_policy=None,
     ) -> None:
         self._prompt_dir = prompt_dir
         self._experience_reader = experience_reader
         self._prompt_settings = prompt_settings
         self._vpa_evidence_catalog = vpa_evidence_catalog
         self._analysis_fact_catalog = analysis_fact_catalog
+        from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
+        self.take_profit_policy = (
+            FixedRiskRewardPolicy.model_validate(take_profit_policy)
+            if take_profit_policy is not None else None
+        )
         self._txt_cache: dict[str, str] = {}
 
     @property
@@ -721,6 +733,7 @@ class PromptAssembler:
             prompt_settings=prompt_settings,
             vpa_evidence_catalog=vpa_evidence_catalog,
             analysis_fact_catalog=self._analysis_fact_catalog,
+            take_profit_policy=self.take_profit_policy,
         )
 
     def clone_with_analysis_fact_catalog(
@@ -734,6 +747,7 @@ class PromptAssembler:
             prompt_settings=self._prompt_settings,
             vpa_evidence_catalog=self._vpa_evidence_catalog,
             analysis_fact_catalog=catalog,
+            take_profit_policy=self.take_profit_policy,
         )
 
     def _vpa_modules_for_stage2(
@@ -1756,7 +1770,7 @@ Acceptance/Rejection 或 Timing 增量，并评估相关反证，不能只复述
 
         breakout_tick_hint = format_breakout_price_hint(frame)
         previous_prediction = self._render_previous_prediction(previous_record)
-        return {
+        protocol = {
             "contract_version": "joint_stage2_agent_protocol_v1" if joint_stage2 else "pa_stage2_agent_protocol_v1",
             "role": "stage2",
             "semantic_parity_policy": (
@@ -1778,6 +1792,7 @@ Acceptance/Rejection 或 Timing 增量，并评估相关反证，不能只复述
             "provider_contract_digest": provider_draft_schema_digest(
                 "stage2", decision_tree_path=self.decision_tree_path,
                 joint_stage2=joint_stage2,
+                take_profit_policy=self.take_profit_policy,
             ),
             "embedded_rules": [
                 _LANGUAGE_ZH_RULE,
@@ -1793,7 +1808,7 @@ Acceptance/Rejection 或 Timing 增量，并评估相关反证，不能只复述
                 self._render_transition_guidance(stage1_json),
                 breakout_tick_hint or "",
                 previous_prediction,
-                _stage2_output_rules(joint_stage2=joint_stage2).replace(
+                _stage2_output_rules(joint_stage2=joint_stage2, take_profit_policy=self.take_profit_policy).replace(
                     "只输出裸 JSON。", "按 Host 输出模式提交当前 Draft，不输出额外文字。"
                 ).replace(
                     "紧随其后的自动生成 Provider Contract", "core_context.provider_output_schema"
@@ -1806,6 +1821,9 @@ Acceptance/Rejection 或 Timing 增量，并评估相关反证，不能只复述
                 _stage2_tail_reminder(joint_stage2=joint_stage2, host_output=True),
             ],
         }
+        if self.take_profit_policy is not None:
+            protocol["take_profit_policy"] = self.take_profit_policy.model_dump(mode="json")
+        return protocol
 
     def build_stage2(
         self,
@@ -2028,6 +2046,7 @@ Acceptance/Rejection 或 Timing 增量，并评估相关反证，不能只复述
             _stage2_output_contract(
                 decision_tree_path=self.decision_tree_path,
                 joint_stage2=joint_stage2,
+                take_profit_policy=self.take_profit_policy,
             )
         )
         if enable_next_bar_prediction:
@@ -2084,6 +2103,10 @@ Acceptance/Rejection 或 Timing 增量，并评估相关反证，不能只复述
         stage1_block = "" if omit_kline_block else (
             f"## 阶段一诊断结果\n\n```json\n{compact_s1}\n```\n\n"
         )
+        no_order_fields = (
+            "entry_price、take_profit_price、take_profit_price_2、stop_loss_price、order_direction"
+            if self.take_profit_policy is None else "entry_price、stop_loss_price、order_direction"
+        )
         return (
             f"{_STAGE2_API_TASK_RULE}\n\n"
             "## 阶段二任务\n\n"
@@ -2097,7 +2120,7 @@ Acceptance/Rejection 或 Timing 增量，并评估相关反证，不能只复述
             + f"{kline_block}"
             f"{prev_pred_block + chr(10) if prev_pred_block else ''}"
             f"请根据以上诊断和K线数据按路由后的 Brooks 分支与 §9–§11、§14 输出 Stage 2 Draft。\n"
-            f"注意:如果判断不下单,entry_price、take_profit_price、take_profit_price_2、stop_loss_price、order_direction 必须全部为 null。\n\n"
+            f"注意:如果判断不下单,{no_order_fields} 必须全部为 null。\n\n"
             f"{_stage2_tail_reminder(joint_stage2=joint_stage2)}"
         )
 

@@ -2,6 +2,11 @@
 
 本文件定义发布前的最低质量要求。交易表现需要独立样本外验证，本契约不承诺盈利。
 
+2026-10-21可选固定RR模式按ADR-0027补充：下文“原TP1不改”仍约束PA模式/旧任务。
+固定模式Provider不输出TP1/TP2，唯一materializer先生成目标再做方程；不得在执行末端
+覆盖已评估TP。真实目标tick必须冻结、同一policy贯通Prompt/Schema/Validator/record/Intent；
+tick变更拒绝新请求，原Entry/SL不改。旧Intent/默认PA身份保持，切换不影响已有挂单持仓。
+
 ## 硬不变量
 
 范围说明：下列旧 Joint/soft/Shadow 约束指旧研究仲裁及旧生产协议；ADR-0025 授权的新

@@ -1,5 +1,16 @@
 # PA Agent Domain Context
 
+2026-10-21 用户授权可选固定盈亏比模式，本地设计见
+`docs/architecture/ADR-0027-selectable-fixed-risk-reward.md`，验收见
+`docs/quality/fixed_risk_reward_acceptance_20261021.md`。新 AnalysisProfile 可选 PA / fixed_rr，
+固定倍数 1、1.5、2、2.5，默认保持 PA、固定初值1.5。固定模式模型保留 entry、结构SL、
+交易/等待与对应目标的未校准主观概率；不输出TP1/TP2，唯一materializer先用冻结真实
+目标tick生成并向entry取整TP1，再运行原Trader Equation，不能执行末端换目标。
+OKX tick经Worker只读投影到Host任务/cohort、Stage2 digest-bound协议及Intent；缺tick
+可执行候选明确失败，不猜价格；No Trade不受影响。旧任务/Intent/挂单/持仓不重算，
+默认PA指纹与旧摘要兼容。以下历史“原TP1不改/面板只有金额TTL”仅适用于PA模式和旧协议。
+本次尚未commit、发布或线上启用；不代表交易收益改善。
+
 2026-10-18用户授权三品种Demo及简化流水。相关实现、金额定义和安全边界须读
 `docs/quality/demo_journal_three_asset_20261018.md`：逐计划PnL只由自身入场/退出fills及冻结单位
 计算，扣已发生手续费，资金费保留账户口径；不按同向净仓均价分摊。四个主状态不取消内部

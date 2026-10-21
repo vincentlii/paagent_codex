@@ -163,6 +163,28 @@ assert.equal(calls[1].options.method,'POST');
 assert.equal(calls[1].options.headers['X-PA-Agent-Control'],'1');
 assert.deepEqual(JSON.parse(calls[1].options.body),{expected_generation:8,
   settings:{notional_usdt:'750',limit_validity_hours:6}});
+context.data.runtime={take_profit_policy_version:'fixed_rr_v1'};
+context.data.capabilities={take_profit_modes:[{id:'pa',label:'PA Agent'},{id:'fixed_rr',label:'固定盈亏比'}],
+  reward_risk_ratios:['1','1.5','2','2.5'].map(id=>({id,label:'1:'+id}))};
+context.data.profile={control_generation:8,pending:false,
+  desired:{take_profit_mode:'pa',fixed_reward_risk_ratio:'1.5',codex_model:'gpt-6-luna'},
+  applied:{take_profit_mode:'pa',fixed_reward_risk_ratio:'1.5'}};
+vm.runInContext('render(data)',context);
+assert.equal(nodes['take-profit-mode'].value,'pa');
+assert.equal(nodes['fixed-reward-risk-ratio'].disabled,true);
+assert.equal(nodes['save-exit-policy'].disabled,true);
+nodes['take-profit-mode'].value='fixed_rr';nodes['take-profit-mode'].events.change();
+assert.equal(nodes['fixed-reward-risk-ratio'].value,'1.5');
+assert.equal(nodes['fixed-reward-risk-ratio'].disabled,false);
+assert.equal(calls.length,2);
+nodes['fixed-reward-risk-ratio'].value='2.5';nodes['fixed-reward-risk-ratio'].events.change();
+vm.runInContext('render(data)',context);
+assert.equal(nodes['fixed-reward-risk-ratio'].value,'2.5');
+assert.equal(nodes['save-exit-policy'].disabled,false);
+nodes['save-exit-policy'].events.click();
+assert.equal(calls.length,3);assert.equal(calls[2].url,'/api/profile');
+assert.deepEqual(JSON.parse(calls[2].options.body),{expected_generation:8,
+  profile:{take_profit_mode:'fixed_rr',fixed_reward_risk_ratio:'2.5',codex_model:'gpt-6-luna'}});
 console.log('Trading rendering and explicit audited settings save: OK');
 """
     result = subprocess.run(

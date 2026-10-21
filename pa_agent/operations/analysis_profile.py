@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, model_validator
+from pa_agent.ai.take_profit_policy import RewardRiskRatio
 
 DeepSeekModel = Literal["deepseek-v4-flash", "deepseek-v4-pro"]
 DeepSeekEffort = Literal["low", "medium", "high", "max"]
@@ -64,6 +65,8 @@ class AnalysisProfile(BaseModel):
     symbol: MarketSymbol = "XAUUSDT"
     symbols: tuple[MarketSymbol, ...] = ("XAUUSDT",)
     decision_stance: Literal["conservative", "balanced", "aggressive"] = "balanced"
+    take_profit_mode: Literal["pa", "fixed_rr"] = "pa"
+    fixed_reward_risk_ratio: RewardRiskRatio = "1.5"
     timeframe: Literal["1h"] = "1h"
     vpa_mode: Literal["shadow"] = "shadow"
     higher_timeframe_enabled: Literal[True] = True
@@ -118,7 +121,7 @@ def codex_model_effort_supported(model: str, effort: str) -> bool:
 
 def profile_fingerprint(profile: AnalysisProfile | Mapping[str, object]) -> str:
     validated = validate_analysis_profile(profile)
-    payload = validated.model_dump(mode="json")
+    payload = profile_identity_payload(validated)
     # Default additions must not invalidate accepted jobs from the previous release.
     if validated.enabled_symbols == (validated.symbol,):
         payload.pop("symbols")
@@ -132,6 +135,15 @@ def profile_fingerprint(profile: AnalysisProfile | Mapping[str, object]) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def profile_identity_payload(profile: AnalysisProfile) -> dict[str, object]:
+    """Keep default PA identities byte-compatible with pre-policy accepted tasks."""
+    payload = profile.model_dump(mode="json")
+    if profile.take_profit_mode == "pa" and profile.fixed_reward_risk_ratio == "1.5":
+        payload.pop("take_profit_mode")
+        payload.pop("fixed_reward_risk_ratio")
+    return payload
 
 
 def analysis_capabilities() -> dict[str, list[dict[str, object]]]:
@@ -173,4 +185,9 @@ def analysis_capabilities() -> dict[str, list[dict[str, object]]]:
             for stance, label in (("conservative", "保守"), ("balanced", "平衡"), ("aggressive", "激进"))
         ],
         "concurrency_choices": [{"id": str(n), "label": str(n)} for n in (1, 2, 3)],
+        "take_profit_modes": [
+            {"id": "pa", "label": "PA Agent 分析进出场"},
+            {"id": "fixed_rr", "label": "固定盈亏比"},
+        ],
+        "reward_risk_ratios": [{"id": n, "label": f"1:{n}"} for n in ("1", "1.5", "2", "2.5")],
     }

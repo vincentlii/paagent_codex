@@ -18,6 +18,7 @@ from pa_agent.ai.decision_tree import (
 )
 from pa_agent.ai.fact_catalog import AnalysisFactCatalog
 from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
+from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
 from pa_agent.util.trade_metrics import compute_risk_reward, passes_trader_equation
 
 _STAGE1_TRACE_ANSWER_ALIASES: dict[str, dict[str, tuple[str, str]]] = {
@@ -196,6 +197,7 @@ def _stage1_draft_schema() -> dict[str, Any]:
 
 def _stage2_draft_schema(
     decision_tree_path: Path | None = None,
+    take_profit_policy: FixedRiskRewardPolicy | None = None,
 ) -> dict[str, Any]:
     decision = copy.deepcopy(STAGE2_SCHEMA["properties"]["decision"])
     for key in ("diagnosis_confidence", "diagnosis_confidence_reasoning"):
@@ -207,6 +209,21 @@ def _stage2_draft_schema(
             rule["then"]["properties"]["estimated_win_rate_reasoning"] = {
                 "enum": [None, ""]
             }
+    if take_profit_policy is not None:
+        def remove_program_targets(value):
+            if isinstance(value, dict):
+                for key in ("take_profit_price", "take_profit_price_2"):
+                    value.pop(key, None)
+                if isinstance(value.get("required"), list):
+                    value["required"] = [k for k in value["required"]
+                                         if k not in {"take_profit_price", "take_profit_price_2"}]
+                for child in value.values():
+                    remove_program_targets(child)
+            elif isinstance(value, list):
+                for child in value:
+                    remove_program_targets(child)
+        remove_program_targets(decision)
+        decision["description"] = take_profit_policy.guidance()
     properties = {
         "protocol_version": {"type": "string", "const": "pa_draft_v2"},
         "decision_intent": {
@@ -251,6 +268,7 @@ STAGE2_DRAFT_SCHEMA = _stage2_draft_schema()
 
 def schema_for_joint_stage2_draft(
     *, decision_tree_path: Path | None = None,
+    take_profit_policy: FixedRiskRewardPolicy | None = None,
 ) -> dict[str, Any]:
     """Joint Stage 2 extends, rather than replaces, the PA decision contract.
 
@@ -258,7 +276,7 @@ def schema_for_joint_stage2_draft(
     research joint_arbiter retain their schemas. The Host must validate VPA
     references against the accepted report before using the shared materializer.
     """
-    schema = _stage2_draft_schema(decision_tree_path)
+    schema = _stage2_draft_schema(decision_tree_path, take_profit_policy)
     schema["properties"]["protocol_version"] = {
         "type": "string", "const": "pa_vpa_stage2_draft_v1",
     }
@@ -286,14 +304,15 @@ def schema_for_provider_draft(
     stage: str,
     *,
     decision_tree_path: Path | None = None,
+    take_profit_policy: FixedRiskRewardPolicy | None = None,
 ) -> dict[str, Any]:
     """Return an isolated provider contract for one PA stage."""
     schemas = {
         "stage1": STAGE1_DRAFT_SCHEMA,
         "stage2": (
             STAGE2_DRAFT_SCHEMA
-            if decision_tree_path is None
-            else _stage2_draft_schema(decision_tree_path)
+            if decision_tree_path is None and take_profit_policy is None
+            else _stage2_draft_schema(decision_tree_path, take_profit_policy)
         ),
     }
     try:
@@ -307,13 +326,15 @@ def _serialized_provider_schema(
     *,
     decision_tree_path: Path | None = None,
     joint_stage2: bool = False,
+    take_profit_policy: FixedRiskRewardPolicy | None = None,
 ) -> str:
     if joint_stage2 and stage != "stage2":
         raise ValueError("joint contract applies only to Stage 2")
     return json.dumps(
-        schema_for_joint_stage2_draft(decision_tree_path=decision_tree_path) if joint_stage2 else schema_for_provider_draft(
+        schema_for_joint_stage2_draft(decision_tree_path=decision_tree_path, take_profit_policy=take_profit_policy) if joint_stage2 else schema_for_provider_draft(
             stage,
             decision_tree_path=decision_tree_path,
+            take_profit_policy=take_profit_policy,
         ),
         ensure_ascii=False,
         sort_keys=True,
@@ -326,6 +347,7 @@ def provider_draft_schema_digest(
     *,
     decision_tree_path: Path | None = None,
     joint_stage2: bool = False,
+    take_profit_policy: FixedRiskRewardPolicy | None = None,
 ) -> str:
     """Stable identity shared by prompts, validation, and audit tests."""
     return hashlib.sha256(
@@ -333,6 +355,7 @@ def provider_draft_schema_digest(
             stage,
             decision_tree_path=decision_tree_path,
             joint_stage2=joint_stage2,
+            take_profit_policy=take_profit_policy,
         ).encode("utf-8")
     ).hexdigest()
 
@@ -342,12 +365,14 @@ def render_provider_draft_contract(
     *,
     decision_tree_path: Path | None = None,
     joint_stage2: bool = False,
+    take_profit_policy: FixedRiskRewardPolicy | None = None,
 ) -> str:
     """Render the minified exact runtime contract for schema-less providers."""
     digest = provider_draft_schema_digest(
         stage,
         decision_tree_path=decision_tree_path,
         joint_stage2=joint_stage2,
+        take_profit_policy=take_profit_policy,
     )
     return (
         f"Provider contract digest: {digest}\n"
@@ -356,6 +381,7 @@ def render_provider_draft_contract(
             stage,
             decision_tree_path=decision_tree_path,
             joint_stage2=joint_stage2,
+            take_profit_policy=take_profit_policy,
         )
         + "\nPA_PROVIDER_DRAFT_CONTRACT_END"
     )
@@ -745,6 +771,7 @@ def materialize_stage2_draft(
     stage1: dict[str, Any],
     catalog: AnalysisFactCatalog,
     decision_tree_path: Path | None = None,
+    take_profit_policy: FixedRiskRewardPolicy | None = None,
 ) -> dict[str, Any]:
     result = copy.deepcopy(draft)
     result.pop("protocol_version", None)
@@ -763,6 +790,15 @@ def materialize_stage2_draft(
     if any(item["node_id"] == "10.3" for item in trace):
         raise ValueError("Stage 2 Draft must not provide program-owned node 10.3")
     executable = decision.get("order_type") in {"限价单", "突破单", "市价单"}
+    if take_profit_policy is not None:
+        if any(key in decision for key in ("take_profit_price", "take_profit_price_2")):
+            raise ValueError("fixed_rr_targets_are_program_owned")
+        decision["take_profit_price"] = (
+            float(take_profit_policy.target(decision.get("entry_price"),
+                decision.get("stop_loss_price"), decision.get("order_direction")))
+            if executable else None
+        )
+        decision["take_profit_price_2"] = None
     if intent == "trade" and not executable:
         raise ValueError("trade intent requires an executable PA candidate")
     equation_passes = False

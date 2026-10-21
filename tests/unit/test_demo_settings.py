@@ -110,6 +110,7 @@ def test_legacy_intent_digest_and_customer_identity_stay_valid():
 
     raw = intent().model_dump(mode="json")
     raw.pop("demo_execution_policy", None)
+    raw.pop("take_profit_policy", None)
     raw["content_digest"] = digest({k: v for k, v in raw.items() if k != "content_digest"})
     parsed = DemoIntent.model_validate(raw)
     assert parsed.content_digest == raw["content_digest"]

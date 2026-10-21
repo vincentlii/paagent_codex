@@ -62,6 +62,31 @@ class OfficialExecutionDispatcher:
     def apply_execution_settings(self, policy):
         self.execution_policy = DemoExecutionPolicy.model_validate(policy)
 
+    def take_profit_tick_size(self, symbol):
+        """Freeze only fresh, execution-venue price rules; never infer from OHLC."""
+        from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
+        from pa_agent.execution.demo_contracts import MAPPINGS
+        if not self.demo_selected:
+            return None
+        try:
+            projection = read_json(self.spool.paths.projection)
+            observed = projection.get("exchange_observed_at_ms")
+            if (projection.get("environment") != "okx_demo_v1"
+                or projection.get("schema_version") != 1
+                or projection.get("coverage", {}).get("contracts") is not True
+                or isinstance(observed, bool) or not isinstance(observed, int)
+                or not 0 <= self.now_ms() - observed <= 30_000):
+                return None
+            rules = projection.get("price_rules", [])
+            matches = [r for r in rules if isinstance(r, dict) and r.get("inst_id") == MAPPINGS.get(symbol)]
+            if len(matches) != 1:
+                return None
+            tick = matches[0].get("tick")
+            return (FixedRiskRewardPolicy(tick_size=tick).model_dump(mode="json")["tick_size"]
+                    if tick is not None else None)
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+
     @property
     def demo_selected(self):
         return self.config.execution_target == "okx_demo"
@@ -132,6 +157,18 @@ class OfficialExecutionDispatcher:
             or getattr(payload, "execution_epoch", None) != self.config.cutover_id
         ):
             return SimpleNamespace(status="skipped_cutover", reason="unbound_or_old_task")
+        from pa_agent.ai.take_profit_policy import resolve_take_profit_policy
+        from pa_agent.operations.analysis_profile import validate_analysis_profile
+        frozen_profile = dict(getattr(payload, "analysis_profile_identity", {}) or {})
+        frozen_profile.pop("profile_fingerprint", None)
+        expected_policy = resolve_take_profit_policy(
+            validate_analysis_profile(frozen_profile),
+            tick_size=getattr(payload, "take_profit_tick_size", None),
+        )
+        runtime = record.get("role_runtime", {}) if isinstance(record, dict) else getattr(record, "role_runtime", {})
+        expected = expected_policy.model_dump(mode="json") if expected_policy is not None else None
+        if runtime.get("take_profit_policy") != expected:
+            return SimpleNamespace(status="rejected", reason="frozen_take_profit_policy_mismatch")
         marker = (
             self.spool.paths.intents
             / "dispatch"

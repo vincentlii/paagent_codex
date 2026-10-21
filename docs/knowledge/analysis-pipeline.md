@@ -14,6 +14,11 @@ verification_scope: not-verified
 
 # 分析链路
 
+2026-10-21 新任务可显式选择固定RR退出，见
+[ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)：模型按冻结的目标协议
+评估Setup/Entry/结构SL及概率，唯一materializer计算TP1后校验原方程；普通PA和联合
+Stage2共用同一实现，无额外模型阶段。下述模型结构TP职责仍适用于PA模式和旧任务。
+
 本页以下 PA-only Stage 2、Shadow 与旧研究 Joint 的表格描述旧 `vpa_mode`
 链路；显式 `analysis_pipeline_v1:pa_vpa_joint` 另按
 [ADR-0025](../architecture/ADR-0025-joint-stage2-pipeline.md) 运行。

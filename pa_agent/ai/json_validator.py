@@ -456,6 +456,7 @@ class JsonValidator:
         validation: Any = None,
         *,
         prompt_dir: Path | None = None,
+        take_profit_policy=None,
     ) -> None:
         from pa_agent.ai.prompts.schemas import STAGE1_SCHEMA, STAGE2_SCHEMA
         from pa_agent.config.paths import PROMPT_DIR
@@ -469,6 +470,11 @@ class JsonValidator:
             self._validation = validation
         effective_prompt_dir = Path(prompt_dir) if prompt_dir is not None else PROMPT_DIR
         self._decision_tree_path = effective_prompt_dir / "\u4e8c\u5143\u51b3\u7b56.txt"
+        from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
+        self.take_profit_policy = (
+            FixedRiskRewardPolicy.model_validate(take_profit_policy)
+            if take_profit_policy is not None else None
+        )
 
         self._schemas = {
             "stage1": copy.deepcopy(STAGE1_SCHEMA),
@@ -485,6 +491,7 @@ class JsonValidator:
         return schema_for_provider_draft(
             stage,
             decision_tree_path=self._decision_tree_path,
+            take_profit_policy=self.take_profit_policy,
         )
 
     @property
@@ -498,6 +505,7 @@ class JsonValidator:
             stage,
             decision_tree_path=self._decision_tree_path,
             joint_stage2=joint_stage2,
+            take_profit_policy=self.take_profit_policy,
         )
 
     def provider_contract_digest(self, stage: Literal["stage1", "stage2"]) -> str:
@@ -506,6 +514,7 @@ class JsonValidator:
         return provider_draft_schema_digest(
             stage,
             decision_tree_path=self._decision_tree_path,
+            take_profit_policy=self.take_profit_policy,
         )
 
     def normalize_parsed(
@@ -574,7 +583,8 @@ class JsonValidator:
                 raw_text=raw_text,
                 message="Joint Stage 2 response is not valid JSON",
             )
-        schema = schema_for_joint_stage2_draft(decision_tree_path=self._decision_tree_path)
+        schema = schema_for_joint_stage2_draft(decision_tree_path=self._decision_tree_path,
+                                             take_profit_policy=self.take_profit_policy)
         if isinstance(draft, dict):
             from pa_agent.ai.pa_provider_contracts import normalize_provider_draft
 
@@ -693,6 +703,10 @@ class JsonValidator:
 
         pre_normalized_obj = copy.deepcopy(obj)
         is_provider_draft = obj.get("protocol_version") == "pa_draft_v2"
+        if stage == "stage2" and self.take_profit_policy is not None and not is_provider_draft:
+            return ValidationError(category="c", stage=stage, raw_text=raw_text,
+                code="fixed_rr_provider_draft_required",
+                message="Fixed RR requires the frozen Provider Draft; canonical targets are Host-owned")
         provider_contract_issues: list[dict[str, Any]] = []
         if is_provider_draft:
             try:
@@ -711,6 +725,7 @@ class JsonValidator:
                 draft_schema = schema_for_provider_draft(
                     stage,
                     decision_tree_path=self._decision_tree_path,
+                    take_profit_policy=self.take_profit_policy,
                 )
                 draft_errors = list(jsonschema.Draft7Validator(draft_schema).iter_errors(obj))
                 issues = _provider_contract_issues(draft_errors)
@@ -773,6 +788,7 @@ class JsonValidator:
                         stage1=stage1_json or {},
                         catalog=catalog,
                         decision_tree_path=self._decision_tree_path,
+                        take_profit_policy=self.take_profit_policy,
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:

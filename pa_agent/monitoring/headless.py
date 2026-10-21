@@ -636,6 +636,7 @@ class HeadlessMonitor:
             "applied_profile": self._applied_profile.model_dump(mode="json"),
             "applied_profile_fingerprint": self._applied_profile_fingerprint,
             "applied_profile_generation": self._applied_profile_generation,
+            "take_profit_policy_version": "fixed_rr_v1",
             "run_once_consumed_generation": self._consumed_run_once_generation,
             "consumed_run_once_generation": self._consumed_run_once_generation,
             "mode": {
@@ -982,6 +983,12 @@ class HeadlessMonitor:
             ),
             analysis_profile=self._applied_profile,
             analysis_profile_fingerprint=self._applied_profile_fingerprint,
+            take_profit_tick_size=(
+                self._paper_execution.take_profit_tick_size(frame.symbol)
+                if self._applied_profile.take_profit_mode == "fixed_rr"
+                and callable(getattr(self._paper_execution, "take_profit_tick_size", None))
+                else None
+            ),
             execution_policy=(
                 "limit_3bar_v1" if frame.timeframe == "1h"
                 and self._settings.analysis_pipeline is not None else None

@@ -20,6 +20,12 @@ Codex Agentic Analysis 是待验证的分析 Backend，不是新的交易系统�
 
 ## 不可协商的 authority
 
+2026-10-21 新授权例外见 [ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)：
+AnalysisProfile 可选择 PA 或 fixed_rr（1/1.5/2/2.5），固定目标进入分析身份，不能与下述
+仅影响执行的金额/TTL混同。固定模式程序仅在唯一materializer中计算TP1，再做原方程；
+LLM仍拥有结构Entry/SL、机会判断及对应目标的主观先验，VPA与Codex权限不扩大。
+旧任务与PA模式保持原义；本地实现、发布、线上启用及收益验证分别报告。
+
 | 角色 | 唯一职责与边界 |
 | --- | --- |
 | PA Agent | 拥有冻结事实、Snapshot、Evidence allowlist、Provider Draft 链、审计与持久化。 |

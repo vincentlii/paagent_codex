@@ -131,7 +131,8 @@ def test_trading_payload_is_bounded_allowlisted_and_separate_from_operations(tmp
     assert payload["trading"]["orders"][0]["review"]["reasoning"] == "<script>not HTML</script>"
     assert "trading" not in build_dashboard_payload(paths, now_ms=1001)
     assert "/api/control" not in TRADING_HTML
-    assert "/api/profile" not in TRADING_HTML
+    assert "take_profit_mode:$('take-profit-mode').value" in TRADING_HTML
+    assert "fixed_reward_risk_ratio:$('fixed-reward-risk-ratio').value" in TRADING_HTML
     assert "innerHTML" not in TRADING_HTML
     assert 'href="/trading"' in DASHBOARD_HTML
 

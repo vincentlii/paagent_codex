@@ -67,6 +67,7 @@ def run_joint(
     frame=None,
     worker_failure_role=None,
     captured_requests=None,
+    take_profit_policy=None,
 ):
     from unittest.mock import MagicMock
     from pa_agent.config.settings import Settings, ValidationSettings
@@ -190,13 +191,15 @@ def run_joint(
         role_backend.run.side_effect = agent_vpa_call
     orchestrator = TwoStageOrchestrator(
         client=client,
-        assembler=PromptAssembler(PROMPT_DIR, prompt_settings=settings.prompt),
+        assembler=PromptAssembler(PROMPT_DIR, prompt_settings=settings.prompt,
+                                  take_profit_policy=take_profit_policy),
         router=route_strategy_files,
-        validator=JsonValidator(),
+        validator=JsonValidator(take_profit_policy=take_profit_policy),
         pending_writer=writer,
         exp_reader=MagicMock(),
         settings=settings,
         analysis_backend=backend,
+        take_profit_policy=take_profit_policy,
     )
     record = orchestrator.submit(frame or make_frame(), CancelToken(), lambda event: None)
     return record, calls, writer

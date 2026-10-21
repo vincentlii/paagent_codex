@@ -18,6 +18,7 @@ from pa_agent.monitoring.scheduler import AnalysisTask
 from pa_agent.operations.analysis_profile import (
     AnalysisProfile,
     profile_fingerprint,
+    profile_identity_payload,
     validate_analysis_profile,
 )
 from pa_agent.quality.runtime_fingerprint import (
@@ -227,6 +228,7 @@ def create_frozen_analysis_task(
     analysis_profile: AnalysisProfile | Mapping[str, object] | None = None,
     analysis_profile_fingerprint: str | None = None,
     execution_policy: str | None = None,
+    take_profit_tick_size: str | None = None,
 ) -> AnalysisTask:
     """Deep-freeze one validated snapshot before it enters the scheduler."""
     if not isinstance(frame, KlineFrame):
@@ -246,7 +248,7 @@ def create_frozen_analysis_task(
             raise ValueError("analysis profile fingerprint mismatch")
         profile_fp = computed_fp
         profile_identity = {
-            **validated_profile.model_dump(mode="json"),
+            **profile_identity_payload(validated_profile),
             "profile_fingerprint": computed_fp,
         }
     elif profile_fp:
@@ -267,6 +269,13 @@ def create_frozen_analysis_task(
             provided_identity.setdefault("profile_fingerprint", profile_fp)
             analysis_backend_identity = provided_identity
     frozen_frame = copy.deepcopy(frame)
+    if take_profit_tick_size is not None:
+        from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
+        if profile_identity.get("take_profit_mode") != "fixed_rr":
+            raise ValueError("target_tick_requires_fixed_rr_profile")
+        take_profit_tick_size = FixedRiskRewardPolicy(
+            tick_size=take_profit_tick_size
+        ).model_dump(mode="json")["tick_size"]
     frozen_htf = copy.deepcopy(htf_context)
     incremental_count = (
         int(incremental_new_bar_count)
@@ -297,6 +306,7 @@ def create_frozen_analysis_task(
         analysis_profile_fingerprint=profile_fp,
         analysis_profile_identity=copy.deepcopy(profile_identity),
         execution_policy=execution_policy,
+        take_profit_tick_size=take_profit_tick_size,
     )
     cohort = analysis_cohort_id(
         settings, analysis_fingerprint, analysis_backend_mode=analysis_backend_mode,
@@ -305,6 +315,8 @@ def create_frozen_analysis_task(
     )
     if execution_policy:
         cohort = _stable_hash({"base": cohort, "execution_policy": execution_policy})
+    if profile_identity.get("take_profit_mode") == "fixed_rr":
+        cohort = _stable_hash({"base": cohort, "take_profit_tick_size": take_profit_tick_size})
     return AnalysisTask.create(
         source=source,
         venue=venue,

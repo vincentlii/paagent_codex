@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -14,11 +16,12 @@ from pa_agent.agent_runtime.frozen_job import (
 from pa_agent.operations.analysis_profile import AnalysisProfile, profile_fingerprint
 
 
-def _builder() -> FrozenAgentJobBuilder:
+def _builder(*, clock: Callable[[], float] = time.time) -> FrozenAgentJobBuilder:
     return FrozenAgentJobBuilder(
         runtime_version="codex-runtime-test",
         agents_text="PA authority remains outside Codex.",
         skill_documents={"stage1": "Diagnose Brooks context from evidence."},
+        clock=clock,
     )
 
 
@@ -82,7 +85,11 @@ def _job(
     )
 
 
-def test_builder_is_deterministic_and_binds_all_runtime_inputs() -> None:
+def test_builder_is_deterministic_and_binds_all_runtime_inputs(monkeypatch) -> None:
+    builder_factory = _builder
+    monkeypatch.setattr(
+        f"{__name__}._builder", lambda: builder_factory(clock=lambda: 1_725_000_100)
+    )
     first = _job()
     second = _job()
 
@@ -150,11 +157,12 @@ def test_store_publishes_complete_job_and_detects_resource_tampering(
     tmp_path: Path,
 ) -> None:
     store = FrozenAgentJobStore(tmp_path)
-    published = store.publish(_job())
+    job = _job()
+    published = store.publish(job)
 
-    assert published.name == _job().manifest.job_digest
+    assert published.name == job.manifest.job_digest
     loaded = store.open(published.name)
-    assert loaded.manifest.job_digest == _job().manifest.job_digest
+    assert loaded.manifest.job_digest == job.manifest.job_digest
 
     schema_path = published / "output_schema.json"
     schema_path.chmod(0o600)

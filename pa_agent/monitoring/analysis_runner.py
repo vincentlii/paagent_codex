@@ -47,6 +47,7 @@ class FrozenAnalysisPayload:
     execution_target: str | None = None
     execution_epoch: str | None = None
     demo_execution_policy: Mapping[str, Any] | None = None
+    take_profit_tick_size: str | None = None
 
 
 class IndependentAnalysisHandler:

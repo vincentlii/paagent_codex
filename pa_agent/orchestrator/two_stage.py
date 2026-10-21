@@ -620,6 +620,7 @@ def _build_empty_record(
     htf_context: dict[str, Any] | None = None,
     prompt_dir: Path | None = None,
     monitoring_task_id: str | None = None,
+    take_profit_policy=None,
 ) -> AnalysisRecord:
     """Build a partial AnalysisRecord with meta populated from the frame."""
     ts_ms = now_local_ms()
@@ -709,9 +710,13 @@ def _build_empty_record(
                 "stage2",
                 decision_tree_path=decision_tree_path,
                 joint_stage2=getattr(getattr(settings, "analysis_pipeline", None), "pipeline", None) == "pa_vpa_joint",
+                take_profit_policy=take_profit_policy,
             ),
         },
     }
+
+    if take_profit_policy is not None:
+        runtime_identity["take_profit_policy"] = take_profit_policy.model_dump(mode="json")
 
     for key in ("analysis_as_of_ms", "experience_pool"):
         if key in frame.data_metadata:
@@ -859,6 +864,7 @@ class TwoStageOrchestrator:
         allow_research_joint: bool = False,
         profile_identity: dict[str, Any] | None = None,
         execution_policy: str | None = None,
+        take_profit_policy=None,
     ) -> None:
         assembler_tree = getattr(assembler, "decision_tree_path", None)
         validator_tree = getattr(validator, "decision_tree_path", None)
@@ -887,6 +893,17 @@ class TwoStageOrchestrator:
             logger=logger,
         )
         self._profile_identity = dict(profile_identity or {})
+        from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
+        self.take_profit_policy = (
+            FixedRiskRewardPolicy.model_validate(take_profit_policy)
+            if take_profit_policy is not None else None
+        )
+        for component in (assembler, validator):
+            selected = getattr(component, "take_profit_policy", None)
+            if (selected is None or isinstance(selected, FixedRiskRewardPolicy)) and selected != self.take_profit_policy:
+                raise ValueError("take_profit_policy_resource_mismatch")
+        if allow_research_joint and self.take_profit_policy is not None:
+            raise ValueError("fixed_rr_not_authorized_for_legacy_joint_research")
         if execution_policy not in {None, "limit_3bar_v1"}:
             raise ValueError("unknown execution policy")
         self._execution_policy = execution_policy
@@ -1389,6 +1406,7 @@ class TwoStageOrchestrator:
             htf_context=htf_context,
             prompt_dir=self._runtime_prompt_dir(),
             monitoring_task_id=monitoring_task_id,
+            take_profit_policy=self.take_profit_policy,
         )
         backend_runtime_identity = getattr(
             self._analysis_backend, "runtime_identity", {}
@@ -2520,6 +2538,7 @@ class TwoStageOrchestrator:
             htf_context=htf_context,
             prompt_dir=self._runtime_prompt_dir(),
             monitoring_task_id=monitoring_task_id,
+            take_profit_policy=self.take_profit_policy,
         )
         if backend_fallback_context:
             preflight_record = preflight_record.model_copy(
@@ -2651,6 +2670,7 @@ class TwoStageOrchestrator:
             validator=JsonValidator(
                 baseline_settings,
                 prompt_dir=self._runtime_prompt_dir(),
+                take_profit_policy=self.take_profit_policy,
             ),
             pending_writer=SuppressedRecordWriter(),
             exp_reader=self._exp_reader,
@@ -2659,6 +2679,9 @@ class TwoStageOrchestrator:
             allow_provider_fallback=False,
             defer_execution_policy=True,
             allow_research_joint=False,
+            profile_identity=self._profile_identity,
+            execution_policy=self._execution_policy,
+            take_profit_policy=self.take_profit_policy,
         )
         baseline = baseline_runner.submit(
             frame,
@@ -3391,7 +3414,8 @@ class TwoStageOrchestrator:
         schema = schema_for(stage) if callable(schema_for) else None
         if (agent_context or {}).get("role_protocol", {}).get("contract_version") == "joint_stage2_agent_protocol_v1":
             from pa_agent.ai.pa_provider_contracts import schema_for_joint_stage2_draft
-            schema = schema_for_joint_stage2_draft(decision_tree_path=self._validator.decision_tree_path)
+            schema = schema_for_joint_stage2_draft(decision_tree_path=self._validator.decision_tree_path,
+                                                  take_profit_policy=self.take_profit_policy)
         del stage_label  # retained in the stable orchestrator helper interface
         schema = self._joint_direct_contract(stage, schema, messages)
         reply = self._analysis_backend.run(

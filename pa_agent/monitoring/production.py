@@ -17,6 +17,7 @@ from pa_agent.monitoring.scheduler import AnalysisTask
 from pa_agent.operations.analysis_profile import (
     AnalysisProfile,
     profile_fingerprint,
+    profile_identity_payload,
     validate_analysis_profile,
 )
 from pa_agent.orchestrator.backend_fallback import FullChainFallbackOrchestrator
@@ -80,7 +81,7 @@ class ProductionOrchestratorFactory:
     @staticmethod
     def _profile_identity_for(profile: AnalysisProfile) -> dict[str, Any]:
         return {
-            **profile.model_dump(mode="json"),
+            **profile_identity_payload(profile),
             "profile_fingerprint": profile_fingerprint(profile),
         }
 
@@ -120,13 +121,19 @@ class ProductionOrchestratorFactory:
         settings = self._settings_for_profile(frozen_profile)
         frozen_identity = dict(getattr(task.payload, "analysis_profile_identity", {}) or {})
         profile_identity = frozen_identity or self._profile_identity_for(frozen_profile)
+        from pa_agent.ai.take_profit_policy import resolve_take_profit_policy
+        take_profit_policy = resolve_take_profit_policy(
+            frozen_profile if frozen_identity else AnalysisProfile(),
+            tick_size=getattr(task.payload, "take_profit_tick_size", None),
+        )
         if frozen_identity and "decision_stance" not in frozen_identity:
             # Old accepted tasks did not expose stance in Profile. Keep their
             # configured baseline, rather than silently adding a new selection.
             settings.general.decision_stance = self._settings.general.decision_stance
         if mode == "deepseek_only":
             return self._build_direct(settings=settings, profile_identity=profile_identity,
-                                      execution_policy=task.payload.execution_policy)
+                                      execution_policy=task.payload.execution_policy,
+                                      take_profit_policy=take_profit_policy)
         assert self._codex_backend_factory is not None
         primary = self._build_orchestrator(
             settings=settings,
@@ -134,6 +141,7 @@ class ProductionOrchestratorFactory:
             analysis_backend=self._codex_backend_factory(task, settings),
             profile_identity=profile_identity,
             execution_policy=task.payload.execution_policy,
+            take_profit_policy=take_profit_policy,
         )
         if mode == "codex_only":
             return primary
@@ -143,6 +151,7 @@ class ProductionOrchestratorFactory:
                 settings=settings.model_copy(deep=True),
                 profile_identity=profile_identity,
                 execution_policy=task.payload.execution_policy,
+                take_profit_policy=take_profit_policy,
             ),
             pipeline_identity=settings.analysis_pipeline,
         )
@@ -162,6 +171,7 @@ class ProductionOrchestratorFactory:
         self, *, client: Any | None = None, settings: Any | None = None,
         profile_identity: Mapping[str, Any] | None = None,
         execution_policy: str | None = None,
+        take_profit_policy=None,
     ) -> TwoStageOrchestrator:
         settings = settings or self._profile_settings.model_copy(deep=True)
         profile_identity = profile_identity or self._profile_identity
@@ -178,6 +188,7 @@ class ProductionOrchestratorFactory:
             ),
             profile_identity=profile_identity,
             execution_policy=execution_policy,
+            take_profit_policy=take_profit_policy,
         )
 
     def _build_orchestrator(
@@ -188,6 +199,7 @@ class ProductionOrchestratorFactory:
         analysis_backend: Any,
         profile_identity: Mapping[str, Any] | None = None,
         execution_policy: str | None = None,
+        take_profit_policy=None,
     ) -> TwoStageOrchestrator:
         experience_reader = ExperienceReader(
             experience_dir=self._experience_dir,
@@ -197,16 +209,19 @@ class ProductionOrchestratorFactory:
             prompt_dir=self._prompt_dir,
             experience_reader=experience_reader,
             prompt_settings=settings.prompt,
+            take_profit_policy=take_profit_policy,
         )
         return TwoStageOrchestrator(
             client=client,
             analysis_backend=analysis_backend,
             assembler=assembler,
             router=route_strategy_files,
-            validator=JsonValidator(settings, prompt_dir=self._prompt_dir),
+            validator=JsonValidator(settings, prompt_dir=self._prompt_dir,
+                                    take_profit_policy=take_profit_policy),
             pending_writer=self._pending_writer,
             exp_reader=experience_reader,
             settings=settings,
             profile_identity=profile_identity,
             execution_policy=execution_policy,
+            take_profit_policy=take_profit_policy,
         )

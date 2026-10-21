@@ -18,6 +18,11 @@ issue_status: monitoring
 
 ## OKX Demo运行与维护
 
+可选固定RR退出的设置、冻结tick、旧任务兼容与回退边界先读
+[ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)和
+[本地验收](../quality/fixed_risk_reward_acceptance_20261021.md)。缺tick不猜测，目标tick
+变更不静默改价；切换设置不重算旧单。新增Intent有policy字段，旧Worker不能接管。
+
 2026-10-18流水/逐计划盈亏及三品种相关排障先读
 [本轮验收](../quality/demo_journal_three_asset_20261018.md)：精确关联fills、冻结合约单位、
 bid/ask新鲜度、手续费与资金费范围、entry GET未知及ACK丢失恢复。原下节只读审查报告

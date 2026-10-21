@@ -103,6 +103,9 @@ def compile_demo_intent(
         inst_id=target,
         disposition="no_trade" if plan is None else "limit",
     )
+    policy = _field(record, "role_runtime", {}).get("take_profit_policy")
+    if policy is not None:
+        values["take_profit_policy"] = policy
     if demo_execution_policy is not None:
         from pa_agent.operations.demo_settings import DemoExecutionPolicy
 
@@ -130,6 +133,8 @@ def bind_demo_limit(
     if intent.disposition != "limit" or contract.inst_id != intent.inst_id:
         raise ValueError("invalid_limit_binding")
     entry, stop, tp1 = intent.entry, intent.stop, intent.tp1
+    if intent.take_profit_policy is not None and intent.take_profit_policy.tick_size != contract.tick:
+        raise ValueError("fixed_rr_target_tick_changed")
     if any(price % contract.tick != 0 for price in (entry, stop, tp1)):
         raise ValueError("target_tick_mismatch")
     if not (stop < entry < tp1 if intent.side == "buy" else tp1 < entry < stop):

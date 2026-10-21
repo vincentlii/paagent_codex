@@ -3,6 +3,8 @@ name: pa-stage2-decision
 description: Use when the Host selects price-only PA Stage 2 after Brooks routing, not joint Stage 2 or research arbitration.
 ---
 
+退出价格职责以本轮冻结角色协议与 Provider Contract 为准。存在 `take_profit_policy=fixed_rr_v1` 时，模型只选择 entry 和结构 stop，不输出 TP1/TP2；按该固定目标和取整规则评估路径障碍与未校准主观概率，仍可等待或不交易。没有该协议时沿用 PA 结构目标。
+
 # PA Stage 2
 
 输出分工：`decision` 说明选中方案或等待的决定性依据与条件；`decision_trace`

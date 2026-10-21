@@ -108,6 +108,9 @@ def safe_demo_projection(value):
             "target_notional",
             "limit_validity_hours",
             "execution_settings_generation",
+            "take_profit_mode",
+            "requested_reward_risk_ratio",
+            "actual_reward_risk_ratio",
             "expires_at_ms",
             "entry_state",
             "protection",
@@ -141,6 +144,11 @@ def safe_demo_projection(value):
             if isinstance(raw, list)
             else []
         )
+    raw_rules = value.get("price_rules")
+    result["price_rules"] = (
+        [_select(row, ("inst_id", "tick")) for row in raw_rules[:3]]
+        if isinstance(raw_rules, list) else []
+    )
     result["periods"] = {}
     for key in ("all", "7d", "30d"):
         raw = _mapping(value.get("periods")).get(key, {})
@@ -191,6 +199,11 @@ def build_demo_projection(store, snapshot, *, now_ms):
                     entry=str(i.entry),
                     stop=str(i.stop),
                     tp1=str(i.tp1),
+                    take_profit_mode="fixed_rr" if i.take_profit_policy else "pa",
+                    requested_reward_risk_ratio=(
+                        i.take_profit_policy.reward_risk_ratio if i.take_profit_policy else None
+                    ),
+                    actual_reward_risk_ratio=str(abs(i.tp1 - i.entry) / abs(i.entry - i.stop)),
                     quantity=str(request.sz),
                     filled=row["filled"],
                     exited_quantity=(
@@ -316,6 +329,7 @@ def build_demo_projection(store, snapshot, *, now_ms):
             ),
             state="ready" if all(snapshot.coverage.values()) else "reconciliation_gap",
             coverage=dict(snapshot.coverage),
+            price_rules=[{"inst_id": c.inst_id, "tick": str(c.tick)} for c in snapshot.contracts],
             account={
                 "equity": str(snapshot.equity) if snapshot.equity is not None else None,
                 "available_balance": (

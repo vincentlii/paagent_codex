@@ -12,6 +12,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pa_agent.operations.demo_settings import DemoExecutionPolicy
+from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
 
 Positive = Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
 MAPPINGS = {"BTCUSDT": "BTC-USDT-SWAP", "ETHUSDT": "ETH-USDT-SWAP", "XAUUSDT": "XAU-USDT-SWAP"}
@@ -118,6 +119,7 @@ class DemoIntent(StrictModel):
     tp1: Positive | None = None
     source_reason: str = Field(default="", max_length=2400)
     demo_execution_policy: DemoExecutionPolicy | None = None
+    take_profit_policy: FixedRiskRewardPolicy | None = None
     content_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
 
     def digest_payload(self):
@@ -126,6 +128,8 @@ class DemoIntent(StrictModel):
         excluded = {"content_digest"}
         if self.demo_execution_policy is None:
             excluded.add("demo_execution_policy")
+        if self.take_profit_policy is None:
+            excluded.add("take_profit_policy")
         return self.model_dump(mode="json", exclude=excluded)
 
     @classmethod
@@ -151,6 +155,11 @@ class DemoIntent(StrictModel):
             v is not None for v in (self.side, self.entry, self.stop, self.tp1)
         ):
             raise ValueError("non_limit_has_prices")
+        if self.disposition == "limit" and self.take_profit_policy is not None:
+            if self.tp1 != self.take_profit_policy.target(
+                self.entry, self.stop, "做多" if self.side == "buy" else "做空"
+            ):
+                raise ValueError("fixed_rr_target_mismatch")
         if not (info.context or {}).get("sealing"):
             if digest(self.digest_payload()) != self.content_digest:
                 raise ValueError("intent_digest_mismatch")

@@ -39,6 +39,7 @@ _MAX_BODY_BYTES = 4096
 _SESSION_COOKIE = "pa_agent_dashboard_session"
 _SESSION_SECONDS = 8 * 60 * 60
 _RUNTIME_FIELDS = (
+    "take_profit_policy_version",
     "service_state",
     "started_at_ms",
     "updated_at_ms",
@@ -278,6 +279,7 @@ def _profile_projection(control: Any, runtime: dict[str, Any] | None) -> dict[st
     }
     return {
         "current": desired,
+        "control_generation": control.generation,
         "current_generation": control.profile_generation,
         "current_fingerprint": control.profile_fingerprint,
         "desired": desired,
@@ -391,13 +393,17 @@ def build_trading_dashboard_payload(paths: RuntimePaths, *, now_ms: int | None =
     """Only a credential-free JSON projection; no trading DB or model access."""
     current_ms = int(time.time()*1000) if now_ms is None else int(now_ms)
     runtime = RuntimeStatusStore(paths.runtime_status_path).read()
+    control = RuntimeControlStore(paths.runtime_control_path).read()
+    capabilities = analysis_capabilities()
     return {
         "schema_version": 1,
         "generated_at_ms": current_ms,
         "health": _health(runtime, now_ms=current_ms),
         "runtime": _safe_runtime_projection(runtime),
         "trading": safe_trading_projection((runtime or {}).get("trading")),
-        "demo_execution_settings": _demo_settings_projection(RuntimeControlStore(paths.runtime_control_path).read(), runtime),
+        "demo_execution_settings": _demo_settings_projection(control, runtime),
+        "profile": _profile_projection(control, runtime),
+        "capabilities": {key: capabilities[key] for key in ("take_profit_modes", "reward_risk_ratios")},
     }
 
 
@@ -721,6 +727,9 @@ def create_server(config: DashboardConfig, paths: RuntimePaths) -> ThreadingHTTP
                 not in {"running", "paused"}
             ):
                 self._json(503, {"error": "runtime_state_unavailable"})
+                return
+            if validated.take_profit_mode != "pa" and runtime.get("take_profit_policy_version") != "fixed_rr_v1":
+                self._json(503, {"error": "take_profit_policy_unsupported"})
                 return
             try:
                 state = control_store.set_analysis_profile(

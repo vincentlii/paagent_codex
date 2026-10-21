@@ -93,6 +93,8 @@ def test_new_default_fields_preserve_legacy_frozen_profile_fingerprint() -> None
     legacy = AnalysisProfile().model_dump(mode="json")
     legacy.pop("symbols", None)
     legacy.pop("decision_stance", None)
+    legacy.pop("take_profit_mode", None)
+    legacy.pop("fixed_reward_risk_ratio", None)
     expected = hashlib.sha256(json.dumps(legacy, ensure_ascii=True, allow_nan=False,
         separators=(",", ":"), sort_keys=True).encode()).hexdigest()
     assert profile_fingerprint(legacy) == expected

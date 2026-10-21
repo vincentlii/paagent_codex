@@ -75,6 +75,11 @@ def encode_task(task: AnalysisTask) -> tuple[str, str]:
     }
     if payload.execution_policy is not None:
         value["payload"]["execution_policy"] = payload.execution_policy
+    if payload.take_profit_tick_size is not None:
+        from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
+        value["payload"]["take_profit_tick_size"] = FixedRiskRewardPolicy(
+            tick_size=payload.take_profit_tick_size
+        ).model_dump(mode="json")["tick_size"]
     if payload.demo_execution_policy is not None:
         from pa_agent.operations.demo_settings import DemoExecutionPolicy
         if payload.execution_target != "okx_demo":
@@ -111,6 +116,12 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
     if isinstance(htf.get("frame"), dict):
         htf["frame"] = _frame_from_dict(htf["frame"])
     previous = source["previous_record"]
+    tick = source.get("take_profit_tick_size")
+    if tick is not None:
+        from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
+        if source["analysis_profile_identity"].get("take_profit_mode") != "fixed_rr":
+            raise ValueError("target_tick_requires_fixed_rr_profile")
+        tick = FixedRiskRewardPolicy(tick_size=tick).model_dump(mode="json")["tick_size"]
     payload = FrozenAnalysisPayload(
         frame=_frame_from_dict(source["frame"]),
         htf_context=htf,
@@ -127,6 +138,7 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
         execution_target=target,
         execution_epoch=epoch,
         demo_execution_policy=demo_policy,
+        take_profit_tick_size=tick,
     )
     task = AnalysisTask.create(
         source=identity["source"], venue=identity["venue"],
