@@ -4,8 +4,8 @@ capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-21（固定盈亏比协调发布；Demo原有fills覆盖缺口阻断新入场）
-核验提交: VPS固定代码6dfd0482bdad5a5d8e3999790fd8616209290b7e
+最后核验: 2026-10-21（旧Qt桌面退役协调发布；Demo原有fills覆盖缺口仍阻断新入场）
+核验提交: VPS固定代码123adb1ee88f359e227d2d9fca16599ed8603579
 权威来源:
   - docs/quality/pre_release_final_audit_20260813.md
   - docs/quality/acceptance.md
@@ -21,12 +21,17 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-21 旧 Qt 桌面版本地退役
+## 2026-10-21 旧 Qt 桌面版退役与发布
 
 用户授权先备份后成套删除桌面端。当前源码移除旧GUI、专属Qt辅助和桌面安装入口，
 同步CI与测试；保留网页Dashboard、Headless、PA/VPA、Codex及OKX执行链路。
 备份、恢复边界及验收见[桌面退役记录](../quality/desktop_retirement_20261021.md)。
-本轮尚未commit或发布，不改变下方线上版本、PA默认或原有Demo fills覆盖缺口。
+代码123adb1已commit并推送私有main、协调发布VPS。无Qt完整本地回归1976项通过，
+发布前新鲜聚焦33项通过；目标安装269资源一致、旧桌面模块及命令移除、依赖/四库/Runtime
+身份保持。四服务active/零重启，调度恢复running60，网页接口及认证核验通过。
+发布前用户当前已选fixed_rr/1.5，三品种/500 USDT/3h与Fast等保持；原有Demo
+reconciliation_gap（fills=false）继续安全阻断新入场，活动计划/持仓为0，未在本轮修复。
+下方PA默认和running57为前次发布证据，不是本次最终设置。
 
 ## 2026-10-21 可选固定盈亏比模式实现与发布
 

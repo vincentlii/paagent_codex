@@ -4,7 +4,10 @@
 `docs/quality/desktop_retirement_20261021.md`。保留 Headless、网页 Dashboard、Codex、
 PA/VPA、共享取消/记录回放/模型用量及 OKX Demo，移除桌面入口、专属 Qt 模块和安装项。
 历史报告中的桌面能力仅描述当时版本；不因退役删除知识、历史审计或改写线上结果。
-本轮清理尚未commit或发布，VPS仍使用下方固定发布版本；原有Demo成交覆盖缺口不在本次清理范围。
+退役代码123adb1已commit、推送私有main并协调发布VPS，原配置保留并恢复running60。
+新包269成员与源码一致，旧桌面模块/命令已卸载，依赖、四库与Runtime资产身份保持。
+用户发布前已选fixed_rr/1.5，本次保持该设置；下方“PA默认/running57”属于前次回执。
+原有Demo成交覆盖缺口仍安全阻断新入场，未在本次清理中修复；完整发布/恢复边界见上述验收末节。
 
 2026-10-21 用户授权可选固定盈亏比模式，本地设计见
 `docs/architecture/ADR-0027-selectable-fixed-risk-reward.md`，验收见
