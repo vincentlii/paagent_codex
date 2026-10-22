@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 import hashlib
 import json
 from collections.abc import Mapping
@@ -243,6 +244,7 @@ def create_frozen_analysis_task(
     analysis_profile_fingerprint: str | None = None,
     execution_policy: str | None = None,
     take_profit_tick_size: str | None = None,
+    execution_price_policy: dict | None = None,
 ) -> AnalysisTask:
     """Deep-freeze one validated snapshot before it enters the scheduler."""
     if not isinstance(frame, KlineFrame):
@@ -283,6 +285,14 @@ def create_frozen_analysis_task(
             provided_identity.setdefault("profile_fingerprint", profile_fp)
             analysis_backend_identity = provided_identity
     frozen_frame = copy.deepcopy(frame)
+    if execution_price_policy is not None:
+        from pa_agent.ai.execution_price_policy import ExecutionPricePolicy
+        from pa_agent.execution.demo_contracts import MAPPINGS
+        execution_price_policy = ExecutionPricePolicy.model_validate(execution_price_policy).model_dump(mode="json")
+        if execution_price_policy["inst_id"] != MAPPINGS.get(frame.symbol):
+            raise ValueError("execution_price_instrument_mismatch")
+        frozen_frame = replace(frozen_frame, data_metadata={
+            **frozen_frame.data_metadata, "execution_price_policy": execution_price_policy})
     if take_profit_tick_size is not None:
         from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
         if profile_identity.get("take_profit_mode") != "fixed_rr":
@@ -335,6 +345,8 @@ def create_frozen_analysis_task(
         cohort = _stable_hash({"base": cohort, "execution_policy": execution_policy})
     if profile_identity.get("take_profit_mode") == "fixed_rr":
         cohort = _stable_hash({"base": cohort, "take_profit_tick_size": take_profit_tick_size})
+    if execution_price_policy is not None:
+        cohort = _stable_hash({"base": cohort, "execution_price_policy": execution_price_policy})
     return AnalysisTask.create(
         source=source,
         venue=venue,

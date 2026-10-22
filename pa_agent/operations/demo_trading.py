@@ -6,12 +6,12 @@ import math
 import json
 from decimal import Decimal, InvalidOperation
 
-from pa_agent.execution.demo_contracts import DemoIntent, DemoOrderRequest
+from pa_agent.execution.demo_contracts import DemoIntent, DemoOrderRequest, client_id
 from pa_agent.operations.demo_plan_view import plan_view, order_ids
 
 NUMERIC_FIELDS = frozenset(
     "equity available_balance unrealized_pnl margin_used planned_stop_loss reserved_margin "
-    "entry stop tp1 quantity filled exited_quantity remaining_quantity average_fill_price notional target_notional pos upl imr margin lever fillPx fillSz fee net_pnl fees funding external_flows pnl".split()
+    "entry stop tp1 original_entry original_stop original_tp1 price_tick quantity filled exited_quantity remaining_quantity average_fill_price notional target_notional pos upl imr margin lever fillPx fillSz fee net_pnl fees funding external_flows pnl".split()
 )
 
 
@@ -99,6 +99,7 @@ def safe_demo_projection(value):
             "entry",
             "stop",
             "tp1",
+            "original_entry", "original_stop", "original_tp1", "price_tick",
             "quantity",
             "filled",
             "exited_quantity",
@@ -247,6 +248,56 @@ def build_demo_projection(store, snapshot, *, now_ms):
         )
     for row in rows["intents"]:
         i = DemoIntent.model_validate_json(row["body"])
+        adjustment = i.price_adjustment or {}
+        original = adjustment.get("original_prices") or {}
+        price_audit = dict(original_entry=original.get("entry_price"),
+                          original_stop=original.get("stop_loss_price"),
+                          original_tp1=original.get("take_profit_price"),
+                          price_tick=(adjustment.get("policy") or {}).get("tick_size")) if adjustment else {}
+        if not row["request"]:
+            # The durable request is written before any exchange submission.
+            # A request-less rejection proves zero only without conflicting legs/fills.
+            zero_rejection = (
+                row["trade_state"] == "rejected"
+                and row["filled"] == "0"
+                and not store.legs(i.content_digest)
+                and not store.triggered_orders(i.content_digest)
+                and not store.order_fills(
+                    i.inst_id, set(), client_id=client_id(snapshot.account_key, i, "entry", 1)
+                )
+            )
+            orders.append(dict(
+                task_id=i.task_id, run_id=i.run_id, symbol=i.inst_id,
+                source_provider=i.source_identity.get("provider"),
+                source_venue=i.source_identity.get("venue"),
+                source_symbol=i.source_identity.get("symbol"),
+                source_instrument_type=i.source_identity.get("instrument_type"),
+                timeframe=i.timeframe, pipeline=i.pipeline, market_digest=i.market_digest,
+                side=i.side, entry=str(i.entry) if i.entry is not None else None,
+                stop=str(i.stop) if i.stop is not None else None,
+                tp1=str(i.tp1) if i.tp1 is not None else None,
+                quantity=None, filled=row["filled"], exited_quantity=None,
+                remaining_quantity=None, average_fill_price=None, notional=None,
+                target_notional=(str(i.demo_execution_policy.notional_usdt)
+                                 if i.demo_execution_policy else "500"),
+                limit_validity_hours=(i.demo_execution_policy.limit_validity_hours
+                                      if i.demo_execution_policy else None),
+                execution_settings_generation=(i.demo_execution_policy.generation
+                                               if i.demo_execution_policy else None),
+                take_profit_mode="fixed_rr" if i.take_profit_policy else "pa",
+                requested_reward_risk_ratio=(i.take_profit_policy.reward_risk_ratio
+                                             if i.take_profit_policy else None),
+                actual_reward_risk_ratio=None,
+                expires_at_ms=i.expires_at_ms, entry_state=row["entry_state"],
+                protection=row["protection"], trade_state=row["trade_state"],
+                reason=(row["reason"] or i.source_reason
+                        or json.loads(row["receipt"]).get("reason") or "awaiting_submission"),
+                created_at_ms=i.generated_at_ms, display_status="unsubmitted",
+                pnl="0" if zero_rejection else None,
+                sync_required=not zero_rejection, valuation_at_ms=None,
+                **price_audit,
+            ))
+            continue
         if row["request"]:
             request = DemoOrderRequest.model_validate_json(row["request"])
             legs = store.legs(i.content_digest)
@@ -269,6 +320,7 @@ def build_demo_projection(store, snapshot, *, now_ms):
                     entry=str(i.entry),
                     stop=str(i.stop),
                     tp1=str(i.tp1),
+                    **price_audit,
                     take_profit_mode="fixed_rr" if i.take_profit_policy else "pa",
                     requested_reward_risk_ratio=(
                         i.take_profit_policy.reward_risk_ratio if i.take_profit_policy else None

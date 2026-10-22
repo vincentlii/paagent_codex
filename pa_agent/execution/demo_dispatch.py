@@ -93,6 +93,14 @@ class OfficialExecutionDispatcher:
     def demo_selected(self):
         return self.config.execution_target == "okx_demo"
 
+    def execution_price_policy(self, symbol):
+        from pa_agent.ai.execution_price_policy import ExecutionPricePolicy
+        from pa_agent.execution.demo_contracts import MAPPINGS
+        if not self.demo_selected:
+            return None
+        return ExecutionPricePolicy(inst_id=MAPPINGS[symbol],
+            tick_size=self.take_profit_tick_size(symbol)).model_dump(mode="json")
+
     @property
     def enabled(self):
         return self.demo_selected or bool(self.paper and self.paper.enabled)
@@ -184,6 +192,9 @@ class OfficialExecutionDispatcher:
             tick_size=getattr(payload, "take_profit_tick_size", None),
         )
         runtime = record.get("role_runtime", {}) if isinstance(record, dict) else getattr(record, "role_runtime", {})
+        price_policy = (getattr(getattr(payload, "frame", None), "data_metadata", {}) or {}).get("execution_price_policy")
+        if runtime.get("execution_price_policy") != price_policy:
+            return SimpleNamespace(status="rejected", reason="frozen_execution_price_policy_mismatch")
         expected = expected_policy.model_dump(mode="json") if expected_policy is not None else None
         if runtime.get("take_profit_policy") != expected:
             return SimpleNamespace(status="rejected", reason="frozen_take_profit_policy_mismatch")

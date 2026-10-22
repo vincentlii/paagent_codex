@@ -834,6 +834,23 @@ _EXECUTION_DISPOSITION: dict = {
         "checks",
     ],
     "properties": {
+        "price_adjustment": {
+            "type": "object",
+            "required": ["policy", "take_profit_policy", "original_prices", "effective_prices"],
+            "properties": {
+                "policy": {"type": "object"},
+                "take_profit_policy": {"type": ["object", "null"]},
+                "original_prices": {"type": "object"},
+                "effective_prices": {
+                    "type": "object",
+                    "required": ["entry_price", "stop_loss_price", "take_profit_price", "take_profit_price_2"],
+                    "properties": {key: {"type": ["string", "number", "null"]} for key in (
+                        "entry_price", "stop_loss_price", "take_profit_price", "take_profit_price_2")},
+                    "additionalProperties": False,
+                },
+            },
+            "additionalProperties": False,
+        },
         "status": {
             "enum": ["eligible", "suppressed", "not_applicable"],
         },

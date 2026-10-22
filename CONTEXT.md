@@ -1,5 +1,12 @@
 # PA Agent Domain Context
 
+修改OKX Demo限价价格精度或提交前拒绝流水，先读
+[执行价格与可见性修复](docs/quality/execution_price_grid_20261023.md)和ADR-0027同日增补。
+2026-10-23用户明确授权纯程序价格转换：新任务冻结`execution_price_grid_v1`，唯一materializer
+保留模型原decision，独立生成execution_disposition.price_adjustment；Entry/SL及PA目标定向取整，
+fixed_rr按执行Entry/SL重算TP，再按执行价格核对方程。不能在Worker末端重新取整或补跳凑几何；
+旧无marker任务/Intent/活动单保持原价。未提交拒绝与已撤单区分，未知PnL不计零。当前仅本地修复，未发布。
+
 修改跨轮等待复核或增量历史时，必须先读
 [等待条件连续性验收](docs/quality/wait_continuity_20261022.md)与ADR-0025同日增补。
 新Host任务以`decision_history_v2`冻结上一份成功记录的决策原文、同源身份、可用时间及价格棒；

@@ -69,3 +69,37 @@ Intent 校验 TP 是否与自身 policy/Entry/SL 一致；Host 派发前核对 r
 外部行为依据：[OKX instruments 文档](https://www.okx.com/docs-v5/en/#public-data-rest-api-get-instruments)
 的 `tickSz`，以及 [Python Decimal](https://docs.python.org/3/library/decimal.html)
 的确定性十进制运算与定向取整。实现不硬编码某品种的当前 tick。
+
+## 2026-10-23 用户授权：独立执行价格网格
+
+用户要求修复来源/执行场所tick不同导致的XAU未提交，并明确允许程序自动转换执行价格。
+这是一项有审计的执行适配授权，不是无损语法归一；stage2_normalizer等语义边界不变。
+上文“原Entry/SL不调整”继续适用于模型decision、旧任务和无新marker的Intent。
+
+新Demo任务冻结`execution_price_grid_v1`（venue=OKX_DEMO、精确inst_id、tick_size），复用
+已验收的Worker只读合约投影，不增加行情/交易所或LLM调用。policy写入冻结frame metadata、
+compact_snapshot_context、Host hash/cohort与Stage 2 digest-bound协议；未知版本/目标错配拒绝。
+PA/fixed_rr共用；fixed_rr目标tick与网格须一致。缺tick不猜，可合法wait，限价执行候选失败。
+
+唯一materializer生成`execution_disposition.price_adjustment`，含严格policy、原价格、有效价格及
+可选固定目标policy。模型原Entry/SL/PA目标、概率、信心和解释保持，Provider不能写执行投影。
+
+1. 仅限价买入向下、卖出向上到最近合法tick，避免把限价变得更激进。
+2. 止损向结构外侧取整：多单向下、空单向上；不替代结构判断。每次Entry/SL调整不足一tick。
+3. PA的TP1朝入场方向取整；TP2仍是原始研究参考，不进入Demo执行。
+4. fixed_rr用有效Entry/SL重新计算TP1并朝入场方向取整；它相对原TP的变化可能超过一tick。
+5. §10.3、数学资格、置信度阈值及计划消费统一使用复算后的有效投影，不修改模型概率/信心。
+   风险重合、收益消失或方程不通过时抑制执行，不额外补跳、放宽阈值或请求模型修价格。
+
+原价引用/信号/结构校验继续检查模型提案；有效价格的数学/几何单独复算。取整导致的程序拒绝
+保留原candidate，显式terminal reject/suppressed，不能伪装模型wait或schema失败。
+Host计划和Intent统一读取有效价；Intent绑定原/有效价与policy，读取时复算，Worker再核对当前
+交易所tick，变更则拒绝新请求，不重新计算，不改变已有保护和退出预算。
+
+Demo已登记但request为空的limit/rejected计划纳入有界流水，显示“未提交（原因）”；普通no_trade
+仍不显示。不把未提交当已取消、持仓或成交，不把拒绝数混进入场统计。无成交、legs/children/
+自身fills等冲突证据的明确拒绝才记0，其余保留未知/同步；复盘可查看模型原价和执行价。
+
+不迁移数据库，不重新下发旧计划；无marker时保持原hash/摘要和原价严格校验。新字段产生后
+不能用旧reader接管新Intent，发布仍须协调排空和备份。现仅本地实现，验收见
+[价格规则与可见性修复](../quality/execution_price_grid_20261023.md)；真实Demo及发布另验。

@@ -557,6 +557,7 @@ class DemoStore:
                     dict(r)
                     for r in db.execute(
                         "SELECT * FROM intents WHERE request IS NOT NULL "
+                        "OR json_extract(body,'$.disposition') IN ('limit','rejected') "
                         "ORDER BY (trade_state='active') DESC,rowid DESC LIMIT 150"
                     )
                 ],

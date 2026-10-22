@@ -201,9 +201,10 @@ def _plan_from_decision(
     decision = _decision(record)
     if not decision:
         raise ValueError("validated stage2 decision is unavailable")
-    from pa_agent.ai.execution_policy import effective_order_type
+    from pa_agent.ai.execution_policy import effective_order_type, effective_decision
 
     order_label = effective_order_type(stage2)
+    decision = effective_decision(stage2)
     if order_label == _NO_TRADE:
         return None
     order_type = _ORDER_TYPES.get(order_label)

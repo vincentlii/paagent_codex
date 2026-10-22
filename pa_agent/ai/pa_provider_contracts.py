@@ -772,6 +772,7 @@ def materialize_stage2_draft(
     catalog: AnalysisFactCatalog,
     decision_tree_path: Path | None = None,
     take_profit_policy: FixedRiskRewardPolicy | None = None,
+    execution_price_policy=None,
 ) -> dict[str, Any]:
     result = copy.deepcopy(draft)
     result.pop("protocol_version", None)
@@ -801,10 +802,16 @@ def materialize_stage2_draft(
         decision["take_profit_price_2"] = None
     if intent == "trade" and not executable:
         raise ValueError("trade intent requires an executable PA candidate")
+    effective = decision
+    if executable and execution_price_policy is not None and decision.get("order_type") == "限价单":
+        adjustment = execution_price_policy.adjustment(decision, take_profit_policy)
+        result["execution_disposition"] = {"price_adjustment": adjustment}
+        from pa_agent.ai.execution_policy import effective_decision
+        effective = effective_decision(result)
     equation_passes = False
     if executable:
         equation, equation_passes = _equation_trace(
-            decision,
+            effective,
             result.get("bar_analysis") if isinstance(result.get("bar_analysis"), dict) else {},
             trace,
             catalog=catalog,
@@ -842,4 +849,7 @@ def materialize_stage2_draft(
             "node_id": terminal_item["node_id"], "outcome": intent, "label": f"LLM {intent} intent",
         }
     result.setdefault("next_cycle_prediction", _next_cycle_placeholder())
+    if execution_price_policy is not None:
+        from pa_agent.ai.execution_policy import apply_stage2_execution_policy
+        result = apply_stage2_execution_policy(result)
     return result

@@ -5,6 +5,7 @@ import copy
 from typing import Any
 
 from pa_agent.util.trade_metrics import validate_order_trade_metrics
+from pa_agent.ai.execution_price_policy import adjusted_decision
 
 _EXECUTABLE_ORDER_TYPES = frozenset({"限价单", "突破单", "市价单"})
 _NO_ORDER = "不下单"
@@ -28,7 +29,8 @@ def apply_stage2_execution_policy(stage2: dict[str, Any]) -> dict[str, Any]:
         }
         return out
 
-    errors = validate_order_trade_metrics(decision)
+    adjustment = copy.deepcopy((out.get("execution_disposition") or {}).get("price_adjustment"))
+    errors = validate_order_trade_metrics(adjusted_decision(out))
     out["execution_disposition"] = {
         "status": "suppressed" if errors else "eligible",
         "candidate_order_type": order_type,
@@ -41,6 +43,8 @@ def apply_stage2_execution_policy(stage2: dict[str, Any]) -> dict[str, Any]:
             }
         },
     }
+    if adjustment is not None:
+        out["execution_disposition"]["price_adjustment"] = adjustment
     return out
 
 
@@ -102,6 +106,10 @@ def effective_order_type(stage2: Any) -> str:
     if disposition.get("candidate_order_type") != candidate:
         raise ValueError("execution disposition does not match the candidate decision")
     return effective
+
+
+def effective_decision(stage2: dict) -> dict:
+    return adjusted_decision(stage2)
 
 
 def _metric_reason_codes(errors: list[str]) -> list[str]:

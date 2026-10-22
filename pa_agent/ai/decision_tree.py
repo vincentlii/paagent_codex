@@ -587,10 +587,18 @@ def validate_stage2_trace_consistency(
     decision = stage2.get("decision", {})
     order_type = decision.get("order_type") if isinstance(decision, dict) else None
     executable_order = order_type in _EXECUTABLE_ORDER_TYPES
+    disposition = stage2.get("execution_disposition") or {}
+    program_price_reject = False
+    if disposition.get("price_adjustment") and disposition.get("status") == "suppressed":
+        from pa_agent.ai.execution_policy import effective_decision
+        from pa_agent.util.trade_metrics import validate_order_trade_metrics
+        program_price_reject = bool(
+            outcome == "reject" and terminal.get("node_id") == "10.3"
+            and validate_order_trade_metrics(effective_decision(stage2)))
 
     if order_type == "不下单" and outcome == "trade":
         errors.append('order_type 不下单 cannot pair with terminal.outcome "trade"')
-    if executable_order and outcome in ("wait", "reject"):
+    if executable_order and outcome in ("wait", "reject") and not program_price_reject:
         errors.append(
             f"order_type {order_type} cannot pair with terminal.outcome {outcome!r}"
         )
@@ -657,7 +665,7 @@ def validate_stage2_trace_consistency(
             )
         else:
             item_103 = trace[idx_103]
-            if isinstance(item_103, dict) and item_103.get("answer") != "是":
+            if isinstance(item_103, dict) and item_103.get("answer") != ("否" if program_price_reject else "是"):
                 errors.append("node 10.3 must be 是 when placing an order")
             if idx_11 >= 0 and idx_11 < idx_103:
                 errors.append("§11 下单方式 nodes must appear after 10.3 交易者方程")

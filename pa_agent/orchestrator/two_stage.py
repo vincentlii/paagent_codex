@@ -729,7 +729,7 @@ def _build_empty_record(
     if take_profit_policy is not None:
         runtime_identity["take_profit_policy"] = take_profit_policy.model_dump(mode="json")
 
-    for key in ("analysis_as_of_ms", "experience_pool"):
+    for key in ("analysis_as_of_ms", "experience_pool", "execution_price_policy"):
         if key in frame.data_metadata:
             runtime_identity[key] = copy.deepcopy(frame.data_metadata[key])
     experience_requested = bool(settings and settings.prompt.experience_max_entries > 0)

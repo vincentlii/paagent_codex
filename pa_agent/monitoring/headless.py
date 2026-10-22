@@ -957,6 +957,9 @@ class HeadlessMonitor:
                 f"{bundle.data_quality.failed_check or 'unknown'}"
             )
         previous, new_count = self._incremental_context(frame)
+        price_policy = (
+            self._paper_execution.execution_price_policy(frame.symbol)
+            if callable(getattr(self._paper_execution, "execution_price_policy", None)) else None)
         task_venue = identity.venue if identity is not None else asset.exchange
         task = create_frozen_analysis_task(
             frame,
@@ -967,6 +970,7 @@ class HeadlessMonitor:
             analysis_fingerprint=self._analysis_fingerprint,
             previous_record=previous,
             incremental_new_bar_count=new_count,
+            execution_price_policy=price_policy,
             created_at_ms=now_ms,
             instrument_spec=spec,
             analysis_backend_mode=self._applied_backend,
@@ -984,7 +988,8 @@ class HeadlessMonitor:
             analysis_profile=self._applied_profile,
             analysis_profile_fingerprint=self._applied_profile_fingerprint,
             take_profit_tick_size=(
-                self._paper_execution.take_profit_tick_size(frame.symbol)
+                price_policy["tick_size"] if price_policy is not None and self._applied_profile.take_profit_mode == "fixed_rr"
+                else self._paper_execution.take_profit_tick_size(frame.symbol)
                 if self._applied_profile.take_profit_mode == "fixed_rr"
                 and callable(getattr(self._paper_execution, "take_profit_tick_size", None))
                 else None

@@ -135,6 +135,23 @@ assert.ok(nodes.orders.textContent.includes('4.25'));
 context.data.trading.demo.orders[0].sync_required=true;vm.runInContext('render(data)',context);
 assert.ok(nodes.notice.textContent.includes('正在同步'));
 assert.ok(!nodes.orders.textContent.includes('4.25'));
+context.data.trading.demo.orders=[{task_id:'unsubmitted',run_id:'old-rejected',symbol:'XAU-USDT-SWAP',
+  side:'buy',entry:'4000.01',stop:'3990.01',tp1:'4020',target_notional:'500',notional:null,
+  display_status:'unsubmitted',reason:'target_tick_mismatch',pnl:'0',sync_required:false,
+  review_status:'available',review:{reasoning:'historical rejected plan'}}];
+vm.runInContext('render(data)',context);
+assert.ok(nodes.orders.textContent.includes('未提交'));
+assert.ok(nodes.orders.textContent.includes('价格不符合交易所 tick'));
+assert.ok(!nodes.orders.textContent.includes('已取消'));
+assert.ok(!nodes.orders.textContent.includes('null'));
+assert.ok(nodes.orders.children[0].children[6].textContent.includes('0.00'));
+nodes.orders.children[0].children[8].children[0].events.click();
+assert.ok(nodes['review-content'].textContent.includes('historical rejected plan'));
+context.data.trading.demo.orders[0].reason='awaiting_submission';
+context.data.trading.demo.orders[0].pnl=null;context.data.trading.demo.orders[0].sync_required=true;
+vm.runInContext('render(data)',context);
+assert.ok(nodes.orders.textContent.includes('等待执行器处理或同步'));
+assert.equal(nodes.orders.children[0].children[6].textContent,'—');
 nodes['execution-version'].value='paper_latency_v4';nodes['execution-version'].events.change();
 assert.ok(nodes.balance.textContent.includes('99,999'));
 context.data.trading.paper_versions.paper_latency_v4.history_frozen=true;

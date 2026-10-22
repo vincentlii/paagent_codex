@@ -1805,6 +1805,10 @@ Acceptance/Rejection 增量，并评估相关反证，不能只复述 PA。
         from pa_agent.util.price_tick import format_breakout_price_hint
 
         breakout_tick_hint = format_breakout_price_hint(frame)
+        from pa_agent.ai.execution_price_policy import frame_price_policy
+        price_policy = frame_price_policy(frame)
+        if price_policy is not None:
+            breakout_tick_hint += "\n" + price_policy.guidance()
         previous_prediction = self._render_previous_prediction(previous_record)
         protocol = {
             "contract_version": "joint_stage2_agent_protocol_v1" if joint_stage2 else "pa_stage2_agent_protocol_v1",
@@ -2101,6 +2105,10 @@ Acceptance/Rejection 增量，并评估相关反证，不能只复述 PA。
 
         n_bars = len(frame.bars)
         breakout_tick_hint = format_breakout_price_hint(frame)
+        from pa_agent.ai.execution_price_policy import frame_price_policy
+        price_policy = frame_price_policy(frame)
+        if price_policy is not None:
+            breakout_tick_hint += "\n" + price_policy.guidance()
         # Prefix-chain Stage 2 already retains the exact catalog from Stage 1.
         # Repeating it would spend tokens without adding a new factual observation.
         higher_timeframe_block = "" if omit_htf_context else render_higher_timeframe_context(htf_context)

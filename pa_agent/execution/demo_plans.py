@@ -8,7 +8,7 @@ from collections.abc import Mapping
 
 from pa_agent.data.instrument import InstrumentSpec
 from pa_agent.data.contracts import ResolvedInstrumentIdentity
-from pa_agent.execution.plans import official_paper_plan, decision_bar_ts, _field, _decision
+from pa_agent.execution.plans import official_paper_plan, decision_bar_ts, _field
 from pa_agent.execution.demo_contracts import (
     DemoConfig,
     DemoIntent,
@@ -106,6 +106,10 @@ def compile_demo_intent(
     policy = _field(record, "role_runtime", {}).get("take_profit_policy")
     if policy is not None:
         values["take_profit_policy"] = policy
+    stage2 = _field(record, "stage2_decision", {})
+    disposition = stage2.get("execution_disposition") or {}
+    if plan is None and disposition.get("status") == "suppressed":
+        values.update(disposition="rejected", source_reason=",".join(disposition.get("reason_codes") or []))
     if demo_execution_policy is not None:
         from pa_agent.operations.demo_settings import DemoExecutionPolicy
 
@@ -117,7 +121,13 @@ def compile_demo_intent(
         if plan.order_type != "limit":
             values.update(disposition="rejected", source_reason="unsupported_order_type")
         else:
-            decision = _decision(record)
+            from pa_agent.ai.execution_policy import effective_decision
+            decision = effective_decision(stage2)
+            adjustment = (stage2.get("execution_disposition") or {}).get("price_adjustment")
+            if adjustment is not None:
+                if adjustment["policy"] != _field(record, "role_runtime", {}).get("execution_price_policy"):
+                    raise ValueError("execution_price_policy_mismatch")
+                values["price_adjustment"] = adjustment
             values.update(
                 side="buy" if plan.side == "long" else "sell",
                 entry=str(decision["entry_price"]),
@@ -133,6 +143,9 @@ def bind_demo_limit(
     if intent.disposition != "limit" or contract.inst_id != intent.inst_id:
         raise ValueError("invalid_limit_binding")
     entry, stop, tp1 = intent.entry, intent.stop, intent.tp1
+    if intent.price_adjustment is not None:
+        if Decimal(intent.price_adjustment["policy"]["tick_size"]) != contract.tick:
+            raise ValueError("execution_price_tick_changed")
     if intent.take_profit_policy is not None and intent.take_profit_policy.tick_size != contract.tick:
         raise ValueError("fixed_rr_target_tick_changed")
     if any(price % contract.tick != 0 for price in (entry, stop, tp1)):

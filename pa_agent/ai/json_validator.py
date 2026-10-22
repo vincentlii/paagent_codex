@@ -703,6 +703,14 @@ class JsonValidator:
 
         pre_normalized_obj = copy.deepcopy(obj)
         is_provider_draft = obj.get("protocol_version") == "pa_draft_v2"
+        from pa_agent.ai.execution_price_policy import frame_price_policy
+        price_policy = frame_price_policy(kline_frame) if stage == "stage2" else None
+        if stage == "stage2" and not is_provider_draft and (
+            price_policy is not None or "price_adjustment" in (obj.get("execution_disposition") or {})
+        ):
+            return ValidationError(category="c", stage=stage, raw_text=raw_text,
+                code="execution_price_provider_draft_required",
+                message="Execution price projection is Host-owned and requires a frozen Provider Draft")
         if stage == "stage2" and self.take_profit_policy is not None and not is_provider_draft:
             return ValidationError(category="c", stage=stage, raw_text=raw_text,
                 code="fixed_rr_provider_draft_required",
@@ -789,6 +797,7 @@ class JsonValidator:
                         catalog=catalog,
                         decision_tree_path=self._decision_tree_path,
                         take_profit_policy=self.take_profit_policy,
+                        execution_price_policy=price_policy,
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:

@@ -128,4 +128,8 @@ def compact_snapshot_context(frame: Any) -> dict[str, Any]:
         context["instrument_spec"] = dict(metadata["instrument_spec"])
     if isinstance(metadata.get("market_context"), Mapping):
         context["market_context"] = dict(metadata["market_context"])
+    if metadata.get("execution_price_policy") is not None:
+        from pa_agent.ai.execution_price_policy import ExecutionPricePolicy
+        context["execution_price_policy"] = ExecutionPricePolicy.model_validate(
+            metadata["execution_price_policy"]).model_dump(mode="json")
     return context

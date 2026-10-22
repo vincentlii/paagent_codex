@@ -10,7 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 from pa_agent.operations.demo_settings import DemoExecutionPolicy
 from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
 
@@ -121,7 +121,15 @@ class DemoIntent(StrictModel):
     source_reason: str = Field(default="", max_length=2400)
     demo_execution_policy: DemoExecutionPolicy | None = None
     take_profit_policy: FixedRiskRewardPolicy | None = None
+    price_adjustment: dict | None = None
     content_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_serializer(mode="wrap")
+    def serialize_legacy_price_shape(self, handler):
+        value = handler(self)
+        if self.price_adjustment is None:
+            value.pop("price_adjustment", None)
+        return value
 
     def digest_payload(self):
         # v1 null price fields participate in the original digest; only this
@@ -131,6 +139,8 @@ class DemoIntent(StrictModel):
             excluded.add("demo_execution_policy")
         if self.take_profit_policy is None:
             excluded.add("take_profit_policy")
+        if self.price_adjustment is None:
+            excluded.add("price_adjustment")
         return self.model_dump(mode="json", exclude=excluded)
 
     @classmethod
@@ -161,6 +171,21 @@ class DemoIntent(StrictModel):
                 self.entry, self.stop, "做多" if self.side == "buy" else "做空"
             ):
                 raise ValueError("fixed_rr_target_mismatch")
+        if self.price_adjustment is not None:
+            from pa_agent.ai.execution_price_policy import ExecutionPricePolicy, adjusted_decision
+            policy = ExecutionPricePolicy.model_validate(self.price_adjustment["policy"])
+            if policy.inst_id != self.inst_id or self.disposition != "limit":
+                raise ValueError("execution_price_binding_mismatch")
+            fixed = self.take_profit_policy.model_dump(mode="json") if self.take_profit_policy else None
+            if fixed != self.price_adjustment.get("take_profit_policy"):
+                raise ValueError("execution_price_target_policy_mismatch")
+            original = {"order_type": "限价单", "order_direction": "做多" if self.side == "buy" else "做空",
+                        **self.price_adjustment["original_prices"]}
+            effective = adjusted_decision({"decision": original, "execution_disposition": {
+                "price_adjustment": self.price_adjustment}})
+            if any(value != Decimal(str(effective[key])) for key, value in (
+                ("entry_price", self.entry), ("stop_loss_price", self.stop), ("take_profit_price", self.tp1))):
+                raise ValueError("execution_price_projection_mismatch")
         if not (info.context or {}).get("sealing"):
             if digest(self.digest_payload()) != self.content_digest:
                 raise ValueError("intent_digest_mismatch")
