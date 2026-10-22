@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from pa_agent.ai.decision_continuity import HISTORY_CONTEXT_VERSION
 from pa_agent.monitoring.identity import canonical_timeframe
 from pa_agent.monitoring.scheduler import AnalysisTask
 from pa_agent.util.threading import OrchestratorEvent
@@ -48,6 +49,11 @@ class FrozenAnalysisPayload:
     execution_epoch: str | None = None
     demo_execution_policy: Mapping[str, Any] | None = None
     take_profit_tick_size: str | None = None
+    history_context_version: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.history_context_version not in (None, HISTORY_CONTEXT_VERSION):
+            raise ValueError("unsupported history context version")
 
 
 class IndependentAnalysisHandler:
@@ -76,6 +82,7 @@ class IndependentAnalysisHandler:
             events.append,
             previous_record=payload.previous_record,
             incremental_new_bar_count=payload.incremental_new_bar_count,
+            history_context_version=payload.history_context_version,
             htf_context=dict(payload.htf_context),
             monitoring_task_id=task.task_id,
         )

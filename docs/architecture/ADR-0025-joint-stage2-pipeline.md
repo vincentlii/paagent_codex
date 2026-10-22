@@ -74,3 +74,29 @@ PA §9原锚点/案例保留，明确当前价格、拟议entry位置、已收�
 工程实现与离线回归不等于专业质量改善；模型匹配回放/盲评、生产启用及自然运行验收分别记录。
 不复用旧`pa_vpa_aabb_v2`研究身份，不改历史分析、挂单、价格、主观先验或执行数学。
 新报告/同步水位存在后，回退必须使用兼容reader；不让只读旧协议的构建接管新任务。
+
+## 2026-10-22：跨轮决策作为有身份的历史意见
+
+用户批准完整优化增量分析与持续跟踪。现有Headless已按新闭盘自动分析并保留上一轮Stage 1，
+但Joint Stage 2的无单理由与watch_points未交接。采用同一上一份成功记录的有界历史上下文，
+不新建观察列表数据库、LLM阶段、市场状态机或输出Schema。
+
+新含增量历史的Host Frozen任务声明`history_context_version=decision_history_v2`。身份覆盖原有
+Stage 1/Stage 2字段及本次使用的snapshot_context、analysis_pipeline、run_outcome、exception、
+role_stop、analysis_timing与完整kline_data；编解码恢复时复算，篡改拒绝。无历史任务身份不变，
+旧任务缺marker按原计划语义读取，未知版本拒绝，不迁移旧Frozen Job或续接其他Snapshot会话。
+
+历史须同品种/周期/来源，来自成功正式路径且无exception/role_stop；protocol、pipeline与官方路径
+须相符，结果已在当前as-of前可用，旧K1已闭盘且仍在当前已闭盘窗口。缺少可信时间、来源或状态
+则不交付该历史，不伪造零等待或完整覆盖。旧K引用用原开盘时间与OHLC精确对应当前K号，出窗、
+缺失、修订或未知引用不猜映射；旧HTF/VPA ID仍只属于旧快照，不成为本轮合法证据。
+
+Stage 1仍只接收现有price-only历史诊断，VPA不接收旧Joint意见；普通PA不能接收旧Joint决策。
+Joint/PA Stage 2经各自Direct Prompt或Codex digest-bound角色协议读取完整历史reasoning、
+watch_points和相关计划字段，不带旧主观概率、joint_analysis或执行状态。模型在现有reasoning中
+复核重要条件并给当前证据，watch_points只保留仍有意义的条件；允许改判、放弃、合法等待和交易。
+程序不解析自然语言判定条件成立，也不把确认满足等同交易资格；已有挂单/持仓不受本轮建议修改。
+
+删除分析时读取全局交易CSV的fallback及旧撤单/反手指导；CSV关系审计仍有正式调用者并保留。
+每轮只携带一份历史，不递归拼接对话或扩张mandatory知识。旧Marker兼容分支有恢复调用者，保留。
+本地验证、备份及模型质量未验证边界见[等待条件连续性验收](../quality/wait_continuity_20261022.md)。

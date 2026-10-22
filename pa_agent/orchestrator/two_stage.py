@@ -42,6 +42,7 @@ from pa_agent.ai.analysis_role_backend import (
     DirectAnalysisRoleBackend,
 )
 from pa_agent.ai.codex_analysis_backend import FullChainFallbackRequired
+from pa_agent.ai.decision_continuity import HISTORY_CONTEXT_VERSION
 from pa_agent.ai.json_validator import Ok, ValidationError
 from pa_agent.ai.pa_handoff import compile_pa_handoff
 from pa_agent.ai.provider_failures import ModelCallFailure
@@ -1356,6 +1357,7 @@ class TwoStageOrchestrator:
         frozen_vpa_catalog: dict[str, Any] | None = None,
         backend_fallback_context: dict[str, Any] | None = None,
         monitoring_task_id: str | None = None,
+        history_context_version: str | None = HISTORY_CONTEXT_VERSION,
     ) -> AnalysisRecord:
         """Run the two-stage analysis pipeline and return an AnalysisRecord.
 
@@ -1425,6 +1427,7 @@ class TwoStageOrchestrator:
                 frozen_vpa_catalog=frozen_vpa_catalog,
                 backend_fallback_context=backend_fallback_context,
                 monitoring_task_id=monitoring_task_id,
+                history_context_version=history_context_version,
             )
 
         # ── Step 1: Build partial record ──────────────────────────────────────
@@ -2044,6 +2047,7 @@ class TwoStageOrchestrator:
             provider_settings=getattr(self._settings, "provider", None),
             htf_context=htf_context,
             joint_stage2=joint_enabled,
+            history_context_version=history_context_version,
         )
         self._initial_stage2_messages = copy.deepcopy(messages_s2)
         from pa_agent.ai.prompt_assembler import stage2_prompt_txt_files
@@ -2068,6 +2072,7 @@ class TwoStageOrchestrator:
                 previous_record=previous_record,
                 enable_next_bar_prediction=_enable_next_bar,
                 joint_stage2=joint_enabled,
+                history_context_version=history_context_version,
             ),
             "allowed_knowledge_ids": stage2_prompt_txt_files(
                 strategy_files,
@@ -2550,6 +2555,7 @@ class TwoStageOrchestrator:
         frozen_vpa_catalog: dict[str, Any] | None,
         backend_fallback_context: dict[str, Any] | None,
         monitoring_task_id: str | None,
+        history_context_version: str | None,
     ) -> AnalysisRecord:
         """Run PA, independent VPA evidence, and a bounded joint arbiter."""
         from pa_agent.ai.json_validator import JsonValidator
@@ -2723,6 +2729,7 @@ class TwoStageOrchestrator:
             on_stage2_files=on_stage2_files,
             previous_record=previous_record,
             incremental_new_bar_count=incremental_new_bar_count,
+            history_context_version=history_context_version,
             htf_context=htf_context,
             backend_fallback_context=backend_fallback_context,
         )

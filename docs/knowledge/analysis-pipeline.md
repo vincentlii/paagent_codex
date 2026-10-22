@@ -14,6 +14,12 @@ verification_scope: not-verified
 
 # 分析链路
 
+2026-10-22本地增量连续性补全见[验收](../quality/wait_continuity_20261022.md)及ADR-0025增补。
+Headless既有闭盘轮询与上一份成功Stage 1诊断继续使用；新`decision_history_v2`将同源、已可用的
+上一轮Stage 2等待理由/watch_points与时间映射冻结到Stage 2协议，交由模型以当前证据复核。
+它是历史意见，不扩展Stage 1/VPA权限，不延续跨快照会话，不自动撤旧单或强迫trade；
+不能核验的历史不交付，模型仍可wait。分析CSV兜底已删除，日志CSV审计保留。尚未发布。
+
 2026-10-21 新任务可显式选择固定RR退出，见
 [ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)：模型按冻结的目标协议
 评估Setup/Entry/结构SL及概率，唯一materializer计算TP1后校验原方程；普通PA和联合

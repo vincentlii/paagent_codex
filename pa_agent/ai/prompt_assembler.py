@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pa_agent.ai.decision_continuity import HISTORY_CONTEXT_VERSION
 from pa_agent.ai.decision_stance import build_decision_stance_guidance, normalize_stance
 from pa_agent.ai.fact_catalog import (
     AnalysisFactCatalog,
@@ -1783,6 +1784,7 @@ Acceptance/Rejection 增量，并评估相关反证，不能只复述 PA。
         previous_record: Any | None,
         enable_next_bar_prediction: bool,
         joint_stage2: bool = False,
+        history_context_version: str | None = HISTORY_CONTEXT_VERSION,
     ) -> dict[str, Any]:
         """Publish mature code-generated Stage 2 rules beside routed knowledge."""
         from pa_agent.ai.pa_provider_contracts import provider_draft_schema_digest
@@ -1796,6 +1798,8 @@ Acceptance/Rejection 增量，并评估相关反证，不能只复述 PA。
                 frame=frame,
                 stage1_json=stage1_json,
                 previous_record=previous_record,
+                joint_stage2=joint_stage2,
+                history_context_version=history_context_version,
             )
         )
         from pa_agent.util.price_tick import format_breakout_price_hint
@@ -1949,6 +1953,7 @@ Acceptance/Rejection 增量，并评估相关反证，不能只复述 PA。
         use_prefix_chain: bool | None = None,
         htf_context: dict[str, Any] | None = None,
         joint_stage2: bool = False,
+        history_context_version: str | None = HISTORY_CONTEXT_VERSION,
     ) -> list[dict]:
         """Build Stage 2 messages, optionally chaining after Stage 1 for KV cache.
 
@@ -1979,6 +1984,7 @@ Acceptance/Rejection 增量，并评估相关反证，不能只复述 PA。
             htf_context=htf_context,
             omit_htf_context=chain_after_s1,
             joint_stage2=joint_stage2,
+            history_context_version=history_context_version,
         )
 
         if chain_after_s1:
@@ -2018,6 +2024,7 @@ Acceptance/Rejection 增量，并评估相关反证，不能只复述 PA。
         htf_context: dict[str, Any] | None = None,
         omit_htf_context: bool = False,
         joint_stage2: bool = False,
+        history_context_version: str | None = HISTORY_CONTEXT_VERSION,
     ) -> str:
         """Build the Stage 2 task turn for standalone or prefix-chain mode."""
         from pa_agent.ai.decision_continuity import (
@@ -2030,6 +2037,8 @@ Acceptance/Rejection 增量，并评估相关反证，不能只复述 PA。
             frame=frame,
             stage1_json=stage1_json,
             previous_record=previous_record,
+            joint_stage2=joint_stage2,
+            history_context_version=history_context_version,
         )
         continuity_block = render_continuity_prompt_block(continuity_ctx)
         transition_block = self._render_transition_guidance(stage1_json)

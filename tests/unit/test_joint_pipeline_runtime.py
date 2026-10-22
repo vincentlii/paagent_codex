@@ -68,6 +68,9 @@ def run_joint(
     worker_failure_role=None,
     captured_requests=None,
     take_profit_policy=None,
+    previous_record=None,
+    incremental_new_bar_count=None,
+    history_context_version="decision_history_v2",
 ):
     from unittest.mock import MagicMock
     from pa_agent.config.settings import Settings, ValidationSettings
@@ -204,7 +207,12 @@ def run_joint(
         analysis_backend=backend,
         take_profit_policy=take_profit_policy,
     )
-    record = orchestrator.submit(frame or make_frame(), CancelToken(), lambda event: None)
+    record = orchestrator.submit(
+        frame or make_frame(), CancelToken(), lambda event: None,
+        previous_record=previous_record,
+        incremental_new_bar_count=incremental_new_bar_count,
+        history_context_version=history_context_version,
+    )
     return record, calls, writer
 
 

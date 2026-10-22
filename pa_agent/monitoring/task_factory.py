@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from pa_agent.ai.higher_timeframe import serialize_higher_timeframe_context
+from pa_agent.ai.decision_continuity import HISTORY_CONTEXT_VERSION
 from pa_agent.config.vpa import resolve_production_vpa_mode
 from pa_agent.data.base import KlineFrame
 from pa_agent.data.snapshot_bundle import compact_snapshot_context, serialize_frame_bars
@@ -128,7 +129,10 @@ def _plain_value(value: Any) -> Any:
 def _incremental_identity_payload(
     previous_record: Any | None,
     new_bar_count: int | None,
+    history_context_version: str | None = None,
 ) -> dict[str, Any] | None:
+    if history_context_version not in (None, HISTORY_CONTEXT_VERSION):
+        raise ValueError("unsupported history context version")
     if previous_record is None or new_bar_count is None or int(new_bar_count) <= 0:
         return None
     response = _record_field(previous_record, "stage1_response", {})
@@ -137,7 +141,7 @@ def _incremental_identity_payload(
     )
     kline_data = _record_field(previous_record, "kline_data", [])
     latest_bar = kline_data[0] if isinstance(kline_data, list) and kline_data else None
-    return {
+    identity = {
         "new_bar_count": int(new_bar_count),
         "previous": {
             "meta": _plain_value(_record_field(previous_record, "meta")),
@@ -157,6 +161,16 @@ def _incremental_identity_payload(
             ),
         },
     }
+    if history_context_version is not None:
+        identity["history_context_version"] = history_context_version
+        identity["previous"].update({
+            name: _plain_value(_record_field(previous_record, name))
+            for name in (
+                "snapshot_context", "analysis_pipeline", "run_outcome", "exception",
+                "role_stop", "analysis_timing", "kline_data",
+            )
+        })
+    return identity
 
 
 def _analysis_settings_payload(settings: Any) -> dict[str, Any]:
@@ -285,17 +299,21 @@ def create_frozen_analysis_task(
     if previous_record is None or incremental_count is None or incremental_count <= 0:
         frozen_previous = None
         incremental_count = None
+        history_context_version = None
     else:
         frozen_previous = copy.deepcopy(previous_record)
+        history_context_version = HISTORY_CONTEXT_VERSION
     incremental_identity = _incremental_identity_payload(
         frozen_previous,
         incremental_count,
+        history_context_version=history_context_version,
     )
     payload = FrozenAnalysisPayload(
         frame=frozen_frame,
         htf_context=frozen_htf or {},
         previous_record=frozen_previous,
         incremental_new_bar_count=incremental_count,
+        history_context_version=history_context_version,
         instrument_spec=copy.deepcopy(instrument_spec),
         analysis_backend_mode=analysis_backend_mode,
         analysis_backend_identity=(

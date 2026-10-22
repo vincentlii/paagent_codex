@@ -1,5 +1,14 @@
 # PA Agent Domain Context
 
+修改跨轮等待复核或增量历史时，必须先读
+[等待条件连续性验收](docs/quality/wait_continuity_20261022.md)与ADR-0025同日增补。
+新Host任务以`decision_history_v2`冻结上一份成功记录的决策原文、同源身份、可用时间及价格棒；
+仅Stage 2复核历史意见，Stage 1仍仅继承price-only诊断，独立VPA不接收旧Joint决策。
+旧K号按时间与原OHLC核对后映射当前K号，不可核对则保持未知；LLM用本轮证据判断等待条件
+已满足/未满足/失效/未知，不由程序解释自然语言或强制交易。不同快照仍使用独立会话。
+分析不再从未冻结CSV补读旧方案；CSV的事后关系审计保留。旧任务无marker保持旧计划上下文，
+未知marker拒绝。此次仅本地开发，发布与真实模型判断改善需另验，不改旧订单或历史结果。
+
 排查前置VPA时机不适用、连续wait、Demo历史复盘空白、成交覆盖缺口或Codex运行失败时，必须先读
 [运行可靠性与VPA语义修复研究](docs/quality/runtime_reliability_vpa_remediation_20261021.md)。
 该文区分源码/只读VPS证据、三角色建议与未验证假设；2026-10-22修复代码1c8b566已发布VPS，现场回执见末节。

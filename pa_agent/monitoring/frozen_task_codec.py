@@ -75,6 +75,8 @@ def encode_task(task: AnalysisTask) -> tuple[str, str]:
     }
     if payload.execution_policy is not None:
         value["payload"]["execution_policy"] = payload.execution_policy
+    if payload.history_context_version is not None:
+        value["payload"]["history_context_version"] = payload.history_context_version
     if payload.take_profit_tick_size is not None:
         from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
         value["payload"]["take_profit_tick_size"] = FixedRiskRewardPolicy(
@@ -129,6 +131,7 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
             AnalysisRecord.model_validate(previous) if previous is not None else None
         ),
         incremental_new_bar_count=source["incremental_new_bar_count"],
+        history_context_version=source.get("history_context_version"),
         instrument_spec=InstrumentSpec.from_value(source["instrument_spec"]),
         analysis_backend_mode=source["analysis_backend_mode"],
         analysis_backend_identity=source["analysis_backend_identity"],
@@ -149,7 +152,8 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
     if task.task_id != identity["task_id"]:
         raise ValueError("frozen task identity mismatch")
     incremental = _incremental_identity_payload(
-        payload.previous_record, payload.incremental_new_bar_count
+        payload.previous_record, payload.incremental_new_bar_count,
+        history_context_version=payload.history_context_version,
     )
     if _snapshot_hash(payload.frame, dict(payload.htf_context), incremental) != task.snapshot_hash:
         raise ValueError("frozen market snapshot mismatch")
