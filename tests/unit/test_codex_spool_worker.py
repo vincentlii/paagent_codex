@@ -30,6 +30,25 @@ from tests.unit.test_codex_analysis_backend import _request
 from tests.unit.test_frozen_agent_job import _job
 
 
+def test_failure_diagnostic_is_bound_to_runtime_and_drops_untrusted_fields():
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerExecutionError
+
+    runtime = {"runtime_asset_digest": "a" * 64}
+    raw = {"schema_version": 1, "request_id": "request", "job_digest": "digest",
+           "acceptance_key": "key", "runtime_identity": runtime, "status": "error",
+           "error_type": "CodexWorkerExecutionError", "message": "unknown process failure",
+           "diagnostic": {"schema_version": 1, "phase": "turn.failed", "exit_status": 1,
+                          "category": "unknown_execution", "stderr": "SECRET"}}
+    kwargs = dict(request_id="request", job_digest="digest", acceptance_key="key", runtime_identity=runtime)
+    with pytest.raises(CodexWorkerExecutionError) as caught:
+        spool_module._decode_result(raw, **kwargs)
+    assert "SECRET" not in json.dumps(caught.value.diagnostic)
+    with pytest.raises(CodexWorkerOutputError):
+        spool_module._decode_result({**raw, "acceptance_key": "wrong"}, **kwargs)
+    with pytest.raises(CodexWorkerOutputError):
+        spool_module._decode_result({**raw, "runtime_identity": {}}, **kwargs)
+
+
 def test_session_maintenance_is_idle_only_and_hourly(tmp_path):
     inbox = tmp_path / "inbox"
     inbox.mkdir()

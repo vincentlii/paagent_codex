@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from pa_agent.execution.demo_contracts import (
     DemoIntent,
     DemoOrderRequest,
     DemoReceipt,
+    DemoEventSync,
     canonical,
     digest,
     client_id,
@@ -363,6 +364,8 @@ class DemoStore:
 
     def apply_snapshot(self, snapshot, *, started_at_ms=None):
         self.pin_account(snapshot.account_key)
+        coverage = dict(snapshot.coverage)
+        sync = {key: value.model_copy(deep=True) for key, value in snapshot.event_sync.items()}
         with self.connect() as db:
             db.execute(
                 "INSERT INTO metadata VALUES('snapshot_started_at_ms',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -372,10 +375,6 @@ class DemoStore:
                 "INSERT OR IGNORE INTO metadata VALUES('ledger_start_ms',?)",
                 (str(snapshot.observed_at_ms),),
             )
-            db.execute(
-                "INSERT INTO metadata VALUES('snapshot',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (snapshot.model_dump_json(),),
-            )
             for table, rows, keys in (
                 ("fills", snapshot.fills, ("instId", "tradeId")),
                 ("bills", snapshot.bills, ("billId",)),
@@ -384,18 +383,113 @@ class DemoStore:
                     if not all(row.get(key) for key in keys):
                         raise ValueError("missing_exchange_event_identity")
                     identity = digest([snapshot.account_key, *[row[key] for key in keys]])
+                    old = db.execute(f"SELECT body FROM {table} WHERE key=?", (identity,)).fetchone()
+                    previous = json.loads(old[0]) if old else None
+                    immutable = (
+                        ("instId", "tradeId", "billId", "ordId", "side", "fillPx", "fillSz", "fee", "feeCcy", "fillTime", "ts")
+                        if table == "fills" else
+                        ("billId", "instId", "type", "subType", "ccy", "balChg", "pnl", "fee", "feeCcy", "ts")
+                    )
+                    differences = []
+                    for field in immutable if previous is not None else ():
+                        if field not in previous or field not in row:
+                            continue
+                        before, after = previous[field], row[field]
+                        if before != after and field in {"fillPx", "fillSz", "fee", "balChg", "pnl"}:
+                            try:
+                                before, after = Decimal(before), Decimal(after)
+                            except InvalidOperation:
+                                pass
+                        if before != after:
+                            differences.append(field)
+                    if differences:
+                        coverage[table] = False
+                        payload = canonical({"stream": table, "identity": identity,
+                                             "old_digest": digest(previous), "new_digest": digest(row),
+                                             "fields": differences})
+                        if not db.execute("SELECT 1 FROM events WHERE kind='exchange_event_conflict' AND payload=? LIMIT 1", (payload,)).fetchone():
+                            db.execute("INSERT INTO events(intent_id,kind,payload,at_ms) VALUES(NULL,'exchange_event_conflict',?,?)",
+                                       (payload, snapshot.observed_at_ms))
+                        db.execute("INSERT OR IGNORE INTO metadata VALUES(?, '1')", ("event_conflict:" + table,))
+                        continue
                     db.execute(
                         f"INSERT OR IGNORE INTO {table} VALUES(?,?)", (identity, canonical(row))
                     )
+                if db.execute("SELECT 1 FROM metadata WHERE key=?", ("event_conflict:" + table,)).fetchone():
+                    coverage[table] = False
+                    if table in sync:
+                        sync[table].status = "event_conflict"
+                if table in sync:
+                    state = sync[table]
+                    expected_filter = {"instType": "SWAP"} if table == "fills" else {}
+                    if (state.stream != table or state.account_key != snapshot.account_key
+                            or state.query_filter != expected_filter):
+                        raise ValueError("event_sync_identity_mismatch")
+                    old = db.execute("SELECT value FROM metadata WHERE key=?", ("event_sync:" + table,)).fetchone()
+                    if old:
+                        prior = DemoEventSync.model_validate_json(old[0])
+                        if state.through_ms < prior.through_ms or (prior.origin_ms and state.origin_ms != prior.origin_ms):
+                            raise ValueError("event_sync_watermark_regressed")
+                        if state.status == "event_conflict":
+                            state.through_ms = prior.through_ms
+                            state.last_id, state.last_ts_ms = prior.last_id, prior.last_ts_ms
+                    elif state.status == "event_conflict":
+                        state.through_ms = 0
+                        cursor_key = "fill_cursor" if table == "fills" else "bill_cursor"
+                        previous_cursor = db.execute("SELECT value FROM metadata WHERE key=?", (cursor_key,)).fetchone()
+                        state.last_id = previous_cursor[0] if previous_cursor else None
+                    db.execute("INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                               ("event_sync:" + table, state.model_dump_json()))
+            snapshot = snapshot.model_copy(update={"coverage": coverage, "event_sync": sync})
+            db.execute(
+                "INSERT INTO metadata VALUES('snapshot',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (snapshot.model_dump_json(),),
+            )
             for name, rows, complete in (
                 ("bill_cursor", snapshot.bills, snapshot.coverage.get("bills")),
                 ("fill_cursor", snapshot.fills, snapshot.coverage.get("fills")),
             ):
-                if complete and rows and rows[0].get("billId"):
+                stream = "fills" if name == "fill_cursor" else "bills"
+                event_id = sync[stream].last_id if stream in sync else (rows[0].get("billId") if rows else None)
+                if complete and event_id:
                     db.execute(
                         "INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                        (name, rows[0]["billId"]),
+                        (name, event_id),
                     )
+        return snapshot
+
+    def sync_state(self):
+        """Read new coverage metadata, or derive an unproven recovery scope for old ledgers."""
+        result = {}
+        with self.connect() as db:
+            values = dict(db.execute("SELECT key,value FROM metadata"))
+            account = values.get("account")
+            if not account:
+                return result
+            for stream, cursor_key in (("fills", "fill_cursor"), ("bills", "bill_cursor")):
+                raw = values.get("event_sync:" + stream)
+                if raw:
+                    state = DemoEventSync.model_validate_json(raw)
+                else:
+                    anchor = values.get(cursor_key)
+                    row = db.execute(f"SELECT body FROM {stream} WHERE json_extract(body,'$.billId')=? LIMIT 1", (anchor,)).fetchone() if anchor else None
+                    anchor_ms = int(json.loads(row[0]).get("ts") or 0) if row else 0
+                    origin = int(values.get("ledger_start_ms") or 0)
+                    if anchor:
+                        # The legacy cursor proves preceding pages were accepted.
+                        # Recover from that event, not the original ledger birthday.
+                        origin = anchor_ms
+                    state = DemoEventSync(account_key=account, stream=stream,
+                                          query_filter={"instType": "SWAP"} if stream == "fills" else {},
+                                          origin_ms=origin, last_id=anchor, last_ts_ms=anchor_ms)
+                expected_filter = {"instType": "SWAP"} if stream == "fills" else {}
+                if (state.account_key != account or state.stream != stream
+                        or state.query_filter != expected_filter):
+                    raise ValueError("event_sync_identity_mismatch")
+                if "event_conflict:" + stream in values:
+                    state.status = "event_conflict"
+                result[stream] = state.model_dump(mode="json")
+        return result
 
     def sync_cursors(self):
         with self.connect() as db:

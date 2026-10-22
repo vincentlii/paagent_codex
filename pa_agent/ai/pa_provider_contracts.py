@@ -415,10 +415,10 @@ def joint_stage2_reference_issues(
     pointer. This checks identities only, not the quality of a VPA explanation.
     Frame binding remains owned by validate_frozen_vpa_catalog at the caller.
     """
-    from pa_agent.ai.role_contracts import VpaEvidenceReport
+    from pa_agent.ai.role_contracts import VpaEvidenceReportBase
     from pa_agent.ai.vpa_measurements import vpa_catalog_id
 
-    if not isinstance(validated_report, VpaEvidenceReport):
+    if not isinstance(validated_report, VpaEvidenceReportBase):
         raise ValueError("joint Stage 2 requires a validated VPA report")
     identity = frozen_catalog.get("catalog_id")
     if identity != vpa_catalog_id(frozen_catalog) or validated_report.catalog_id != identity:

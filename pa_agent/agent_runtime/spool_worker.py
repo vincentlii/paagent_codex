@@ -20,6 +20,8 @@ from pa_agent.agent_runtime.codex_worker import (
     CodexWorkerAuthenticationError,
     CodexWorkerError,
     CodexWorkerOutputError,
+    CodexWorkerExecutionError,
+    safe_worker_diagnostic,
     CodexWorkerRateLimited,
     CodexWorkerResult,
     CodexWorkerStopped,
@@ -404,6 +406,10 @@ class CodexSpoolService:
                 "error_type": type(exc).__name__,
                 "message": str(exc),
             }
+            diagnostic = safe_worker_diagnostic(getattr(exc, "diagnostic", None))
+            if diagnostic:
+                envelope["diagnostic"] = diagnostic
+                envelope["acceptance_key"] = job.manifest.acceptance_key
             if getattr(exc, "collaboration", None):
                 envelope["collaboration"] = dict(exc.collaboration)
                 envelope["acceptance_key"] = job.manifest.acceptance_key
@@ -466,7 +472,7 @@ def _decode_result(
         raise CodexWorkerOutputError("isolated result acceptance identity mismatch")
     if raw.get("status") != "ok":
         collaboration = dict(raw.get("collaboration") or {})
-        if (collaboration or raw.get("observed_usage")) and (
+        if (collaboration or raw.get("observed_usage") or raw.get("diagnostic")) and (
                 raw.get("acceptance_key") != acceptance_key
                 or (collaboration and collaboration.get("job_digest") != job_digest)
                 or not _runtime_identity_matches(dict(raw.get("runtime_identity") or {}), runtime_identity)):
@@ -482,6 +488,7 @@ def _decode_result(
                 raise CodexWorkerOutputError("isolated role stop is malformed") from exc
             error = CodexWorkerStopped(stop)
             error.collaboration = collaboration
+            error.diagnostic = safe_worker_diagnostic(raw.get("diagnostic"))
             if raw.get("observed_usage") is not None:
                 error.observed_usage = AIUsage(**raw["observed_usage"])
                 error.usage_observation = dict(raw.get("usage_observation") or {})
@@ -492,10 +499,12 @@ def _decode_result(
             "CodexWorkerTimeout": CodexWorkerTimeout,
             "CodexWorkerUnavailable": CodexWorkerUnavailable,
             "CodexWorkerOutputError": CodexWorkerOutputError,
+            "CodexWorkerExecutionError": CodexWorkerExecutionError,
         }
         error = error_types.get(str(raw.get("error_type")), CodexWorkerOutputError)
         failure = error(str(raw.get("message") or "isolated Codex worker failed"))
         failure.collaboration = collaboration
+        failure.diagnostic = safe_worker_diagnostic(raw.get("diagnostic"))
         if raw.get("observed_usage") is not None:
             failure.observed_usage = AIUsage(**raw["observed_usage"])
             failure.usage_observation = dict(raw.get("usage_observation") or {})

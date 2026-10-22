@@ -126,6 +126,23 @@ def test_new_plan_and_no_trade_do_not_cancel_old_entry(runtime):
     assert store.row(a.content_digest)["trade_state"] == "active"
 
 
+def test_history_sync_gap_still_protects_independent_partial_fill(runtime, monkeypatch):
+    worker, exchange, store, spool = runtime
+    a = plan()
+    spool.publish(a)
+    worker.tick()
+    exchange.fill(store, a, "0.4")
+    monkeypatch.setattr(store, "sync_state", lambda: (_ for _ in ()).throw(ValueError("corrupt")))
+    b = plan("b", source_bar_ms=1800000000100)
+    spool.publish(b)
+    projection = worker.tick()
+    assert projection["state"] == "blocked"
+    assert projection["reason"] == "event_sync_metadata_invalid"
+    assert store.row(a.content_digest)["protection"] == "protected"
+    assert len([c for c in exchange.calls if c[0] == "entry"]) == 1
+    assert any(c[0] == "oco" and c[1]["quantity"] == D("0.4") for c in exchange.calls)
+
+
 def test_missing_entry_get_blocks_new_orders_and_protects_owned_fills(runtime, monkeypatch):
     worker, exchange, store, spool = runtime
     a = plan()

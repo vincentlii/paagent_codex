@@ -90,14 +90,23 @@ class IndependentAnalysisHandler:
             and not save_failed
             and OrchestratorEvent.RecordAuditFailed not in events
         )
+        failure = getattr(record, "exception", None)
+        retryable = (
+            status in _RETRYABLE_ANALYSIS_STATUSES
+            or (status in _SUCCESSFUL_ANALYSIS_STATUSES and not success)
+        )
+        if not success and isinstance(failure, dict) and failure.get("type") == "provider_error":
+            # A UI/domain status is not permission to invoke the model again.
+            # Only typed transient transport failures authorize scheduler retries.
+            if isinstance(failure.get("retryable"), bool):
+                retryable = failure["retryable"] and failure.get("failure_kind") in {
+                    "rate_limited", "timeout", "connection", "unavailable", "empty_response",
+                } and not failure.get("role_stop")
         return AnalysisRunResult(
             record=record,
             analysis_status=status,
             analysis_success=success,
-            retryable=(
-                status in _RETRYABLE_ANALYSIS_STATUSES
-                or (status in _SUCCESSFUL_ANALYSIS_STATUSES and not success)
-            ),
+            retryable=bool(retryable),
             record_persisted=persisted,
             audit_ok=OrchestratorEvent.RecordAuditFailed not in events,
         )

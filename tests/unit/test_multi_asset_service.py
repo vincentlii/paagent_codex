@@ -98,6 +98,21 @@ def test_handler_rejects_cross_asset_frame_before_model_call() -> None:
     assert factory_called is False
 
 
+@pytest.mark.parametrize("status", ["incomplete", "unavailable_provider", "internal_error"])
+@pytest.mark.parametrize("retryable", [True, False])
+def test_typed_provider_retry_authority_survives_status_projection(status, retryable):
+    class Orchestrator:
+        def submit(self, frame, token, on_event, **kwargs):
+            on_event(OrchestratorEvent.RecordSaved)
+            return SimpleNamespace(run_outcome={"status": status}, exception={
+                "type": "provider_error", "retryable": retryable,
+                "failure_kind": "unavailable" if retryable else "invalid_request",
+            })
+
+    result = IndependentAnalysisHandler(lambda task: Orchestrator())(_task("BTCUSDT"), None)
+    assert result.retryable is retryable
+
+
 def test_handler_preserves_monthly_timeframe_semantics() -> None:
     handled: list[str] = []
 

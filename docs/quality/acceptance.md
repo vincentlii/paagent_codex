@@ -79,7 +79,6 @@ tick变更拒绝新请求，原Entry/SL不改。旧Intent/默认PA身份保持�
 - 记录 Decision Packet bytes/tokens、optional 调查次数和 `last_evidence_to_final_ms`；不得以放大 timeout
   代替架构或模型策略优化。
 - 20 个资产并发排队时无丢失、重复、跨资产身份污染或重复数据库记录。
-- GUI 连续 1000 次取消、切换品种与关闭，不发生 `QThread` 生命周期崩溃。
 - Windows 与 Linux CI 必须使用 `uv.lock` 运行全部 `not live` 测试；CI 不得访问真实行情、Provider
   或交易 API。wheel smoke 必须从安装位置读取 Prompt，并证明 Headless import 不加载 Qt。
 - Codex 初始静态 Context p95 不高于匹配 Direct Prompt 的 40%，包含 Evidence retrieval 的总输入

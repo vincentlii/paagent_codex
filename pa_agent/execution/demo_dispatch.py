@@ -54,10 +54,12 @@ def require_cutover(paths, config):
 
 
 class OfficialExecutionDispatcher:
-    def __init__(self, paper, demo_spool, config, *, now_ms, task_lookup=None):
+    def __init__(self, paper, demo_spool, config, *, now_ms, task_lookup=None, review_paths=None):
         self.paper, self.spool, self.config, self.now_ms = paper, demo_spool, config, now_ms
         self.task_lookup = task_lookup
         self.execution_policy = DemoExecutionPolicy()
+        self._review_paths = review_paths
+        self._review_cache = None
 
     def apply_execution_settings(self, policy):
         self.execution_policy = DemoExecutionPolicy.model_validate(policy)
@@ -134,6 +136,22 @@ class OfficialExecutionDispatcher:
             demo = read_json(self.spool.paths.projection) if self.demo_selected else None
         except (OSError, ValueError):
             demo = None
+        if self._review_paths and demo:
+            from pa_agent.operations.demo_trading import bind_demo_order_reviews, safe_demo_projection
+            demo = safe_demo_projection(demo)
+            identity = tuple(tuple(o.get(k) for k in (
+                "task_id", "run_id", "symbol", "source_provider", "source_venue", "source_symbol",
+                "source_instrument_type", "timeframe", "pipeline", "market_digest",
+            )) for o in demo.get("orders", []))
+            now = self.now_ms()
+            if (self._review_cache is None or self._review_cache[0] != identity
+                    or not 0 <= now - self._review_cache[1] < 30000):
+                bound = bind_demo_order_reviews(demo, *self._review_paths)
+                self._review_cache = (identity, now, [{k: o.get(k) for k in (
+                    "review", "review_status", "cycle", "direction", "gate",
+                )} for o in bound.get("orders", [])])
+            for order, review in zip(demo.get("orders", []), self._review_cache[2]):
+                order.update(review)
         return compose_trading_projection(
             paper, demo, selected_backend="okx_demo", now_ms=self.now_ms()
         )

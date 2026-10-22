@@ -78,10 +78,27 @@ class DemoWorker:
     def reconcile(self):
         started_at_ms = self.now_ms()
         bill_cursor, fill_cursors = self.store.sync_cursors()
-        snapshot = self.client.snapshot(since_bill_id=bill_cursor, since_fill_ids=fill_cursors)
+        sync_valid = True
+        try:
+            sync_state = self.store.sync_state()
+        except (ValueError, TypeError):
+            sync_state, sync_valid = {}, False
+        snapshot = self.client.snapshot(
+            since_bill_id=bill_cursor, since_fill_ids=fill_cursors,
+            sync_state=sync_state,
+        )
         if not self.config.account_key or snapshot.account_key != self.config.account_key:
             raise DemoUnavailable("account_identity_mismatch")
-        self.store.apply_snapshot(snapshot, started_at_ms=started_at_ms)
+        self.store.pin_account(snapshot.account_key)
+        if sync_valid:
+            snapshot = self.store.apply_snapshot(snapshot, started_at_ms=started_at_ms)
+        else:
+            # Preserve corrupt metadata for inspection, but still observe/manage
+            # existing exposure from the fresh, account-bound order/position GETs.
+            snapshot = snapshot.model_copy(update={
+                "coverage": {**snapshot.coverage, "fills": False, "bills": False}, "event_sync": {},
+            })
+            self.error = "event_sync_metadata_invalid"
         self.snapshot = snapshot
         return snapshot
 
@@ -554,6 +571,7 @@ class DemoWorker:
         self.error = ""
         try:
             snapshot = self.reconcile()
+            reconciliation_error = self.error
             # Gather all per-plan fills before comparing them with a shared net position.
             for intent in self.store.pending_intents():
                 if intent.schema_version == "okx_demo_intent_v2":
@@ -571,6 +589,8 @@ class DemoWorker:
                 else:
                     self._start(intent, snapshot)
             self.error = self.error or self._account_block(snapshot)
+            if reconciliation_error and self.error in {"", "reconciliation_gap"}:
+                self.error = reconciliation_error
         except (DemoUnavailable, DemoRequestUnknown, DemoRequestRejected) as exc:
             self.error = str(exc)
         if self.snapshot is not None:

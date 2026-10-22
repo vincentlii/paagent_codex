@@ -282,7 +282,8 @@ def test_auto_mode_requests_full_chain_fallback_only_for_availability(
 def test_backend_rejects_role_when_full_cycle_budget_is_already_exhausted() -> None:
     worker = MagicMock()
     publisher = MagicMock()
-    monotonic = MagicMock(side_effect=[100.0, 701.0])
+    ticks = iter([100.0, 701.0])
+    monotonic = lambda: next(ticks, 701.0)
     backend = CodexAnalysisRoleBackend(
         worker=worker,
         publish_job=publisher,
@@ -348,7 +349,7 @@ def test_current_role_cycle_budget_stops_without_availability_fallback():
 
     backend = CodexAnalysisRoleBackend(
         worker=MagicMock(), publish_job=MagicMock(), request_full_chain_fallback=True,
-        cycle_wall_seconds=600, monotonic=MagicMock(side_effect=[100.0, 701.0]),
+        cycle_wall_seconds=600, monotonic=lambda ticks=iter([100.0, 701.0]): next(ticks, 701.0),
     )
     request = replace(_request(), agent_context={
         "role_protocol": {"contract_version": "pa_stage1_agent_protocol_v1"},
@@ -360,6 +361,27 @@ def test_current_role_cycle_budget_stops_without_availability_fallback():
     assert isinstance(caught.value.original, CodexWorkerStopped)
     assert caught.value.original.stop.status == "incomplete"
     assert backend._circuit.snapshot()["failures"] == 0
+
+
+def test_job_publication_time_is_deducted_before_starting_worker(tmp_path):
+    from dataclasses import replace
+
+    clock = [100.0]
+    worker = MagicMock()
+
+    def publish(request, attempt):
+        path = FrozenAgentJobStore(tmp_path).publish(_job(attempt=attempt))
+        clock[0] = 701.0
+        return path
+
+    backend = CodexAnalysisRoleBackend(worker=worker, publish_job=publish,
+        cycle_wall_seconds=600, monotonic=lambda: clock[0])
+    request = replace(_request(), agent_context={"role_protocol": {"contract_version": "pa_stage1_agent_protocol_v1"}})
+    with pytest.raises(ModelCallFailure) as caught:
+        backend.run(request, on_reasoning_token=None, on_content_token=None, cancel_token=None)
+    assert caught.value.failure.kind == "role_stopped"
+    assert caught.value.attempts[-1]["model_call_started"] is False
+    worker.run.assert_not_called()
 
 
 def test_worker_role_stop_is_not_misclassified_as_invalid_output(tmp_path: Path) -> None:
@@ -450,6 +472,19 @@ def test_output_failure_never_requests_fallback(tmp_path: Path) -> None:
     assert caught.value.failure.retryable is False
 
 
+def test_unknown_process_failure_never_gets_retry_or_full_chain_fallback(tmp_path):
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerExecutionError
+
+    published = FrozenAgentJobStore(tmp_path).publish(_job())
+    backend = CodexAnalysisRoleBackend(worker=MagicMock(run=MagicMock(side_effect=CodexWorkerExecutionError("unknown"))),
+        publish_job=lambda *args: published, request_full_chain_fallback=True)
+    with pytest.raises(ModelCallFailure) as caught:
+        backend.run(_request(), on_reasoning_token=None, on_content_token=None, cancel_token=None)
+    assert not isinstance(caught.value, FullChainFallbackRequired)
+    assert caught.value.failure.kind == "internal"
+    assert caught.value.failure.retryable is False
+
+
 def test_backend_rejects_published_job_not_bound_to_current_request(
     tmp_path: Path,
 ) -> None:
@@ -536,6 +571,97 @@ def test_circuit_counts_only_availability_failures(tmp_path: Path) -> None:
 
     assert caught.value.failure.kind == "unavailable"
     assert worker.run.call_count == 2
+
+
+def test_half_open_waiters_resume_after_probe_and_stale_success_cannot_reset():
+    import threading
+    import time
+
+    clock = MagicMock(return_value=100.0)
+    breaker = CodexCircuitBreaker(failure_threshold=1, cooldown_seconds=1, clock=clock)
+    breaker.record_availability_failure()
+    clock.return_value = 102.0
+    probe = breaker.acquire(deadline=time.monotonic() + 1)
+    assert probe is not None
+    arrived, finished = threading.Event(), threading.Event()
+    results = []
+
+    def wait_for_probe():
+        arrived.set()
+        results.append(breaker.acquire(deadline=time.monotonic() + 1))
+        finished.set()
+
+    thread = threading.Thread(target=wait_for_probe)
+    thread.start()
+    assert arrived.wait(1)
+    assert not finished.wait(0.02)
+    breaker.record_success(generation=probe)
+    assert finished.wait(1)
+    thread.join()
+    assert results[0] is not None
+    old_generation = results[0]
+    breaker.record_availability_failure(generation=old_generation)
+    breaker.record_success(generation=old_generation)
+    assert breaker.snapshot()["opened_until"] > clock()
+
+
+def test_half_open_admission_is_bounded_and_cancellable():
+    import threading
+    import time
+
+    clock = MagicMock(return_value=100.0)
+    breaker = CodexCircuitBreaker(failure_threshold=1, cooldown_seconds=1, clock=clock)
+    breaker.record_availability_failure()
+    clock.return_value = 102.0
+    probe = breaker.acquire(deadline=time.monotonic() + 1)
+    assert probe is not None
+    assert breaker.acquire(deadline=time.monotonic() + 0.01) is None
+    cancel = threading.Event()
+    cancel.set()
+    assert breaker.acquire(deadline=time.monotonic() + 1, cancel_token=cancel) is None
+    breaker.release(probe)
+    assert breaker.acquire(deadline=time.monotonic() + 1) is not None
+
+
+def test_three_backends_share_one_half_open_probe_then_each_run_once(tmp_path):
+    import threading
+
+    clock = MagicMock(return_value=100.0)
+    circuit = CodexCircuitBreaker(failure_threshold=1, cooldown_seconds=1, clock=clock)
+    circuit.record_availability_failure()
+    clock.return_value = 102.0
+    probing, release = threading.Event(), threading.Event()
+    calls, results = [], []
+
+    def execute(published, **kwargs):
+        calls.append(str(published))
+        if len(calls) == 1:
+            probing.set()
+            assert release.wait(2)
+        return _result()
+
+    backends = []
+    for index in range(3):
+        published = FrozenAgentJobStore(tmp_path / str(index)).publish(_job())
+        backends.append(CodexAnalysisRoleBackend(worker=MagicMock(run=execute),
+            publish_job=lambda request, attempt, path=published: path, circuit_breaker=circuit))
+
+    def run(backend):
+        results.append(backend.run(_request(), on_reasoning_token=None, on_content_token=None, cancel_token=None))
+
+    threads = [threading.Thread(target=run, args=(b,)) for b in backends]
+    threads[0].start()
+    assert probing.wait(1)
+    threads[1].start()
+    threads[2].start()
+    assert len(calls) == 1
+    release.set()
+    for thread in threads:
+        thread.join(3)
+        assert not thread.is_alive()
+    assert len(results) == len(calls) == 3
+    assert len(set(calls)) == 3
+    assert circuit.snapshot()["probe_in_flight"] is False
 
 
 def test_worker_nonzero_exit_is_classified_without_exposing_stderr(tmp_path: Path) -> None:

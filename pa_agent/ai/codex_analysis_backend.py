@@ -18,6 +18,8 @@ from pa_agent.agent_runtime.codex_worker import (
     CodexWorkerAvailabilityError,
     CodexWorkerError,
     CodexWorkerOutputError,
+    CodexWorkerExecutionError,
+    safe_worker_diagnostic,
     CodexWorkerRateLimited,
     CodexWorkerStopped,
     CodexWorkerTimeout,
@@ -69,36 +71,58 @@ class CodexCircuitBreaker:
         self._probe_in_flight = False
         self._auth_locked = False
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._generation = 0
         self._load()
 
-    def allow(self) -> bool:
-        with self._lock:
-            now = self._clock()
-            if self._auth_locked:
-                if now < self._opened_until or self._probe_in_flight:
-                    return False
-                self._probe_in_flight = True
-                self._save()
-                return True
-            if not self._opened_until:
-                return True
-            if now < self._opened_until or self._probe_in_flight:
-                return False
-            self._probe_in_flight = True
-            self._save()
+    def _allow_locked(self) -> bool:
+        if not self._opened_until and not self._auth_locked:
             return True
+        if self._clock() < self._opened_until or self._probe_in_flight:
+            return False
+        self._probe_in_flight = True
+        self._save()
+        return True
 
-    def record_success(self) -> None:
-        with self._lock:
+    def acquire(self, *, deadline: float, cancel_token: Any = None,
+                monotonic: Callable[[], float] = time.monotonic) -> int | None:
+        """Only wait behind an existing half-open probe, within the caller's budget."""
+        with self._condition:
+            while True:
+                if cancel_token is not None and cancel_token.is_set():
+                    return None
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return None
+                if self._allow_locked():
+                    return self._generation
+                if not self._probe_in_flight:
+                    return None  # The cooldown/auth block is still in force.
+                self._condition.wait(min(remaining, 0.1))
+
+    def release(self, generation: int) -> None:
+        with self._condition:
+            if generation == self._generation and self._probe_in_flight:
+                self._probe_in_flight = False
+                self._save()
+                self._condition.notify_all()
+
+    def record_success(self, *, generation: int | None = None) -> None:
+        with self._condition:
+            if generation is not None and generation != self._generation:
+                return
             self._failures = 0
             self._opened_until = 0.0
             self._cooldown_level = 0
             self._probe_in_flight = False
             self._auth_locked = False
             self._save()
+            self._condition.notify_all()
 
-    def record_availability_failure(self, *, authentication: bool = False) -> None:
-        with self._lock:
+    def record_availability_failure(self, *, authentication: bool = False, generation: int | None = None) -> None:
+        with self._condition:
+            if generation is not None and generation != self._generation:
+                return
             self._failures += 1
             self._probe_in_flight = False
             if authentication:
@@ -113,16 +137,21 @@ class CodexCircuitBreaker:
                 )
                 self._opened_until = self._clock() + cooldown
                 self._cooldown_level += 1
+            if self._opened_until:
+                self._generation += 1
             self._save()
+            self._condition.notify_all()
 
     def record_authentication_restored(self) -> None:
-        with self._lock:
+        with self._condition:
+            self._generation += 1
             self._auth_locked = False
             self._failures = 0
             self._opened_until = 0.0
             self._probe_in_flight = False
             self._cooldown_level = 0
             self._save()
+            self._condition.notify_all()
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -215,6 +244,37 @@ class CodexAnalysisRoleBackend:
         return self
 
     def run(
+        self, request: AnalysisRoleRequest, *,
+        on_reasoning_token: Callable[[str], None] | None,
+        on_content_token: Callable[[str], None] | None,
+        cancel_token: Any,
+        on_attempt_error: Callable[[Exception], None] | None = None,
+    ) -> AnalysisRoleResult:
+        if self._cycle_started_at is None:
+            self._cycle_started_at = self._monotonic()
+        deadline = self._cycle_started_at + self._cycle_wall_seconds
+        wait_started = self._monotonic()
+        generation = self._circuit.acquire(deadline=deadline, cancel_token=cancel_token,
+                                           monotonic=self._monotonic)
+        self._admission_wait_ms = max(0.0, (self._monotonic() - wait_started) * 1000)
+        if generation is None:
+            cancelled = cancel_token is not None and cancel_token.is_set()
+            if not cancelled and self._monotonic() >= deadline:
+                self._raise_cycle_exhausted(request)
+            self._raise_failure(ProviderFailure(
+                kind="cancelled" if cancelled else "unavailable",
+                message="Codex analysis was cancelled" if cancelled else "Codex circuit admission blocked or expired",
+                retryable=not cancelled,
+            ), attempts=({"stage": request.role, "analysis_backend": self.backend_id,
+                          "model_call_started": False, "admission_wait_ms": self._admission_wait_ms},))
+        try:
+            return self._run_admitted(request, on_reasoning_token=on_reasoning_token,
+                on_content_token=on_content_token, cancel_token=cancel_token,
+                on_attempt_error=on_attempt_error, admission_generation=generation)
+        finally:
+            self._circuit.release(generation)
+
+    def _run_admitted(
         self,
         request: AnalysisRoleRequest,
         *,
@@ -222,6 +282,7 @@ class CodexAnalysisRoleBackend:
         on_content_token: Callable[[str], None] | None,
         cancel_token: Any,
         on_attempt_error: Callable[[Exception], None] | None = None,
+        admission_generation: int,
     ) -> AnalysisRoleResult:
         started = time.monotonic()
         del on_reasoning_token  # hidden Codex reasoning is deliberately never persisted
@@ -234,53 +295,14 @@ class CodexAnalysisRoleBackend:
                 ),
                 original=CancelledError("cancelled"),
             )
-        if not self._circuit.allow():
-            self._raise_failure(
-                ProviderFailure(
-                    kind="unavailable",
-                    message="Codex circuit is open",
-                    retryable=True,
-                ),
-                attempts=(),
-            )
-
         attempt = self._next_attempt(request)
         request, session_options = self._prepare_session_invocation(request, attempt)
-        if self._cycle_started_at is None:
-            self._cycle_started_at = self._monotonic()
         remaining_cycle_seconds = self._cycle_wall_seconds - (
             self._monotonic() - self._cycle_started_at
         )
         if remaining_cycle_seconds <= 0:
-            if request.agent_context and request.role in {"stage1", "stage2", "vpa_evidence"}:
-                from pa_agent.ai.role_contracts import AnalysisRoleStop
-                stopped = CodexWorkerStopped(AnalysisRoleStop(
-                    role=request.role, status="incomplete", reason="analysis cycle wall-clock budget exceeded",
-                ))
-                if on_attempt_error is not None:
-                    on_attempt_error(stopped)
-                self._raise_failure(ProviderFailure(
-                    kind="role_stopped", message=stopped.stop.reason, retryable=False,
-                ), attempts=({
-                    "stage": request.role,
-                    "analysis_backend": self.backend_id,
-                    "attempt": attempt,
-                },), original=stopped)
-            self._circuit.record_availability_failure()
-            self._raise_failure(
-                ProviderFailure(
-                    kind="timeout",
-                    message="Codex analysis cycle exceeded its wall-clock budget",
-                    retryable=True,
-                ),
-                attempts=({
-                    "stage": request.role,
-                    "analysis_backend": self.backend_id,
-                    "attempt": attempt,
-                },),
-            )
+            self._raise_cycle_exhausted(request)
         if request.snapshot_hash is None or request.cutoff_ts_open is None:
-            self._circuit.record_success()
             self._raise_failure(
                 ProviderFailure(
                     kind="invalid_request",
@@ -300,7 +322,7 @@ class CodexAnalysisRoleBackend:
         except OSError as exc:
             if on_attempt_error is not None:
                 on_attempt_error(exc)
-            self._circuit.record_availability_failure()
+            self._circuit.record_availability_failure(generation=admission_generation)
             self._raise_failure(
                 ProviderFailure(
                     kind="unavailable",
@@ -317,7 +339,6 @@ class CodexAnalysisRoleBackend:
         except (TypeError, ValueError, KeyError, JobIntegrityError) as exc:
             if on_attempt_error is not None:
                 on_attempt_error(exc)
-            self._circuit.record_success()
             self._raise_failure(
                 ProviderFailure(
                     kind="invalid_request",
@@ -335,7 +356,6 @@ class CodexAnalysisRoleBackend:
             job.runtime.get("backend_runtime_identity") or {}
         )
         if frozen_runtime_identity != self._runtime_identity:
-            self._circuit.record_success()
             self._raise_failure(
                 ProviderFailure(
                     kind="invalid_request",
@@ -351,6 +371,8 @@ class CodexAnalysisRoleBackend:
         attempt_meta = {
             "stage": request.role,
             "analysis_backend": self.backend_id,
+            "admission_wait_ms": self._admission_wait_ms,
+            "model_call_started": True,
             "model": job.manifest.model,
             "requested_model": job.manifest.model,
             "requested_reasoning_effort": job.manifest.reasoning_effort,
@@ -366,6 +388,11 @@ class CodexAnalysisRoleBackend:
             "stage_subagents": frozen_runtime_identity.get("stage_subagents", "off"),
         }
         try:
+            remaining_cycle_seconds = self._cycle_wall_seconds - (
+                self._monotonic() - self._cycle_started_at
+            )
+            if remaining_cycle_seconds <= 0:
+                self._raise_cycle_exhausted(request)
             result = self._worker.run(
                 published,
                 timeout_seconds=remaining_cycle_seconds,
@@ -376,6 +403,9 @@ class CodexAnalysisRoleBackend:
         except CodexWorkerError as exc:
             attempt_meta["latency_ms"] = (time.monotonic() - started) * 1000
             attempt_meta["worker_error_type"] = type(exc).__name__
+            diagnostic = safe_worker_diagnostic(getattr(exc, "diagnostic", None))
+            if diagnostic:
+                attempt_meta["worker_diagnostic"] = diagnostic
             # Worker messages are bounded Host classifications, not raw provider
             # stderr, credentials, prompts or model reasoning.
             if not isinstance(exc, CodexWorkerStopped):
@@ -397,13 +427,11 @@ class CodexAnalysisRoleBackend:
             failure = _worker_failure(exc)
             if isinstance(exc, CodexWorkerAvailabilityError):
                 self._circuit.record_availability_failure(
-                    authentication=isinstance(exc, CodexWorkerAuthenticationError)
+                    authentication=isinstance(exc, CodexWorkerAuthenticationError), generation=admission_generation
                 )
-            else:
-                self._circuit.record_success()
             self._raise_failure(failure, attempts=(attempt_meta,), original=exc)
 
-        self._circuit.record_success()
+        self._circuit.record_success(generation=admission_generation)
         # Freeze observations before normalization/repair can fail. This is a
         # failure ledger, not a fabricated reply or accepted trading Draft.
         attempt_meta.update(
@@ -569,6 +597,8 @@ class CodexAnalysisRoleBackend:
         }
         from pa_agent.ai.analysis_metrics import call_metrics
         runtime["timings"] = result.timings
+        runtime["admission_wait_ms"] = self._admission_wait_ms
+        runtime["model_call_started"] = True
         runtime["metrics"] = call_metrics(result.usage, runtime, wall_ms=(time.monotonic() - started) * 1000)
         reply = AIReply(
             content=content,
@@ -608,6 +638,19 @@ class CodexAnalysisRoleBackend:
             backend_id=self.backend_id,
             runtime=runtime,
         )
+
+    def _raise_cycle_exhausted(self, request: AnalysisRoleRequest) -> None:
+        attempts = ({"stage": request.role, "analysis_backend": self.backend_id,
+                     "model_call_started": False, "admission_wait_ms": self._admission_wait_ms},)
+        if request.agent_context and request.role in {"stage1", "stage2", "vpa_evidence"}:
+            from pa_agent.ai.role_contracts import AnalysisRoleStop
+            stopped = CodexWorkerStopped(AnalysisRoleStop(
+                role=request.role, status="incomplete", reason="analysis cycle wall-clock budget exceeded",
+            ))
+            raise ModelCallFailure(ProviderFailure(kind="role_stopped", message=stopped.stop.reason,
+                retryable=False), attempts=attempts, original=stopped)
+        raise ModelCallFailure(ProviderFailure(kind="timeout",
+            message="Codex analysis cycle exceeded its wall-clock budget", retryable=False), attempts=attempts)
 
     def _next_attempt(self, request: AnalysisRoleRequest) -> int:
         task_id = str((request.agent_context or {}).get("task_id") or "")
@@ -690,6 +733,8 @@ class CodexAnalysisRoleBackend:
 
 
 def _worker_failure(exc: CodexWorkerError) -> ProviderFailure:
+    if isinstance(exc, CodexWorkerExecutionError):
+        return ProviderFailure(kind="internal", message="Codex execution failed; cause is unknown", retryable=False)
     if isinstance(exc, CodexWorkerStopped):
         return ProviderFailure(
             kind="role_stopped",

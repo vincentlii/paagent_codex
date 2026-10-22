@@ -160,6 +160,24 @@ def test_partial_is_protected_before_cancel_and_prices_never_move(tmp_path):
     worker.close()
 
 
+def test_corrupt_sync_metadata_blocks_new_entries_but_keeps_partial_protection(tmp_path, monkeypatch):
+    worker, exchange, store, _ = setup(tmp_path)
+    try:
+        worker.tick()
+        entry = exchange.calls[0][1]
+        exchange.orders[entry.client_id].update(state="partially_filled", accFillSz="0.4", avgPx="49900")
+        exchange.position = "0.4"
+        monkeypatch.setattr(store, "sync_state", lambda: (_ for _ in ()).throw(ValueError("corrupt")))
+        projection = worker.tick()
+        assert projection["state"] == "blocked"
+        assert projection["reason"] == "event_sync_metadata_invalid"
+        assert not projection["coverage"]["fills"] and not projection["coverage"]["bills"]
+        assert store.row(intent().content_digest)["protection"] == "protected"
+        assert [c[0] for c in exchange.calls] == ["entry", "oco", "cancel"]
+    finally:
+        worker.close()
+
+
 def test_unknown_submit_survives_restart_without_second_post(tmp_path):
     from pa_agent.execution.demo_worker import DemoWorker
 

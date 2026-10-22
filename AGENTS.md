@@ -62,7 +62,7 @@
 - 生产不得采用旧 Joint Arbiter 或 `soft` 决策。旧配置请求 `soft` 时必须显式记录 requested=`soft`、effective=`shadow`；只有研究 executor 可授权 effective=`soft`。VPA 独立角色和旧 Shadow/研究补丁均不得创建 Setup、翻转方向或修改 PA Stage 2 的 `estimated_win_rate`。新版联合 Stage 2 可在已验证 PA/Router 边界内综合已验收 VPA 报告，独立给出自身未校准主观先验；它不得机械加减 PA-only 先验、让 VPA 单独定义概率或改变上游字段。
 - VPA observation 的 `bar_range` 由程序根据 evidence ID 生成。解释字段不得复写 OHLC/volume/RVOL 等数值或声明无明确窗口的新高/新低；基础事实只能引用程序目录。
 - VPA 知识模块只教 Background、Location、Effort/Result、序列比较与 acceptance/rejection，不得包含 Joint action enum 或执行补丁语义。窗口 seasonality 只能聚合同一窗口每根棒各自的严格因果精确时槽基线；覆盖不完整时保持 unavailable，不得外推或成为 Gate。
-- VPA 解释中明确出现的 `K#` 若能唯一映射到单棒 evidence，程序可写入独立 `auto_bound_evidence_ids` 并进入结构化审计；不得修改模型声明的 `evidence_ids`，也不得把常规自动绑定算作模型 normalization 或独立量价信息。已被窗口 evidence 覆盖时不得重复补，未知或歧义引用仍是 hard error。没有 PA Entry Attempt 时，`entry_timing_relation` 必须由程序收敛为 `insufficient_data`，但 VPA 背景观察与独立后续条件可保留。
+- VPA 解释中明确出现的 `K#` 若能唯一映射到单棒 evidence，程序可写入独立 `auto_bound_evidence_ids` 并进入结构化审计；不得修改模型声明的 `evidence_ids`，也不得把常规自动绑定算作模型 normalization 或独立量价信息。已被窗口 evidence 覆盖时不得重复补，未知或歧义引用仍是 hard error。旧后置协议没有 PA Entry Attempt 时，`entry_timing_relation` 仍由程序收敛为 `insufficient_data`。新显式前置 `predecision_vpa_v2` 不含订单 timing 字段，Host 写 `entry_timing_applicability=not_applicable`，真实量价不足与反证保留；新旧任务不迁移。修改前读 `docs/quality/runtime_reliability_vpa_remediation_20261021.md` 与 ADR-0025 的2026-10-22增补，区分本地实现、模型质量和发布证据。
 - 相邻窗口净推进方向与 HTF 点位相对当前 K1.close 的上/下方属于程序事实。程序只校验明确的同向/反向、窗口方向标签和空间词矛盾，不据此命名 leg、磁力位、支撑阻力、Test 或 Absorption。
 - VPA `sequence_claim` 倒序是 hard error；证据窗口重叠时只删除该 claim 并记录 normalization + warning，保留 observation 与 PA 正式结果。
 - §9.0P 计划型限价只由程序校验 entry 相对 K1.close 的正确一侧；不得因 K1 影线历史触价、推测 tick size 或自由文本而自动判失效、改价或改单。

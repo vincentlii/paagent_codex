@@ -45,6 +45,43 @@ class ModelCallFailure(RuntimeError):
         self.attempts = attempts
 
 
+def runtime_failure_summary(failure: dict) -> dict:
+    """Trusted operational projection; no raw provider text or model rationale."""
+    from pa_agent.agent_runtime.codex_worker import safe_worker_diagnostic
+
+    if failure.get("type") != "provider_error":
+        return {}
+    kind = failure.get("failure_kind")
+    labels = {"role_stopped": "分析未完成", "cancelled": "分析已取消",
+              "invalid_request": "契约／输出拒绝", "authentication": "认证失败",
+              "quota": "额度不足", "rate_limited": "限流", "timeout": "调用超时",
+              "connection": "连接故障", "unavailable": "服务暂不可用",
+              "empty_response": "响应为空", "internal": "内部错误，原因未确定"}
+    if kind not in labels:
+        return {}
+    attempts = failure.get("attempts")
+    last = next((a for a in reversed(attempts) if isinstance(a, dict)), {}) if isinstance(attempts, (list, tuple)) else {}
+    diagnostic = safe_worker_diagnostic(last.get("worker_diagnostic"))
+    label = labels[kind]
+    if diagnostic.get("category") == "unknown_execution":
+        label = "CLI 异常，原因未确定"
+    elif diagnostic.get("phase") == "process_start":
+        label = "CLI 进程启动失败"
+    elif diagnostic.get("phase") == "process_budget":
+        label = "VPA 预算停止" if failure.get("stage") == "vpa_evidence" else "分析预算停止"
+    elif kind == "unavailable" and last.get("model_call_started") is False:
+        label = "熔断准入等待／拦截"
+    result = {"schema_version": 1, "failure_kind": kind, "label": label,
+              "retryable": failure.get("retryable") is True}
+    if failure.get("stage") in {"stage1", "stage2", "vpa_evidence", "preflight", "joint_arbiter"}:
+        result["stage"] = failure["stage"]
+    if diagnostic:
+        result["diagnostic"] = diagnostic
+    if type(last.get("model_call_started")) is bool:
+        result["model_call_started"] = last["model_call_started"]
+    return result
+
+
 def classify_provider_exception(exc: BaseException) -> ProviderFailure:
     from pa_agent.ai.deepseek_client import CancelledError
 

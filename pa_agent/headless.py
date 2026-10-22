@@ -367,6 +367,7 @@ def build_headless_monitor(settings: Settings, paths: RuntimePaths):
     paper_execution = OfficialExecutionDispatcher(
             None, DemoSpool(resolve_demo_paths(paths, environ=os.environ)), demo_config,
             now_ms=lambda: int(time.time() * 1000), task_lookup=scheduler_audit.load_task,
+            review_paths=(paths.analysis_audit_db_path, paths.monitoring_audit_db_path),
         )
     def service_factory(on_completion):
         monitoring = settings.monitoring

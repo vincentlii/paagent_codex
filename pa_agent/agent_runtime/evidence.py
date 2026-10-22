@@ -349,17 +349,17 @@ class FrozenEvidenceGateway:
             if bool(experience_locations) != bool(expected_experience):
                 raise KeyError("experience delivery partition")
             if skill_key("stage2", self._core_context) == "joint_stage2":
-                from pa_agent.ai.role_contracts import VpaEvidenceReport
+                from pa_agent.ai.role_contracts import parse_vpa_report
 
                 report = upstream["vpa_evidence"]
                 required = {
                     "catalog_id", "data_status", "background_relation",
-                    "entry_timing_relation", "observations", "hypothesis_assessments",
+                    "observations", "hypothesis_assessments",
                     "next_confirmation", "summary",
                 }
                 if not isinstance(report, dict) or not required.issubset(report):
                     raise KeyError("validated VPA report fields")
-                validated_report = VpaEvidenceReport.model_validate(report)
+                validated_report = parse_vpa_report(report)
                 if not isinstance(upstream["pa_hypotheses"], dict):
                     raise KeyError("pa_hypotheses")
                 if (stage2_host_gated_draft(self._job)
@@ -418,6 +418,9 @@ class FrozenEvidenceGateway:
         if skill_key("stage2", self._core_context) == "joint_stage2":
             receipt["accepted_vpa_report"] = {
                 "catalog_id": validated_report.catalog_id,
+                **({"report_scope": validated_report.report_scope,
+                    "entry_timing_applicability": validated_report.entry_timing_applicability}
+                   if hasattr(validated_report, "report_scope") else {}),
                 "citable_evidence_ids": sorted(validated_report.evidence_ids),
                 "citation_scope": "validated_report_only",
                 "raw_catalog_access": False,

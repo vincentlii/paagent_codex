@@ -49,6 +49,10 @@ from pa_agent.ai.reasoning_profiles import resolve_reasoning_profile
 from pa_agent.ai.role_contracts import (
     JOINT_DECISION_SCHEMA,
     VPA_EVIDENCE_SCHEMA,
+    PREDECISION_VPA_SCOPE,
+    PREDECISION_VPA_SCHEMA,
+    VpaEvidenceReportBase,
+    parse_vpa_report,
     RunOutcome,
     VpaEvidenceReport,
 )
@@ -365,10 +369,16 @@ def _call_attempt_entry(
         ),
         "created_at_ms": int(datetime.now().timestamp() * 1000),
     }
+    if reply is not None or type(model_call_meta.get("model_call_started")) is bool:
+        call["model_call_started"] = reply is not None or model_call_meta["model_call_started"]
     if call["analysis_backend"] == "codex_agent":
         if failed_codex_call:
             call["worker_error_type"] = _audit_text(model_call_meta.get("worker_error_type"))
             call["worker_failure_reason"] = _audit_text(model_call_meta.get("worker_failure_reason"))
+            from pa_agent.agent_runtime.codex_worker import safe_worker_diagnostic
+            diagnostic = safe_worker_diagnostic(model_call_meta.get("worker_diagnostic"))
+            if diagnostic:
+                call["worker_diagnostic"] = diagnostic
         if observed_failure:
             call["usage_observed_without_response"] = True
         call["stage_subagents"] = _audit_text(model_call_meta.get("stage_subagents", "off"))
@@ -824,6 +834,22 @@ def _accumulate_usage_calls(current: dict, usage_calls: list[Any]) -> dict:
     return total
 
 
+_PREDECISION_VPA_ROLE_PROTOCOL = {
+    **_VPA_ROLE_PROTOCOL,
+    "contract_version": "predecision_vpa_evidence_agent_protocol_v2",
+    "report_scope": PREDECISION_VPA_SCOPE,
+    "interpretation_contract": [
+        "Read all frozen mandatory evidence and knowledge before interpreting the catalog.",
+        "Assess existing PA hypotheses and structural locations using background, effort/result, sequence comparison and acceptance/rejection evidence.",
+        "No order exists yet: order timing assessment is not_applicable, independently of catalog data availability.",
+        "Keep genuine insufficient evidence, competing explanations and counterevidence; a complete neutral report or no diagnostic increment is valid.",
+        "Future confirmation records only an independent unresolved VPA question, never an approval gate for a PA trade.",
+        "Do not create setups, direction changes, order prices or execution instructions; joint Stage 2 owns those decisions.",
+        "Use catalog evidence IDs and causal windows; do not restate measurements or invent facts.",
+    ],
+}
+
+
 class TwoStageOrchestrator:
     """Orchestrates the two-stage AI analysis pipeline.
 
@@ -1126,7 +1152,7 @@ class TwoStageOrchestrator:
         *,
         frozen_vpa_catalog: dict | None,
         htf_context: dict | None,
-    ) -> tuple[AnalysisRecord, VpaEvidenceReport | None, dict | None]:
+    ) -> tuple[AnalysisRecord, VpaEvidenceReportBase | None, dict | None]:
         """The new pipeline's VPA role, before any Stage 2 order exists."""
         from pa_agent.ai.fact_catalog import analysis_snapshot_hash
         from pa_agent.ai.prompt_assembler import VPA_KNOWLEDGE_MODULES, VpaPromptBuildError
@@ -1153,7 +1179,8 @@ class TwoStageOrchestrator:
                 settings.prompt, vpa_evidence_catalog=catalog
             )
             messages = [] if self._analysis_backend.backend_id == "codex_agent" else role_assembler.build_vpa_evidence_report(
-                frame, record.stage1_diagnosis, record.pa_hypotheses, htf_context=htf_context
+                frame, record.stage1_diagnosis, record.pa_hypotheses, htf_context=htf_context,
+                report_scope=PREDECISION_VPA_SCOPE,
             )
         except (ValueError, VpaPromptBuildError) as exc:
             record.exception = {
@@ -1175,7 +1202,7 @@ class TwoStageOrchestrator:
             self._persist_partial(record, "joint_vpa_isolation", on_event)
             return record, None, catalog
         backend = self._analysis_backend.bind_role(client=client, settings=settings)
-        vpa_schema = self._joint_direct_contract("vpa_evidence", VPA_EVIDENCE_SCHEMA, messages)
+        vpa_schema = self._joint_direct_contract("vpa_evidence", PREDECISION_VPA_SCHEMA, messages)
         context = {
             "task_id": record.meta.run_id,
             "symbol": frame.symbol,
@@ -1189,7 +1216,8 @@ class TwoStageOrchestrator:
                 VPA_KNOWLEDGE_MODULES[name]
                 for name in build_vpa_knowledge_context(record.stage1_diagnosis).module_names
             ],
-            "role_protocol": copy.deepcopy(_VPA_ROLE_PROTOCOL),
+            "report_scope": PREDECISION_VPA_SCOPE,
+            "role_protocol": copy.deepcopy(_PREDECISION_VPA_ROLE_PROTOCOL),
         }
 
         def call_api(current_messages: list[dict]) -> Any:
@@ -1229,8 +1257,7 @@ class TwoStageOrchestrator:
                         status=_attempt_failure_status(exc),
                         error_type=exc.failure.kind,
                         backend_id=backend.backend_id,
-                        failure_metadata=next((item for item in reversed(exc.attempts)
-                                               if item.get("collaboration")), None),
+                        failure_metadata=next(iter(reversed(exc.attempts)), None),
                     )
                 )
                 raise
@@ -1256,7 +1283,8 @@ class TwoStageOrchestrator:
                 messages=messages,
                 call_api=call_api,
                 validate=lambda raw: validate_vpa_evidence(
-                    raw, catalog=catalog, pa_hypotheses=hypotheses
+                    raw, catalog=catalog, pa_hypotheses=hypotheses,
+                    report_scope=PREDECISION_VPA_SCOPE,
                 ),
                 max_repairs=min(1, self._validation_settings().retry_max)
                 if self._validation_settings().retry_enabled
@@ -1304,7 +1332,7 @@ class TwoStageOrchestrator:
             }
             self._persist_partial(record, "joint_vpa_incomplete", on_event)
             return record, None, catalog
-        report = VpaEvidenceReport.model_validate(result.obj["vpa_report"])
+        report = parse_vpa_report(result.obj["vpa_report"])
         record.vpa_evidence = report.model_dump(mode="json")
         return record, report, catalog
 

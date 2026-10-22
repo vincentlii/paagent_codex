@@ -10,6 +10,37 @@ from pa_agent.operations.projection import (
 )
 
 
+def test_recent_runs_display_only_versioned_safe_failure_summary(tmp_path):
+    from pa_agent.ai.provider_failures import runtime_failure_summary
+
+    summary = runtime_failure_summary({"type": "provider_error", "stage": "vpa_evidence",
+        "failure_kind": "internal", "retryable": False, "message": "SECRET",
+        "attempts": [{"worker_diagnostic": {"schema_version": 1, "phase": "turn.failed",
+            "category": "unknown_execution", "exit_status": 1, "raw_stderr": "SECRET"}}]})
+    assert summary["label"] == "CLI 异常，原因未确定"
+    assert "SECRET" not in json.dumps(summary)
+    path = tmp_path / "analysis.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE analysis_runs(run_id TEXT,timestamp_local_ms INTEGER,review_context_json TEXT)")
+        db.execute("INSERT INTO analysis_runs VALUES(?,?,?)", ("failed", 1, json.dumps({"runtime_failure": summary})))
+    row = read_recent_runs(path)[0]
+    assert row["failure_label"] == summary["label"]
+    assert row["failure_stage"] == "vpa_evidence"
+
+
+def test_runtime_stop_and_no_model_admission_are_not_schema_failures():
+    from pa_agent.ai.provider_failures import runtime_failure_summary
+
+    blocked = runtime_failure_summary({"type": "provider_error", "stage": "stage1", "failure_kind": "unavailable",
+        "retryable": True, "attempts": [{"model_call_started": False, "admission_wait_ms": 31}]})
+    assert blocked["label"] == "熔断准入等待／拦截"
+    assert blocked["model_call_started"] is False
+    stopped = runtime_failure_summary({"type": "provider_error", "stage": "vpa_evidence", "failure_kind": "role_stopped",
+        "retryable": False, "attempts": [{"worker_diagnostic": {"schema_version": 1,
+            "phase": "process_budget", "category": "timeout", "budget_source": "role"}}]})
+    assert stopped["label"] == "VPA 预算停止"
+
+
 def test_recent_run_projection_is_read_only_and_tolerates_older_schema(tmp_path) -> None:
     db_path = tmp_path / "analysis.sqlite3"
     with sqlite3.connect(db_path) as connection:

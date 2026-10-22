@@ -29,6 +29,7 @@ def call_metrics(usage, runtime, *, wall_ms=None):
         ("decision_packet_bytes", "bytes", False),
         ("decision_packet_tokens", "tokens", True),
         ("optional_evidence_call_count", "count", False),
+        ("admission_wait_ms", "milliseconds", False),
     ):
         value = runtime.get(name)
         event_field = {"evidence_response_bytes": "response_bytes",
@@ -76,6 +77,8 @@ def summarize_call_metrics(calls):
                        "estimated_sum": sum(estimated) if estimated else None,
                        "complete_actual": len(actual) == len(calls) and bool(calls)}
     return {"protocol_version": "analysis_metrics_v1", "calls": len(calls),
+            "model_calls": sum(c["model_call_started"] for c in calls)
+            if all(type(c.get("model_call_started")) is bool for c in calls) else None,
             "prior_attempt_usage_known": bool(calls) and all(
                 (c.get("metrics") or {}).get("prior_attempt_usage_known", False) for c in calls),
             "usage_coverage_complete": bool(calls) and all(

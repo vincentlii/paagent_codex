@@ -9,6 +9,7 @@ import os
 import re
 import stat
 import struct
+from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,8 @@ from pa_agent.execution.demo_contracts import (
     DemoSnapshot,
     DemoContract,
     DemoOrderRequest,
+    DemoEventSync,
+    DemoSyncRange,
     canonical,
 )
 
@@ -319,13 +322,116 @@ class OkxDemoClient:
             cursor = next_cursor
         return rows, False
 
-    def snapshot(self, *, since_bill_id=None, since_fill_ids=None):
+    def _sync_events(self, stream, account, server_ms, state, legacy_id=None):
+        """Read at most four pages; only a completed fixed interval advances coverage."""
+        day = 86_400_000
+        recent_days = 3 if stream == "fills" else 7
+        recent = "/api/v5/trade/fills" if stream == "fills" else "/api/v5/account/bills"
+        history = recent + ("-history" if stream == "fills" else "-archive")
+        filters = {"instType": "SWAP"} if stream == "fills" else {}
+        stamp = datetime.fromtimestamp(server_ms / 1000, timezone.utc)
+        month_index = stamp.year * 12 + stamp.month - 1 - 3
+        year, month = month_index // 12, month_index % 12 + 1
+        history_floor = int(stamp.replace(
+            year=year, month=month, day=min(stamp.day, monthrange(year, month)[1])
+        ).timestamp() * 1000)
+        if state is None:
+            state = DemoEventSync(account_key=account, stream=stream, query_filter=filters,
+                                  last_id=legacy_id)
+        else:
+            state = DemoEventSync.model_validate(state).model_copy(deep=True)
+        if state.account_key != account or state.stream != stream or state.query_filter != filters:
+            raise DemoUnavailable("event_sync_identity_mismatch")
+        if state.status == "event_conflict":
+            return [], False, state
+        if server_ms < max(state.through_ms, state.pending.end_ms if state.pending else 0):
+            state.status = "clock_reversed"
+            return [], False, state
+        rows = []
+        for _ in range(4):
+            if state.pending is None:
+                if state.through_ms:
+                    begin = max(state.origin_ms, state.through_ms - 60_000)
+                elif state.origin_ms:
+                    begin = state.origin_ms
+                else:
+                    begin = history_floor + 60_000 if state.last_id else server_ms - recent_days * day + 60_000
+                    state.origin_ms = begin
+                state.pending = DemoSyncRange(
+                    begin_ms=begin, end_ms=server_ms,
+                    anchor_id=state.last_id if not state.through_ms else None,
+                )
+            pending = state.pending
+            if pending.begin_ms < history_floor:
+                state.status = "history_expired"
+                return rows, False, state
+            path = recent if pending.begin_ms >= server_ms - recent_days * day + 30_000 else history
+            query = filters | {"begin": str(pending.begin_ms), "end": str(pending.end_ms), "limit": "100"}
+            if pending.after:
+                query["after"] = pending.after
+            try:
+                batch = self._request("GET", path, query=query)
+            except (DemoRequestUnknown, DemoRequestRejected, DemoUnavailable):
+                state.status = "unavailable"
+                return rows, False, state
+            if len(batch) > 100:
+                state.status = "invalid_page"
+                return rows, False, state
+            reached = False
+            previous_id = int(pending.after) if pending.after and pending.after.isdigit() else None
+            for raw in batch:
+                bill_id = str(raw.get("billId") or "")
+                try:
+                    event_ms = int(raw["ts"])
+                    valid = (bill_id.isdigit() and len(bill_id) <= 64
+                             and pending.begin_ms <= event_ms <= pending.end_ms
+                             and (previous_id is None or int(bill_id) < previous_id)
+                             and (stream != "fills" or (
+                                 str(raw.get("instId") or "").endswith("-SWAP") and raw.get("tradeId")
+                                 and raw.get("instType", "SWAP") == "SWAP"
+                             )))
+                except (KeyError, TypeError, ValueError):
+                    valid = False
+                if not valid:
+                    state.status = "invalid_page"
+                    return rows, False, state
+                previous_id = int(bill_id)
+                if pending.head_id is None:
+                    pending.head_id, pending.head_ts_ms = bill_id, event_ms
+                rows.append(safe_row(raw))
+                if bill_id == pending.anchor_id:
+                    reached = True
+                    break
+            if reached or len(batch) < 100:
+                if pending.anchor_id and not reached:
+                    state.status = "anchor_not_found"
+                    return rows, False, state
+                state.through_ms = pending.end_ms
+                if pending.head_id and (state.last_id is None or int(pending.head_id) >= int(state.last_id)):
+                    state.last_id, state.last_ts_ms = pending.head_id, pending.head_ts_ms
+                state.pending = None
+                if state.through_ms == server_ms:
+                    state.status = "ready"
+                    return rows, True, state
+                # A restored old interval is not coverage of the new head. Finish its
+                # tail in this bounded call if budget remains, otherwise next poll.
+                # Replaying the normal overlap again here can starve recovery when
+                # the overlap alone exceeds a single poll's page budget.
+                state.pending = DemoSyncRange(begin_ms=state.through_ms, end_ms=server_ms)
+                continue
+            pending.after = str(batch[-1]["billId"])
+        state.status = "backfill_pending"
+        return rows, False, state
+
+    def snapshot(self, *, since_bill_id=None, since_fill_ids=None, sync_state=None):
         start = self.now_ms()
         server = self._request("GET", "/api/v5/public/time", private=False)
         config = self._request("GET", "/api/v5/account/config")
         balance = self._request("GET", "/api/v5/account/balance", query={"ccy": "USDT"})
         if len(server) != 1 or len(config) != 1 or not config[0].get("uid"):
             raise DemoUnavailable("incomplete_account_identity")
+        server_ms = int(server[0]["ts"])
+        account = hashlib.sha256(("okx_demo_v1:" + str(config[0]["uid"])).encode()).hexdigest()
         positions = self._request("GET", "/api/v5/account/positions")
         orders, orders_ok = self._pages("/api/v5/trade/orders-pending", {}, "ordId")
         algos, algos_ok = [], True
@@ -335,13 +441,13 @@ class OkxDemoClient:
             )
             algos.extend(page)
             algos_ok &= covered
-        fills, fills_ok = self._pages(
-            "/api/v5/trade/fills",
-            {"instType": "SWAP"},
-            "tradeId",
+        fills, fills_ok, fill_sync = self._sync_events(
+            "fills", account, server_ms, (sync_state or {}).get("fills"),
             (since_fill_ids or {}).get("SWAP"),
         )
-        bills, bills_ok = self._pages("/api/v5/account/bills", {}, "billId", since_bill_id)
+        bills, bills_ok, bill_sync = self._sync_events(
+            "bills", account, server_ms, (sync_state or {}).get("bills"), since_bill_id,
+        )
         available = self._request("GET", "/api/v5/account/instruments", query={"instType": "SWAP"})
         contracts, leverages, quotes = [], {}, {}
         for row in available:
@@ -379,10 +485,8 @@ class OkxDemoClient:
         usdt = next((d for d in details if d.get("ccy") == "USDT"), {})
         return DemoSnapshot(
             observed_at_ms=start,
-            server_time_ms=int(server[0]["ts"]),
-            account_key=hashlib.sha256(
-                ("okx_demo_v1:" + str(config[0]["uid"])).encode()
-            ).hexdigest(),
+            server_time_ms=server_ms,
+            account_key=account,
             account_mode=str(config[0].get("acctLv", "")),
             position_mode=str(config[0].get("posMode", "")),
             equity=usdt.get("eq") or None,
@@ -395,6 +499,7 @@ class OkxDemoClient:
             positions=tuple(safe_row(r) for r in positions),
             fills=tuple(fills),
             bills=tuple(bills),
+            event_sync={"fills": fill_sync, "bills": bill_sync},
             coverage={
                 "orders": orders_ok,
                 "algos": algos_ok,

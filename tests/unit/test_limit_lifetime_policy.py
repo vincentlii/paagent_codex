@@ -170,7 +170,7 @@ def test_policy_survives_frozen_task_codec_without_changing_legacy_cohort():
     assert decode_task(old, old_digest).payload.execution_policy is None
 
 
-def test_only_stage1_first_draft_budget_increases():
+def test_stage_budgets_keep_role_and_repair_bounds():
     from pa_agent.agent_runtime.publisher import CodexJobPublisher
 
     publisher = object.__new__(CodexJobPublisher)
@@ -179,5 +179,7 @@ def test_only_stage1_first_draft_budget_increases():
                 bar_count=100, role_evidence_count=0, role_evidence_bytes=0)
     assert publisher._budget_for("stage1", 1, bounded_packet_bytes=100, **args).max_wall_seconds == 300
     assert publisher._budget_for("stage1", 2, **args).max_wall_seconds == 180
-    assert publisher._budget_for("vpa_evidence", 1, **args).max_wall_seconds == 180
+    assert publisher._budget_for("vpa_evidence", 1, **args).max_wall_seconds == 240
+    assert publisher._budget_for("vpa_evidence", 2, **args).max_wall_seconds == 180
+    assert publisher._budget_for("joint_arbiter", 1, **args).max_wall_seconds == 180
     assert publisher._budget_for("stage2", 1, **args).max_wall_seconds == 300

@@ -179,7 +179,12 @@ PA 链先固化为 `PaHypothesisSet`：
 该对象只能由 `compile_pa_handoff(...)` 生成。限价单/市价单允许 `entry_rule=null`；缺少可选
 Setup 或 invalidation 文案时保持 null，不得由程序猜测，也不得静默丢失合法 Entry Attempt。
 
-`VpaEvidenceReport` 只保存：
+以下`VpaEvidenceReport`属于旧后置Shadow/研究协议。2026-10-22新增的显式联合前置
+`predecision_vpa_v2`见[ADR-0025增补](architecture/ADR-0025-joint-stage2-pipeline.md)：
+它保留背景/位置与量价证据，不要求订单timing字段；Host另标`not_applicable`，不把不适用当数据不足。
+下文无candidate→timing不足仅约束旧协议；旧Frozen保留原义，模型质量与上线另验。
+
+旧`VpaEvidenceReport`只保存：
 
 - `catalog_id`
 - `data_status`

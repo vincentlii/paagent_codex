@@ -24,6 +24,61 @@ from pa_agent.agent_runtime.frozen_job import FrozenAgentJobStore
 from tests.unit.test_frozen_agent_job import _job
 
 
+def test_unknown_process_failure_is_not_output_error_and_keeps_safe_diagnostic():
+    from pa_agent.agent_runtime.codex_worker import _classify_failed_process
+
+    stdout = '\n'.join(json.dumps(event) for event in [
+        {"type": "thread.started", "thread_id": "private-thread"},
+        {"type": "turn.started"},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "authentication SECRET"}},
+        {"type": "turn.failed", "error": {"message": "PRIVATE_FAILURE", "code": "private-code"}},
+    ])
+    error = _classify_failed_process(1, stdout, "authorization: SECRET")
+    assert type(error).__name__ == "CodexWorkerExecutionError"
+    assert not isinstance(error, CodexWorkerOutputError)
+    assert error.diagnostic == {
+        "schema_version": 1, "phase": "turn.failed", "exit_status": 1,
+        "category": "unknown_execution",
+    }
+    assert "PRIVATE" not in json.dumps(error.diagnostic)
+    assert "SECRET" not in str(error)
+
+
+def test_process_diagnostic_uses_terminal_error_over_startup_noise():
+    from pa_agent.agent_runtime.codex_worker import _classify_failed_process
+
+    error = _classify_failed_process(1, json.dumps({"type": "turn.failed", "error": {
+        "message": "temporarily unavailable", "status_code": 503}}), "authentication SECRET")
+    assert isinstance(error, CodexWorkerUnavailable)
+    assert error.diagnostic["status_code"] == 503
+    assert error.diagnostic["category"] == "unavailable"
+
+
+@pytest.mark.parametrize("status", ["review_required", "incomplete"])
+def test_model_role_stop_is_not_reported_as_budget_stop(tmp_path, status):
+    from pa_agent.agent_runtime.codex_worker import CodexWorkerStopped
+    from pa_agent.agent_runtime.execution_contract import RUNTIME_CONTRACT
+    from pa_agent.ai.provider_failures import runtime_failure_summary
+
+    published = FrozenAgentJobStore(tmp_path / "jobs").publish(
+        _job(core_context={"runtime_contract_version": RUNTIME_CONTRACT}))
+
+    def stopped(command, **kwargs):
+        Path(command[command.index("--output-last-message") + 1]).write_text(json.dumps({
+            "result": {"protocol_version": "analysis_role_stop_v1",
+                "role": "stage1", "status": status, "reason": "unresolved evidence"}}), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    worker = CodexCliWorker(CodexCliConfig(codex_home=tmp_path / "home", runtime_root=tmp_path / "runtime",
+        outbox_root=tmp_path / "outbox", model="gpt-5.6-terra", reasoning_effort="high"), process_runner=stopped)
+    with pytest.raises(CodexWorkerStopped) as caught:
+        worker.run(published)
+    summary = runtime_failure_summary({"type": "provider_error", "stage": "stage1", "failure_kind": "role_stopped",
+        "attempts": [{"worker_diagnostic": getattr(caught.value, "diagnostic", {})}]})
+    assert summary["label"] == "分析未完成"
+    assert not summary.get("diagnostic")
+
+
 @pytest.mark.parametrize("timed_out", [False, True])
 def test_parent_cli_owns_process_group_and_reaps_descendants(monkeypatch, timed_out):
     import signal

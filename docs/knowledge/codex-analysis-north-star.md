@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-10-09
+最后核验: 2026-10-22（原则与状态分离；未重新验收 VPS）
 权威来源:
   - CONTEXT.md
   - docs/architecture/ADR-0024-codex-analysis-backend.md
@@ -78,33 +78,22 @@ UUID，长期记忆始终禁用。14 天保留清理属于空闲 Worker 运维�
 不删除认证、正式证据或有效恢复引用。黄金产品与单市场背景是事实限定，不是
 第二套策略规则。实施和验证范围见 [V1 运行升级](../quality/v1_operations_upgrade_20261010.md)。
 
-## 当前边界
+## 许可与验证边界
 
-2026-10-09 用户已授权全量 A、单 Agent、`pa_vpa_joint`、`gpt-6-luna/xhigh`
-在 VPS 持续有界 Paper 观察，Fast 只作后续冻结任务的 service tier 选择，不保证
-固定 1.5× 加速。该许可不等于盈利、稳定性、B 分层或子 Agent 晋级，也不扩张
-Codex authority。运行状态以[当前状态](current-status.md)和
-[V1 体检报告](../quality/v1_health_audit_20261009.md)为准。
-下方“默认未改变／未部署”的阶段描述保留为历史实施证据，不是当前运维状态。
+2026-10-09 用户授权全量 A、单 Agent、`pa_vpa_joint`、`gpt-6-luna/xhigh`
+在 VPS 持续有界 Paper 观察；后续授权迁入 OKX Demo、三品种与固定盈亏比，
+当前生效配置及发布证据统一见[当前状态](current-status.md)，不在本原则页重复维护。
+Fast 是后续冻结任务的 service tier 选择，不保证固定加速。
+这些许可不等于盈利、稳定性、知识删减或子 Agent 晋级，也不扩张 Codex authority。
 
-Stage 内子协作采用研究协议 `host_stage_challenge_v1`：Host 启动独立 Codex 子进程，
-子角色只查同一 Frozen Job 的有限同域资源并给待核意见；父保持完整 mandatory、专业裁决
-和唯一 Draft。它旨在并行处理一个独立争议，不以删知识、分走父必读或自动改规则换速度。
+Stage 内子协作仅在显式研究协议 `host_stage_challenge_v1` 内：Host 启动独立 Codex
+子进程，子角色只查同一 Frozen Job 的有限同域资源并给待核意见；父保留完整 mandatory、
+专业裁决和唯一 Draft。它不通过删知识、分走父必读或自动改规则换速度。
 2026-09-27 本地真实合成传输通过；真实市场增益、Linux 和生产晋级未通过，详见
 [逐阶段研究计划](../quality/stage_subagent_research_plan.md)。Direct 和默认单 Agent 保持不变。
 
-阶段 5 已在现有 two_stage 内接通显式 pa_vpa_joint：price-only Stage 1 / Router → VPA →
-联合 Stage 2 / 原物化器与校验。没有先出 PA baseline 再改单，typed stop 禁止伪装 No Trade。
-初次 Prompt、重试和审计使用同一联合契约，完整 mandatory 知识未删减；历史联合 Stage 2 不得
-作为 Stage 1 的独立 PA 依据。详见 `docs/quality/phase5_joint_pipeline_acceptance.md`。
-阶段 6 已完成本地交付时点、expiry 与隔离 `paper_latency_v3`，详见
-[交付与 Paper 验收](../quality/phase6_delivery_paper_acceptance.md)。柱内或缺失成交路径保持 censored，不能当零收益。
-默认配置、VPS 与生产晋级未改变；真实效果、Linux/live 与后续盲评仍未验收。
-
-阶段 4 的本地 Runtime / Skills / 必读矩阵和三角色自审见
-`docs/quality/phase4_runtime_acceptance.md`。result 封套携带原 Draft 或非决策停止对象；
-联合 Stage 2 使用显式 Skill 变体，仍复用 stage2 与唯一 materializer。独立 VPA、旧研究仲裁
-和修复角色不得互换。测量只做冻结锚点算术，回执不是新的 catalog fact ID。
-本阶段不改变正式 pipeline；真实 MCP SDK/CLI/Linux 与专业效果仍须后续验证。
-
-本地 Codex Analysis Backend 已存在，但 Analysis Profile UI 与真实 Codex 分析的 live evidence 仍待本阶段验证。未取得目标 VPS、真实账号、Frozen Snapshot 和 Paper 证据前，能力保持 `research-only`，生产默认 `deepseek_only`，不因实现存在而宣称模型、VPA 或交易结果已晋级。
+阶段实施报告记录当时结果，不自动覆盖后来已验证的状态；完整历史导航见
+[历史状态](archive/README.md)。当前新前置 VPA 的作用域、旧报告兼容及工程/质量验收边界见
+[ADR-0025](../architecture/ADR-0025-joint-stage2-pipeline.md)与
+[运行可靠性实施及复查](../quality/runtime_reliability_vpa_remediation_20261021.md)。
+未完成模型匹配回放/盲评，不能仅用测试通过宣称减少不合理等待或改善收益。

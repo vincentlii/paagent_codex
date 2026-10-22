@@ -69,6 +69,21 @@ def vpa_impact(record: Any) -> dict[str, Any] | None:
     report = record.vpa_evidence if isinstance(record.vpa_evidence, dict) else None
     if report is None:
         return None
+    if report.get("report_scope") == "predecision_vpa_v2":
+        pipeline = getattr(record, "analysis_pipeline", None)
+        pipeline = pipeline.get("pipeline") if isinstance(pipeline, dict) else getattr(pipeline, "pipeline", None)
+        stage2 = getattr(record, "stage2_decision", None) if pipeline == "pa_vpa_joint" else None
+        stage2 = stage2 if isinstance(stage2, dict) else {}
+        analysis = stage2.get("joint_analysis") or {}
+        analysis = analysis if isinstance(analysis, dict) else {}
+        return {
+            "report_scope": report["report_scope"],
+            "entry_timing_applicability": report.get("entry_timing_applicability"),
+            "background_relation": report.get("background_relation"),
+            "evidence_used": copy.deepcopy(analysis.get("vpa_evidence_refs") or []),
+            "decision_effect": "joint_stage2_evidence" if stage2 else "predecision_evidence_only",
+            "reason": "Validated predecision VPA evidence; no causal decision-change claim.",
+        }
     joint = record.joint_decision if isinstance(record.joint_decision, dict) else None
     arbitration = (
         joint.get("joint_arbitration")

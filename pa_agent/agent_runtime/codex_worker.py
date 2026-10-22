@@ -76,6 +76,10 @@ class CodexWorkerOutputError(CodexWorkerError):
     """Codex produced output that cannot enter PA Agent validation."""
 
 
+class CodexWorkerExecutionError(CodexWorkerError):
+    """A process failed without evidence of an output or availability fault."""
+
+
 class CodexWorkerStopped(CodexWorkerError):
     """A typed non-decision; never an availability fallback signal."""
 
@@ -251,10 +255,14 @@ class CodexCliWorker:
             except subprocess.TimeoutExpired as exc:
                 parent_stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else str(exc.stdout or "")
                 if uses_result_envelope(job):
-                    raise CodexWorkerStopped(AnalysisRoleStop(
+                    failure = CodexWorkerStopped(AnalysisRoleStop(
                         role=job.manifest.role, status="incomplete", reason="wall-clock budget exceeded",
-                    )) from exc
-                raise CodexWorkerTimeout("Codex job exceeded wall-clock budget") from exc
+                    ))
+                else:
+                    failure = CodexWorkerTimeout("Codex job exceeded wall-clock budget")
+                failure.diagnostic = {"schema_version": 1, "phase": "process_budget", "category": "timeout",
+                    "budget_source": "cycle" if timeout_seconds is not None and timeout_seconds < job.budget.max_wall_seconds else "role"}
+                raise failure from exc
             except OSError as exc:
                 # Keep the OS classification, never its raw text or credential/path detail.
                 suffix = f" (errno {exc.errno})" if exc.errno is not None else ""
@@ -379,6 +387,21 @@ class CodexCliWorker:
             )
         except BaseException as exc:
             worker_failure = exc
+            if (isinstance(exc, CodexWorkerError) and not isinstance(exc, CodexWorkerStopped)
+                    and not getattr(exc, "diagnostic", None)):
+                if isinstance(exc, CodexWorkerTimeout):
+                    phase, category = "process_budget", "timeout"
+                elif isinstance(exc.__cause__, OSError):
+                    phase, category = "process_start", "unavailable"
+                else:
+                    phase, category = "worker_validation", "output_or_request"
+                exc.diagnostic = {"schema_version": 1, "phase": phase, "category": category}
+                if phase == "process_start" and type(exc.__cause__.errno) is int:
+                    exc.diagnostic["errno"] = exc.__cause__.errno
+                if phase == "process_budget":
+                    exc.diagnostic["budget_source"] = (
+                        "cycle" if timeout_seconds is not None and timeout_seconds < job.budget.max_wall_seconds else "role"
+                    )
             raise
         finally:
             if worker_failure is not None or challenge_host is not None:
@@ -1646,24 +1669,42 @@ def _classify_failed_process(
 ) -> CodexWorkerError:
     """Classify Codex failures without treating unknown errors as availability."""
     detail, status = _failure_detail(stdout, stderr)
+    phase = "process_exit"
+    for line in str(stdout or "").splitlines():
+        try:
+            event = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(event, dict) and event.get("type") in {
+            "thread.started", "turn.started", "turn.completed", "turn.failed", "error",
+        }:
+            phase = event["type"]
+
+    def diagnosed(error: CodexWorkerError, category: str) -> CodexWorkerError:
+        error.diagnostic = {"schema_version": 1, "phase": phase,
+                            "exit_status": int(returncode), "category": category}
+        if status is not None and 100 <= status <= 599:
+            error.diagnostic["status_code"] = status
+        return error
+
     suffix = f" (exit status {returncode})"
     if "context_length_exceeded" in detail:
-        return CodexWorkerOutputError("Codex context window exceeded" + suffix)
+        return diagnosed(CodexWorkerOutputError("Codex context window exceeded" + suffix), "output_or_request")
     if status in {401, 403} or any(
         token in detail for token in ("unauthorized", "login required", "authentication")
     ):
-        return CodexWorkerAuthenticationError("Codex authentication failed" + suffix)
+        return diagnosed(CodexWorkerAuthenticationError("Codex authentication failed" + suffix), "authentication")
     if status in {402, 429} or any(
         token in detail for token in ("rate limit", "insufficient_quota", "usage limit")
     ):
-        return CodexWorkerRateLimited("Codex was rate limited" + suffix)
+        return diagnosed(CodexWorkerRateLimited("Codex was rate limited" + suffix), "rate_limited")
     if status in {408, 504} or "timed out" in detail or "timeout" in detail:
-        return CodexWorkerTimeout("Codex execution timed out" + suffix)
+        return diagnosed(CodexWorkerTimeout("Codex execution timed out" + suffix), "timeout")
     if status in {400, 404, 409, 422} or any(
         token in detail
         for token in ("invalid_json_schema", "invalid json schema", "invalid_request", "output schema")
     ):
-        return CodexWorkerOutputError("Codex request was rejected" + suffix)
+        return diagnosed(CodexWorkerOutputError("Codex request was rejected" + suffix), "output_or_request")
     if (status is not None and status >= 500) or any(
         token in detail
         for token in (
@@ -1677,8 +1718,33 @@ def _classify_failed_process(
             "mcp server timed out",
         )
     ):
-        return CodexWorkerUnavailable("Codex CLI was unavailable" + suffix)
-    return CodexWorkerOutputError("Codex failed without an availability signal" + suffix)
+        return diagnosed(CodexWorkerUnavailable("Codex CLI was unavailable" + suffix), "unavailable")
+    return diagnosed(CodexWorkerExecutionError("Codex execution failed; cause is unknown" + suffix), "unknown_execution")
+
+
+def safe_worker_diagnostic(value: Any) -> dict[str, Any]:
+    """Project fixed Host diagnostic fields; never copy provider text or IDs."""
+    if not isinstance(value, dict) or value.get("schema_version") != 1:
+        return {}
+    if value.get("phase") not in {"process_start", "process_budget", "worker_validation", "process_exit", "thread.started", "turn.started", "turn.completed", "turn.failed", "error"}:
+        return {}
+    if value.get("category") not in {"unknown_execution", "output_or_request", "authentication", "rate_limited", "timeout", "unavailable"}:
+        return {}
+    status = value.get("exit_status")
+    if status is not None and (type(status) is not int or not -(2**31) <= status <= 2**32 - 1):
+        return {}
+    result = {"schema_version": 1, "phase": value["phase"],
+              "category": value["category"]}
+    if status is not None:
+        result["exit_status"] = status
+    http_status = value.get("status_code")
+    if type(http_status) is int and 100 <= http_status <= 599:
+        result["status_code"] = http_status
+    if type(value.get("errno")) is int and 0 <= value["errno"] <= 65535:
+        result["errno"] = value["errno"]
+    if value.get("budget_source") in {"cycle", "role"}:
+        result["budget_source"] = value["budget_source"]
+    return result
 
 
 def _failure_detail(
@@ -1694,7 +1760,6 @@ def _failure_detail(
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
-            fragments.append(line)
             continue
         if not isinstance(event, dict):
             continue

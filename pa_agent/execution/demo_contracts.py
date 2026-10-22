@@ -15,6 +15,7 @@ from pa_agent.operations.demo_settings import DemoExecutionPolicy
 from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
 
 Positive = Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+EventId = Annotated[str, Field(pattern=r"^[0-9]{1,64}$")]
 MAPPINGS = {"BTCUSDT": "BTC-USDT-SWAP", "ETHUSDT": "ETH-USDT-SWAP", "XAUUSDT": "XAU-USDT-SWAP"}
 
 
@@ -196,6 +197,57 @@ class DemoOrderRequest(StrictModel):
     contract_digest: str
 
 
+class DemoSyncRange(StrictModel):
+    """A fixed, resumable API-visible interval, paginated by billId, not time."""
+
+    model_config = ConfigDict(frozen=False)
+
+    begin_ms: int = Field(ge=0)
+    end_ms: int = Field(ge=0)
+    after: EventId | None = None
+    anchor_id: EventId | None = None
+    head_id: EventId | None = None
+    head_ts_ms: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def ordered_range(self):
+        if self.begin_ms > self.end_ms:
+            raise ValueError("invalid_event_sync_range")
+        return self
+
+
+class DemoEventSync(StrictModel):
+    """Account/filter-bound coverage. Last event identity never stands for time coverage."""
+
+    model_config = ConfigDict(frozen=False)
+
+    schema_version: Literal["okx_event_sync_v1"] = "okx_event_sync_v1"
+    account_key: str = Field(min_length=1)
+    stream: Literal["fills", "bills"]
+    query_filter: dict[str, str]
+    origin_ms: int = Field(default=0, ge=0)
+    through_ms: int = Field(default=0, ge=0)
+    last_id: EventId | None = None
+    last_ts_ms: int = Field(default=0, ge=0)
+    pending: DemoSyncRange | None = None
+    status: Literal[
+        "ready", "backfill_pending", "anchor_not_found", "history_expired",
+        "unavailable", "invalid_page", "event_conflict", "clock_reversed",
+    ] = "backfill_pending"
+
+    @model_validator(mode="after")
+    def consistent_scope(self):
+        expected = {"instType": "SWAP"} if self.stream == "fills" else {}
+        if self.query_filter != expected or (self.through_ms and self.through_ms < self.origin_ms):
+            raise ValueError("invalid_event_sync_scope")
+        if self.pending and self.through_ms and (
+            self.pending.end_ms < self.through_ms or self.pending.begin_ms > self.through_ms
+            or self.pending.anchor_id is not None
+        ):
+            raise ValueError("invalid_event_sync_progress")
+        return self
+
+
 class DemoSnapshot(StrictModel):
     observed_at_ms: int
     server_time_ms: int
@@ -213,6 +265,7 @@ class DemoSnapshot(StrictModel):
     leverage: dict[str, str] = {}
     quotes: dict[str, dict[str, str]] = {}
     coverage: dict[str, bool] = {}
+    event_sync: dict[str, DemoEventSync] = {}
 
 
 class DemoReceipt(StrictModel):

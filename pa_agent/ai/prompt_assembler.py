@@ -78,6 +78,16 @@ _VPA_EVIDENCE_ANALYST_SYSTEM = """
 - 只输出一个 JSON object，不输出 Markdown、PA 字段、交易方向、订单、胜率或置信度。
 """.strip()
 
+_PREDECISION_VPA_ANALYST_SYSTEM = """
+你是 PA Agent 的独立 Wyckoff VPA 证据分析员，只解释冻结目录中的量价事实。
+PA Stage 1 已提供市场框架与结构位置；具体 Setup、入场、结构止损尚由联合 Stage 2 判断。
+先核对 Background、Location、Effort/Result、序列及后续已收盘响应，再比较合理解释与反证，最后使用谨慎的专业标签。
+OHLCV 不证明参与者身份、主动买卖或机构意图；tick/proxy/unknown volume 只允许同源相对活动比较。
+同时披露相反的 causal rolling 和 seasonality comparator，不只选有利证据。
+只引用可见目录 ID，不复写数值、不创造事实；K0 与形成中棒不可作为确认。
+只按本轮 Provider Schema 输出 JSON，不输出订单、Setup、方向、概率或交易指令。
+""".strip()
+
 _JOINT_ARBITER_SYSTEM = """
 你是 PA Agent 的联合决策裁决员。
 
@@ -624,6 +634,9 @@ Frozen Snapshot 中的事实不可改写；冻结的 Stage 1 是本轮权限依�
 `decision_trace` 不要输出 `question/section/bar_range`、§10.3 或 `terminal`。
 Trace protocol: `node_id` must be an exact question ID; section heading `11` is invalid,
 so choose the applicable `11.1`-`11.4`. Every executable order must include node `14`.
+`trade` 表示当前已具备提交订单的条件；合法限价/突破挂单可以等待未来价格触达，但 Setup 和结构失效依据须已成立。
+若交易资格仍依赖未来新增已收盘证据或尚未形成的结构，当前选择 `wait`，不能用 `trade` 预先提交。
+`entry_rule` 是说明文字，执行器不会据此等待闭盘确认或重新判断 Setup；不要把未满足的资格条件写进它来代替 `wait`。
 若 `order_type=不下单`，方向、{no_order_prices}、交易置信度和胜率必须按 contract 置 null。
 `next_bar_prediction` 是启用时由 LLM 提供的辅助判断，不参与订单授权。
 模型仍需判断 §10.1/§10.2、Setup 是否成立、信号质量和是否执行；
@@ -1186,8 +1199,13 @@ class PromptAssembler:
         pa_hypotheses: dict[str, Any],
         *,
         htf_context: dict[str, Any] | None = None,
+        report_scope: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build an independent VPA evidence call over frozen PA hypotheses."""
+        from pa_agent.ai.role_contracts import PREDECISION_VPA_SCOPE
+
+        if report_scope not in (None, PREDECISION_VPA_SCOPE):
+            raise ValueError("unsupported VPA report scope")
         if not self._vpa_enabled():
             raise ValueError("VPA evidence analysis requires VPA to be enabled")
         frozen_keys = (
@@ -1227,53 +1245,7 @@ class PromptAssembler:
             "entry_attempt": entry_attempt_context,
             "htf_identity": htf_identity or None,
         }
-        user_content = (
-            "## VPA_EVIDENCE_ANALYSIS_TASK\n\n"
-            "先读量价 Evidence Catalog，再对照以下单一冻结分析信封。你只能评估量价证据与这些"
-            "假设及候选的关系，不能重写 PA。候选中的订单价格、trade_math 与"
-            "window_context 均由程序冻结；有候选时，entry_timing_relation 必须"
-            "针对该真实 Entry Attempt，而不是笼统复述 PA 方向。\n\n"
-            "### VPA_ANALYSIS_ENVELOPE\n\n"
-            f"```json\n{json.dumps(analysis_envelope, ensure_ascii=False, indent=2)}\n```\n\n"
-            + (f"{knowledge}\n\n" if knowledge else "")
-            + (f"{measurements}\n\n" if measurements else "")
-            + (
-                "Comparator relations such as above/below record direction only; "
-                "read the signed deviation_pct before judging magnitude, and a ratio "
-                "sign alone does not justify strong activity wording.\n\n"
-            )
-            + """输出且只输出：
-{
-  "vpa_report": {
-    "summary": "核心量价解释、竞争解释与不确定性，不复写数字",
-    "observations": [{
-      "evidence_ids": ["仅使用目录中的 ID"],
-      "finding_kind": "background | effort_result | sequence_comparison | acceptance_rejection | entry_timing",
-      "sequence_claims": [{
-        "earlier_evidence_id": "较早证据 ID",
-        "later_evidence_id": "较晚证据 ID",
-        "relation": "response | follow_through | acceptance | rejection | test"
-      }],
-      "interpretation": "先写事实综合，再比较合理解释并说明不确定性，不复写数字",
-      "epistemic_status": "candidate | confirmed | unresolved | insufficient_data",
-      "interpretation_label": "开放式专业标签或 null；必须最后填写"
-    }],
-    "hypothesis_assessments": [{
-      "hypothesis_id": "逐字复制每个 PA hypothesis_id；每个假设恰好一项",
-      "relation": "supports | neutral | challenges | insufficient_data",
-      "evidence_ids": ["实际使用的 evidence ID；无证据时为空数组"],
-      "reason": "该量价证据为何支持、挑战或不足"
-    }],
-    "background_relation": "supports | neutral | challenges | insufficient_data",
-    "entry_timing_relation": "supports | neutral | challenges | insufficient_data",
-    "next_confirmation": {
-      "state": "pending_closed_bar | not_applicable",
-      "trigger": "pending_closed_bar 时填写下一根已收盘 K 线需要验证的 acceptance/rejection；not_applicable 时为 null"
-    }
-  }
-}
-
-不要输出 `bar_range`，程序会根据 evidence IDs 唯一生成。K 序号越大越早，K1
+        evidence_guidance = """不要输出 `bar_range`，程序会根据 evidence IDs 唯一生成。K 序号越大越早，K1
 是最新已收盘 K 线；凡声称 response/follow-through/acceptance/rejection/test，优先用
 `sequence_claims` 已经明确声明较早与较晚 evidence ID，无需仅为格式在父级 `evidence_ids` 重复列出；
 程序会把目录内已知 ID 记入 `auto_bound_evidence_ids`，但不会据此替你升级 supports/challenges。两个证据
@@ -1283,18 +1255,78 @@ class PromptAssembler:
 只有 VPA 本身存在需要下一根已收盘 K 线验证的竞争解释时，
 `next_confirmation` 才写 `pending_closed_bar`；VPA 为 neutral/insufficient，或没有独立的后续
 验证条件时可写 `not_applicable`。该字段是证据观察项，不是 Brooks Entry Attempt 的审批 Gate。
-当 `VPA_ANALYSIS_ENVELOPE.entry_attempt.applicable=false` 时，不存在可被 VPA 评价的当前入场尝试，
-必须写 `entry_timing_relation=insufficient_data`；仍可输出独立的背景观察和后续证据条件。
 完整读取必读证据后，再判断是否存在可引用、有诊断价值的量价信息。
 数据可用不等于存在诊断性量价增量；存在时说明真正的 Effort/Result、序列比较、
-Acceptance/Rejection 或 Timing 增量，并评估相关反证，不能只复述 PA。
+Acceptance/Rejection 增量，并评估相关反证，不能只复述 PA。
 没有诊断性增量时明确写“未发现诊断性增量”，允许 `observations=[]`，按实际证据
 选择 `neutral` 或 `insufficient_data`，不强凑观察或支持/挑战结论。
 未读证据或工具失败不能以“无增量”或中性报告掩盖，须遵守当前角色停止协议。
 已完整读取但证据不足时仍完整输出，并明确写 `insufficient_data`。"""
+        predecision = report_scope == PREDECISION_VPA_SCOPE
+        if predecision:
+            analysis_envelope.pop("entry_attempt")
+            analysis_envelope["report_scope"] = PREDECISION_VPA_SCOPE
+            analysis_envelope["entry_timing_applicability"] = "not_applicable"
+            task_context = (
+                "这是 Stage 2 决策前的位置与背景量价取证。Host 明确标记订单时机评价为 not_applicable："
+                "当前尚无订单，不代表量价数据不足。分析 PA 已有结构附近的接受、拒绝、序列及反证；"
+                "保留竞争解释，允许无诊断性增量，不强凑观察。Setup、具体入场及结构失效由联合 Stage 2 判断。"
+            )
+        else:
+            task_context = (
+                "先读量价 Evidence Catalog，再对照以下单一冻结分析信封。你只能评估量价证据与这些"
+                "假设及候选的关系，不能重写 PA。候选中的订单价格、trade_math 与"
+                "window_context 均由程序冻结；有候选时，entry_timing_relation 必须"
+                "针对该真实 Entry Attempt，而不是笼统复述 PA 方向。"
+            )
+        # One output shape for both scopes; the full Schema remains in the
+        # provider transport and Host validation rather than duplicated in prose.
+        report_example = {
+            "summary": "核心量价解释、竞争解释与不确定性，不复写数字",
+            "observations": [{
+                "evidence_ids": ["仅使用目录中的 ID"],
+                "finding_kind": "background | effort_result | sequence_comparison | acceptance_rejection"
+                                + ("" if predecision else " | entry_timing"),
+                "sequence_claims": [{
+                    "earlier_evidence_id": "较早证据 ID",
+                    "later_evidence_id": "较晚证据 ID",
+                    "relation": "response | follow_through | acceptance | rejection | test",
+                }],
+                "interpretation": "先写事实综合，再比较合理解释并说明不确定性，不复写数字",
+                "epistemic_status": "candidate | confirmed | unresolved | insufficient_data",
+                "interpretation_label": "开放式专业标签或 null；必须最后填写",
+            }],
+            "hypothesis_assessments": [{
+                "hypothesis_id": "逐字复制每个 PA hypothesis_id；每个假设恰好一项",
+                "relation": "supports | neutral | challenges | insufficient_data",
+                "evidence_ids": ["实际使用的 evidence ID；无证据时为空数组"],
+                "reason": "该量价证据为何支持、挑战或不足",
+            }],
+            "background_relation": "supports | neutral | challenges | insufficient_data",
+        }
+        if not predecision:
+            report_example["entry_timing_relation"] = "supports | neutral | challenges | insufficient_data"
+        report_example["next_confirmation"] = {
+            "state": "pending_closed_bar | not_applicable",
+            "trigger": "pending_closed_bar 时填写下一根已收盘 K 线需要验证的 acceptance/rejection；not_applicable 时为 null",
+        }
+        user_content = (
+            "## VPA_EVIDENCE_ANALYSIS_TASK\n\n"
+            + task_context + "\n\n### VPA_ANALYSIS_ENVELOPE\n\n"
+            + f"```json\n{json.dumps(analysis_envelope, ensure_ascii=False, indent=2)}\n```\n\n"
+            + (f"{knowledge}\n\n" if knowledge else "")
+            + (f"{measurements}\n\n" if measurements else "")
+            + "输出且只输出：\n"
+            + json.dumps({"vpa_report": report_example}, ensure_ascii=False, indent=2)
         )
+        user_content += "\n\n" + evidence_guidance
+        if not predecision:
+            user_content += (
+                "\n当 entry_attempt.applicable=false 时，必须写 entry_timing_relation=insufficient_data；"
+                "仍可保留背景及独立后续条件。"
+            )
         return [
-            {"role": "system", "content": _VPA_EVIDENCE_ANALYST_SYSTEM},
+            {"role": "system", "content": _PREDECISION_VPA_ANALYST_SYSTEM if predecision else _VPA_EVIDENCE_ANALYST_SYSTEM},
             {"role": "user", "content": user_content},
         ]
 

@@ -13,6 +13,27 @@ from pa_agent.records.audit_store import AnalysisAuditStore
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
 
 
+def test_explicit_joint_scope_is_not_labeled_shadow_or_order_timing(tmp_path):
+    from pa_agent.records.projection import vpa_impact
+
+    record = _record().model_copy(update={
+        "analysis_pipeline": AnalysisPipelineIdentity(pipeline="pa_vpa_joint"),
+        "vpa_evidence": {"report_scope": "predecision_vpa_v2", "entry_timing_applicability": "not_applicable",
+                         "background_relation": "challenges"},
+        "joint_decision": None,
+        "stage2_decision": {"joint_analysis": {"vpa_evidence_refs": ["evidence-1"], "reason": "Observed challenge"}},
+    })
+    impact = vpa_impact(record)
+    assert impact["decision_effect"] == "joint_stage2_evidence"
+    assert impact["entry_timing_applicability"] == "not_applicable"
+    assert "entry_timing_relation" not in impact
+    assert impact["evidence_used"] == ["evidence-1"]
+    store = AnalysisAuditStore(tmp_path / "audit.sqlite3")
+    assert store.record_analysis(record, record_path=tmp_path / "record.json").ok
+    row = store.get_run(record.meta.run_id)
+    assert row["vpa_timing_relation"] == "not_applicable"
+
+
 def test_review_cli_list_accepts_default_cohort_filter(tmp_path: Path) -> None:
     result = subprocess.run(
         [

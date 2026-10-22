@@ -1,5 +1,12 @@
 # PA Agent Domain Context
 
+排查前置VPA时机不适用、连续wait、Demo历史复盘空白、成交覆盖缺口或Codex运行失败时，必须先读
+[运行可靠性与VPA语义修复研究](docs/quality/runtime_reliability_vpa_remediation_20261021.md)。
+该文区分源码/只读VPS证据、三角色建议与未验证假设；2026-10-22本地实现见末节，尚未发布。
+新显式联合任务采用`predecision_vpa_v2`，模型只解释可观察的背景/位置量价证据，Host标记订单时机
+不适用，不再生成`entry_timing_relation=insufficient_data`占位。真实不足、反证与合法等待保留；
+旧Frozen/off/Shadow/研究协议不改写。OKX覆盖水位、历史复盘、Codex诊断/重试/准入修复同见该文。
+
 2026-10-21 用户授权备份后成套退役旧 Qt 桌面端；本地清理范围、恢复方法和验收见
 `docs/quality/desktop_retirement_20261021.md`。保留 Headless、网页 Dashboard、Codex、
 PA/VPA、共享取消/记录回放/模型用量及 OKX Demo，移除桌面入口、专属 Qt 模块和安装项。

@@ -110,9 +110,12 @@ def run_joint(
         return replies.pop(0)
 
     def vpa_call(*args, **kwargs):
+        report = _vpa_report()
+        report["vpa_report"].pop("entry_timing_relation")
+        report["vpa_report"]["observations"][0]["finding_kind"] = "acceptance_rejection"
         calls.append("vpa_evidence")
         return make_reply(
-            stop if stop_role == "vpa_evidence" else {} if vpa_failure else _vpa_report()
+            stop if stop_role == "vpa_evidence" else {} if vpa_failure else report
         )
 
     client.stream_chat.side_effect = pa_call

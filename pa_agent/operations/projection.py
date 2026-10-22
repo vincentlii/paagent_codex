@@ -216,6 +216,17 @@ def _enrich_operational_quality(run: dict[str, Any], review_json: str | None) ->
     try:
         review = json.loads(review_json) if review_json else {}
         quality = review.get("operational_quality") or {}
+        failure = review.get("runtime_failure") or {}
+        if failure.get("schema_version") == 1:
+            from pa_agent.ai.provider_failures import runtime_failure_summary
+            safe_failure = runtime_failure_summary({"type": "provider_error",
+                "failure_kind": failure.get("failure_kind"), "stage": failure.get("stage"),
+                "retryable": failure.get("retryable"), "attempts": [{
+                    "worker_diagnostic": failure.get("diagnostic"),
+                    "model_call_started": failure.get("model_call_started"),
+                }]})
+            run["failure_label"] = safe_failure.get("label")
+            run["failure_stage"] = safe_failure.get("stage")
         first_pass = (quality.get("first_pass") or {}).get("clean")
         metrics = quality.get("metrics") or {}
     except (TypeError, ValueError, AttributeError):

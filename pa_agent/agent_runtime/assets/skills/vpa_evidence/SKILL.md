@@ -6,7 +6,7 @@ description: Use when a frozen PA Agent job requests an independent VPA evidence
 # VPA Evidence
 
 输出分工：每条 observation 解释一个有独立意义的量价关系及局限；hypothesis assessment
-说明这些观察如何支持或挑战 PA 假设；时机字段只回答当前入场尝试的适用性与确认程度。
+说明这些观察如何支持或挑战 PA 假设；订单时机评价只适用于冻结旧协议中的实际候选，前置 scope 不回答尚不存在的订单。
 不要把同一窗口换措辞复制为多条观察，也不要为凑标签重新解释整张图。保留真正独立的反证。
 目录内数值与序列是程序事实，直接引用；推理集中于 Background、Location、Effort/Result
 及已发生的后续响应。未来确认留在条件中，不能通过更长推理把未发生的证据变成确定结论。
@@ -24,7 +24,7 @@ description: Use when a frozen PA Agent job requests an independent VPA evidence
    同源比较必须保留两段结果的方向、幅度和相对强弱；“都缺乏确认”不能掩盖一段横走而另一段显著下跌。解释限制不等于消除这种不对称。
 6. 标签不能替代 Evidence，也不能成为第二个 Setup Router。
 7. raw/tick/proxy/unknown volume 按 provenance 限制解释，不能互换基线或反推真实参与者身份。已完整读到的数据确实不足时使用契约内 `insufficient_data`，不写不存在的 unavailable 关系枚举，也不以 neutral 代替缺失。工具或必读资源失败、预算耗尽返回 Runtime incomplete，不能伪造完整 VPA 报告。
-8. 核对实际已读引用、provenance与时序；研究意见不能替代完整目录覆盖。分别评价 primary/alternative hypothesis、背景关系和当前 entry timing。若没有 PA entry attempt，保持其不适用状态，不编造 entry。解释每个事件前先核对该事件 evidence 的 `later_closed_bar_count` 与 `later_closed_bar_range`，逐项评价已发生的后续响应；最新棒没有后续数据，不代表更早事件也没有。下一根收盘所需确认只能是未来条件，不写成已发生证据。sequence claim 必须引用实际先后证据，不从窗口交叠推导先后。
+8. 核对实际已读引用、provenance与时序；研究意见不能替代完整目录覆盖。分别评价 primary/alternative hypothesis、背景与位置证据。只有冻结旧协议提供实际候选时才评价 entry timing；`report_scope=predecision_vpa_v2` 的 Provider Schema 没有订单时机评价，Host 标记其不适用，数据状态独立。不要先造 entry 来补全此问题。解释每个事件前先核对该事件 evidence 的 `later_closed_bar_count` 与 `later_closed_bar_range`，逐项评价已发生的后续响应；最新棒没有后续数据，不代表更早事件也没有。下一根收盘所需确认只能是未来条件，不写成已发生证据。sequence claim 必须引用实际先后证据，不从窗口交叠推导先后。
 9. 不创建或翻转 Brooks Setup、方向、订单、胜率、Gate 或正式 Trade/No Trade。
 
 成交量窗口及比较基线由 Host 冻结，不能用价格工具创造新的 VPA evidence ID 或成交量分类。充分证据下的 support/challenge 是专业解释，不是程序测量。输出 VPA Draft，经 Runtime result 封套提交；上游身份矛盾为 review_required。

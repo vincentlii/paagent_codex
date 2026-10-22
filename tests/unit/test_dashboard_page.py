@@ -52,6 +52,7 @@ const context=vm.createContext({console,Date,Number,Math,
 vm.runInContext(input.script,context,{timeout:1000});
 context.data={recent_runs:[
   {symbol:'BTCUSDT',run_status:'failed',error_type:'provider_error',outcome:'trade',
+   failure_label:'CLI 异常，原因未确定',failure_stage:'stage1',
    paper_status:'rejected',paper_reason:'<script>full reason</script>',
    analysis_backend:'codex_agent',requested_model:'requested',effective_model:'effective',
    effective_reasoning_effort:'xhigh'},
@@ -61,7 +62,7 @@ vm.runInContext('latest=data;renderRuns(data.recent_runs)',context);
 assert.equal(nodes.runs.children.length,2);
 const row=nodes.runs.children[0];
 assert.equal(row.children.length,13);
-assert.equal(row.children[0].textContent,'failed');
+assert.equal(row.children[0].textContent,'failedstage1 · CLI 异常，原因未确定');
 assert.ok(row.children[0].className.includes('run-status'));
 assert.equal(row.children[0].title,'provider_error');
 assert.ok(row.children[3]._text.includes('trade · Paper: rejected'));

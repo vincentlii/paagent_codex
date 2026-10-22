@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+PREDECISION_VPA_SCOPE = "predecision_vpa_v2"
+
 Relation = Literal["supports", "neutral", "challenges", "insufficient_data"]
 DecisionEffect = Literal[
     "keep_brooks_baseline",
@@ -256,7 +258,7 @@ class VpaNextConfirmationDraft(BaseModel):
     trigger: str | None
 
 
-class VpaEvidenceReport(BaseModel):
+class VpaEvidenceReportBase(BaseModel):
     """Independent VPA evidence report; it has no order or setup authority."""
 
     model_config = ConfigDict(extra="forbid")
@@ -267,7 +269,6 @@ class VpaEvidenceReport(BaseModel):
     observations: list[VpaObservation]
     hypothesis_assessments: list[VpaHypothesisAssessment]
     background_relation: Relation
-    entry_timing_relation: Relation
     next_confirmation: VpaNextConfirmation
 
     @property
@@ -308,6 +309,39 @@ class VpaEvidenceReport(BaseModel):
         return ids
 
 
+class VpaEvidenceReport(VpaEvidenceReportBase):
+    """Legacy post-candidate evidence; retained for old jobs and research."""
+
+    entry_timing_relation: Relation
+
+
+class PredecisionVpaObservationDraft(VpaObservationDraft):
+    finding_kind: Literal[
+        "background", "effort_result", "sequence_comparison", "acceptance_rejection"
+    ]
+
+
+class PredecisionVpaObservation(VpaObservation):
+    finding_kind: Literal[
+        "background", "effort_result", "sequence_comparison", "acceptance_rejection"
+    ]
+
+
+class PredecisionVpaEvidenceReport(VpaEvidenceReportBase):
+    report_scope: Literal["predecision_vpa_v2"]
+    entry_timing_applicability: Literal["not_applicable"]
+    observations: list[PredecisionVpaObservation]
+
+
+def parse_vpa_report(raw: dict[str, Any]) -> VpaEvidenceReportBase:
+    """Select only by explicit frozen scope; absent scope retains legacy meaning."""
+    if "report_scope" not in raw:
+        return VpaEvidenceReport.model_validate(raw)
+    if raw.get("report_scope") != PREDECISION_VPA_SCOPE:
+        raise ValueError("unsupported VPA report scope")
+    return PredecisionVpaEvidenceReport.model_validate(raw)
+
+
 class VpaEvidenceReportDraft(BaseModel):
     """Provider-facing report without program-owned observation ranges."""
 
@@ -325,6 +359,22 @@ class VpaEvidenceEnvelopeDraft(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     vpa_report: VpaEvidenceReportDraft
+
+
+class PredecisionVpaEvidenceReportDraft(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    summary: str
+    observations: list[PredecisionVpaObservationDraft]
+    hypothesis_assessments: list[VpaHypothesisAssessmentDraft]
+    background_relation: Relation
+    next_confirmation: VpaNextConfirmationDraft
+
+
+class PredecisionVpaEvidenceEnvelopeDraft(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    vpa_report: PredecisionVpaEvidenceReportDraft
 
 
 class JointArbitration(BaseModel):
@@ -445,5 +495,7 @@ class AnalysisMetric(BaseModel):
 
 
 VPA_EVIDENCE_SCHEMA: dict[str, Any] = VpaEvidenceEnvelopeDraft.model_json_schema()
+
+PREDECISION_VPA_SCHEMA: dict[str, Any] = PredecisionVpaEvidenceEnvelopeDraft.model_json_schema()
 
 JOINT_DECISION_SCHEMA: dict[str, Any] = JointDecisionProposal.model_json_schema()

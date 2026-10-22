@@ -374,6 +374,45 @@ def test_order_review_remains_available_after_latest_analysis_window(ledgers):
     assert result["orders"][0]["review"]["reasoning"] == "original stored reasoning"
 
 
+@pytest.mark.parametrize("symbol,inst_id", [("XAUUSDT", "XAU-USDT-SWAP"), ("BTCUSDT", "BTC-USDT-SWAP"), ("ETHUSDT", "ETH-USDT-SWAP")])
+def test_demo_review_binds_original_task_after_recent_window_and_survives_cleaning(ledgers, symbol, inst_id):
+    from pa_agent.operations.demo_trading import bind_demo_order_reviews, compose_trading_projection
+    from pa_agent.operations.trading import safe_trading_projection
+
+    _task(ledgers, "old-demo", symbol=symbol)
+    _analysis(ledgers, "old-demo", symbol=symbol, resolved_symbol=symbol, review_context_json=json.dumps({
+        "decision_review": {"reasoning": "original demo PA"},
+        "vpa_evidence": {"summary": "original demo VPA"},
+    }))
+    for n in range(40):
+        _task(ledgers, f"recent-{n}")
+        _analysis(ledgers, f"recent-{n}")
+    demo = {"schema_version": 1, "environment": "okx_demo_v1", "state": "ready",
+            "exchange_observed_at_ms": NOW, "orders": [{
+                "task_id": "old-demo", "run_id": "old-demo", "symbol": inst_id,
+                "source_provider": "binance_usdm", "source_venue": "BINANCE",
+                "source_symbol": symbol, "source_instrument_type": "perpetual",
+                "timeframe": "1h", "pipeline": "pa_vpa_joint", "market_digest": "old-demo",
+            }]}
+    bound = bind_demo_order_reviews(demo, ledgers[0], ledgers[1])
+    composed = compose_trading_projection(_report(ledgers), bound, selected_backend="okx_demo", now_ms=NOW)
+    order = safe_trading_projection(composed)["demo"]["orders"][0]
+    assert order["review_status"] == "available"
+    assert order["review"]["reasoning"] == "original demo PA"
+    assert order["review"]["vpa_summary"] == "original demo VPA"
+    assert len(composed["analysis"]["analyses"]) == 30
+
+    for field in ("task_id", "market_digest", "source_venue", "source_symbol"):
+        altered = dict(demo, orders=[dict(demo["orders"][0], **{field: "wrong"})])
+        bad = bind_demo_order_reviews(altered, ledgers[0], ledgers[1])["orders"][0]
+        assert bad["review_status"] != "available"
+        assert not bad.get("review")
+
+    missing = bind_demo_order_reviews(demo, ledgers[0].with_name("missing.sqlite3"), ledgers[1])
+    assert missing["orders"][0]["review_status"] == "unavailable"
+    assert not missing["orders"][0]["review"]
+
+
 def test_ambiguous_with_known_entry_counts_fill_but_never_profit(ledgers):
     _order(ledgers, "known-entry", status="ambiguous", pnl=None)
     _order(

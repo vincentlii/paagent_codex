@@ -121,6 +121,8 @@ def safe_demo_projection(value):
             "pnl",
             "sync_required",
             "valuation_at_ms",
+            "source_provider", "source_venue", "source_symbol", "source_instrument_type",
+            "timeframe", "pipeline", "market_digest", "cycle", "direction", "gate", "review_status",
         ),
         "decisions": ("task_id", "run_id", "symbol", "disposition", "reason", "created_at_ms"),
         "positions": ("instId", "pos", "upl", "imr", "margin", "mgnMode", "lever"),
@@ -144,6 +146,10 @@ def safe_demo_projection(value):
             if isinstance(raw, list)
             else []
         )
+    from pa_agent.operations.trading import REVIEW_FIELDS
+    raw_orders = value.get("orders")
+    for raw, clean in zip(raw_orders if isinstance(raw_orders, list) else [], result["orders"]):
+        clean["review"] = _select(_mapping(raw).get("review"), REVIEW_FIELDS)
     raw_rules = value.get("price_rules")
     result["price_rules"] = (
         [_select(row, ("inst_id", "tick")) for row in raw_rules[:3]]
@@ -161,6 +167,65 @@ def safe_demo_projection(value):
             if isinstance(curve, list)
             else []
         )
+    return result
+
+
+def bind_demo_order_reviews(demo, analysis_db, monitoring_db):
+    """Host-only historical join, bound to the exact source task, not a recent list."""
+    from pa_agent.execution.demo_contracts import MAPPINGS
+    from pa_agent.operations.trading import _reader, _review, _uri
+    import sqlite3
+
+    result = safe_demo_projection(demo)
+    orders = result.get("orders", [])
+    for order in orders:
+        order.update(review={}, review_status="missing")
+    ids = list({o.get("task_id") for o in orders if o.get("task_id")})
+    if not ids:
+        return result
+    try:
+        with _reader(analysis_db) as db:
+            db.execute("ATTACH DATABASE ? AS monitoring", (_uri(monitoring_db),))
+            rows = db.execute(
+                "SELECT a.run_id,a.symbol,a.timeframe,a.analysis_pipeline,a.source_provider,a.venue,"
+                "a.resolved_symbol,a.instrument_type,a.stage1_cycle_position,a.stage1_direction,"
+                "a.stage1_gate_result,CASE WHEN length(a.review_context_json)<=1000000 "
+                "THEN a.review_context_json END AS review_json,m.task_id,m.snapshot_hash,"
+                "m.source AS task_source,m.venue AS task_venue,m.symbol AS task_symbol,"
+                "m.timeframe AS task_timeframe FROM analysis_runs a JOIN monitoring.monitoring_jobs m "
+                "ON a.run_id=m.run_id WHERE m.task_id IN (" + ",".join("?" for _ in ids) + ")", ids,
+            ).fetchall()
+        by_task = {r["task_id"]: r for r in rows}
+        for order in orders:
+            row = by_task.get(order.get("task_id"))
+            if row is None:
+                continue
+            checks = {
+                "run_id": row["run_id"], "source_provider": row["source_provider"],
+                "source_venue": row["venue"], "source_symbol": row["symbol"],
+                "source_instrument_type": row["instrument_type"], "timeframe": row["timeframe"],
+                "pipeline": row["analysis_pipeline"], "market_digest": row["snapshot_hash"],
+            }
+            valid = (
+                all(order.get(k) == v and v for k, v in checks.items())
+                and row["source_provider"] == row["task_source"] == "binance_usdm"
+                and row["venue"] == row["task_venue"] == "BINANCE"
+                and row["symbol"] == row["resolved_symbol"] == row["task_symbol"]
+                and row["timeframe"] == row["task_timeframe"] == "1h"
+                and row["analysis_pipeline"] == "pa_vpa_joint"
+                and row["instrument_type"] in {"perpetual", "tradifi_perpetual"}
+                and MAPPINGS.get(row["symbol"]) == order.get("symbol")
+            )
+            if not valid:
+                order["review_status"] = "identity_mismatch"
+                continue
+            review = _review(row["review_json"])
+            order.update(review=review, review_status="available" if any(review.values()) else "missing",
+                         cycle=row["stage1_cycle_position"], direction=row["stage1_direction"],
+                         gate=row["stage1_gate_result"])
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        for order in orders:
+            order.update(review={}, review_status="unavailable")
     return result
 
 
@@ -195,6 +260,11 @@ def build_demo_projection(store, snapshot, *, now_ms):
                     task_id=i.task_id,
                     run_id=i.run_id,
                     symbol=i.inst_id,
+                    source_provider=i.source_identity.get("provider"),
+                    source_venue=i.source_identity.get("venue"),
+                    source_symbol=i.source_identity.get("symbol"),
+                    source_instrument_type=i.source_identity.get("instrument_type"),
+                    timeframe=i.timeframe, pipeline=i.pipeline, market_digest=i.market_digest,
                     side=i.side,
                     entry=str(i.entry),
                     stop=str(i.stop),

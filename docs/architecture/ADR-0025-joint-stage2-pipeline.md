@@ -52,3 +52,25 @@ PA/VPA 交易员视角：VPA 提供反证而非机械投票，联合角色保留
 
 契约验收覆盖旧模式映射、角色顺序、Schema 复用隔离、停止对象拒绝订单及有限数值。
 启用还须验证引用、Gate、Router、修复、记录和执行消费者，不以契约测试替代全链验收。
+
+## 2026-10-22：前置 VPA 的阶段作用域
+
+用户批准[运行可靠性与VPA语义修复](../quality/runtime_reliability_vpa_remediation_20261021.md)后实施。
+新创建的显式`pa_vpa_joint` VPA任务冻结`report_scope=predecision_vpa_v2`，使用独立Provider Schema。
+此时尚无订单，模型报告不含`entry_timing_relation`，observation不含订单`entry_timing`类型；仍提供
+Background、Location、Effort/Result、序列、假设支持/反证及独立`next_confirmation`。
+Host在唯一现有Validator物化`report_scope`与`entry_timing_applicability=not_applicable`。
+适用性不参与数据完整性或支持度运算，不生成neutral/supports，不作为Stage 2等待审批。
+真正数据不足仍用已有relation/epistemic状态表达，工具/必读/身份失败继续停止分析。
+
+Direct、Codex、repair、Frozen receipt和历史reader共用同一契约分派；缺scope读旧报告，未知scope拒绝。
+旧Frozen资源、后置Shadow和研究Arbiter保持原timing字段与无candidate归一语义，不在线迁移。
+新VPA首稿240秒，repair/旧研究Arbiter仍180秒，整链600秒且计入半开准入与任务发布耗时。
+不会增设Router、物化器、模型阶段、位置距离Gate、强制交易或自动放宽事实校验。
+
+PA §9原锚点/案例保留，明确当前价格、拟议entry位置、已收盘信号、未来触价和入场后跟随的不同作用域。
+限价计划仍须有当前已成立的结构与失效依据，不能依赖未来造结构；合格信号或计划均无时允许等待。
+
+工程实现与离线回归不等于专业质量改善；模型匹配回放/盲评、生产启用及自然运行验收分别记录。
+不复用旧`pa_vpa_aabb_v2`研究身份，不改历史分析、挂单、价格、主观先验或执行数学。
+新报告/同步水位存在后，回退必须使用兼容reader；不让只读旧协议的构建接管新任务。

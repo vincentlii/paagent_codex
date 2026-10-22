@@ -73,6 +73,11 @@ class CodexJobPublisher:
             ).encode("utf-8")).hexdigest()
             if schema_digest != context["role_protocol"]["provider_contract_digest"]:
                 raise ValueError("Stage 2 Provider Contract does not match frozen output schema")
+        if request.role == "vpa_evidence" and context.get("report_scope") is not None:
+            from pa_agent.ai.role_contracts import PREDECISION_VPA_SCHEMA
+
+            if request.schema != PREDECISION_VPA_SCHEMA:
+                raise ValueError("VPA Provider Contract does not match frozen report scope")
         raw_continuation = context.pop("pa_session_continuation", None)
         if raw_continuation is not None and (
             request.role != "stage2" or int(attempt) != 1
@@ -130,9 +135,9 @@ class CodexJobPublisher:
             raise ValueError("agent_context frame does not match role snapshot")
         if joint and int(attempt) == 1:
             from pa_agent.ai.pa_handoff import compile_pa_handoff
-            from pa_agent.ai.role_contracts import VpaEvidenceReport
+            from pa_agent.ai.role_contracts import parse_vpa_report
 
-            report = VpaEvidenceReport.model_validate(context["vpa_evidence"])
+            report = parse_vpa_report(context["vpa_evidence"])
             if not context.get("vpa_catalog_id") or report.catalog_id != context["vpa_catalog_id"]:
                 raise ValueError("Joint Stage 2 VPA report catalog identity mismatch")
 
@@ -486,7 +491,15 @@ class CodexJobPublisher:
         }
         from pa_agent.agent_runtime.execution_contract import JOINT_PROTOCOL
 
+        from pa_agent.ai.role_contracts import PREDECISION_VPA_SCOPE
+
         protocol = context.get("role_protocol")
+        scope = context.get("report_scope")
+        if role == "vpa_evidence" and scope is not None:
+            if scope != PREDECISION_VPA_SCOPE:
+                raise ValueError("unsupported VPA report scope")
+            expected_protocols["vpa_evidence"] = "predecision_vpa_evidence_agent_protocol_v2"
+
         if role == "stage2" and isinstance(protocol, dict) and protocol.get("contract_version") == JOINT_PROTOCOL:
             expected_protocols["stage2"] = JOINT_PROTOCOL
         if not isinstance(protocol, dict) or protocol.get("contract_version") != expected_protocols.get(role):
@@ -585,7 +598,7 @@ class CodexJobPublisher:
                     196_608,
                     mandatory_knowledge_bytes + role_evidence_bytes + 131_072,
                 ),
-                max_wall_seconds=180,
+                max_wall_seconds=240 if role == "vpa_evidence" else 180,
             )
         frame_calls = max(1, (int(bar_count) + PRICE_FRAME_CHUNK_SIZE - 1) // PRICE_FRAME_CHUNK_SIZE)
         return AgentJobBudget(

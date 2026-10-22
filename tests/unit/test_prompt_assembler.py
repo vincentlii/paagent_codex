@@ -565,7 +565,7 @@ def test_vpa_module_profile_uses_only_explicit_pa_context() -> None:
     assert absent.module_names == ("core", "trend_pullback", "breakout_retest")
 
 
-def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:
+def test_runtime_vpa_core_defers_scope_to_frozen_role_contract() -> None:
     core = (
         Path(__file__).resolve().parents[2]
         / "prompt_engineering"
@@ -575,7 +575,9 @@ def test_runtime_vpa_core_uses_current_dual_relation_contract() -> None:
 
     assert "`data_status`" in core
     assert "`background_relation`" in core
-    assert "`entry_timing_relation`" in core
+    assert "`entry_timing_relation`" not in core
+    assert "Applicability and data availability are independent" in core
+    assert "legacy post-candidate report" in core
     assert "`finding_kind`" in core
     assert "`epistemic_status`" in core
     assert "`sequence_claims`" in core

@@ -163,7 +163,9 @@ def _has_vpa_information_increment(record: Any) -> bool:
     if context.get("data_status") == "unavailable":
         return (
             context.get("background_relation") == "insufficient_data"
-            and context.get("entry_timing_relation") == "insufficient_data"
+            and (context.get("entry_timing_relation") == "insufficient_data"
+                 or (context.get("report_scope") == "predecision_vpa_v2"
+                     and context.get("entry_timing_applicability") == "not_applicable"))
             and arbitration.get("decision_effect") in {None, "keep_brooks_baseline"}
         )
     substantive = {

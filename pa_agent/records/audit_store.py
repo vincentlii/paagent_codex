@@ -1085,6 +1085,9 @@ class AnalysisAuditStore:
             "decision_effect": arbitration.get("decision_effect"),
             "reason": arbitration.get("reason"),
         }
+        if canonical_vpa.get("report_scope") == "predecision_vpa_v2":
+            from pa_agent.records.projection import vpa_impact
+            impact = vpa_impact(record) or {}
         vpa_context = canonical_vpa
         comparison = pa_joint_comparison(record) or {}
         comparison = comparison if isinstance(comparison, dict) else {}
@@ -1141,6 +1144,8 @@ class AnalysisAuditStore:
             ),
             "decision_review": decision_review,
         }
+        from pa_agent.ai.provider_failures import runtime_failure_summary
+        review_context["runtime_failure"] = runtime_failure_summary(exception)
         from pa_agent.ai.analysis_metrics import summarize_call_metrics
         from pa_agent.experiments.pa_vpa_aabb import classify_first_pass
 
@@ -1207,7 +1212,7 @@ class AnalysisAuditStore:
             ),
             "vpa_data_status": catalog.get("data_status"),
             "vpa_background_relation": impact.get("background_relation"),
-            "vpa_timing_relation": impact.get("entry_timing_relation"),
+            "vpa_timing_relation": impact.get("entry_timing_applicability", impact.get("entry_timing_relation")),
             "vpa_effect": impact.get("decision_effect"),
             "baseline_order_type": (
                 baseline_decision.get("order_type")

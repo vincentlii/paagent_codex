@@ -32,6 +32,10 @@ from pa_agent.ai.json_validator import (
 from pa_agent.ai.role_contracts import (
     JOINT_DECISION_SCHEMA,
     VPA_EVIDENCE_SCHEMA,
+    PREDECISION_VPA_SCOPE,
+    PREDECISION_VPA_SCHEMA,
+    PredecisionVpaEvidenceEnvelopeDraft,
+    parse_vpa_report,
     JointArbitration,
     JointDecisionProposal,
     PaHypothesisSet,
@@ -598,8 +602,14 @@ def validate_vpa_evidence(
     *,
     catalog: dict[str, Any],
     pa_hypotheses: PaHypothesisSet,
+    report_scope: str | None = None,
 ) -> RoleValidationResult:
     """Validate an independent VPA report against immutable evidence."""
+    if report_scope not in (None, PREDECISION_VPA_SCOPE):
+        return RoleValidationResult(None, ("unsupported VPA report scope",))
+    predecision = report_scope == PREDECISION_VPA_SCOPE
+    schema = PREDECISION_VPA_SCHEMA if predecision else VPA_EVIDENCE_SCHEMA
+    envelope_type = PredecisionVpaEvidenceEnvelopeDraft if predecision else VpaEvidenceEnvelopeDraft
     outer, parse_errors = _parse_json_object(raw_text)
     if outer is None:
         return RoleValidationResult(None, tuple(parse_errors))
@@ -609,8 +619,7 @@ def validate_vpa_evidence(
         "summary",
         "observations",
         "background_relation",
-        "entry_timing_relation",
-    }.issubset(outer):
+    }.issubset(outer) and (predecision or "entry_timing_relation" in outer):
         outer = {"vpa_report": outer}
         normalizations.append(
             {
@@ -675,6 +684,8 @@ def validate_vpa_evidence(
             "hypothesis_assessments must cover exactly: "
             + ", ".join(sorted(pa_hypotheses.hypothesis_ids))
         )
+    if predecision and isinstance(report_obj, dict) and "entry_timing_relation" in report_obj:
+        pre_schema_errors.append("vpa_report.entry_timing_relation is not part of predecision scope")
     authority_paths = _json_key_paths(outer, _VPA_RESERVED_AUTHORITY_FIELDS)
     if authority_paths:
         violations = tuple(f"vpa_forbidden_field:{path}" for path in authority_paths)
@@ -683,7 +694,7 @@ def validate_vpa_evidence(
             tuple(f"VPA may not output authority field {path}" for path in authority_paths),
             authority_violations=violations,
         )
-    schema_errors = _schema_errors(VPA_EVIDENCE_SCHEMA, outer)
+    schema_errors = _schema_errors(schema, outer)
     errors = [*pre_schema_errors, *schema_errors]
     if not schema_errors:
         # Report independent citation failures together before bounded repair.
@@ -717,7 +728,7 @@ def validate_vpa_evidence(
         )
 
     try:
-        draft = VpaEvidenceEnvelopeDraft.model_validate(outer)
+        draft = envelope_type.model_validate(outer)
     except PydanticValidationError as exc:
         return RoleValidationResult(
             None,
@@ -760,9 +771,13 @@ def validate_vpa_evidence(
         report_obj,
         catalog,
     )
+    if predecision:
+        report_obj["report_scope"] = PREDECISION_VPA_SCOPE
+        report_obj["entry_timing_applicability"] = "not_applicable"
     applicability_warnings: list[str] = []
     if (
-        not pa_hypotheses.candidate_ids
+        not predecision
+        and not pa_hypotheses.candidate_ids
         and report_obj.get("entry_timing_relation") != "insufficient_data"
     ):
         before = report_obj.get("entry_timing_relation")
@@ -780,7 +795,7 @@ def validate_vpa_evidence(
             "there is no PA setup candidate"
         )
     if report_obj.get("data_status") == "unavailable":
-        for field in ("background_relation", "entry_timing_relation"):
+        for field in (("background_relation",) if predecision else ("background_relation", "entry_timing_relation")):
             before = report_obj.get(field)
             if before != "insufficient_data":
                 report_obj[field] = "insufficient_data"
@@ -822,7 +837,7 @@ def validate_vpa_evidence(
     outer = {"vpa_report": report_obj}
 
     try:
-        report = VpaEvidenceReport.model_validate(report_obj)
+        report = parse_vpa_report(report_obj)
     except PydanticValidationError as exc:
         return RoleValidationResult(
             None,
@@ -883,7 +898,7 @@ def validate_vpa_evidence(
     }
     if (
         report.background_relation in {"supports", "challenges"}
-        or report.entry_timing_relation in {"supports", "challenges"}
+        or getattr(report, "entry_timing_relation", None) in {"supports", "challenges"}
     ) and not (report.declared_evidence_ids & relative_ids):
         errors.append(
             "supports/challenges requires declared program relative-volume evidence"
@@ -917,7 +932,7 @@ def validate_vpa_evidence(
             errors.append(
                 "unavailable VPA data requires background_relation=insufficient_data"
             )
-        if report.entry_timing_relation != "insufficient_data":
+        if not predecision and report.entry_timing_relation != "insufficient_data":
             errors.append(
                 "unavailable VPA data requires entry_timing_relation=insufficient_data"
             )
@@ -950,7 +965,7 @@ def validate_vpa_evidence(
         warnings.append("usable VPA data produced no contextual observations")
     if (
         report.background_relation == "neutral"
-        and report.entry_timing_relation == "neutral"
+        and getattr(report, "entry_timing_relation", None) == "neutral"
     ):
         warnings.append("VPA report is neutral; no decision change is expected")
 

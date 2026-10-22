@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from pa_agent.agent_runtime.codex_worker import CodexCliConfig, CodexCliWorker, CodexWorkerOutputError
+from pa_agent.agent_runtime.codex_worker import CodexCliConfig, CodexCliWorker, CodexWorkerOutputError, CodexWorkerExecutionError
 from pa_agent.agent_runtime.runtime_identity import codex_runtime_identity
 from pa_agent.operations.analysis_profile import codex_model_effort_supported
 from tests.unit.test_frozen_agent_job import _job
@@ -62,7 +62,7 @@ def test_schema_failure_is_not_masked_by_plugin_auth_warning():
 @pytest.mark.parametrize("event, expected", [
     ({"type": "item.completed", "item": {"type": "error", "message": "rate limit exceeded"}}, "CodexWorkerRateLimited"),
     ({"type": "turn.failed", "error": {"code": "context_length_exceeded", "message": "private request details"}}, "CodexWorkerOutputError"),
-    ({"type": "turn.failed", "error": {"code": "unknown_code", "message": "opaque failure"}}, "CodexWorkerOutputError"),
+    ({"type": "turn.failed", "error": {"code": "unknown_code", "message": "opaque failure"}}, "CodexWorkerExecutionError"),
 ])
 def test_structured_cli_failure_is_classified_without_startup_warning_or_raw_text(event, expected):
     from pa_agent.agent_runtime.codex_worker import _classify_failed_process
@@ -80,7 +80,7 @@ def test_agent_message_cannot_supply_cli_availability_classification():
     stdout = json.dumps({"type": "item.completed", "item": {
         "type": "agent_message", "code": "rate_limit_exceeded", "message": "rate limit",
     }})
-    assert type(_classify_failed_process(1, stdout, "")) is CodexWorkerOutputError
+    assert type(_classify_failed_process(1, stdout, "")) is CodexWorkerExecutionError
 
 
 def test_deepseek_schema_is_serializable_through_real_gateway():

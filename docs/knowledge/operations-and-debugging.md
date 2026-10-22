@@ -18,6 +18,15 @@ issue_status: monitoring
 
 ## OKX Demo运行与维护
 
+2026-10-21故障排查先读[运行可靠性与VPA语义研究](../quality/runtime_reliability_vpa_remediation_20261021.md)：
+旧订单复盘不能只查最近30分析；last fill ID不等于最近完整同步时间，超出近期接口保留窗口后须用历史区间接回，
+不能删游标解除缺口。三次未知CLI退出不能倒填为Schema错误；前置timing不适用不代表量价证据不足。
+2026-10-22已完成本地修复，具体实现与验证见该文末节；VPS未发布，不能据此声称Demo已ready。
+新的覆盖水位和原成交游标不同；固定区间恢复未完成、历史不可恢复或同ID事实冲突仍阻断新增入场，
+活动计划继续精确订单查询和定量保护。元数据损坏须保留原件排查，不能清库/重置水位报成功。
+安全诊断只有真实程序预算事件才能标预算停止，模型主动停止不能被推断成超时；未知CLI退出不自动重试或fallback。
+半开准入使用同一整链deadline，任务发布耗时也扣除；等待不计模型调用，取消/过期不物化为wait交易建议。
+
 可选固定RR退出的设置、冻结tick、旧任务兼容与回退边界先读
 [ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)和
 [本地验收](../quality/fixed_risk_reward_acceptance_20261021.md)。缺tick不猜测，目标tick

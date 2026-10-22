@@ -175,7 +175,10 @@ def _review(raw: Any) -> dict[str, Any]:
         {
             "vpa_summary": _text(vpa.get("summary")),
             "vpa_background": _text(vpa.get("background_relation")),
-            "vpa_timing": _text(vpa.get("entry_timing_relation")),
+            "vpa_timing": ("not_applicable"
+                if vpa.get("report_scope") == "predecision_vpa_v2"
+                and vpa.get("entry_timing_applicability") == "not_applicable"
+                else _text(vpa.get("entry_timing_relation"))),
             "vpa_data_status": _text(vpa.get("data_status")),
         }
     )
