@@ -1,6 +1,6 @@
 # 增量分析与等待条件连续性
 
-- 状态：本地实施与离线验收完成；未commit、未发布、未调用真实模型。
+- 状态：代码d9c9fe6已提交、推送私有main并发布VPS；真实模型质量未验。
 - 基线：`f59b08f635ef770a9c9872152faaa0d4937527b6`。
 - 范围：Headless Frozen任务、Direct/Codex Stage 2历史交接、旧分析兜底及相关知识原句。
 
@@ -96,3 +96,33 @@ JUnit、安装核验和开销JSON保存在上述本地备份目录。测试与�
 按None计算hash，却把payload保存为{}，codec恢复复算不一致。本次Headless开/关HTF均传明确
 available/unavailable/disabled字典，不受该边界影响；新身份测试使用实际字典形式，不把它当作
 本次篡改红测。未在本轮夹带修改旧hash或宽松恢复，独立修复时须测试旧身份兼容。
+
+## 固定提交 VPS 发布回执
+
+用户明确授权commit并发布；运行代码`d9c9fe65817272c09d54766f3d6746af93bd25fe`，
+既有ICT四项变更保留未提交。发布前新鲜44项聚焦回归、关键静态及diff检查通过。
+分析暂停排空至paused63，queued/running/unfinished均0、inbox为空、无恢复阻塞。
+
+Host备份`/var/backups/pa-agent/pa-agent-20261022T141644Z`（17961成员），
+Demo备份`/var/backups/pa-agent-demo/demo-1792678630476`（242成员）；
+manifest逐项及四库逻辑等价验证通过。安装269成员与固定源码/wheel逐字节一致，
+48项依赖、4库、1465个受保护文件在安装前后保持；Runtime权限审计通过。
+Linux wheel SHA256：`18b5fe936fea73d865641683df3dd1cd8a0a7cf9aaefb663f9ff00ad85b13fdc`。
+
+恢复running64，四服务active/running、Result=success、NRestarts=0；三品种connected，
+Codex认证healthy、Runtime digest保持；Demo ready且七项coverage全真，无持仓。
+原三品种/500USDT/3h/fixed_rr1.5、gpt-6-luna/xhigh/Fast/并发3及Profile保持。
+五类HTTP接口200、未认证status401，6笔复盘可读；18 fills/18 bills原文保持。
+未通过重跑或补发旧计划验收。新完整模型链、等待判断改善及收益仍未验证。
+
+### 本次发现的停服行为
+
+发布前有1笔BTC零成交live挂单；发布后它为canceled/closed，fills未增加。
+`demo_worker.main`正常接收SIGTERM退出时，将entry_enabled设false后执行最后一次tick；
+`demo_independent.manage`在entry_enabled=false时调用_cancel_entry，故协调停服会撤未成交余量。
+本次不是3h到期或新分析替换；发布脚本没有直接调用交易所撤单，也没有重新提交旧计划。
+此前“保留现有挂单”的发布说明不成立，已向用户明确更正。需独立区分维护重启与显式停用入场，
+并验证部分成交保护和恢复边界；未在本轮发布中追加未验收的执行语义改动。
+
+发布资料及脱敏receipt位于`docs/changelog/releases/20261022-wait-continuity/`及
+`/var/backups/pa-agent/releases/wait-continuity-20261022/`。临时构建和上传包已清理，完整备份保留。

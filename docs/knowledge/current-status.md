@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 最后核验: 2026-10-22（协调发布；Demo覆盖恢复与历史复盘现场通过）
-核验提交: VPS运行代码1c8b5661bf087147a2cd4c82b92cf2fb6a80044f
+核验提交: VPS运行代码d9c9fe65817272c09d54766f3d6746af93bd25fe
 权威来源:
   - CONTEXT.md
   - docs/quality/runtime_reliability_vpa_remediation_20261021.md
@@ -19,16 +19,18 @@ verification_scope:
 本页区分线上已发布事实与尚未验证事项。以前发布周期的状态已移入
 [历史归档](archive/README.md)，不能用旧“未实施/未部署”描述覆盖新验收证据。
 
-## 本地开发：增量等待复核（尚未发布）
+## 已发布：增量等待复核
 
 已补全上一轮Stage 2等待理由/watch_points到下一轮决策的冻结交接，使用`decision_history_v2`。
 原K号保留原时间并核对当前OHLC，历史意见与本轮证据分开；模型复核条件，不由程序代判。
 Stage 1/独立VPA仍不接收旧Joint决策；无新模型阶段、Schema、观察数据库或交易Gate。
 旧分析CSV兜底和撤旧单指导已替换，保留仍被日志和旧任务使用的兼容代码。
 本地2090项完整非live回归及安装资源验证通过；验收及备份见[等待条件连续性验收](../quality/wait_continuity_20261022.md)。
-未调用真实模型、未commit/发布；是否减少不合理等待或提高收益尚无验证。
+代码d9c9fe6已推送私有main并发布；恢复running64，四服务正常、Demo ready、七项覆盖全真。
+原金额/TTL/盈亏比/模型设置保持。停服退出钩子撤销了原BTC零成交挂单，未补发；详见验收回执。
+真实模型是否减少不合理等待或提高收益尚无验证。
 
-## 线上：最后已核验发布
+## 前次发布基线（1c8b566）
 
 VPS运行代码 `1c8b566` 已推送私有main并协调发布，恢复running62，四服务active/running且零重启。
 269安装成员与固定源码一致，依赖保持48项，四库安装前后逻辑一致、Host及Demo备份逐项验证。

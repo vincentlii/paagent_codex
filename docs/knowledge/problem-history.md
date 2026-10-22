@@ -338,7 +338,7 @@ issue_status: monitoring
 
 ### PH-25 跨轮保留市场诊断却丢失无单等待条件
 
-- `issue_status`：本地实现；发布与真实模型行为待验。
+- `issue_status`：已发布d9c9fe6；真实模型行为待验。
 - **症状与根因：**Headless按新闭盘自动分析，但price-only过滤移除旧Joint Stage 2；连续性代码仅识别可执行订单，无单reasoning/watch_points消失，模型可能每轮重新提出“等下一根”。
 - **错误修法：**跨快照续接旧会话、把旧VPA意见注入Stage 1、用自然语言正则自动确认条件、强迫trade，或从可变CSV补读历史。
 - **正确原则：**用已有成功记录作为有界历史意见，冻结同源身份、可用时间和原棒；仅Stage 2用当前证据重新判断，旧引用不得作为当前事实。旧方案触价仍不等于成交。
@@ -350,3 +350,10 @@ issue_status: monitoring
 - **根因与范围：**公共工厂接受htf_context=None，以None计算hash，却将payload存为{}；codec按{}复算失败。生产Headless的HTF开/关均生成明确状态字典，未受影响。
 - **错误修法：**将该不一致当作新历史身份篡改红测、全局改hash或直接跳过恢复校验。
 - **后续原则：**独立修复输入表示/序列化一致性并明确旧身份兼容，不改已冻结身份；本次测试使用真实状态字典以隔离根因。证据见[验收边界](../quality/wait_continuity_20261022.md)。
+
+### PH-27 维护重启与禁用入场共用撤单路径
+
+- `issue_status`：已定位，未改执行语义。
+- **事实：**Demo Worker SIGTERM退出先设entry_enabled=false再tick；独立计划管理因此撤未成交余量。维护重启会影响原挂单，不是TTL到期或新分析替代。
+- **原则：**发布前明确此行为；不擅自补发旧计划。后续区分维护交接与显式禁入场须覆盖部分成交、保护预算、恢复和实际交易所生命周期，不能直接删安全tick。
+- **证据：**[本次发布回执](../quality/wait_continuity_20261022.md)，原BTC live→canceled、fills保持18。
