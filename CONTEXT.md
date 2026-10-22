@@ -2,10 +2,12 @@
 
 排查前置VPA时机不适用、连续wait、Demo历史复盘空白、成交覆盖缺口或Codex运行失败时，必须先读
 [运行可靠性与VPA语义修复研究](docs/quality/runtime_reliability_vpa_remediation_20261021.md)。
-该文区分源码/只读VPS证据、三角色建议与未验证假设；2026-10-22本地实现见末节，尚未发布。
+该文区分源码/只读VPS证据、三角色建议与未验证假设；2026-10-22修复代码1c8b566已发布VPS，现场回执见末节。
 新显式联合任务采用`predecision_vpa_v2`，模型只解释可观察的背景/位置量价证据，Host标记订单时机
 不适用，不再生成`entry_timing_relation=insufficient_data`占位。真实不足、反证与合法等待保留；
 旧Frozen/off/Shadow/研究协议不改写。OKX覆盖水位、历史复盘、Codex诊断/重试/准入修复同见该文。
+四库与历史成交保持，Demo覆盖已恢复全真/ready，5笔旧复盘可读，原Profile与执行设置保持并恢复running62；
+真实模型匹配质量及连续自然运行仍待验证，不能把发布成功当作交易质量晋级。
 
 2026-10-21 用户授权备份后成套退役旧 Qt 桌面端；本地清理范围、恢复方法和验收见
 `docs/quality/desktop_retirement_20261021.md`。保留 Headless、网页 Dashboard、Codex、

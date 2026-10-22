@@ -1,7 +1,7 @@
 # 运行可靠性与 VPA 语义修复研究
 
-研究日期：2026-10-21；本地实施及复查：2026-10-22。当前为**已本地实施，未提交/发布，模型质量未验收**。
-第1–17节保留原研究时点的事实与设计；第18–19节记录实施与复查，不能把旧“尚未实现”当作当前状态。
+研究日期：2026-10-21；本地实施、复查与发布：2026-10-22。当前为**1c8b566已发布VPS，工程现场验收通过，模型质量未验收**。
+第1–17节保留原研究事实与设计；第18–19节记录本地实施与复查，第20–21节记录最新授权与发布。
 
 本轮只读审查源码、历史测试与主任务回传的脱敏运行证据，执行不调用模型的本地契约重放，
 并核对 Brooks / Wyckoff 第一手资料。以下建议不是已经生效的交易规则，也不授权重跑生产分析、
@@ -770,3 +770,53 @@ ICT 原有导航和评估内容保留，未纳入本轮实现。完整静态 Sch
 历史复盘或发布协调的确定技术阻断。发布须暂停排空，备份并验证四库和Demo独占状态，
 协调Host/Codex/Demo/Dashboard安装，核对Runtime与Prompt资源、权限及原配置后恢复。
 正式版本、备份、现场恢复与验收结果在发布完成后补充，不能把此授权段落当作已经上线。
+
+## 21. 固定提交与 VPS 现场验收
+
+运行代码 `1c8b5661bf087147a2cd4c82b92cf2fb6a80044f` 已推送私有仓库 `vincentlii/paagent_codex` 的main，
+VPS从`bf453c1`仅快进。既有ICT四项改动未纳入；AGENTS只提交本次VPA作用域修正。
+提交前新文件末尾空行已清理，固定提交的diff检查、关键静态与新鲜106项回归通过。
+
+发布先保持原Profile/配置并暂停到61：Host queued/running/unfinished均为0、恢复阻塞为空、
+Codex inbox为空；现场无活动计划、净仓或外部订单。随后协调停止四服务，不跨版本续接旧会话。
+发布辅助脚本曾暴露monitoring路径、停服后Host投影及局部变量检查遗漏，均发生在覆盖线上程序前；
+纠正后按单独备份/安装阶段执行并核验，没有为此修改产品逻辑、数据或放宽安全门禁。
+
+### 备份与安装
+
+- Host备份 `/var/backups/pa-agent/pa-agent-20261022T032054Z`，17554成员；
+  Demo备份 `/var/backups/pa-agent-demo/demo-1792639281288`，231成员，持有自己的Worker锁。
+  manifest逐项通过，四个备份库quick_check通过，逻辑摘要与停服原库逐一相同。
+- Linux从固定Git archive干净副本离线构建，无依赖下载/升级；pip正常卸载后重装wheel。
+  269个源码/Prompt/Runtime成员逐项匹配Git、安装与源码，48个distribution名称/版本保持，pip check通过。
+- wheel SHA256：`e4378a823ff32ca36c29a9ded3f3b9731ee2e4a2498515efa86f02de9d4d9c0c`。
+  Runtime asset：`70d7dbf8239f4f18a54f7de0209f946a1d59e91a406271cc8fb98c35edc62d3b`；
+  source/install及Linux权限审计通过，Headless/Demo/Codex入口无Qt导入。
+- 安装前后四库逻辑摘要、1432个受保护配置/认证/原Intent及Receipt文件摘要完全保持；
+  不迁移数据库，不重置水位或游标，不修改账户/cutover，不删除历史分析或成交。
+
+### 现场结果
+
+先以paused61启动并核验，再恢复原running62。四服务均active/running、Result=success、NRestarts=0，
+Codex auth healthy、Runtime新摘要一致；三品种connected，无控制错误或恢复阻塞。
+原`gpt-6-luna/xhigh`、Fast、三品种并发3、aggressive、fixed_rr/1.5、500 USDT/3h、
+Profile指纹与Run Once代次保持，未通过切换配置补发旧计划。
+
+OKX Demo从`blocked/reconciliation_gap`恢复为`ready`，account/algos/bills/contracts/fills/orders/positions
+七项coverage全真。原fills18条、bills18条逐行原文相同；未生成重复成交或费用。恢复时无挂单/持仓/外部单，
+启动前确认无尚待补发的旧有效限价计划，已有过期Intent按原执行协议处理。
+
+认证`/api/trading`的5笔历史BTC订单均为`review_status=available`且有非空原复盘，
+经Host绑定和完整页面白名单后可读。默认交易视图为OKX Demo，Paper v3/v4仍历史冻结且统计隔离。
+`/healthz`、`/api/status`、`/api/trading`、`/trading`、首页均HTTP200，未认证status为401。
+
+UTC2026-10-22 11:27:28恢复回执已保存。发布资料位于
+`/var/backups/pa-agent/releases/runtime-remediation-20261022/`，本地脱敏回执位于对应忽略发布目录。
+本轮不追加真实模型实验或模拟测试下单；完整新模型链、至少三个自然整点及交易质量仍待观察，
+不能以服务/对账恢复代替匹配盲评或收益晋级。
+
+### 回退与清理
+
+新覆盖metadata已产生；回退必须使用能读取新旧报告和水位的兼容构建，协调暂停排空后进行。
+不能直接让旧wheel或旧数据库接管并抹掉发布后的事件。原包源码和完整备份保留用于调查与恢复设计。
+本次派生构建目录、上传暂存和本地pytest目录在核验后清理，保留固定源码归档、wheel、manifest和精简回执。
