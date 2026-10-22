@@ -101,5 +101,5 @@ Demo已登记但request为空的limit/rejected计划纳入有界流水，显示�
 自身fills等冲突证据的明确拒绝才记0，其余保留未知/同步；复盘可查看模型原价和执行价。
 
 不迁移数据库，不重新下发旧计划；无marker时保持原hash/摘要和原价严格校验。新字段产生后
-不能用旧reader接管新Intent，发布仍须协调排空和备份。现仅本地实现，验收见
-[价格规则与可见性修复](../quality/execution_price_grid_20261023.md)；真实Demo及发布另验。
+不能用旧reader接管新Intent，发布仍须协调排空和备份。代码167d482已发布VPS，验收见
+[价格规则与可见性修复](../quality/execution_price_grid_20261023.md)；未发送测试订单，自然成交质量另验。

@@ -1,6 +1,6 @@
 # 执行价格规则与未提交流水
 
-- 范围：本地修复；未commit、未发布、未调用真实模型或交易所私有API。
+- 范围：本地修复与VPS发布；未调用真实模型、未发送测试订单。发布核验使用既有Worker同步及只读面板。
 - 基线：`c66b1aa64c105e23b390ea20d2cecf4b2bd1d0cb`。
 - 用户授权：自动转换合规执行价格；无额外LLM步骤，保留原结构提案并审计变化。
 
@@ -73,8 +73,8 @@ Host→Intent→Worker→投影与同账本重启不重复。模型canonical不�
 未因此放宽程序规则。原全量失败、最终JUnit及性能/安装凭证保存在本地备份目录。
 
 临时pytest目录、构建/安装目录及egg-info已清理；源码旧helper调用已删除，保留有调用者的旧协议兼容。
-未调用真实模型/交易所、未改VPS或订单、未commit。离线Mock交易所测试仅证明程序行为，
-不能替代真实Demo成交生命周期、Linux发布或收益评价。后续发布需协调新reader，且必须考虑
+以上本地验证未调用真实模型/交易所、未改VPS或订单。离线Mock交易所测试仅证明程序行为，
+不能替代真实Demo成交生命周期或收益评价。发布需协调新reader，且必须考虑
 已知维护退出会撤挂单的行为，不得承诺停服保留活动挂单。
 
 ## 性能
@@ -85,3 +85,28 @@ Host→Intent→Worker→投影与同账本重启不重复。模型canonical不�
 
 依据：项目现有OKX合约price_rules/绑定校验及[Python Decimal官方文档](https://docs.python.org/3/library/decimal.html)
 的精确十进制与定向取整；不硬编码XAU当前tick。
+
+## VPS发布回执（2026-10-23）
+
+用户授权commit及发布。代码`167d482a9e167f5bd11d590106720989dd4d60bc`已推送私有main，
+以固定bundle部署。发布前39项聚焦复验通过；暂停/排空后确认无活动计划、挂单、持仓、恢复阻塞。
+本次没有订单因停服被撤销；已知维护退出撤余量行为仍见PH-27。
+
+Host备份`/var/backups/pa-agent/pa-agent-20261022T174523Z`（18294成员），Demo备份
+`/var/backups/pa-agent-demo/demo-1792691152413`（251成员）；manifest与四库逻辑等价核验通过。
+安装前后四库及1492个受保护文件保持。Linux wheel的270成员与源码逐字节一致，48项依赖保持，
+Headless无Qt；wheel SHA256=`dcf32c796508d41feaa566a1c32d7d5a7c219ec249f1349a704c35f94e7c1ec8`。
+Runtime资产digest保持`70d7dbf8239f4f18a54f7de0209f946a1d59e91a406271cc8fb98c35edc62d3b`。
+
+恢复`running66`，Host/Codex Worker/Demo Worker/Dashboard四服务active且重启计数0。
+Demo ready，account/algos/bills/contracts/fills/orders/positions七项覆盖全真。认证端点全部200，
+未认证401；Paper历史冻结，18条fills及18条bills原行保持，8份历史复盘均非空可读。
+原三品种、500 USDT、3小时、fixed_rr=1.5、模型/Fast/倾向及并发配置保持。
+
+原XAU run `1f86f54a65a24066a5b5b5c66d4b611d`已在流水显示unsubmitted、
+target_tick_mismatch、PnL=0、复盘available。安装代码读取Worker既有tick=0.1，离线复算
+4101.4/4109.7/4089.0且原阈值复核eligible；没有publish、模型调用或测试订单，不补发旧计划。
+自然新分析到真实Demo成交的生命周期仍待观察，不能以发布验收宣称收益改善。
+
+线上机器回执保存在`/var/backups/pa-agent/releases/execution-tick-20261023`；
+本地受忽略发布目录保存对应输出。临时构建目录及上传bundle已清理。

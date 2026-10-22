@@ -360,7 +360,7 @@ issue_status: monitoring
 
 ### PH-28 分析限价可执行但目标tick拒绝，提交前计划又被流水隐藏
 
-- `issue_status`：2026-10-23用户授权本地修复，尚未发布；历史记录不改写。
+- `issue_status`：2026-10-23用户授权修复，167d482已发布VPS；旧XAU拒绝流水与复盘现场通过，历史记录不改写，未补发。
 - **现场证据：**北京时间2026-10-22 23:00:06 XAUUSDT，run_id=`1f86f54a65a24066a5b5b5c66d4b611d`；Stage 2为trade且execution_disposition=eligible。Worker于23:07接收，intent=`5c4392059d86eb2eb3a3ea399b37f1bb2573069aeef96217c36ee6d0be920902`最终trade_state=rejected、reason=target_tick_mismatch、request=null，无entry leg。
 - **根因：**来源Binance tick=0.01，目标OKX XAU-USDT-SWAP tick=0.1；entry=4101.32、stop=4109.69不合规，TP1=4088.8合规。固定RR只对程序目标按目标tick计算，未保证模型Entry/SL与目标tick一致；Host eligible不代表Worker执行已通过。
 - **可见性缺口：**DemoStore.projection_rows仅选request非空进入orders；原计划只在demo.decisions中有拒绝理由，面板流水不显示该项。receipt accepted表示持久接收，不表示交易所挂单成功。

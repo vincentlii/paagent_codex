@@ -4,8 +4,8 @@ capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-22（协调发布；Demo覆盖恢复与历史复盘现场通过）
-核验提交: VPS运行代码d9c9fe65817272c09d54766f3d6746af93bd25fe
+最后核验: 2026-10-23（价格网格修复发布；Demo覆盖与历史复盘现场通过）
+核验提交: VPS运行代码167d482a9e167f5bd11d590106720989dd4d60bc
 权威来源:
   - CONTEXT.md
   - docs/quality/runtime_reliability_vpa_remediation_20261021.md
@@ -19,13 +19,15 @@ verification_scope:
 本页区分线上已发布事实与尚未验证事项。以前发布周期的状态已移入
 [历史归档](archive/README.md)，不能用旧“未实施/未部署”描述覆盖新验收证据。
 
-## 本地修复：执行价格网格与未提交流水（尚未发布）
+## 已发布：执行价格网格与未提交流水
 
 2026-10-23用户授权程序将限价执行价格适配目标tick。原decision保留，有效Entry/SL/TP单独审计；
 fixed_rr重算目标并以有效价核对方程，无新增模型调用。旧任务不迁移、不补发23点XAU建议。
 已登记但提交前拒绝的计划显示“未提交”及原因，普通wait不混入订单统计。
-本地范围、性能、验证和备份见[验收](../quality/execution_price_grid_20261023.md)。未commit或发布。
+范围、性能、备份和VPS发布回执见[验收](../quality/execution_price_grid_20261023.md)。代码167d482已推送私有main并发布。
 最终2113项非live通过；价格处理本机中位约0.049毫秒，270成员安装资源验证通过。
+恢复running66，四服务正常、Demo ready且七项覆盖全真；原三品种、500 USDT、3小时和1:1.5配置保持。
+旧XAU拒绝流水及8份历史复盘可读；未补发旧计划，未调用模型或发送测试订单。自然新计划成交尚待观察。
 
 ## 已发布：增量等待复核
 

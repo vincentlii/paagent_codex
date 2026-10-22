@@ -22,7 +22,8 @@ Codex Agentic Analysis 是待验证的分析 Backend，不是新的交易系统�
 
 2026-10-23用户明确授权新Demo限价的程序价格网格适配，见[ADR-0027增补](../architecture/ADR-0027-selectable-fixed-risk-reward.md)。
 模型结构原价保留；唯一Host materializer以冻结真实tick生成独立有效执行价并重算原方程，
-不改Setup/方向/概率、不迁移旧任务，Worker不在末端静默改价。仅本地实现，发布另验。
+不改Setup/方向/概率、不迁移旧任务，Worker不在末端静默改价。代码167d482已发布VPS；
+安装、旧XAU可见性与离线价格复算现场通过，未补发旧单；自然成交质量另验。
 
 2026-10-21 新授权例外见 [ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)：
 AnalysisProfile 可选择 PA 或 fixed_rr（1/1.5/2/2.5），固定目标进入分析身份，不能与下述
