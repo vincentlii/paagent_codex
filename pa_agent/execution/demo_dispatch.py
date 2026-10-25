@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -101,6 +102,34 @@ class OfficialExecutionDispatcher:
         return ExecutionPricePolicy(inst_id=MAPPINGS[symbol],
             tick_size=self.take_profit_tick_size(symbol)).model_dump(mode="json")
 
+    def trade_execution_context(self, frame):
+        from pa_agent.ai.trade_execution_context import FeeSchedule, TradeExecutionContext
+        from pa_agent.execution.demo_contracts import MAPPINGS
+        if not self.demo_selected:
+            return None
+        inst = MAPPINGS[frame.symbol]
+        now = self.now_ms()
+        fee = None
+        try:
+            projection = read_json(self.spool.paths.projection)
+            observed = projection.get("exchange_observed_at_ms")
+            if (projection.get("environment") == "okx_demo_v1" and projection.get("schema_version") == 1
+                and projection.get("fee_scope") == hashlib.sha256(("fee:" + self.config.account_key).encode()).hexdigest()
+                and self.config.account_key and type(observed) is int and 0 <= now-observed <= 30_000):
+                matches = [r for r in projection.get("fee_schedules", [])
+                           if isinstance(r, dict) and r.get("inst_id") == inst]
+                if len(matches) == 1:
+                    candidate = FeeSchedule.model_validate(matches[0])
+                    if 0 <= now - candidate.observed_at_ms <= 300_000:
+                        fee = candidate
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        close = int(frame.bars[0].ts_open) + 3_600_000
+        return TradeExecutionContext(inst_id=inst, source_close_ms=close,
+            limit_validity_hours=self.execution_policy.limit_validity_hours,
+            expires_at_ms=close+self.execution_policy.limit_validity_hours*3_600_000,
+            frozen_at_ms=now, fee_schedule=fee).model_dump(mode="json")
+
     @property
     def enabled(self):
         return self.demo_selected or bool(self.paper and self.paper.enabled)
@@ -108,17 +137,13 @@ class OfficialExecutionDispatcher:
     def bind_task(self, task):
         existing = self.task_lookup(task.task_id) if self.task_lookup is not None else None
         if existing is not None:
-            return replace(
-                task,
-                payload=replace(
-                    task.payload,
-                    execution_target=existing.payload.execution_target,
-                    execution_epoch=existing.payload.execution_epoch,
-                    demo_execution_policy=existing.payload.demo_execution_policy,
-                ),
-            )
+            return replace(task, payload=existing.payload)
         payload = bind_execution_epoch(task.payload, self.config)
         if payload is not task.payload:
+            from pa_agent.ai.trade_execution_context import frame_trade_context
+            context = frame_trade_context(payload.frame)
+            if context is not None and context.limit_validity_hours != self.execution_policy.limit_validity_hours:
+                raise ValueError("frozen_trade_context_ttl_mismatch")
             payload = replace(
                 payload, demo_execution_policy=self.execution_policy.model_dump(mode="json")
             )
@@ -195,6 +220,9 @@ class OfficialExecutionDispatcher:
         price_policy = (getattr(getattr(payload, "frame", None), "data_metadata", {}) or {}).get("execution_price_policy")
         if runtime.get("execution_price_policy") != price_policy:
             return SimpleNamespace(status="rejected", reason="frozen_execution_price_policy_mismatch")
+        trade_context = (getattr(getattr(payload, "frame", None), "data_metadata", {}) or {}).get("trade_execution_context")
+        if runtime.get("trade_execution_context") != trade_context:
+            return SimpleNamespace(status="rejected", reason="frozen_trade_execution_context_mismatch")
         expected = expected_policy.model_dump(mode="json") if expected_policy is not None else None
         if runtime.get("take_profit_policy") != expected:
             return SimpleNamespace(status="rejected", reason="frozen_take_profit_policy_mismatch")

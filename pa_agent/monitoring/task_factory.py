@@ -94,18 +94,21 @@ def _snapshot_hash(
         candidate = htf_context.get("frame")
         if isinstance(candidate, KlineFrame):
             higher_frame = candidate
-    return _stable_hash(
-        {
-            "current": _frame_identity_payload(frame),
-            "htf_context": serialize_higher_timeframe_context(htf_context),
-            "higher": (
-                _frame_identity_payload(higher_frame)
-                if higher_frame is not None
-                else None
-            ),
-            "incremental_context": incremental_context,
-        }
-    )
+    identity = {
+        "current": _frame_identity_payload(frame),
+        "htf_context": serialize_higher_timeframe_context(htf_context),
+        "higher": (
+            _frame_identity_payload(higher_frame)
+            if higher_frame is not None
+            else None
+        ),
+        "incremental_context": incremental_context,
+    }
+    from pa_agent.ai.trade_execution_context import frame_trade_context
+    context = frame_trade_context(frame)
+    if context is not None:
+        identity["trade_execution_context"] = context.identity()
+    return _stable_hash(identity)
 
 
 def _record_field(record: Any, name: str, default: Any = None) -> Any:
@@ -245,6 +248,7 @@ def create_frozen_analysis_task(
     execution_policy: str | None = None,
     take_profit_tick_size: str | None = None,
     execution_price_policy: dict | None = None,
+    trade_execution_context: dict | None = None,
 ) -> AnalysisTask:
     """Deep-freeze one validated snapshot before it enters the scheduler."""
     if not isinstance(frame, KlineFrame):
@@ -285,6 +289,14 @@ def create_frozen_analysis_task(
             provided_identity.setdefault("profile_fingerprint", profile_fp)
             analysis_backend_identity = provided_identity
     frozen_frame = copy.deepcopy(frame)
+    if trade_execution_context is None:
+        trade_execution_context = frozen_frame.data_metadata.get("trade_execution_context")
+    if trade_execution_context is not None:
+        from pa_agent.ai.trade_execution_context import frame_trade_context
+        frozen_frame = replace(frozen_frame, data_metadata={
+            **frozen_frame.data_metadata, "trade_execution_context": copy.deepcopy(trade_execution_context)})
+        trade_execution_context = frame_trade_context(frozen_frame).model_dump(mode="json")
+        frozen_frame.data_metadata["trade_execution_context"] = trade_execution_context
     if execution_price_policy is not None:
         from pa_agent.ai.execution_price_policy import ExecutionPricePolicy
         from pa_agent.execution.demo_contracts import MAPPINGS
@@ -300,7 +312,8 @@ def create_frozen_analysis_task(
         take_profit_tick_size = FixedRiskRewardPolicy(
             tick_size=take_profit_tick_size
         ).model_dump(mode="json")["tick_size"]
-    frozen_htf = copy.deepcopy(htf_context)
+    # Normalize the optional input before both hashing and persistence.
+    frozen_htf = {} if htf_context is None else copy.deepcopy(htf_context)
     incremental_count = (
         int(incremental_new_bar_count)
         if incremental_new_bar_count is not None
@@ -320,7 +333,7 @@ def create_frozen_analysis_task(
     )
     payload = FrozenAnalysisPayload(
         frame=frozen_frame,
-        htf_context=frozen_htf or {},
+        htf_context=frozen_htf,
         previous_record=frozen_previous,
         incremental_new_bar_count=incremental_count,
         history_context_version=history_context_version,
@@ -347,6 +360,9 @@ def create_frozen_analysis_task(
         cohort = _stable_hash({"base": cohort, "take_profit_tick_size": take_profit_tick_size})
     if execution_price_policy is not None:
         cohort = _stable_hash({"base": cohort, "execution_price_policy": execution_price_policy})
+    if trade_execution_context is not None:
+        from pa_agent.ai.trade_execution_context import frame_trade_context
+        cohort = _stable_hash({"base": cohort, "trade_execution_context": frame_trade_context(frozen_frame).treatment()})
     return AnalysisTask.create(
         source=source,
         venue=venue,

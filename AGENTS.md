@@ -1,5 +1,10 @@
 # AGENTS
 
+- 修改维护退出或空HTF恢复前读 `docs/quality/engineering_handoff_release_20261026.md`：新None入口在冻结前统一为{}，旧损坏hash不重写；SIGTERM只停止新入场，Worker持续持锁管理已提交计划至新鲜完整对账且空仓空单才退出，正常TTL/partial/显式禁入仍有效。systemd无强制停止超时，维护须先暂停并排空，不直接停服留下可成交但无管理的挂单；硬件断电/强杀不在保证内。实际发布与模型/收益证据分别报告。
+
+- 修改新Demo任务TTL/费率/佣金后资格前读 `docs/architecture/ADR-0028-frozen-trade-execution-context.md` 与 `docs/quality/trader_entry_execution_acceptance_20261025.md`：`trade_execution_context_v1`仅Stage 2读取，Host任务/cohort绑定、canonical市场hash不变；唯一materializer保留原候选/结构SL/p及毛方程，既有execution_disposition另算佣金后资格，未知费用不补零，滑点/资金费未覆盖。旧无marker任务/订单不升级，费率失效或上升只拒新不撤旧、不影响已有保护；本地验收不等于发布或收益改善。
+
+
 - 排查新自然运行的支撑位 repair 或 `trade` 无 Paper 挂单前读 `docs/quality/v1_runtime_failure_paper_audit_20261012.md`：canonical 排序下标须映回原 Draft；授权数组项删除及 survivor 编辑按原索引权限匹配，不投影成重复项。用户已授权 ADR-0012 的历史冲突隔离：跨账户无潜在活跃依赖才审计隔离旧 OHLC，accepted 版本排除隔离 reason，延迟新订单不得回放隔离棒；不加价格容差、不改历史结果。修复 `227e197` 已发布 VPS；自然轮询隔离旧冲突通过，完整新模型链待观察。含隔离审计的现库禁止直接回退旧 Paper reader。
 
 - 修改教材示例、PA/Joint Prompt 契约或 Stage 1 调查限制前读 `docs/quality/knowledge_prompt_investigation_20261012.md`：时间、tick 和价格参照必须注明适用范围，章节 ID 与案例保持完整；Provider Draft 不要求 canonical-only 字段，显式 Joint 使用自身角色与未校准先验。新冻结 `stage1_investigation_v1` 先成功读取完整 Packet，再允许最多一次事实、一次知识调查，所有尝试计数；Gateway 与 Worker 共同校验，旧 Frozen Job 不迁移。报告分别记录本地验收与固定提交 VPS 发布；Runtime 资产更新前须确认 Host 和 Worker 队列清空且无恢复阻塞，不跨版本续接旧会话。发布不证明模型质量提高。

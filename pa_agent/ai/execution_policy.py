@@ -30,6 +30,7 @@ def apply_stage2_execution_policy(stage2: dict[str, Any]) -> dict[str, Any]:
         return out
 
     adjustment = copy.deepcopy((out.get("execution_disposition") or {}).get("price_adjustment"))
+    trade_context = copy.deepcopy((out.get("execution_disposition") or {}).get("trade_execution_context"))
     errors = validate_order_trade_metrics(adjusted_decision(out))
     out["execution_disposition"] = {
         "status": "suppressed" if errors else "eligible",
@@ -45,6 +46,18 @@ def apply_stage2_execution_policy(stage2: dict[str, Any]) -> dict[str, Any]:
     }
     if adjustment is not None:
         out["execution_disposition"]["price_adjustment"] = adjustment
+    if trade_context is not None:
+        from pa_agent.ai.trade_execution_context import TradeExecutionContext
+        context = TradeExecutionContext.model_validate(trade_context)
+        disposition = out["execution_disposition"]
+        disposition["trade_execution_context"] = context.model_dump(mode="json")
+        if not errors:
+            check = context.commission_check(adjusted_decision(out))
+            disposition["checks"]["commission_net"] = check
+            if not check["passed"]:
+                disposition.update(status="suppressed", effective_order_type=_NO_ORDER)
+                disposition["reason_codes"].append(
+                    "commission_net_equation_failed" if check["status"] == "available" else "commission_unavailable")
     return out
 
 
@@ -105,7 +118,19 @@ def effective_order_type(stage2: Any) -> str:
     effective = str(disposition.get("effective_order_type") or "")
     if disposition.get("candidate_order_type") != candidate:
         raise ValueError("execution disposition does not match the candidate decision")
+    verify_commission_projection(stage2)
     return effective
+
+
+def verify_commission_projection(stage2: dict) -> None:
+    disposition = stage2.get("execution_disposition") or {}
+    if disposition.get("trade_execution_context") is None:
+        return
+    expected = apply_stage2_execution_policy(stage2)["execution_disposition"]
+    if expected["checks"].get("commission_net") != disposition.get("checks", {}).get("commission_net"):
+        raise ValueError("commission_projection_mismatch")
+    if expected["status"] == "suppressed" and disposition.get("effective_order_type") != _NO_ORDER:
+        raise ValueError("commission_eligibility_mismatch")
 
 
 def effective_decision(stage2: dict) -> dict:

@@ -773,6 +773,7 @@ def materialize_stage2_draft(
     decision_tree_path: Path | None = None,
     take_profit_policy: FixedRiskRewardPolicy | None = None,
     execution_price_policy=None,
+    trade_execution_context=None,
 ) -> dict[str, Any]:
     result = copy.deepcopy(draft)
     result.pop("protocol_version", None)
@@ -808,6 +809,8 @@ def materialize_stage2_draft(
         result["execution_disposition"] = {"price_adjustment": adjustment}
         from pa_agent.ai.execution_policy import effective_decision
         effective = effective_decision(result)
+    if executable and trade_execution_context is not None:
+        result.setdefault("execution_disposition", {})["trade_execution_context"] = trade_execution_context.model_dump(mode="json")
     equation_passes = False
     if executable:
         equation, equation_passes = _equation_trace(
@@ -849,7 +852,7 @@ def materialize_stage2_draft(
             "node_id": terminal_item["node_id"], "outcome": intent, "label": f"LLM {intent} intent",
         }
     result.setdefault("next_cycle_prediction", _next_cycle_placeholder())
-    if execution_price_policy is not None:
+    if execution_price_policy is not None or trade_execution_context is not None:
         from pa_agent.ai.execution_policy import apply_stage2_execution_policy
         result = apply_stage2_execution_policy(result)
     return result

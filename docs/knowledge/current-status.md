@@ -19,6 +19,16 @@ verification_scope:
 本页区分线上已发布事实与尚未验证事项。以前发布周期的状态已移入
 [历史归档](archive/README.md)，不能用旧“未实施/未部署”描述覆盖新验收证据。
 
+## 本地实现：入场选择第一批（未发布）
+
+2026-10-25—26用户授权的第一批：原文去冲突、Stage 2读取冻结入场期限/账户费率、程序佣金后
+执行检查及现有候选比较指导，见[ADR-0028](../architecture/ADR-0028-frozen-trade-execution-context.md)
+和[验收](../quality/trader_entry_execution_acceptance_20261025.md)。旧任务/订单不升级，结构SL/
+原候选/概率保留，无新增模型调用；市场hash与执行条件分开。当前工作区未commit、未发布，
+下方VPS回执仍是线上基线；真实模型判断及收益未验证。
+最终Windows本地2154项完整非live回归通过，271个wheel代码/资源成员与源码及安装目录一致、
+Headless无Qt导入；独立三角色复核通过。备份与测试/打包临时目录清理见上述验收。
+
 ## 已发布：执行价格网格与未提交流水
 
 2026-10-23用户授权程序将限价执行价格适配目标tick。原decision保留，有效Entry/SL/TP单独审计；

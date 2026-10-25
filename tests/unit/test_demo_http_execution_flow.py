@@ -92,6 +92,8 @@ def test_host_to_signed_http_partial_protection_exit_and_dashboard(tmp_path):
             ]
         elif path.endswith("/account/leverage-info"):
             rows = [{"posSide": "net", "lever": "3"}]
+        elif path.endswith("/account/trade-fee"):
+            rows = [{"instType": "SWAP", "makerU": "-0.0002", "takerU": "-0.0005"}]
         elif path.endswith("/market/ticker"):
             rows = [
                 {"instId": "BTC-USDT-SWAP", "askPx": "50100", "bidPx": "50099", "ts": str(clock[0])}

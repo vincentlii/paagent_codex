@@ -503,6 +503,12 @@ systemd credential并仅GET账户、余额、品种、模式、杠杆及敞口�
 Worker入场还要求Host control新鲜且running；Pause/停止新入场不停止既有保护/对账。
 受控验证通过前accepted_symbols保持空，不能把MockTransport测试当交易所支持证据。
 
+2026-10-26维护交接修订见[工程验收](quality/engineering_handoff_release_20261026.md)：SIGTERM
+停止新注册/入场，已有订单继续由同一Worker管理至安全排空才退出；不会因维护提前撤未到期
+零成交挂单。`TimeoutStopSec=infinity`防止强杀中断保护；有活动单/未知敞口时stop/restart
+可能长期等待。发布前先暂停Host并确认完整对账、空单空仓，再停四服务；不得强杀绕过、
+离线留下可成交挂单或改expiry。原TTL/部分成交撤余量/主动禁入仍有效，断电/强杀不在保证内。
+
 升级前暂停新入场、等待对账并停止Demo Worker，再运行独立的`pa-agent-demo-backup.service`
 或Worker用户的`pa-agent-okx-demo --backup /var/backups/pa-agent-demo`。备份取得同一排他锁，
 运行中直接拒绝；备份service只放开自身state的锁/WAL辅助文件及备份目录写权限，数据库源

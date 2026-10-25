@@ -18,6 +18,19 @@ issue_status: monitoring
 
 ## OKX Demo运行与维护
 
+排查计划不成交、连续止损或Demo收益前，必须先读
+[2026-10-24效果归因](../quality/demo_plan_performance_attribution_20261024.md)：同instId的Demo/实盘
+也可能有不同尖峰和成交路径。XAU已出现Demo触止损、同分钟实盘未触的现场证据，不能混用行情评估。
+归因取证时TTL为5h（旧单保留自身期限）；线上基线方程未计费用，低结构风险单的成本/R可能显著。
+先区分实际成交、触价诊断、到期/维护撤销及主观概率，再考虑策略改动；取证报告本身未改业务。
+拟优化交易选择时，继续读[交易员入场研究](../quality/trader_entry_selection_proposal_20261025.md)：
+区分触价可达与触价后价值；保留结构SL、固定RR及旧单独立。2026-10-25用户授权的原句清理、
+冻结TTL和佣金后资格已本地实现，未发布，见[第一批验收](../quality/trader_entry_execution_acceptance_20261025.md)。
+新拒绝查`commission_net_equation_failed/commission_unavailable/commission_rate_increased`、
+冻结`role_runtime.trade_execution_context`与`execution_disposition.checks.commission_net`；
+不可用先核对Worker读取/账户scope/缓存时间，不通过改价、抬p或补零绕过。活动保护不依赖费率。
+确认型新订单与事件撤单未实施，需独立设计授权。
+
 2026-10-21故障排查先读[运行可靠性与VPA语义研究](../quality/runtime_reliability_vpa_remediation_20261021.md)：
 旧订单复盘不能只查最近30分析；last fill ID不等于最近完整同步时间，超出近期接口保留窗口后须用历史区间接回，
 不能删游标解除缺口。三次未知CLI退出不能倒填为Schema错误；前置timing不适用不代表量价证据不足。

@@ -154,11 +154,12 @@ class OkxDemoClient:
         self.credentials = credentials
         self.now_ms = now_ms or (lambda: int(time() * 1000))
         self.instruments = tuple(instruments)
+        self._fee_cache = {}
         self.http = httpx.Client(
             transport=transport, timeout=5, follow_redirects=False, trust_env=False
         )
 
-    def _request(self, method, path, *, query=None, body=None, private=True, exp_time_ms=None):
+    def _request(self, method, path, *, query=None, body=None, private=True, exp_time_ms=None, timeout=5):
         suffix = path + ("?" + urlencode(query) if query else "")
         text = canonical(body) if body is not None else ""
         headers = {"Content-Type": "application/json", "x-simulated-trading": "1"}
@@ -193,6 +194,7 @@ class OkxDemoClient:
                 self.ORIGIN + suffix,
                 headers=headers,
                 content=text.encode() if text else None,
+                timeout=timeout,
             )
             if response.status_code != 200 or len(response.content) > 4 * 1024 * 1024:
                 raise ValueError("invalid_response")
@@ -423,6 +425,39 @@ class OkxDemoClient:
         state.status = "backfill_pending"
         return rows, False, state
 
+    def fee_schedule(self, inst_id, *, inst_family, group_id):
+        """Private read-only fee facts; failure never interrupts existing protection."""
+        from pa_agent.ai.trade_execution_context import FeeSchedule
+        key = (inst_id, inst_family, group_id)
+        now = self.now_ms()
+        cached = self._fee_cache.get(key)
+        if cached and 0 <= now - cached[0] < (300_000 if cached[1] is not None else 30_000):
+            return cached[1]
+        fee = None
+        try:
+            if not inst_family or inst_family != inst_id.removesuffix("-SWAP"):
+                raise ValueError("fee_family_mismatch")
+            rows = self._request("GET", "/api/v5/account/trade-fee",
+                                 query={"instType": "SWAP", "instFamily": inst_family}, timeout=1)
+            if len(rows) != 1 or rows[0].get("instType") != "SWAP":
+                raise ValueError("fee_response_scope")
+            row = rows[0]
+            groups = row.get("feeGroup")
+            if groups:
+                matches = [g for g in groups if isinstance(g, dict) and group_id
+                           and g.get("groupId") == group_id]
+                if len(matches) != 1:
+                    raise ValueError("fee_group_ambiguous")
+                maker, taker = matches[0].get("maker"), matches[0].get("taker")
+            else:
+                # Explicit USDT-margin legacy fields only; root maker/taker are coin-margin.
+                maker, taker = row.get("makerU"), row.get("takerU")
+            fee = FeeSchedule(inst_id=inst_id, maker=maker, taker=taker, observed_at_ms=self.now_ms())
+        except (DemoUnavailable, DemoRequestUnknown, DemoRequestRejected, ValueError, TypeError, KeyError):
+            pass
+        self._fee_cache[key] = (self.now_ms(), fee)
+        return fee
+
     def snapshot(self, *, since_bill_id=None, since_fill_ids=None, sync_state=None):
         start = self.now_ms()
         server = self._request("GET", "/api/v5/public/time", private=False)
@@ -449,7 +484,7 @@ class OkxDemoClient:
             "bills", account, server_ms, (sync_state or {}).get("bills"), since_bill_id,
         )
         available = self._request("GET", "/api/v5/account/instruments", query={"instType": "SWAP"})
-        contracts, leverages, quotes = [], {}, {}
+        contracts, leverages, quotes, fees = [], {}, {}, []
         for row in available:
             inst = row.get("instId")
             if inst not in self.instruments or row.get("state") != "live":
@@ -469,6 +504,10 @@ class OkxDemoClient:
                     observed_at_ms=start,
                 )
             )
+            fee = self.fee_schedule(inst, inst_family=row.get("instFamily") or inst.removesuffix("-SWAP"),
+                                    group_id=row.get("groupId"))
+            if fee is not None:
+                fees.append(fee)
             leverage = self._request(
                 "GET",
                 "/api/v5/account/leverage-info",
@@ -492,6 +531,7 @@ class OkxDemoClient:
             equity=usdt.get("eq") or None,
             available=usdt.get("availBal") or None,
             contracts=tuple(contracts),
+            fee_schedules=tuple(fees),
             leverage=leverages,
             quotes=quotes,
             orders=tuple(orders),

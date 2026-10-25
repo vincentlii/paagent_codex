@@ -9,6 +9,7 @@ def test_demo_service_and_installer_keep_privileges_separate():
     assert "x-simulated" not in service  # Header belongs to immutable client, not configuration.
     assert "LoadCredential=okx-demo-secret:" in service
     assert "ProtectSystem=strict" in service
+    assert "TimeoutStopSec=infinity" in service
     assert "ReadOnlyPaths=/var/lib/pa-agent-execution/intents" in service
     assert "/var/lib/pa-agent/records" not in service
     backup = (ROOT / "deploy/systemd/pa-agent-demo-backup.service").read_text()

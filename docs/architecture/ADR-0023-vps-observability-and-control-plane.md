@@ -32,7 +32,9 @@ lot向下取整，不足最小数量或保证金则拒绝，不通过调价或�
 Host空闲边界确认生效，后续新任务冻结完整设置及代次，意图和执行账本保留自身值；
 已有任务、挂单、持仓与Paper协议不变。TTL从分析K1收盘起算，到期撤未成交余量，
 不延长决策新鲜度，不改变止损/TP1。请求保存与Host生效分别显示。
-设置不属于模型身份、市场hash或cutover证书。旧control v1–v4默认迁入500/3h，保留Fast；
+旧无`trade_execution_context_v1`任务的设置不属于模型身份、市场hash或cutover证书；
+2026-10-25授权的新任务TTL分析身份改由[ADR-0028](ADR-0028-frozen-trade-execution-context.md)规定，
+金额及cutover控制不变。旧control v1–v4默认迁入500/3h，保留Fast；
 无参数的旧Intent仅省略新增optional字段参与摘要，不改变旧合法null字段摘要。
 兼容只保证新Worker读旧数据，发布和回退必须协调Host/Worker版本。详见
 [Demo验收](../quality/okx_demo_execution_acceptance_20261015.md)。

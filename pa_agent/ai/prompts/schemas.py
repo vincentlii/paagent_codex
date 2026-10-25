@@ -834,6 +834,7 @@ _EXECUTION_DISPOSITION: dict = {
         "checks",
     ],
     "properties": {
+        "trade_execution_context": {"type": "object"},
         "price_adjustment": {
             "type": "object",
             "required": ["policy", "take_profit_policy", "original_prices", "effective_prices"],
@@ -868,6 +869,7 @@ _EXECUTION_DISPOSITION: dict = {
         "checks": {
             "type": "object",
             "properties": {
+                "commission_net": {"type": "object"},
                 "trade_metrics": {
                     "type": "object",
                     "required": ["passed", "errors"],

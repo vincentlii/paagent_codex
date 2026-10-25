@@ -13,6 +13,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 from pa_agent.operations.demo_settings import DemoExecutionPolicy
 from pa_agent.ai.take_profit_policy import FixedRiskRewardPolicy
+from pa_agent.ai.trade_execution_context import FeeSchedule, TradeExecutionContext
 
 Positive = Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
 EventId = Annotated[str, Field(pattern=r"^[0-9]{1,64}$")]
@@ -122,6 +123,7 @@ class DemoIntent(StrictModel):
     demo_execution_policy: DemoExecutionPolicy | None = None
     take_profit_policy: FixedRiskRewardPolicy | None = None
     price_adjustment: dict | None = None
+    trade_execution_context: TradeExecutionContext | None = None
     content_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
 
     @model_serializer(mode="wrap")
@@ -129,6 +131,8 @@ class DemoIntent(StrictModel):
         value = handler(self)
         if self.price_adjustment is None:
             value.pop("price_adjustment", None)
+        if self.trade_execution_context is None:
+            value.pop("trade_execution_context", None)
         return value
 
     def digest_payload(self):
@@ -141,6 +145,8 @@ class DemoIntent(StrictModel):
             excluded.add("take_profit_policy")
         if self.price_adjustment is None:
             excluded.add("price_adjustment")
+        if self.trade_execution_context is None:
+            excluded.add("trade_execution_context")
         return self.model_dump(mode="json", exclude=excluded)
 
     @classmethod
@@ -166,6 +172,16 @@ class DemoIntent(StrictModel):
             v is not None for v in (self.side, self.entry, self.stop, self.tp1)
         ):
             raise ValueError("non_limit_has_prices")
+        context = self.trade_execution_context
+        if context is not None:
+            if (context.inst_id != self.inst_id or context.source_close_ms != self.source_bar_ms + 3_600_000
+                or self.demo_execution_policy is None
+                or context.limit_validity_hours != self.demo_execution_policy.limit_validity_hours
+                or self.expires_at_ms != context.expires_at_ms
+                or context.frozen_at_ms > self.generated_at_ms):
+                raise ValueError("trade_context_intent_binding_mismatch")
+            if self.disposition == "limit" and context.fee_schedule is None:
+                raise ValueError("commission_unavailable")
         if self.disposition == "limit" and self.take_profit_policy is not None:
             if self.tp1 != self.take_profit_policy.target(
                 self.entry, self.stop, "做多" if self.side == "buy" else "做空"
@@ -282,6 +298,7 @@ class DemoSnapshot(StrictModel):
     equity: Decimal | None = None
     available: Decimal | None = None
     contracts: tuple[DemoContract, ...] = ()
+    fee_schedules: tuple[FeeSchedule, ...] = ()
     orders: tuple[dict[str, str], ...] = ()
     algos: tuple[dict[str, str], ...] = ()
     positions: tuple[dict[str, str], ...] = ()

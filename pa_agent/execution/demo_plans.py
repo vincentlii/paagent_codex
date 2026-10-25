@@ -108,6 +108,19 @@ def compile_demo_intent(
         values["take_profit_policy"] = policy
     stage2 = _field(record, "stage2_decision", {})
     disposition = stage2.get("execution_disposition") or {}
+    trade_context = _field(record, "role_runtime", {}).get("trade_execution_context")
+    if disposition.get("trade_execution_context") is not None and disposition["trade_execution_context"] != trade_context:
+        raise ValueError("trade_execution_context_mismatch")
+    if trade_context is not None:
+        from pa_agent.ai.trade_execution_context import TradeExecutionContext
+        context = TradeExecutionContext.model_validate(trade_context)
+        if stage2.get("decision", {}).get("order_type") in {"限价单", "突破单", "市价单"}:
+            if disposition.get("trade_execution_context") != trade_context:
+                raise ValueError("trade_execution_context_mismatch")
+            from pa_agent.ai.execution_policy import verify_commission_projection
+            verify_commission_projection(stage2)
+        values["trade_execution_context"] = trade_context
+        values["expires_at_ms"] = context.expires_at_ms
     if plan is None and disposition.get("status") == "suppressed":
         values.update(disposition="rejected", source_reason=",".join(disposition.get("reason_codes") or []))
     if demo_execution_policy is not None:

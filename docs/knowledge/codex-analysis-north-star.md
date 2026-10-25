@@ -26,8 +26,8 @@ Codex Agentic Analysis 是待验证的分析 Backend，不是新的交易系统�
 安装、旧XAU可见性与离线价格复算现场通过，未补发旧单；自然成交质量另验。
 
 2026-10-21 新授权例外见 [ADR-0027](../architecture/ADR-0027-selectable-fixed-risk-reward.md)：
-AnalysisProfile 可选择 PA 或 fixed_rr（1/1.5/2/2.5），固定目标进入分析身份，不能与下述
-仅影响执行的金额/TTL混同。固定模式程序仅在唯一materializer中计算TP1，再做原方程；
+AnalysisProfile 可选择 PA 或 fixed_rr（1/1.5/2/2.5），固定目标进入分析身份。金额只影响执行；
+新任务TTL的分析身份按下述ADR-0028冻结，旧无marker协议不变。固定模式程序仅在唯一materializer中计算TP1，再做原方程；
 LLM仍拥有结构Entry/SL、机会判断及对应目标的主观先验，VPA与Codex权限不扩大。
 旧任务与PA模式保持原义；本地实现、发布、线上启用及收益验证分别报告。
 
@@ -42,9 +42,12 @@ LLM仍拥有结构Entry/SL、机会判断及对应目标的主观先验，VPA与
 AGENTS 固化不可变 authority、no-lookahead、Evidence grounding、阶段协议与停止条件。Role Skills 只编码 Stage 1、普通/联合 Stage 2、VPA、旧研究 Joint Arbiter 和 pointer repair 的操作程序；Brooks/VPA 领域知识仍由 PA Agent 按 Context/Router 管理，Skills 不得成为第二份领域知识库。
 
 2026-10-15用户授权的面板执行设置仅限OKX Demo单笔总价值和限价有效期，默认500 USDT / 3h。
-它们由Host在任务接收时冻结，与模型/Codex/AnalysisProfile、Snapshot/cohort和cutover身份
-分离；不修改模型建议的entry/stop/TP1，不授予Dashboard或Codex交易凭据和下单权限。
-具体控制、兼容与发布边界见ADR-0023的同日增补和Demo本地验收报告。
+旧任务的两项设置由Host在任务接收时冻结，与分析身份分离；旧任务不重标。
+2026-10-25用户授权第一批优化：[ADR-0028](../architecture/ADR-0028-frozen-trade-execution-context.md)
+的新`trade_execution_context_v1`将TTL/绝对expiry及可核验账户费率冻结给Stage 2，绑定任务/cohort，
+不改变canonical市场hash。毛方程及原候选保留，佣金后检查只决定execution_disposition；
+费用未知不补零，滑点/资金费仍未覆盖。金额、原结构判断、VPA权限及旧单不变，不增加模型调用。
+本地实现、发布、自然模型质量与收益分别报告；不授予Dashboard或Codex凭据和下单权限。
 
 ## Frozen Evidence 与角色隔离
 

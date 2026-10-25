@@ -1,5 +1,26 @@
 # PA Agent Domain Context
 
+维护/恢复修复及当前发布范围先读
+[工程交接验收](docs/quality/engineering_handoff_release_20261026.md)：空HTF仅在新任务首次冻结前
+None→{}，旧损坏身份仍拒绝。维护信号不再伪装成entry_enabled=false；停止新注册/提交后继续
+持锁管理已有计划，完整新鲜对账且无活动已提交计划/普通单/algo/仓位才退出。
+正常TTL、部分成交保护及主动禁入场不变。活动单会延长正常stop/restart，不能强杀绕过；
+新代码/Runtime安装必须先暂停排空，保证期间不离线留下新成交无人保护的挂单。
+
+分析Demo效果、触达率或据亏损调整交易规则前，先读
+[Demo效果归因](docs/quality/demo_plan_performance_attribution_20261024.md)：OKX Demo与实盘价格路径不同，
+不可搬用Demo成交时刻到实盘推导收益；正式计划、canary及分析尝试分开。历史方程仅毛收益，
+真实费用可能占较大结构R；两笔异版本止损不足以验证策略优势。报告保留当时只读诊断边界。
+从交易员角度调整入场、TTL、成本或教材冲突前，再读
+[入场选择研究提案](docs/quality/trader_entry_selection_proposal_20261025.md)。现有候选比较和位置VPA
+要求已存在；用户已授权第一批，设计及本地验收见
+[ADR-0028](docs/architecture/ADR-0028-frozen-trade-execution-context.md)与
+[验收](docs/quality/trader_entry_execution_acceptance_20261025.md)。新Demo任务的Stage 2读取冻结TTL/
+绝对expiry及账户费率，唯一materializer保留毛方程及原candidate，execution_disposition另算佣金后
+资格；未知费用不补零，不改结构SL/概率，不增加模型调用。执行条件绑定任务/cohort而非独立行情。
+原文冲突已替换，旧无marker任务/订单不升级；新增订单类型、事件撤单及旧单管理扩权未授权。
+本地实现未commit或发布，模型质量/收益另验。
+
 修改OKX Demo限价价格精度或提交前拒绝流水，先读
 [执行价格与可见性修复](docs/quality/execution_price_grid_20261023.md)和ADR-0027同日增补。
 2026-10-23用户明确授权纯程序价格转换：新任务冻结`execution_price_grid_v1`，唯一materializer

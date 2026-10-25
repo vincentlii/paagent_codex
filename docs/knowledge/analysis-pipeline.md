@@ -14,6 +14,12 @@ verification_scope: not-verified
 
 # 分析链路
 
+新Demo任务的冻结期限/费率链见[ADR-0028](../architecture/ADR-0028-frozen-trade-execution-context.md)：
+Worker只读缓存费率→账户匹配投影→Host任务冻结→仅Stage 2协议资源→唯一materializer原候选及
+毛方程→既有execution_disposition佣金后检查→record/Intent绑定→Worker提交前复核。市场身份
+不含交易条件；未增加模型轮次或VPA输入。未知费用不影响分析成功和既有保护，只阻止新候选执行。
+旧无marker协议不变；本地实现未发布，见[验收](../quality/trader_entry_execution_acceptance_20261025.md)。
+
 2026-10-22本地增量连续性补全见[验收](../quality/wait_continuity_20261022.md)及ADR-0025增补。
 Headless既有闭盘轮询与上一份成功Stage 1诊断继续使用；新`decision_history_v2`将同源、已可用的
 上一轮Stage 2等待理由/watch_points与时间映射冻结到Stage 2协议，交由模型以当前证据复核。

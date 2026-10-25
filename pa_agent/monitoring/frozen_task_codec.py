@@ -115,6 +115,8 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
     if (target is not None or epoch is not None) and (target != "okx_demo" or not isinstance(epoch, str) or not epoch):
         raise ValueError("invalid frozen execution binding")
     htf = source["htf_context"]
+    if not isinstance(htf, dict):
+        raise ValueError("frozen higher-timeframe context must be an object")
     if isinstance(htf.get("frame"), dict):
         htf["frame"] = _frame_from_dict(htf["frame"])
     previous = source["previous_record"]
@@ -151,6 +153,10 @@ def decode_task(encoded: str, digest: str) -> AnalysisTask:
     )
     if task.task_id != identity["task_id"]:
         raise ValueError("frozen task identity mismatch")
+    from pa_agent.ai.trade_execution_context import frame_trade_context
+    context = frame_trade_context(payload.frame)
+    if context is not None and demo_policy is not None and context.limit_validity_hours != demo_policy["limit_validity_hours"]:
+        raise ValueError("frozen_trade_context_ttl_mismatch")
     incremental = _incremental_identity_payload(
         payload.previous_record, payload.incremental_new_bar_count,
         history_context_version=payload.history_context_version,

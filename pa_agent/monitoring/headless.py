@@ -971,6 +971,9 @@ class HeadlessMonitor:
             previous_record=previous,
             incremental_new_bar_count=new_count,
             execution_price_policy=price_policy,
+            trade_execution_context=(
+                self._paper_execution.trade_execution_context(frame)
+                if callable(getattr(self._paper_execution, "trade_execution_context", None)) else None),
             created_at_ms=now_ms,
             instrument_spec=spec,
             analysis_backend_mode=self._applied_backend,

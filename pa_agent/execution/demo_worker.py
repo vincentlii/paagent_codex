@@ -59,6 +59,7 @@ class DemoWorker:
         self.lock = WorkerLock(paths.state_db.parent / "worker.lock")
         self.snapshot = None
         self.error = "not_reconciled"
+        self._stopping = False
         from pa_agent.execution.demo_independent import IndependentPlanManager
 
         self.independent = IndependentPlanManager(self)
@@ -509,6 +510,17 @@ class DemoWorker:
         self._submit_limit(intent, snapshot)
 
     def _submit_limit(self, intent, snapshot):
+        if self._stopping:
+            return
+        if intent.trade_execution_context is not None:
+            fees = [f for f in snapshot.fee_schedules if f.inst_id == intent.inst_id
+                    and 0 <= self.now_ms()-f.observed_at_ms <= 300_000]
+            if len(fees) != 1:
+                self._finish(intent, "commission_unavailable")
+                return
+            if fees[0].commission_rate > intent.trade_execution_context.fee_schedule.commission_rate:
+                self._finish(intent, "commission_rate_increased")
+                return
         if Decimal(snapshot.leverage.get(intent.inst_id, "0")) != self.config.leverage:
             self._finish(intent, "leverage_mismatch")
             return
@@ -581,9 +593,14 @@ class DemoWorker:
                     self.independent.manage(intent, snapshot)
                 else:
                     self._manage(intent, snapshot)
-            for intent in self.spool.pending():
-                self.spool.ack(self._accept(intent, snapshot))
+            if not self._stopping:
+                for intent in self.spool.pending():
+                    if self._stopping:
+                        break
+                    self.spool.ack(self._accept(intent, snapshot))
             for intent in self.store.pending_intents():
+                if self._stopping:
+                    break
                 if intent.schema_version == "okx_demo_intent_v2":
                     self.independent.start(intent, snapshot)
                 else:
@@ -602,6 +619,22 @@ class DemoWorker:
             atomic_json(self.paths.projection, projection)
             return projection
         return {"state": "unavailable", "reason": self.error}
+
+    def request_shutdown(self):
+        """Stop new entry work; keep original expiry and existing exit protection."""
+        self._stopping = True
+
+    def can_handoff(self):
+        """A pending entry can fill while offline; drain it under this worker first."""
+        snapshot = self.snapshot
+        if (snapshot is None or self.error or not snapshot.coverage
+            or not all(snapshot.coverage.values())
+            or not 0 <= self.now_ms()-snapshot.observed_at_ms <= 30_000):
+            return False
+        if any(self.store.row(i.content_digest)["request"] for i in self.store.pending_intents()):
+            return False
+        return not snapshot.orders and not snapshot.algos and not any(
+            Decimal(p.get("pos", "0")) != 0 for p in snapshot.positions)
 
     def close(self):
         self.lock.close()
@@ -813,15 +846,22 @@ def main(argv=None):
             config, paths, client, DemoStore(paths.state_db), DemoSpool(paths), now_ms=clock
         )
         stopped = threading.Event()
+        def stop_for_handoff(*_):
+            worker.request_shutdown()
+            stopped.set()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(sig, lambda *_: stopped.set())
-        while not stopped.is_set():
+            signal.signal(sig, stop_for_handoff)
+        while True:
             projection = worker.tick()
+            if stopped.is_set() and worker.can_handoff():
+                break
             # REST limits and errors back off; protection reconciliation continues.
             active = bool(worker.store.pending_intents())
-            stopped.wait(10 if projection.get("state") != "ready" else 2 if active else 10)
-        worker.config = config.model_copy(update={"entry_enabled": False})
-        worker.tick()  # Best-effort remainder cancel, never claim it confirmed on shutdown.
+            delay = 10 if projection.get("state") != "ready" else 2 if active else 10
+            if stopped.is_set():
+                time.sleep(delay)  # Event.wait would return immediately during draining.
+            else:
+                stopped.wait(delay)
         return 0
     except (OSError, ValueError, RuntimeError, ArithmeticError):
         print(

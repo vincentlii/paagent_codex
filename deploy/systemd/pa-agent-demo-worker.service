@@ -21,7 +21,9 @@ ExecStartPre=/opt/miniconda3/envs/pa-agent/bin/pa-agent-okx-demo --check
 ExecStart=/opt/miniconda3/envs/pa-agent/bin/pa-agent-okx-demo
 Restart=on-failure
 RestartSec=10s
-TimeoutStopSec=180s
+# Graceful maintenance drains existing entries/positions under continuous protection.
+# Deployment must require an idle Demo account before requesting stop.
+TimeoutStopSec=infinity
 KillSignal=SIGTERM
 UMask=0077
 NoNewPrivileges=true

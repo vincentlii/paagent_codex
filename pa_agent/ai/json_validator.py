@@ -705,6 +705,14 @@ class JsonValidator:
         is_provider_draft = obj.get("protocol_version") == "pa_draft_v2"
         from pa_agent.ai.execution_price_policy import frame_price_policy
         price_policy = frame_price_policy(kline_frame) if stage == "stage2" else None
+        from pa_agent.ai.trade_execution_context import frame_trade_context
+        trade_context = frame_trade_context(kline_frame) if stage == "stage2" else None
+        if stage == "stage2" and not is_provider_draft and (
+            trade_context is not None or "trade_execution_context" in (obj.get("execution_disposition") or {})
+        ):
+            return ValidationError(category="c", stage=stage, raw_text=raw_text,
+                code="trade_context_provider_draft_required",
+                message="Trade execution facts are Host-owned and require a frozen Provider Draft")
         if stage == "stage2" and not is_provider_draft and (
             price_policy is not None or "price_adjustment" in (obj.get("execution_disposition") or {})
         ):
@@ -798,6 +806,7 @@ class JsonValidator:
                         decision_tree_path=self._decision_tree_path,
                         take_profit_policy=self.take_profit_policy,
                         execution_price_policy=price_policy,
+                        trade_execution_context=trade_context,
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:

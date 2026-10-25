@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import json
+import hashlib
 from decimal import Decimal, InvalidOperation
 
 from pa_agent.execution.demo_contracts import DemoIntent, DemoOrderRequest, client_id
@@ -155,6 +156,11 @@ def safe_demo_projection(value):
     result["price_rules"] = (
         [_select(row, ("inst_id", "tick")) for row in raw_rules[:3]]
         if isinstance(raw_rules, list) else []
+    )
+    raw_fees = value.get("fee_schedules")
+    result["fee_schedules"] = (
+        [_select(row, ("inst_id", "maker", "taker", "observed_at_ms")) for row in raw_fees[:3]]
+        if isinstance(raw_fees, list) else []
     )
     result["periods"] = {}
     for key in ("all", "7d", "30d"):
@@ -439,7 +445,7 @@ def build_demo_projection(store, snapshot, *, now_ms):
         except (KeyError, InvalidOperation):
             return None
 
-    return safe_demo_projection(
+    projection = safe_demo_projection(
         dict(
             schema_version=1,
             environment="okx_demo_v1",
@@ -452,6 +458,7 @@ def build_demo_projection(store, snapshot, *, now_ms):
             state="ready" if all(snapshot.coverage.values()) else "reconciliation_gap",
             coverage=dict(snapshot.coverage),
             price_rules=[{"inst_id": c.inst_id, "tick": str(c.tick)} for c in snapshot.contracts],
+            fee_schedules=[f.model_dump(mode="json") for f in snapshot.fee_schedules],
             account={
                 "equity": str(snapshot.equity) if snapshot.equity is not None else None,
                 "available_balance": (
@@ -474,6 +481,9 @@ def build_demo_projection(store, snapshot, *, now_ms):
             outside_orders=len(snapshot.orders) + len(snapshot.algos),
         )
     )
+    # Internal Worker→Host binding; public Dashboard projection strips it.
+    projection["fee_scope"] = hashlib.sha256(("fee:" + snapshot.account_key).encode()).hexdigest()
+    return projection
 
 
 def compose_trading_projection(paper, demo, *, selected_backend, now_ms):
