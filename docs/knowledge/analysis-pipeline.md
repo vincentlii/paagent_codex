@@ -1,9 +1,11 @@
 ---
 lifecycle: active
-capability: no-go
-verification_scope: not-verified
-最后核验: 2026-10-09
-核验提交: working-tree audit（未提交）
+capability: demo-execution-limited
+verification_scope:
+  - local
+  - VPS-controlled-live
+最后核验: 2026-10-26（冻结执行context发布及单快照模型链；收益未验）
+核验提交: 27c1b230863c085a835cf93d7ca37184d737c0d4
 权威来源:
   - CONTEXT.md
   - pa_agent/orchestrator/two_stage.py
@@ -18,7 +20,8 @@ verification_scope: not-verified
 Worker只读缓存费率→账户匹配投影→Host任务冻结→仅Stage 2协议资源→唯一materializer原候选及
 毛方程→既有execution_disposition佣金后检查→record/Intent绑定→Worker提交前复核。市场身份
 不含交易条件；未增加模型轮次或VPA输入。未知费用不影响分析成功和既有保护，只阻止新候选执行。
-旧无marker协议不变；本地实现未发布，见[验收](../quality/trader_entry_execution_acceptance_20261025.md)。
+旧无marker协议不变；代码27c1b23已安装VPS，见[实现验收](../quality/trader_entry_execution_acceptance_20261025.md)
+及[发布与实际保护核验](../quality/engineering_handoff_release_20261026.md)。
 
 2026-10-22本地增量连续性补全见[验收](../quality/wait_continuity_20261022.md)及ADR-0025增补。
 Headless既有闭盘轮询与上一份成功Stage 1诊断继续使用；新`decision_history_v2`将同源、已可用的

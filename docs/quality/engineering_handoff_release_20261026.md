@@ -68,9 +68,92 @@ maker=-0.0002、taker=-0.0005，保守收费0.0005。账户身份匹配，凭据
 `test_codex_deepseek_provider`创建假binary没有POSIX执行位，生产`resolve_executable`正确拒绝。
 仅为该fixture补`chmod(0o700)`，不放宽运行校验、不改DeepSeek能力；原失败日志保留。
 安装前重新固定测试修复提交及CI结果，不能把Windows通过当作Linux通过。
+最终CI：Windows与Linux各2172通过、1跳过、7项live未执行，分别211.36秒/92.60秒；
+与本机2173全过的差别为环境条件跳过，不增加或隐藏失败。wheel/Linux资源及shell检查success。
 
-待记录：最终本地/安装验收、固定commit/推送、VPS备份安装和健康、费率冻结、隔离最小Demo
-保护/重启交接验证、模型分析及自然样本。不同证据分开，不将canary的合成计划计作策略收益。
+实现及测试修复`07c89b8`/`27c1b23`已推送私有main；固定运行版本为
+`27c1b230863c085a835cf93d7ca37184d737c0d4`。其Windows、Linux全量CI、wheel/Linux资源及shell
+检查全部success；原失败不删除。[CI回执](https://github.com/vincentlii/paagent_codex/actions/runs/40215333561)。
+
+VPS暂停排空至paused68，无恢复阻塞、inbox为空、无活动订单后协调停四服务。
+Host备份`/var/backups/pa-agent/pa-agent-20261025T171017Z`共19812成员；
+Demo备份`/var/backups/pa-agent-demo/demo-1792948253064`共503成员，manifest/SQLite均通过。
+安装前后四库逻辑一致、2263个受保护文件及48个非项目依赖保持，原设置/认证未替换。
+271个安装成员与固定源码/wheel逐字节一致，Headless无Qt；Runtime资产及POSIX权限核验通过。
+Linux wheel SHA256=`3d8071849facc4f5b4ba4d80bf227f5cb76e27eebb4941b2cfd785e7f93e3e6a`，
+Runtime digest=`c98fb98e4cd63233d2a03b82d78f2bd51ac42c713c8ff9de801f8d2444953d94`。
+Demo service停止超时已实际读回infinity，四服务在paused边界active/running且零重启。
+原28份fills/28份bills逐行保持，30份历史订单自身复盘非空，API鉴权401/授权200及Paper历史冻结通过。
+
+### 真实费率与最小保护验收
+
+新Worker从账户取得三个feeGroup费率并缓存，Host私有scope匹配；对各自原冻结frame离线组装
+context验证TTL=5h、绝对expiry=原source close+5h。没有改旧任务或补发订单。
+冻结链证据与公开面板不暴露scope的离线回归分开；仅查费率不是保护生命周期验收。
+
+用户授权范围内用唯一隔离service及账本运行BTC最小数量`0.01`张canary；正式分析保持暂停，
+正式Demo Worker先安全退出，不与测试并发操作同账户。两个计划均明确标记synthetic，不写
+正式分析/订单账本，不当作自然交易或策略收益：
+
+| 测试 | 实际结果 |
+| --- | --- |
+| 未成交普通限价，entry=64604.32，总价值6.460432 USDT | 实际live/零成交；request_shutdown后3轮仍为同ordId/live，can_handoff=false，原期限未改 |
+| 上单显式测试清理及同账本重启 | 查询撤单终态及安全排空后重启，原客户ID/腿数保持，无补发 |
+| 带新fee/TTL marker的可成交限价，entry=80747.62，总价值8.074762 USDT | 实际成交；交易所live定量OCO，sz=0.01、SL=76710.23、TP=84785.01；严格原价及独立数量协议核验通过 |
+| 有持仓/保护时维护请求 | 同algo保持，未增加退出腿，can_handoff=false，管理继续 |
+| 测试收尾 | 只取消测试自身订单/保护，原预算释放确认后reduce-only清理自身剩余；普通单/algo/仓位及隔离active均0 |
+
+canary service success/inactive，正式Worker恢复ready，七项coverage全真。未观察真实部分成交，
+该路径只有离线覆盖；测试主动清理退出不冒充OCO自然触发或盈利。账户口径费用会包含canary，
+其合成计划不进入正式策略逐计划PnL。
+
+已恢复running69：原三品种、500 USDT/5h、fixed_rr=1.5、gpt-6-luna/xhigh/Fast/并发3全部保持。
+四服务active/running、Result=success、零重启，Host无恢复阻塞，三品种connected；Demo ready且
+七项coverage全真。五类HTTP接口授权200、未认证401，30份历史复盘非空可读，Paper历史冻结。
+现场临时build-source和上传发布包已清理；完整备份、安装manifest与隔离canary账本保留。
+
+模型观察预登记为`trade_entry_single_pair_v1`：同一真实旧XAU冻结任务（100根1h、60根4h）、
+同一原增量历史/已冻结来源、fixed_rr1.5和gpt-6-luna/xhigh，各版本各一次，顺序before→after。
+before源码8887ad0，after源码27c1b23；after额外冻结TTL/已核验费用，教材/Skill按自身版本。
+执行在专用Codex用户的独立目录/会话，凭据只在VPS自有隔离home，无生产DB读取权限；
+Host先复制只读输入，不生成订单或写生产记录。不是PA/VPA增量实验，不宣称统计非劣/盈利。
+两臂均一次完成，3调用、completed_with_warnings，无repair调用或执行订单：
+
+| 指标 | before（8887ad0） | after（27c1b23） |
+| --- | --- | --- |
+| 整链耗时 | 343.74秒 | 336.92秒 |
+| 实际输入token（含缓存部分） | 496821 | 478848 |
+| 其中cached input | 233088 | 200320 |
+| 实际输出token | 35441 | 31698 |
+| 实际总token | 532262 | 510546 |
+| 终点 | wait / 9.0P | wait / 9.2 |
+| 执行处置 | not_applicable | not_applicable |
+
+两臂usage coverage完整，未知用量0；缓存包含于输入，不能再次相加。单次总token下降4.08%、
+耗时下降1.99%只描述本对照，不能推断因果、分位延迟、持续降费或非劣。调用未开启正式Fast，
+不能拿这次耗时作为线上Fast性能。两次没有候选，故本对照不验证实际候选的佣金后放行率。
+
+PA复核：两次主要等待理由都是Stage 1冻结neutral背景且无获准已成立Setup；after区分旧等待
+条件的局部进展与更宽范围确认，并实际引用source close起算的5h绝对截止时间，没有靠延长
+本轮分析时间重新起算TTL。但两臂对旧K号及局部触发的文字复述并不完全一致，本次没有独立
+盲评裁定哪份解释更好；仍未证明不会继续出现过度等待，也没有新增放宽方向权限的修补。
+
+VPA复核：两次保留量价对偏空解释的反证，也保留尚未确认的接受/跟随；前置时机not_applicable
+没有被写成insufficient_data或数据缺失Gate。不能据此证明每次VPA解释正确或有独立收益增量。
+
+工程复核：无失败或额外repair；Stage 1质量warning分别5/6项，VPA专业文字warning均3项，
+Stage 2各有一次无歧义normalization，均保留原审计，不伪称无warning。程序费用计算和真实保护
+验收与模型判断分开；它们不决定背景、Setup或概率。原输入/protocol/driver/两臂record、result
+及SHA已归档至本次VPS发布目录，两个临时home的复制auth已删除，原auth校验保持，测试上传
+脚本已删除。两臂独立service均success/inactive。
+
+最终恢复检查仍为running69，三品种connected、四服务active/running且零重启，Demo ready，
+七项coverage全真，无活动敞口或恢复阻塞，30份历史复盘可读。启动后尚未接收新的自然闭盘
+分析样本，故没有新自然成交/收益验收；不能把这一时点的0个任务算作不下单率或0R样本。
+下一自然闭盘继续按原调度运行；需要新前向完整记录及足够退出样本后，分别检查提交拒绝、
+触达/到期、成本后收益及不确定覆盖。收益仍未验证，不以合成canary或两笔历史止损下结论。
+
+不同证据分开，不将canary的合成计划计作策略收益。
 模型调用的失败/限流保留，不通过重跑洗掉；数量/时间不足时只报告观察，不能证明收益提高。
 
 官方依据：[systemd.service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)

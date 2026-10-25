@@ -19,7 +19,9 @@ None→{}，旧损坏身份仍拒绝。维护信号不再伪装成entry_enabled=
 绝对expiry及账户费率，唯一materializer保留毛方程及原candidate，execution_disposition另算佣金后
 资格；未知费用不补零，不改结构SL/概率，不增加模型调用。执行条件绑定任务/cohort而非独立行情。
 原文冲突已替换，旧无marker任务/订单不升级；新增订单类型、事件撤单及旧单管理扩权未授权。
-本地实现未commit或发布，模型质量/收益另验。
+代码27c1b23已commit、推送私有main并安装VPS；费率/最小Demo保护链通过，完整回执见工程交接验收。
+同一旧XAU快照真实模型前后各一次均3调用完成且wait，after读取原close起算期限；仅描述观察，
+未证明解释质量提升或消除过度等待。自然收益未验，不能用合成最小单证明策略效果。
 
 修改OKX Demo限价价格精度或提交前拒绝流水，先读
 [执行价格与可见性修复](docs/quality/execution_price_grid_20261023.md)和ADR-0027同日增补。

@@ -1,12 +1,12 @@
 ---
 lifecycle: active
-capability: paper-observation-limited
+capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-10-15
-核验提交: fe9574f8f6ca49d50275aba912dbd40bb7e97bb2（Demo运行代码；历史Paper修复身份见对应章节）
+最后核验: 2026-10-26（维护排空、费用冻结与最小实际保护核验）
+核验提交: 27c1b230863c085a835cf93d7ca37184d737c0d4（历史Paper修复身份见对应章节）
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -25,7 +25,8 @@ issue_status: monitoring
 先区分实际成交、触价诊断、到期/维护撤销及主观概率，再考虑策略改动；取证报告本身未改业务。
 拟优化交易选择时，继续读[交易员入场研究](../quality/trader_entry_selection_proposal_20261025.md)：
 区分触价可达与触价后价值；保留结构SL、固定RR及旧单独立。2026-10-25用户授权的原句清理、
-冻结TTL和佣金后资格已本地实现，未发布，见[第一批验收](../quality/trader_entry_execution_acceptance_20261025.md)。
+冻结TTL和佣金后资格已随27c1b23安装VPS，见[第一批验收](../quality/trader_entry_execution_acceptance_20261025.md)
+和[工程交接/发布验收](../quality/engineering_handoff_release_20261026.md)。
 新拒绝查`commission_net_equation_failed/commission_unavailable/commission_rate_increased`、
 冻结`role_runtime.trade_execution_context`与`execution_disposition.checks.commission_net`；
 不可用先核对Worker读取/账户scope/缓存时间，不通过改价、抬p或补零绕过。活动保护不依赖费率。

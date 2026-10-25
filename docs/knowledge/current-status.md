@@ -4,14 +4,15 @@ capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-23（价格网格修复发布；Demo覆盖与历史复盘现场通过）
-核验提交: VPS运行代码167d482a9e167f5bd11d590106720989dd4d60bc
+最后核验: 2026-10-26（工程交接及冻结费用发布；真实Demo最小保护和单快照模型对照）
+核验提交: VPS运行代码27c1b230863c085a835cf93d7ca37184d737c0d4
 权威来源:
   - CONTEXT.md
   - docs/quality/runtime_reliability_vpa_remediation_20261021.md
   - docs/quality/desktop_retirement_20261021.md
   - docs/architecture/ADR-0025-joint-stage2-pipeline.md
   - docs/architecture/ADR-0027-selectable-fixed-risk-reward.md
+  - docs/quality/engineering_handoff_release_20261026.md
 ---
 
 # 当前状态
@@ -19,15 +20,25 @@ verification_scope:
 本页区分线上已发布事实与尚未验证事项。以前发布周期的状态已移入
 [历史归档](archive/README.md)，不能用旧“未实施/未部署”描述覆盖新验收证据。
 
-## 本地实现：入场选择第一批（未发布）
+## 2026-10-26：第一批优化及工程交接已安装VPS
 
 2026-10-25—26用户授权的第一批：原文去冲突、Stage 2读取冻结入场期限/账户费率、程序佣金后
 执行检查及现有候选比较指导，见[ADR-0028](../architecture/ADR-0028-frozen-trade-execution-context.md)
 和[验收](../quality/trader_entry_execution_acceptance_20261025.md)。旧任务/订单不升级，结构SL/
-原候选/概率保留，无新增模型调用；市场hash与执行条件分开。当前工作区未commit、未发布，
-下方VPS回执仍是线上基线；真实模型判断及收益未验证。
+原候选/概率保留，无新增模型调用；市场hash与执行条件分开。代码27c1b23已commit、推送私有main并
+安装VPS，详见[工程交接验收](../quality/engineering_handoff_release_20261026.md)；真实模型判断及收益单独验证。
 最终Windows本地2154项完整非live回归通过，271个wheel代码/资源成员与源码及安装目录一致、
 Headless无Qt导入；独立三角色复核通过。备份与测试/打包临时目录清理见上述验收。
+本次追加维护/空HTF修复后本地2173项通过，最终Windows/Linux CI及wheel资源全通过。
+PH-26仅新None入口统一为{}、旧损坏身份仍拒绝；PH-27维护停止新入场并持续持锁管理至安全排空，
+活动订单会延长stop/restart，不通过停服离线保留可成交挂单。最终排空设计为主Agent复核。
+271个安装成员、48依赖及安装前后四库/配置保持；账户三品种费率读取和Host冻结通过。
+BTC最小单实际成交及原价sz=0.01的live OCO核验通过，维护不撤旧pending且持仓保护不退出。
+测试已清空自身敞口、正式Worker恢复ready；属于合成执行验收，不是自然收益或真实部分成交证据。
+同一XAU旧快照各一次真实模型对照已完成：before/after均3调用、带warning完成且wait，总token
+532262/510546。after读取了原source close起算的截止时间，两次均因neutral/Setup未成立而等待，
+未把前置VPA时机不适用当数据缺失。单样本不证明解释质量改善、消除过度等待或盈利。
+正式running69保持三品种、500 USDT/5h、RR1.5及原模型设置；新自然成交收益尚未验收。
 
 ## 已发布：执行价格网格与未提交流水
 
