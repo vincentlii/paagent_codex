@@ -40,6 +40,7 @@ def test_provider_credentials_catalog_and_command_are_isolated(tmp_path, monkeyp
 def test_provider_identity_binds_catalog_without_credentials(tmp_path):
     binary = tmp_path/'codex.exe'
     binary.write_bytes(b'test-binary')
+    binary.chmod(0o700)
     catalog = tmp_path/'models.json'
     catalog.write_text(json.dumps({'models': [{'slug': 'deepseek-flash'}]}))
     identity = codex_runtime_identity(model='deepseek-flash', reasoning_effort='high',
