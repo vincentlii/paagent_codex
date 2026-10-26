@@ -194,6 +194,19 @@ class DemoWorker:
             identity_field = "algoClOrdId" if leg["leg"] == "oco" else "clOrdId"
             if result.get(identity_field) not in (None, leg["client_id"]):
                 raise DemoUnavailable("order_client_identity_mismatch")
+            if leg["leg"] == "emergency" and intent.trade_execution_context and intent.trade_execution_context.exit_order_type:
+                params = json.loads(leg["params"])
+                try:
+                    valid = (result.get("ordType") == "limit" and result.get("reduceOnly") == "true"
+                             and result.get("side") == params["side"]
+                             and Decimal(result["px"]) == Decimal(params["limit_price"]) == intent.stop
+                             and Decimal(result["sz"]) == Decimal(params["quantity"])
+                             and 0 <= Decimal(result["accFillSz"]) <= Decimal(params["quantity"]))
+                except (KeyError, ValueError, ArithmeticError):
+                    valid = False
+                if not valid:
+                    self.error = "limit_exit_parameters_mismatch"
+                    return {}  # Keep the original finite budget; never repair by another POST.
             if intent.schema_version == "okx_demo_intent_v2" and leg["leg"] == "entry":
                 previous = json.loads(leg.get("response", "{}"))
                 if Decimal(result.get("accFillSz", "0")) > Decimal(previous.get("accFillSz", "0")):
@@ -208,7 +221,10 @@ class DemoWorker:
     def _exits_terminal(self, intent):
         complete = True
         for leg in self.store.legs(intent.content_digest):
-            if leg["leg"] != "oco" or leg["status"] != "effective":
+            if leg["leg"] != "oco" or (leg["status"] != "effective" and not any(
+                c["parent_client_id"] == leg["client_id"]
+                for c in self.store.triggered_orders(intent.content_digest)
+            )):
                 continue
             self._leg_query(intent, leg)  # A trigger may expose its child IDs only on a later read.
             children = [
@@ -229,6 +245,23 @@ class DemoWorker:
                 ):
                     complete = False
                     continue
+                if intent.trade_execution_context and intent.trade_execution_context.exit_order_type:
+                    params = json.loads(leg["params"])
+                    try:
+                        # Retain a valid child even if its parent's fill GET lags.
+                        # The exposure ledger then flags quantities above known entry
+                        # inconsistent, rather than losing an already observed exit.
+                        valid = (result.get("ordType") == "limit" and result.get("reduceOnly") == "true"
+                                 and result.get("side") == params["side"]
+                                 and Decimal(result["px"]) in {intent.stop, intent.tp1}
+                                 and 0 < Decimal(result["sz"]) <= Decimal(params["quantity"])
+                                 and 0 <= Decimal(result["accFillSz"]) <= Decimal(result["sz"]))
+                    except (KeyError, ValueError, ArithmeticError):
+                        valid = False
+                    if not valid:
+                        self.error = "limit_exit_parameters_mismatch"
+                        complete = False
+                        continue
                 self.store.observe_triggered(leg["client_id"], child["order_id"], result)
                 if result.get("state") not in ENTRY_TERMINAL:
                     complete = False
@@ -306,17 +339,21 @@ class DemoWorker:
             return  # Unknown submit is never resent.
         generation = max((l["generation"] for l in legs), default=0) + 1
         params = {"quantity": str(quantity), "side": "sell" if request.side == "buy" else "buy"}
+        limit_exit = bool(intent.trade_execution_context and intent.trade_execution_context.exit_order_type)
+        if limit_exit:
+            params["limit_price"] = str(request.stop)
         cid = self.store.prepare_leg(
             intent.content_digest, "emergency", params, generation=generation
         )
         self.store.update_leg(cid, "submission_unknown")
         try:
             response = self.client.close_position(
-                inst_id=intent.inst_id, side=params["side"], quantity=quantity, client_id=cid
+                inst_id=intent.inst_id, side=params["side"], quantity=quantity, client_id=cid,
+                **({"limit_price": request.stop} if limit_exit else {}),
             )
             self.store.update_leg(cid, "accepted", response)
-        except DemoRequestRejected:
-            self.store.update_leg(cid, "rejected")
+        except DemoRequestRejected as exc:
+            self.store.update_leg(cid, "rejected", {"sCode": exc.code})
         except (DemoRequestUnknown, DemoUnavailable):
             pass
         self.store.record_observation(
@@ -563,10 +600,19 @@ class DemoWorker:
         )
         self.store.update_leg(cid, "submission_unknown")
         self.store.update(intent.content_digest, entry_state="submission_unknown")
+        if request.attached_algo_client_id:
+            if intent.inst_id not in self.config.attached_accepted_symbols:
+                raise DemoUnavailable("attached_protection_not_live_accepted")
+            self.store.prepare_leg(intent.content_digest, "oco", dict(
+                stop=str(request.stop), tp1=str(request.tp1), quantity=str(request.sz),
+                side="sell" if request.side == "buy" else "buy", exit_order_type="limit",
+                attached_entry_client_id=request.client_id), generation=1)
         try:
             response = self.client.place_limit(request)
         except DemoRequestRejected as exc:
             self.store.update_leg(cid, "rejected")
+            if request.attached_algo_client_id:
+                self.store.update_leg(request.attached_algo_client_id, "rejected", {"sCode": exc.code})
             self.store.update(
                 intent.content_digest,
                 entry_state="rejected",

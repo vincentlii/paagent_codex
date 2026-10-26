@@ -5,7 +5,7 @@ import json
 from decimal import Decimal, localcontext
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 Instrument = Literal["BTC-USDT-SWAP", "ETH-USDT-SWAP", "XAU-USDT-SWAP"]
 Timestamp = Annotated[int, Field(strict=True, gt=0)]
@@ -47,9 +47,22 @@ class TradeExecutionContext(BaseModel):
     expires_at_ms: Timestamp
     frozen_at_ms: Timestamp
     fee_schedule: FeeSchedule | None = None
+    exit_order_type: Literal["limit"] | None = None
+    protection_binding: Literal["entry_attached"] | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_shape(self, handler):
+        value = handler(self)
+        if self.exit_order_type is None:
+            value.pop("exit_order_type", None)
+        if self.protection_binding is None:
+            value.pop("protection_binding", None)
+        return value
 
     @model_validator(mode="after")
     def consistent(self):
+        if self.protection_binding and self.exit_order_type != "limit":
+            raise ValueError("attached_protection_requires_limit_exits")
         if self.expires_at_ms != self.source_close_ms + self.limit_validity_hours * 3_600_000:
             raise ValueError("trade_context_expiry_mismatch")
         if self.frozen_at_ms < self.source_close_ms:
@@ -75,9 +88,10 @@ class TradeExecutionContext(BaseModel):
         return value
 
     def commission_check(self, decision):
+        uncovered = ["slippage", "funding"] + (["limit_exit_nonfill"] if self.exit_order_type else [])
         if self.fee_schedule is None:
             return {"passed": False, "status": "unavailable", "scope": "commission_only",
-                    "uncovered": ["slippage", "funding"]}
+                    "uncovered": uncovered}
         with localcontext() as ctx:
             ctx.prec = 64
             entry, stop, target, p = (Decimal(str(decision[k])) for k in (
@@ -90,7 +104,7 @@ class TradeExecutionContext(BaseModel):
             denominator = net_risk + net_reward
             breakeven = str(net_risk / denominator * 100) if denominator > 0 else None
             return {"passed": net_reward > 0 and expectancy > 0, "status": "available",
-                    "scope": "commission_only", "uncovered": ["slippage", "funding"],
+                    "scope": "commission_only", "uncovered": uncovered,
                     "rate_assumption": "max_commission_no_rebate_both_legs",
                     "breakeven_win_rate": breakeven,
                     **{k: str(v) for k, v in dict(rate=rate, win_fee=win_fee, loss_fee=loss_fee,
@@ -101,8 +115,17 @@ class TradeExecutionContext(BaseModel):
                        ).items()}}
 
     def guidance(self):
+        limit_guidance = (
+            "。本轮止盈和止损均为last触发后原价限价退出；触价不代表成交，可能长期未成交。"
+            "保护建立失败时应急退出也仅使用原结构SL限价，不自动改市价。"
+            "主观概率仍指目标先于止损达到，不是限价成交保证；佣金方程未覆盖退出未成交风险。"
+            if self.exit_order_type else "")
+        if self.protection_binding:
+            limit_guidance += ("开仓已预绑定交易所保护，主单全成或部分成交撤余后才由交易所生成；"
+                               "不承诺原子保护、部分成交期间无窗口或退出成交。")
         return ("冻结交易约束（仅本轮Stage 2，时间为UTC epoch毫秒）："
                 + json.dumps(self.model_dump(mode="json"), ensure_ascii=False)
+                + limit_guidance
                 + "。有效期从source_close_ms起算，只撤未成交余量，不是持仓时限；分析交付也消耗可挂单时间。"
                 "在已有entry_reachability中判断本期限内的路径及反证，区分触达可能性与成交后TP先于SL的概率，"
                 "不编造精确成交率，不强迫每次有候选。当前Demo只执行普通限价；不为适配执行器强造限价。"

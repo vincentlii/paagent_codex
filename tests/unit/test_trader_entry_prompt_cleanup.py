@@ -22,7 +22,7 @@ def test_structure_stop_rule_reaches_direct_and_frozen_stage_knowledge():
     delivered = ["\n".join(message["content"] for message in direct),
                  "".join(section["text"] for section in modules[module_id]["sections"])]
     for text in delivered:
-        assert not re.search(r"止损：信号棒极点外\s*1\s*到\s*2\s*跳动", text)
+        assert not re.search(r"止损：信号棒极点外\s*1\s*到\s*2\s*跳动", text)  # noqa: RUF001
         assert "当前 Setup 的结构失效位置" in text
 
 
@@ -67,3 +67,43 @@ def test_joint_skill_reuses_fields_without_forcing_vpa_confirmation_or_new_order
     assert "无相关证据不强求影响" in text
     assert "未来新增闭盘证据" in text
     assert "不授予新订单类型或旧单管理权限" in text
+
+
+@pytest.mark.parametrize("joint_stage2", [False, True])
+def test_complete_delivered_pa_library_has_no_structure_stop_conflicts(joint_stage2):
+    from pa_agent.ai.prompt_assembler import stage1_prompt_txt_files, stage2_prompt_txt_files
+
+    knowledge_ids = list(dict.fromkeys([
+        *stage1_prompt_txt_files(), *stage2_prompt_txt_files(load_full_strategy_library=True),
+    ]))
+    modules, _ = build_knowledge_bundle(
+        prompt_dir=PROMPT_DIR, knowledge_ids=knowledge_ids, role="stage2", joint_stage2=joint_stage2,
+    )
+    prohibited = (
+        "信号棒过长时的紧缩止损", "标准图表止损过远时，在信号棒极点外设较紧止损",  # noqa: RUF001
+        "可能设在非关键结构位", "先定结构 TP1/TP2，再定 stop",  # noqa: RUF001
+        "信号棒止损法是最低标准", "止损：OB的另一侧1跳动",  # noqa: RUF001
+        "§10.2 应判「是」→ 等待更小信号棒", "盘中触价即可执行的保护性止损",
+        "入场后设置止损和目标", "入场并设置止损",
+        "至少留出1-2个跳动点的缓冲空间", "**禁止**边界外仅 1–2 跳的止损",  # noqa: RUF001
+    )
+    conflicts = {
+        name: [rule for rule in prohibited if rule in "".join(s["text"] for s in module["sections"])]
+        for name, module in modules.items()
+    }
+    assert not {name: rules for name, rules in conflicts.items() if rules}
+
+
+def test_delivered_stop_buffer_examples_keep_structure_and_verified_tick_scope():
+    modules, _ = build_knowledge_bundle(prompt_dir=PROMPT_DIR,
+        knowledge_ids=["极速上涨交易策略.txt", "极速下跌交易策略.txt", "文件21-铁丝网与无交易环境.txt"],
+        role="stage2")
+    for module in modules.values():
+        text = "".join(section["text"] for section in module["sections"])
+        assert "1–2 tick" in text  # noqa: RUF001
+        assert "Host" in text
+        assert "不是通用下限" in text or "不把跳数设为通用止损下限" in text
+    for name in ("极速上涨交易策略.txt", "极速下跌交易策略.txt"):
+        text = "".join(section["text"] for section in modules[name]["sections"])
+        assert "已确定结构失效锚点且 Host 提供真实 tick" in text
+        assert "另一个独立成立的 Setup" in text

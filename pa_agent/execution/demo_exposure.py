@@ -29,6 +29,20 @@ def _quantity(value):
     return result
 
 
+def exit_quantity(entry: dict | None, leg: dict) -> Decimal:
+    """Native attachment's frozen size is a cap; only its parent's fills are owned."""
+    params = json.loads(leg["params"])
+    cap = _quantity(params["quantity"])
+    if "attached_entry_client_id" not in params:
+        return cap
+    if not entry or params["attached_entry_client_id"] != entry["client_id"]:
+        raise ValueError("attached_entry_identity_mismatch")
+    entered = _quantity(json.loads(entry["response"]).get("accFillSz", "0"))
+    if entered > cap:
+        raise ValueError("attached_entry_quantity_exceeds_cap")
+    return entered
+
+
 def plan_exposure(entry: dict | None, legs: list[dict], children: list[dict]) -> PlanExposure:
     entered = exited = reserved = protected = ZERO
     uncertain = False
@@ -40,7 +54,7 @@ def plan_exposure(entry: dict | None, legs: list[dict], children: list[dict]) ->
         for leg in legs:
             if leg["leg"] == "entry":
                 continue
-            quantity = _quantity(json.loads(leg["params"])["quantity"])
+            quantity = exit_quantity(entry, leg)
             response = json.loads(leg["response"])
             status = leg["status"]
             rows = (
@@ -84,7 +98,7 @@ def plan_exposure(entry: dict | None, legs: list[dict], children: list[dict]) ->
                 reserved += quantity - leg_filled
                 if status == "live" and leg["leg"] == "oco":
                     protected += quantity - leg_filled
-                else:
+                elif quantity > 0 or rows or response.get("algoId"):
                     uncertain = True
         remaining = entered - exited
         inconsistent |= (

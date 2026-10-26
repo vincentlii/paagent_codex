@@ -68,6 +68,7 @@ def plan_view(intent, request, row, legs, children, fills, quote, now_ms):
             )
             if leg["status"] not in {
                 "live",
+                "partially_filled",
                 "effective",
                 "filled",
                 "canceled",
@@ -78,7 +79,7 @@ def plan_view(intent, request, row, legs, children, fills, quote, now_ms):
             if leg["status"] == "effective" and not observations:
                 return result
             for oid, state, body in observations:
-                if not oid or "accFillSz" not in body or state not in TERMINAL:
+                if not oid or "accFillSz" not in body or state not in TERMINAL | {"live", "partially_filled"}:
                     return result
                 quantity = _number(body["accFillSz"])
                 if oid == entry_id or (oid in exits and exits[oid] != quantity):

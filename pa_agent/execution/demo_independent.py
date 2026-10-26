@@ -6,8 +6,9 @@ import json
 from decimal import Decimal
 
 from pa_agent.execution.demo_contracts import DemoOrderRequest
+from pa_agent.execution.demo_exposure import exit_quantity
 from pa_agent.execution.demo_store import ENTRY_TERMINAL, LEG_TERMINAL
-from pa_agent.execution.okx_demo import DemoRequestRejected, DemoRequestUnknown, DemoUnavailable
+from pa_agent.execution.okx_demo import DemoRequestRejected, DemoRequestUnknown, DemoUnavailable, _raise_code
 
 
 class IndependentPlanManager:
@@ -89,6 +90,10 @@ class IndependentPlanManager:
         if intent.inst_id not in w.config.independent_accepted_symbols:
             w._finish(intent, "independent_protection_not_live_accepted")
             return
+        if (intent.trade_execution_context and intent.trade_execution_context.protection_binding
+                and intent.inst_id not in w.config.attached_accepted_symbols):
+            w._finish(intent, "attached_protection_not_live_accepted")
+            return
         block = w._entry_block(snapshot)
         if block or not self._aligned(intent.inst_id, snapshot):
             w.error = block or "plan_position_reconciliation_gap"
@@ -100,7 +105,8 @@ class IndependentPlanManager:
         row = self.store.row(intent.content_digest)
         if not row["request"]:
             return
-        for leg in self.store.legs(intent.content_digest):
+        entry_result = {}
+        for leg in sorted(self.store.legs(intent.content_digest), key=lambda l: l["leg"] != "entry"):
             result = w._leg_query(intent, leg)
             if not result and leg["leg"] == "entry" and leg["status"] not in ENTRY_TERMINAL:
                 # An empty GET is not evidence of zero fills. Recover only fills
@@ -136,6 +142,7 @@ class IndependentPlanManager:
                 # reservation, including across restart; never infer absence from GET.
                 self.store.update_leg(leg["client_id"], "observation_unknown")
             if leg["leg"] == "entry" and result:
+                entry_result = result
                 self.store.update(
                     intent.content_digest,
                     entry_state=result.get("state", "unknown"),
@@ -152,23 +159,65 @@ class IndependentPlanManager:
                         terminal_filled=latest["filled"],
                     )
         w._exits_terminal(intent)
+        request = DemoOrderRequest.model_validate_json(row["request"])
+        if request.attached_algo_client_id:
+            self._observe_attachment(intent, request, entry_result)
+
+    def _observe_attachment(self, intent, request, entry_result):
+        legs = self.store.legs(intent.content_digest)
+        native = next((l for l in legs if l["client_id"] == request.attached_algo_client_id), None)
+        if not native:
+            return  # A crash before registration did not release the entry POST.
+        response = json.loads(native["response"])
+        entry = next(l for l in legs if l["leg"] == "entry")
+        entry_body = json.loads(entry["response"])
+        children = self.store.triggered_orders(intent.content_digest)
+        known = bool(response.get("algoId") or response.get("state") in {"live", "effective"}
+                     or any(c["parent_client_id"] == native["client_id"] for c in children))
+        statuses = json.loads(entry_result.get("attached_algo_status", "[]"))
+        failure = next((s["failCode"] for s in statuses
+                        if s.get("attachAlgoClOrdId") == native["client_id"]
+                        and s.get("failCode") not in (None, "", "0")), None)
+        if failure:
+            try:
+                _raise_code(failure, "attached_protection")
+            except DemoRequestUnknown:
+                self.store.update_leg(native["client_id"], "observation_unknown")
+                return
+            except DemoRequestRejected:
+                pass
+            if known:
+                self.store.update_leg(native["client_id"], "observation_unknown")
+                self.worker.error = "attached_protection_observation_conflict"
+            else:
+                self.store.update_leg(native["client_id"], "rejected", {"sCode": failure})
+        elif (entry_result.get("state") in ENTRY_TERMINAL
+              and Decimal(entry_result.get("accFillSz", "0")) == 0
+              and Decimal(entry_body.get("accFillSz", "0")) == 0
+              and Decimal(self.store.row(intent.content_digest)["filled"]) == 0
+              and not self.store.order_fills(intent.inst_id,
+                  {entry_body["ordId"]} if entry_body.get("ordId") else set(),
+                  client_id=None if entry_body.get("ordId") else entry["client_id"])
+              and not known and native["status"] not in LEG_TERMINAL):
+            self.store.update_leg(native["client_id"], "canceled", {"_unactivated_attachment": True})
 
     @staticmethod
-    def _verify(result, request, leg):
+    def _verify(result, request, leg, *, limit_exit=False, quantity=None):
         params = json.loads(leg["params"])
         if (
             result.get("algoClOrdId") != leg["client_id"]
             or result.get("instId") != request.inst_id
             or result.get("side") != params["side"]
-            or Decimal(result.get("sz", "0")) != Decimal(params["quantity"])
+            or Decimal(result.get("sz", "0")) != (Decimal(params["quantity"]) if quantity is None else quantity)
             or result.get("closeFraction") not in (None, "")
             or Decimal(result.get("slTriggerPx", "0")) != request.stop
             or Decimal(result.get("tpTriggerPx", "0")) != request.tp1
             or result.get("ordType") != "oco"
             or result.get("reduceOnly") != "true"
             or result.get("posSide") != "net"
-            or result.get("slOrdPx") != "-1"
-            or result.get("tpOrdPx") != "-1"
+            or Decimal(result.get("slOrdPx", "0")) != (request.stop if limit_exit else Decimal(-1))
+            or Decimal(result.get("tpOrdPx", "0")) != (request.tp1 if limit_exit else Decimal(-1))
+            or (params.get("exit_order_type") == "limit") != limit_exit
             or result.get("slTriggerPxType") != "last"
             or result.get("tpTriggerPxType") != "last"
         ):
@@ -183,6 +232,9 @@ class IndependentPlanManager:
             quantity=str(quantity),
             side="sell" if request.side == "buy" else "buy",
         )
+        limit_exit = bool(intent.trade_execution_context and intent.trade_execution_context.exit_order_type)
+        if limit_exit:
+            params["exit_order_type"] = "limit"
         cid = self.store.prepare_leg(
             intent.content_digest,
             "oco",
@@ -198,16 +250,18 @@ class IndependentPlanManager:
                 tp1=request.tp1,
                 client_id=cid,
                 quantity=quantity,
+                **({"exit_order_type": "limit"} if limit_exit else {}),
             )
             self.store.update_leg(cid, "accepted", result)
             result = w._leg_query(intent, {"client_id": cid, "leg": "oco"})
             if result.get("state") == "live":
                 try:
-                    self._verify(result, request, {"client_id": cid, "params": json.dumps(params)})
+                    self._verify(result, request, {"client_id": cid, "params": json.dumps(params)},
+                                 limit_exit=limit_exit)
                 except (DemoUnavailable, ArithmeticError):
                     return False  # Never call a mismatched live exit verified or overlap it.
-        except DemoRequestRejected:
-            self.store.update_leg(cid, "rejected")
+        except DemoRequestRejected as exc:
+            self.store.update_leg(cid, "rejected", {"sCode": exc.code})
             # Only the unreserved part may be closed. Other plans and live/unknown exits are excluded.
             w._emergency(intent, request, quantity)
         except (DemoRequestUnknown, DemoUnavailable):
@@ -219,18 +273,22 @@ class IndependentPlanManager:
         if not row["request"]:
             return
         request = DemoOrderRequest.model_validate_json(row["request"])
+        native = bool(request.attached_algo_client_id)
+        limit_exit = bool(intent.trade_execution_context and intent.trade_execution_context.exit_order_type)
         if not any(l["leg"] == "entry" for l in self.store.legs(intent.content_digest)):
             w._finish(intent, "incomplete_preparation")
             return
         bad = False
+        entry = next(l for l in self.store.legs(intent.content_digest) if l["leg"] == "entry")
         for leg in self.store.legs(intent.content_digest):
             if leg["leg"] == "oco" and leg["status"] == "live":
                 try:
-                    self._verify(json.loads(leg["response"]), request, leg)
-                except (DemoUnavailable, ArithmeticError):
+                    self._verify(json.loads(leg["response"]), request, leg, limit_exit=limit_exit,
+                                 quantity=exit_quantity(entry, leg))
+                except (DemoUnavailable, ValueError, ArithmeticError):
                     bad = True
                     result = json.loads(leg["response"])
-                    if result.get("algoId"):
+                    if result.get("algoId") and not native:
                         try:
                             w.client.cancel_algo(intent.inst_id, result["algoId"])
                         except (DemoRequestRejected, DemoRequestUnknown, DemoUnavailable):
@@ -238,13 +296,29 @@ class IndependentPlanManager:
         exposure = self.store.plan_exposure(intent.content_digest)
         if bad:
             self.store.update(intent.content_digest, protection="protection_failed")
+            w.error = "protection_parameters_mismatch"
             w._cancel_entry(intent, request)
             return  # Cancel ACK cannot release a possibly live exit budget.
         free = exposure.remaining - exposure.reserved_exit
         if free > 0 and not exposure.inconsistent:
+            if limit_exit and any(l["leg"] == "emergency" and l["status"] in {"rejected", "order_failed"}
+                                  for l in self.store.legs(intent.content_digest)):
+                self.store.update(intent.content_digest, protection="protection_failed")
+                w.error = "limit_exit_rejected"
+                w._cancel_entry(intent, request)
+                return
             # Fresh GET fills may precede account snapshot; no whole-position inference or remedy.
             if self._aligned(intent.inst_id, snapshot, protecting=True):
-                if self._protect(intent, request, free) is False:
+                if native:
+                    attached = next((l for l in self.store.legs(intent.content_digest)
+                                     if l["client_id"] == request.attached_algo_client_id), None)
+                    if not attached:
+                        w.error = "attached_preparation_incomplete"
+                        w._cancel_entry(intent, request)
+                        return
+                    if attached["status"] in {"canceled", "rejected", "order_failed", "effective"}:
+                        w._emergency(intent, request, free)
+                elif self._protect(intent, request, free) is False:
                     self.store.update(intent.content_digest, protection="protection_failed")
                     w._cancel_entry(intent, request)
                     return

@@ -193,4 +193,6 @@ def bind_demo_limit(
         margin=margin,
         exp_time_ms=intent.fresh_until_ms,
         contract_digest=digest(contract.model_dump(mode="json")),
+        attached_algo_client_id=(client_id(account_key, intent, "oco", 1)
+            if intent.trade_execution_context and intent.trade_execution_context.protection_binding else None),
     )

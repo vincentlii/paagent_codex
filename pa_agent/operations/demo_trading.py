@@ -123,6 +123,7 @@ def safe_demo_projection(value):
             "pnl",
             "sync_required",
             "valuation_at_ms",
+            "exit_order_type", "exit_path", "protection_rejection_code",
             "source_provider", "source_venue", "source_symbol", "source_instrument_type",
             "timeframe", "pipeline", "market_digest", "cycle", "direction", "gate", "review_status",
         ),
@@ -311,6 +312,12 @@ def build_demo_projection(store, snapshot, *, now_ms):
             entry = next((l for l in legs if l["leg"] == "entry"), None)
             average_fill = json.loads(entry["response"]).get("avgPx") if entry else None
             independent = i.schema_version == "okx_demo_intent_v2"
+            exit_audit = dict(
+                exit_order_type="limit" if i.trade_execution_context and i.trade_execution_context.exit_order_type else "market",
+                exit_path="protection_failure_emergency" if any(l["leg"] == "emergency" for l in legs) else "oco",
+                protection_rejection_code=next((json.loads(l["response"]).get("sCode")
+                    for l in reversed(legs) if l["leg"] == "oco" and l["status"] == "rejected"), None),
+            )
             exposure = store.plan_exposure(i.content_digest) if independent else None
             orders.append(
                 dict(
@@ -327,6 +334,7 @@ def build_demo_projection(store, snapshot, *, now_ms):
                     stop=str(i.stop),
                     tp1=str(i.tp1),
                     **price_audit,
+                    **exit_audit,
                     take_profit_mode="fixed_rr" if i.take_profit_policy else "pa",
                     requested_reward_risk_ratio=(
                         i.take_profit_policy.reward_risk_ratio if i.take_profit_policy else None

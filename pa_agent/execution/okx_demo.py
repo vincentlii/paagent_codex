@@ -111,7 +111,7 @@ ROW_KEYS = frozenset(
     "px sz accFillSz avgPx fillSz fillPx fillTime tradeId billId ts uTime cTime pnl fee feeCcy "
     "fundingFee balChg ccy type subType pos upl imr margin mgnMode lever reduceOnly closeFraction "
     "slTriggerPx tpTriggerPx slTriggerPxType tpTriggerPxType slOrdPx tpOrdPx actualSz actualPx "
-    "actualSide actualOrdId triggerTime sCode".split()
+    "actualSide actualOrdId triggerTime sCode failCode".split()
 )
 
 
@@ -128,6 +128,20 @@ def safe_row(value: dict) -> dict[str, str]:
         and all(isinstance(v, str) and v.isalnum() and len(v) <= 64 for v in ids)
     ):
         result["child_order_ids"] = canonical(ids)
+    attachments = value.get("attachAlgoOrds")
+    if isinstance(attachments, list) and 0 < len(attachments) <= 10:
+        facts = []
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            cid, code = attachment.get("attachAlgoClOrdId"), str(attachment.get("failCode", ""))
+            if isinstance(cid, str) and re.fullmatch(r"[a-zA-Z0-9]{1,32}", cid):
+                fact = {"attachAlgoClOrdId": cid}
+                if re.fullmatch(r"[0-9]{1,8}", code):
+                    fact["failCode"] = code
+                facts.append(fact)
+        if facts:
+            result["attached_algo_status"] = canonical(facts)
     return result
 
 
@@ -204,11 +218,15 @@ class OkxDemoClient:
         except (httpx.HTTPError, ValueError, TypeError):
             raise DemoRequestUnknown(path) from None
         code = str(value.get("code", ""))
-        if code != "0":
-            _raise_code(code, path)
         rows = value["data"]
         if any(not isinstance(row, dict) for row in rows):
             raise DemoRequestUnknown(path)
+        if code != "0":
+            if code in {"1", "2"}:
+                if len(rows) == 1 and str(rows[0].get("sCode", "0")) != "0":
+                    _raise_code(rows[0]["sCode"], path)
+                raise DemoRequestUnknown(path)
+            _raise_code(code, path)
         for row in rows:
             if str(row.get("sCode", "0")) != "0":
                 _raise_code(row["sCode"], path)
@@ -232,6 +250,12 @@ class OkxDemoClient:
                 px=str(request.px),
                 sz=str(request.sz),
                 clOrdId=request.client_id,
+                **({"attachAlgoOrds": [{
+                    "attachAlgoClOrdId": request.attached_algo_client_id, "tpOrdKind": "condition",
+                    "slTriggerPx": str(request.stop), "slOrdPx": str(request.stop),
+                    "tpTriggerPx": str(request.tp1), "tpOrdPx": str(request.tp1),
+                    "slTriggerPxType": "last", "tpTriggerPxType": "last",
+                }]} if request.attached_algo_client_id else {}),
             ),
             "ordId",
             exp_time_ms=request.exp_time_ms,
@@ -247,7 +271,9 @@ class OkxDemoClient:
             "/api/v5/trade/cancel-order", {"instId": inst_id, "clOrdId": client_id}, "ordId"
         )
 
-    def place_oco(self, *, inst_id, side, stop, tp1, client_id, quantity=None):
+    def place_oco(self, *, inst_id, side, stop, tp1, client_id, quantity=None, exit_order_type="market"):
+        if exit_order_type not in {"market", "limit"}:
+            raise ValueError("invalid_exit_order_type")
         if quantity is not None and (not quantity.is_finite() or quantity <= 0):
             raise ValueError("invalid_exit_quantity")
         return self._post(
@@ -263,8 +289,8 @@ class OkxDemoClient:
                 **({"closeFraction": "1"} if quantity is None else {"sz": str(quantity)}),
                 slTriggerPx=str(stop),
                 tpTriggerPx=str(tp1),
-                slOrdPx="-1",
-                tpOrdPx="-1",
+                slOrdPx=str(stop) if exit_order_type == "limit" else "-1",
+                tpOrdPx=str(tp1) if exit_order_type == "limit" else "-1",
                 slTriggerPxType="last",
                 tpTriggerPxType="last",
             ),
@@ -280,7 +306,9 @@ class OkxDemoClient:
             "/api/v5/trade/cancel-algos", [{"instId": inst_id, "algoId": algo_id}], "algoId"
         )
 
-    def close_position(self, *, inst_id, side, quantity, client_id):
+    def close_position(self, *, inst_id, side, quantity, client_id, limit_price=None):
+        if limit_price is not None and (not limit_price.is_finite() or limit_price <= 0):
+            raise ValueError("invalid_exit_price")
         return self._post(
             "/api/v5/trade/order",
             dict(
@@ -288,7 +316,8 @@ class OkxDemoClient:
                 tdMode="isolated",
                 posSide="net",
                 side=side,
-                ordType="market",
+                ordType="limit" if limit_price is not None else "market",
+                **({"px": str(limit_price)} if limit_price is not None else {}),
                 sz=str(quantity),
                 reduceOnly=True,
                 clOrdId=client_id,

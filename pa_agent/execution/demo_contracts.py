@@ -47,6 +47,14 @@ class DemoConfig(StrictModel):
     account_key: str = ""
     accepted_symbols: tuple[str, ...] = ()
     independent_accepted_symbols: tuple[str, ...] = ()
+    attached_accepted_symbols: tuple[str, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_shape(self, handler):
+        value = handler(self)
+        if not self.attached_accepted_symbols:
+            value.pop("attached_accepted_symbols", None)
+        return value
 
     @model_validator(mode="after")
     def check(self) -> Self:
@@ -54,7 +62,7 @@ class DemoConfig(StrictModel):
             raise ValueError("fixed_500_leverage_3_protocol")
         if any(
             s not in MAPPINGS.values()
-            for s in self.symbols + self.accepted_symbols + self.independent_accepted_symbols
+            for s in self.symbols + self.accepted_symbols + self.independent_accepted_symbols + self.attached_accepted_symbols
         ):
             raise ValueError("unsupported_instrument")
         if self.entry_enabled and (
@@ -174,6 +182,8 @@ class DemoIntent(StrictModel):
             raise ValueError("non_limit_has_prices")
         context = self.trade_execution_context
         if context is not None:
+            if context.exit_order_type and self.schema_version != "okx_demo_intent_v2":
+                raise ValueError("limit_exit_requires_independent_plan")
             if (context.inst_id != self.inst_id or context.source_close_ms != self.source_bar_ms + 3_600_000
                 or self.demo_execution_policy is None
                 or context.limit_validity_hours != self.demo_execution_policy.limit_validity_hours
@@ -236,6 +246,14 @@ class DemoOrderRequest(StrictModel):
     margin: Positive
     exp_time_ms: int
     contract_digest: str
+    attached_algo_client_id: str | None = Field(default=None, pattern=r"^pad[a-f0-9]{29}$")
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_shape(self, handler):
+        value = handler(self)
+        if self.attached_algo_client_id is None:
+            value.pop("attached_algo_client_id", None)
+        return value
 
 
 class DemoSyncRange(StrictModel):

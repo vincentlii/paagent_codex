@@ -80,5 +80,33 @@ Runtime Skill 已变更，发布必须暂停并排空 Host/Codex 队列，禁止
 验收与未验证边界见[第一批验收](../quality/trader_entry_execution_acceptance_20261025.md)。
 本地工程验证不能证明模型入场选择、成交率或收益已经改善；这些需要同输入研究和自然样本。
 
+## 2026-10-26：用户选择双边限价退出（本地，未发布）
+
+用户明确接受触发后可能无法成交。新增可空`exit_order_type=limit`仅在Host新建context时冻结，
+旧无字段维持原序列化/身份和市价协议；新标记仅允许独立v2计划。它只交付Stage 2，模型仍
+评估目标先于SL达到，而非保证限价退出成交；佣金检查另列`limit_exit_nonfill`未覆盖风险。
+
+定量OCO按last触发，委托价分别为原有效SL/TP。触发后的live/partial子单仍预约自身退出数量；
+不重发、不按触价宣称平仓。OCO确定拒绝保留安全码，原应急腿也以原SL价reduce-only限价；
+限价应急本身拒绝后显式阻断，避免循环提交。未知保留预算，晚到成交仅可保护未预约增量。
+已知live限价不是两边价格均受保护的保证，无法成交可持续持仓并阻止维护排空。
+完整验收与回退边界见[限价退出](../quality/limit_exit_execution_20261026.md)，不据此宣称VPS已启用。
+
 依据：[OKX fee API](https://www.okx.com/docs-v5/en/#trading-account-rest-api-get-fee-rates)、
 [Python Decimal](https://docs.python.org/3/library/decimal.html)，及现有 Draft/冻结/执行投影协议。
+
+## 2026-10-26：开仓附带精确数量保护
+
+新增可空`protection_binding=entry_attached`，只允许limit context，绑定任务/cohort/请求；
+旧None不序列化。新DemoConfig空默认能力表不改变旧配置/证书，只有独立现场验收品种才
+由Host冻结native协议；能力变更须paused/idle重新核验证书，不重绑旧任务或cutover epoch。
+
+入场POST前登记同CID的native OCO g1并随入场HTTP提交一组condition TP/SL；新native路径
+不再POST第二个OCO。g1冻结request.sz上限与entry身份，实际预算取自身已知成交量；
+partial撤余促交易所生成保护，unknown/child未决不释放预算，晚到数量不修改旧params。
+附件确定失败才允许原SL价限价应急，50004等内部错误不当确定失败；退出参数矛盾保留并阻新。
+新reader产生后不得直接回退旧Worker；历史reader及旧协议仅供其自身冻结订单继续管理。
+
+这减少Host观察成交后再提交保护的间隔，不保证交易所原子生成。限价触发未成交/价格带拒绝
+仍可持续持仓。设计、探测失败、独立审阅及实际发布证据见
+[结构与保护验收](../quality/stop_protection_completion_20261026.md)。

@@ -128,7 +128,8 @@ class OfficialExecutionDispatcher:
         return TradeExecutionContext(inst_id=inst, source_close_ms=close,
             limit_validity_hours=self.execution_policy.limit_validity_hours,
             expires_at_ms=close+self.execution_policy.limit_validity_hours*3_600_000,
-            frozen_at_ms=now, fee_schedule=fee).model_dump(mode="json")
+            frozen_at_ms=now, fee_schedule=fee, exit_order_type="limit",
+            protection_binding="entry_attached" if inst in self.config.attached_accepted_symbols else None).model_dump(mode="json")
 
     @property
     def enabled(self):

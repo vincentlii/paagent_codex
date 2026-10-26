@@ -134,6 +134,10 @@ class DemoStore:
             return receipt if stale else None
 
     def save_prepared(self, intent, request):
+        attached = bool(intent.trade_execution_context and intent.trade_execution_context.protection_binding)
+        expected = client_id(request.account_key, intent, "oco", 1) if attached else None
+        if request.attached_algo_client_id != expected:
+            raise ValueError("attached_protection_binding_mismatch")
         with self.connect() as db:
             row = db.execute(
                 "SELECT request FROM intents WHERE id=?", (intent.content_digest,)
@@ -182,7 +186,21 @@ class DemoStore:
                 or (not independent and previous[1] not in LEG_TERMINAL)
             ):
                 raise ValueError("previous_leg_not_terminal")
-            if independent and leg != "entry":
+            native = params.get("attached_entry_client_id") is not None
+            if native:
+                if not (
+                    independent and leg == "oco" and generation == 1
+                    and intent.trade_execution_context
+                    and intent.trade_execution_context.protection_binding == "entry_attached"
+                    and request.attached_algo_client_id == cid
+                    and params == dict(stop=str(request.stop), tp1=str(request.tp1),
+                        quantity=str(request.sz), side="sell" if request.side == "buy" else "buy",
+                        exit_order_type="limit", attached_entry_client_id=request.client_id)
+                    and db.execute("SELECT 1 FROM legs WHERE client_id=? AND leg='entry'",
+                                   (request.client_id,)).fetchone()
+                ):
+                    raise ValueError("attached_protection_binding_mismatch")
+            if independent and leg != "entry" and not native:
                 exposure = self._exposure(db, intent_id)
                 quantity = Decimal(params["quantity"])
                 if (
@@ -245,10 +263,14 @@ class DemoStore:
             previous = db.execute(
                 "SELECT status,response FROM legs WHERE client_id=?", (cid,)
             ).fetchone()
-            if previous and previous["status"] in LEG_TERMINAL and status not in LEG_TERMINAL:
+            unactivated = (previous and previous["status"] == "canceled"
+                           and json.loads(previous["response"]).get("_unactivated_attachment"))
+            if previous and previous["status"] in LEG_TERMINAL and status not in LEG_TERMINAL and not unactivated:
                 return
             body = json.loads(previous["response"]) if previous else {}
             body = self._merge_observation(body, response or {})
+            if unactivated and response and not response.get("_unactivated_attachment"):
+                body.pop("_unactivated_attachment", None)
             db.execute(
                 "UPDATE legs SET status=?,response=? WHERE client_id=?",
                 (status, canonical(body), cid),

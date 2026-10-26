@@ -1,5 +1,12 @@
 # PA Agent Domain Context
 
+结构止损教材及开仓附带保护修改前读[完整优化验收](docs/quality/stop_protection_completion_20261026.md)：
+原位清理所有可交付策略冲突，结构SL不按固定阈值机械放宽；新限价协议按实测白名单绑定原生
+附带OCO，预算用冻结max和自身已知entered，未知不重发，旧任务不升级。发布与收益证据分开。
+
+修改Demo双边限价退出前读[限价退出设计与验收](docs/quality/limit_exit_execution_20261026.md)：
+用户已选择止盈/止损均限价并接受触价未成交，未来新任务冻结，旧单不改；本地实现/发布分开报告。
+
 维护/恢复修复及当前发布范围先读
 [工程交接验收](docs/quality/engineering_handoff_release_20261026.md)：空HTF仅在新任务首次冻结前
 None→{}，旧损坏身份仍拒绝。维护信号不再伪装成entry_enabled=false；停止新注册/提交后继续

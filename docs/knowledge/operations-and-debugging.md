@@ -18,6 +18,18 @@ issue_status: monitoring
 
 ## OKX Demo运行与维护
 
+新native协议与旧market/limit-only按冻结context分流，不能替旧订单升级保护。启用品种须先在
+隔离账本验收并于paused/idle更新能力证书；正式数据不导入canary。native g1的quantity是上限，
+当前预算只取自身entered。附件GET空不证明失败；内部50004、未知child和陈旧零回报均不能
+释放退出量。原价限价可能被价格带拒绝，须保留数字码并阻断，不能自动改价或升级市价。
+结构教材清理、失败证据、备份与发布边界见[结构与保护验收](../quality/stop_protection_completion_20261026.md)。
+
+双边限价退出的新本地协议见[限价退出验收](../quality/limit_exit_execution_20261026.md)：
+先检查冻结context的exit_order_type，不用当前代码默认值重标历史。OCO触发、子限价live、
+部分退出及完全平仓须分开；触发未成交仍占退出预算，不因TTL或维护升级市价。
+`limit_exit_rejected/limit_exit_parameters_mismatch`需查自身durable腿及数字拒绝码，不能删除
+账本/补发/释放未知数量解决；既有其他计划保护仍继续。该协议未发布，旧拒绝码无法追溯补写。
+
 排查计划不成交、连续止损或Demo收益前，必须先读
 [2026-10-24效果归因](../quality/demo_plan_performance_attribution_20261024.md)：同instId的Demo/实盘
 也可能有不同尖峰和成交路径。XAU已出现Demo触止损、同分钟实盘未触的现场证据，不能混用行情评估。
