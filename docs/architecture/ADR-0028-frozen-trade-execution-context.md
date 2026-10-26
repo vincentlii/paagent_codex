@@ -80,7 +80,7 @@ Runtime Skill 已变更，发布必须暂停并排空 Host/Codex 队列，禁止
 验收与未验证边界见[第一批验收](../quality/trader_entry_execution_acceptance_20261025.md)。
 本地工程验证不能证明模型入场选择、成交率或收益已经改善；这些需要同输入研究和自然样本。
 
-## 2026-10-26：用户选择双边限价退出（本地，未发布）
+## 2026-10-26：用户选择双边限价退出（已随71c8abf发布）
 
 用户明确接受触发后可能无法成交。新增可空`exit_order_type=limit`仅在Host新建context时冻结，
 旧无字段维持原序列化/身份和市价协议；新标记仅允许独立v2计划。它只交付Stage 2，模型仍
@@ -90,7 +90,7 @@ Runtime Skill 已变更，发布必须暂停并排空 Host/Codex 队列，禁止
 不重发、不按触价宣称平仓。OCO确定拒绝保留安全码，原应急腿也以原SL价reduce-only限价；
 限价应急本身拒绝后显式阻断，避免循环提交。未知保留预算，晚到成交仅可保护未预约增量。
 已知live限价不是两边价格均受保护的保证，无法成交可持续持仓并阻止维护排空。
-完整验收与回退边界见[限价退出](../quality/limit_exit_execution_20261026.md)，不据此宣称VPS已启用。
+早期本地验收与回退边界见[限价退出](../quality/limit_exit_execution_20261026.md)；最终现场启用证据见下方结构与保护验收。
 
 依据：[OKX fee API](https://www.okx.com/docs-v5/en/#trading-account-rest-api-get-fee-rates)、
 [Python Decimal](https://docs.python.org/3/library/decimal.html)，及现有 Draft/冻结/执行投影协议。

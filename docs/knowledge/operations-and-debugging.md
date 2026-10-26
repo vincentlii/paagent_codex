@@ -5,8 +5,8 @@ verification_scope:
   - local
   - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-10-26（维护排空、费用冻结与最小实际保护核验）
-核验提交: 27c1b230863c085a835cf93d7ca37184d737c0d4（历史Paper修复身份见对应章节）
+最后核验: 2026-10-27（原生附带限价保护、三品种能力表及发布恢复核验）
+核验提交: 71c8abf46747e888a5dbd1f3b6747c771b2ad766（历史Paper修复身份见对应章节）
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -24,11 +24,11 @@ issue_status: monitoring
 释放退出量。原价限价可能被价格带拒绝，须保留数字码并阻断，不能自动改价或升级市价。
 结构教材清理、失败证据、备份与发布边界见[结构与保护验收](../quality/stop_protection_completion_20261026.md)。
 
-双边限价退出的新本地协议见[限价退出验收](../quality/limit_exit_execution_20261026.md)：
+双边限价退出协议及历史实现证据见[限价退出验收](../quality/limit_exit_execution_20261026.md)：
 先检查冻结context的exit_order_type，不用当前代码默认值重标历史。OCO触发、子限价live、
 部分退出及完全平仓须分开；触发未成交仍占退出预算，不因TTL或维护升级市价。
 `limit_exit_rejected/limit_exit_parameters_mismatch`需查自身durable腿及数字拒绝码，不能删除
-账本/补发/释放未知数量解决；既有其他计划保护仍继续。该协议未发布，旧拒绝码无法追溯补写。
+账本/补发/释放未知数量解决；既有其他计划保护仍继续。新协议已随71c8abf发布，旧拒绝码无法追溯补写。
 
 排查计划不成交、连续止损或Demo收益前，必须先读
 [2026-10-24效果归因](../quality/demo_plan_performance_attribution_20261024.md)：同instId的Demo/实盘

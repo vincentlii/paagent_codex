@@ -4,8 +4,8 @@ capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-26（工程交接及冻结费用发布；真实Demo最小保护和单快照模型对照）
-核验提交: VPS运行代码27c1b230863c085a835cf93d7ca37184d737c0d4
+最后核验: 2026-10-27（结构止损教材、双边限价退出和三品种原生保护发布）
+核验提交: VPS运行代码71c8abf46747e888a5dbd1f3b6747c771b2ad766
 权威来源:
   - CONTEXT.md
   - docs/quality/runtime_reliability_vpa_remediation_20261021.md
@@ -13,6 +13,7 @@ verification_scope:
   - docs/architecture/ADR-0025-joint-stage2-pipeline.md
   - docs/architecture/ADR-0027-selectable-fixed-risk-reward.md
   - docs/quality/engineering_handoff_release_20261026.md
+  - docs/quality/stop_protection_completion_20261026.md
 ---
 
 # 当前状态
@@ -24,12 +25,17 @@ verification_scope:
 本页区分线上已发布事实与尚未验证事项。以前发布周期的状态已移入
 [历史归档](archive/README.md)，不能用旧“未实施/未部署”描述覆盖新验收证据。
 
-## 本地：双边限价退出（未发布）
+## 已发布：结构止损教材及原生双边限价保护
 
-2026-10-26用户明确接受止盈/止损均限价、触发后可能无法成交。未来新context冻结退出类型，
-旧任务仍市价；正常OCO与保护失败应急均保持原价和独立数量，未知不重复、部分成交可估值，
-应急拒绝后阻断自动循环。范围和证据见[限价退出验收](../quality/limit_exit_execution_20261026.md)。
-没有commit、VPS发布或真实测试订单；下方27c1b23仍是线上运行代码。
+代码71c8abf已推送私有main并安装VPS；11份教材39处冲突指导原位清理，结构SL仍由模型判断，
+263个knowledge ID和案例保留。新任务冻结双边原价限价退出及入场native附带保护，旧任务不升级。
+没有新分析角色、额外模型调用、ATR/% Gate或数据库迁移；未知保留预算，应急拒绝后阻断重发。
+本地2217项非live通过，Windows/Linux CI及wheel全绿；三品种最小双成交计划的独立原价保护、
+旧挂单不受影响及重启同CID核验通过，测试敞口已清空。v3的ETH清理延迟失败及原两次零发单
+脚本失败保留；ETH原单后续自行成交，XAU仅补未执行部分，不能伪称单次全成功canary。
+恢复running71、四服务正常、Demo ready且七项覆盖全真，原三品种/500 USDT/5h/RR1.5及
+模型设置保持。自然限价退出成交、模型质量与收益未验收，见
+[完整发布回执](../quality/stop_protection_completion_20261026.md)。
 
 ## 2026-10-26：第一批优化及工程交接已安装VPS
 
