@@ -5,8 +5,8 @@ verification_scope:
   - local
   - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-10-28（同周期准入及等待歧义仅本地；VPS核验仍为10-27）
-核验提交: 71c8abf46747e888a5dbd1f3b6747c771b2ad766（历史Paper修复身份见对应章节）
+最后核验: 2026-10-29（同周期准入及等待歧义已发布VPS）
+核验提交: 49ce987c32702329a5c27081dfe2954c6d754dc3（历史Paper修复身份见对应章节）
 权威来源:
   - docs/linux_headless_deployment.md
   - CONTEXT.md
@@ -24,7 +24,8 @@ issue_status: monitoring
 重启成功/终止任务不重新分析，未完成只走既有恢复；损坏或缺失accepted envelope须阻断排查，不能清库。
 显式配置改变cohort、下一闭盘仍可分析；不要把不同配置当无效重复，也不要删除真实修订。
 等待质量须复核已有Setup与具体反证，neutral按§9.0P既有单侧例外；前置VPA的next_confirmation
-不是默认入场门槛。本轮仅本地实现，线上及模型改善需单独核验，额度/熔断/600s整链预算保持。
+不是默认入场门槛。49ce987已安装VPS并恢复running74，四服务/模拟盘对账通过；
+额度/熔断/600s整链预算保持。模型改善仍需新冻结输入及前向运行证据，不以发布健康代替判断或收益验收。
 
 ## OKX Demo运行与维护
 

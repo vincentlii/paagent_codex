@@ -4,8 +4,8 @@ capability: demo-execution-limited
 verification_scope:
   - local
   - VPS-controlled-live
-最后核验: 2026-10-28（同周期准入及等待歧义仅本地；VPS发布仍为10-27）
-核验提交: VPS运行代码71c8abf46747e888a5dbd1f3b6747c771b2ad766
+最后核验: 2026-10-29（同周期准入及等待歧义已发布VPS）
+核验提交: VPS运行代码49ce987c32702329a5c27081dfe2954c6d754dc3
 权威来源:
   - CONTEXT.md
   - docs/quality/runtime_reliability_vpa_remediation_20261021.md
@@ -18,15 +18,18 @@ verification_scope:
 
 # 当前状态
 
-## 2026-10-28：同周期重复分析与等待歧义修复（本地，未发布）
+## 2026-10-29：同周期重复分析与等待歧义修复已发布
 
 [43小时归因及修复验收](../quality/post_release_low_trade_audit_20261028.md)保留原始取证：
 128wait/1limit，0执行suppressed；唯一限价未触价。用户要求本轮不处理额度耗尽。
 本地自动轮询选同源、同闭盘、同cohort首次accepted冻结任务，后续修订继续观察，既有hash/历史不改；
 重试沿原任务及上限，重启已终止不刷新预算，未完成只交恢复。新闭盘/显式配置变更仍可分析。
 5份教材、Assembler与2份Role Skills原位清理neutral例外/追加确认/前置VPA时机歧义，
-无新模型调用、Schema、Gate、止损或TTL规则。本地实现不等于VPS已启用或交易效果改善。
-线上仍为下节71c8abf；10/28只读取证时用户已将RR改为2，不能拿发布原RR1.5当当前配置。
+无新模型调用、Schema、Gate、止损或TTL规则。49ce987已推送私有main并安装VPS，Windows/Linux
+各2237通过、1环境条件跳过，wheel检查通过；四服务正常、Demo ready且七项覆盖全真。
+恢复running74，三品种/500 USDT/5h/固定2R及模型/Fast配置保持；四库及2977个保护文件保持。
+31份历史复盘可读，44份fills/bills逐行不变。模型判断、实际成交频率与收益改善未验证，
+完整备份/安装回执见上述报告末节；下节71c8abf和RR1.5为此前发布历史，不作为当前配置。
 
 结构止损教材及native附带限价保护的本轮状态，以
 [结构与保护验收](../quality/stop_protection_completion_20261026.md)的最终发布回执为准：

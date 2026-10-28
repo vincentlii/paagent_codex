@@ -206,3 +206,34 @@ Shadow、研究A/A/B/B、Joint、HTF、订单数学、records/audit、Demo保护
 Headless未导入Qt。wheel SHA-256为925cff3cc5dfb69c13ca2b6f0df166e17fc2479d76361fa78071ac9c87f791ca；
 首个核验脚本因git中文路径引用格式产生假差异，改用core.quotepath=false后通过，包内容未改。
 本地通过不等于VPS启用、模型更少wait或收益改善。
+
+## 2026-10-29固定提交发布回执
+
+用户随后明确授权commit及发布VPS。业务提交`49ce987c32702329a5c27081dfe2954c6d754dc3`
+仅包含本轮17个文件，已推送私有main；既有ICT研究、导航改动和并行ICT源码/测试均未提交或发布。
+此前唯一独立审阅已完成；追加发布边界复核尝试遇额度耗尽，没有把该次失败写成独立通过。
+主Agent核验12份源码/测试摘要保持，Git LF转换后的提交内容与验收原件一致；发布从固定commit
+archive构建，未打包工作区未跟踪文件。
+
+[固定提交CI](https://github.com/vincentlii/paagent_codex/actions/runs/40729748531)全部success：
+Windows/Linux各2237通过、1项环境条件跳过、7项live未执行，分别194.65/102.96秒；两条既有
+tvDatafeed弃用warning保留。wheel/Linux资源、无Qt导入及部署shell检查通过。
+
+发布前paused73、Host/Worker/inbox排空，无恢复阻塞、空仓空单后协调停止四服务。
+Host备份`/var/backups/pa-agent/pa-agent-20261028T165157Z`含23833成员；
+Demo备份`/var/backups/pa-agent-demo/demo-1793206360373`含710成员；manifest与SQLite检查通过。
+安装前后四库逻辑一致、2977个凭据/配置/待处理及执行回执保护文件、48个依赖保持。
+271个源码/资源成员与固定源码、Linux wheel及安装目录逐字节一致，无Qt。
+Linux wheel SHA-256为`dc79c10bf47ac46ca31742205fea6e66b2611308047ffe760864240d0420de83`；
+Runtime digest为`08cc218df9110d2b88cd4be7b87b1522f6cb0dc41bc373ae7d2d01395a4a908e`，
+Worker实际身份及POSIX权限核验通过。未改unit、依赖、费率策略、配置或已有订单。
+
+已恢复running74：四服务active/running、Result=success、NRestarts=0；XAU/BTC/ETH全部connected，
+无恢复阻塞，Demo ready、七项coverage全true，空仓空单。原500 USDT/5h/固定2R、gpt-6-luna/xhigh、
+Fast、并发3及Profile保持；31份历史复盘可读，原44份fills/44份bills逐行保持，Paper历史只读。
+未认证接口401、授权五类接口200。本次未发合成测试单、未改私有凭据或调用外部实验模型。
+
+VPS临时构建目录及上传包已清理；备份、安装manifest、CI及最终健康回执保存在本次发布目录。
+服务恢复后暂未收集新版完整自然模型链，不能宣称减少wait、提高成交率或收益。
+保留修复前真实失败及未知用量，不以重跑覆盖。发布脚本最初内联引号检查失败发生在只读
+Python启动前，改用既有SSH stdin脚本后检查通过，没有由此改变运行状态或交易。
