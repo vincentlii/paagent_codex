@@ -69,7 +69,7 @@
 2. 边界拒绝后有强入场棒跟随；“被套”是行为解释，不是持仓事实
 3. 铁丝网后尖峰级突破 + 跟随
 4. 第二次边界尝试提供新信息且结构 stop 合理，不为“小止损”贴近正常噪音
-5. 顶部短 K 线：仅当 direction=bearish（或 AIS）时评估上边界做空；底部短 K 线：仅当 direction=bullish（或 AIL）时评估下边界做多；**direction=neutral 且无 AIL/AIS → wait**
+5. 顶部短 K 线：仅当 direction=bearish（或 AIS）时评估上边界做空；底部短 K 线：仅当 direction=bullish（或 AIL）时评估下边界做多；neutral 按 §9.0P 既有例外；短 K 线本身不授予方向或双边权限
 
 无例外满足 → `order_type=不下单`，terminal=wait。
 

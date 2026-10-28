@@ -59,7 +59,7 @@
 4. 交易区间边界中的二次入场【PA Agent：仅顺 direction 一侧】
    a) 交易区间上边：第一次触及→回撤→第二次触及→**仅当 direction=bearish 或 AIS** 时评估做空；direction=bullish → wait
    b) 交易区间下边：第一次触及→反弹→第二次触及→**仅当 direction=bullish 或 AIL** 时评估做多；direction=bearish → wait
-   c) direction=neutral 且 §2.4 非 Always In → **不下单**（禁止双边边界二次入场）
+   c) neutral 按 §9.0P 既有例外；二次入场标签不替代资格，禁止双边边界方案
    d) Brooks 背景：第二次触及区间边界的信号更可靠——仍须 direction 门控
    e) 第一次触及可能是突破尝试，第二次才是真正的区间确认
 

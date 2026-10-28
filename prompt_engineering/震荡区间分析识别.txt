@@ -293,7 +293,7 @@ Barbwire是整个Al Brooks体系中最强的信号之一。Barbwire之后，通�
 
 步骤5：制定边界入场计划（仅高密度和中等密度区间执行此步）
 <!-- knowledge: chapter-028 -->
-- **仅顺 direction 一侧**：direction=bullish → 下边界做多；direction=bearish → 上边界做空；neutral → 不制定入场计划
+- **仅顺 direction 一侧**：direction=bullish → 下边界做多；direction=bearish → 上边界做空；neutral 按 §9.0P 既有例外
 - 确定结构失效 stop 和可达 TP1；须 §10.3 通过
 - 低密度区间和 Barbwire 跳过此步，直接等待突破信号
 
@@ -336,7 +336,7 @@ Barbwire是整个Al Brooks体系中最强的信号之一。Barbwire之后，通�
 <!-- knowledge: chapter-035 -->
 
 陷阱1：把区间的边界当成磁铁单边使用
-区间边界既是支撑/阻力，也是突破的起点。**PA Agent**：只顺 `direction` 一侧在边界等待（偏多下沿做多、偏空上沿做空）；`direction=neutral` → wait。**禁止**「两手准备」双边挂单或逆势 fade。
+区间边界既是支撑/阻力，也是突破的起点。**PA Agent**：只顺 `direction` 一侧在边界等待（偏多下沿做多、偏空上沿做空）；neutral 按 §9.0P 既有例外评估。**禁止**「两手准备」双边挂单或逆势 fade。
 
 陷阱2：在低密度区间中刮头皮
 低密度区间的边界不可靠，价格可能绕过边界而不触发任何反应。在低密度区间中刮头皮的风险远高于高密度区间。

@@ -1,5 +1,13 @@
 # PA Agent Domain Context
 
+分析最新发布后的低频、未成交或反复等待前读[43小时只读归因](docs/quality/post_release_low_trade_audit_20261028.md)：
+129个品种小时仅108个有完整结果，成功记录含同小时修订/seasonality更新/配置变更，不能重复计机会；
+128wait/1limit且0suppressed。唯一BTC限价正常到期未触价，Demo/实盘路径必须分开。确认要求
+递进与neutral教材例外不能据一次未成交或未来走势强迫交易。文末本地修复将自动轮询固定到
+同源同闭盘/同cohort首次accepted冻结任务，修订继续观察、不重写hash；重启终止任务不刷新预算，
+未完成任务只交恢复。原位统一neutral既有例外、Setup已成立后的未来触价及VPA假设确认边界，
+不增加Gate/调用/Schema；新闭盘或明确配置变更仍可分析。本地验收与VPS/模型收益证据分开。
+
 结构止损教材及开仓附带保护修改前读[完整优化验收](docs/quality/stop_protection_completion_20261026.md)：
 原位清理所有可交付策略冲突，结构SL不按固定阈值机械放宽；新限价协议按实测白名单绑定原生
 附带OCO，预算用冻结max和自身已知entered，未知不重发，旧任务不升级。发布与收益证据分开。

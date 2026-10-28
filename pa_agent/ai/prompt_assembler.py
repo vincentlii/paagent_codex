@@ -635,12 +635,12 @@ Frozen Snapshot 中的事实不可改写；冻结的 Stage 1 是本轮权限依�
 `decision_trace` 不要输出 `question/section/bar_range`、§10.3 或 `terminal`。
 Trace protocol: `node_id` must be an exact question ID; section heading `11` is invalid,
 so choose the applicable `11.1`-`11.4`. Every executable order must include node `14`.
-`trade` 表示当前已具备提交订单的条件；合法限价/突破挂单可以等待未来价格触达，但 Setup 和结构失效依据须已成立。
-若交易资格仍依赖未来新增已收盘证据或尚未形成的结构，当前选择 `wait`，不能用 `trade` 预先提交。
+`trade` 表示当前已具备提交订单的条件；Setup 和结构失效依据已成立时，合法挂单只等未来触价，不要求先回测或出现入场后跟随。
+资格确实依赖未来新增已收盘证据时选择 `wait`，说明具体缺口；不把预挂必有的未来不确定性当作所有计划均不成立的理由。
 `entry_rule` 是说明文字，执行器不会据此等待闭盘确认或重新判断 Setup；不要把未满足的资格条件写进它来代替 `wait`。
 若 `order_type=不下单`，方向、{no_order_prices}、交易置信度和胜率必须按 contract 置 null。
 `next_bar_prediction` 是启用时由 LLM 提供的辅助判断，不参与订单授权。
-模型仍需判断 §10.1/§10.2、Setup 是否成立、信号质量和是否执行；
+模型仍需判断 §10.1/§10.2、Setup 是否成立、信号质量和是否执行；旧条件已满足后不自动追加确认，若仍等待，说明当前具体反证及其如何影响方案。
 不得为了让方程通过而调整结构价格或胜率。{prior_scope}
 先基于本轮 Background、Location、Setup、信号与反证形成定性概率排序，再给数值；
 教学材料中的通用频率不得复制为本轮胜率，Breakeven 也不得反推胜率。
@@ -676,7 +676,8 @@ def _stage2_output_rules(*, joint_stage2: bool = False, take_profit_policy=None)
         joint_analysis_rule=(
             "`joint_analysis` 必须论证支持、挑战、方案与等待、限价可达性、目标阻力和结构失效；"
             "在 entry_reachability / selection_vs_wait 说明已存 VPA 位置证据是否影响入场锚点或等待；"
-            "无相关证据不强求影响，前置 VPA timing 不适用不等于背景/位置数据不可用，不增加后置调用；"
+            "无相关证据不强求影响。前置 VPA 不评价订单时机不是待确认缺口，无需复述 not_applicable；"
+            "next_confirmation 只区分量价假设，不默认成为入场条件；保留真实量价反证，不增加后置调用；"
             "`vpa_evidence_refs` 只引用已验收报告中的证据，数据不足时可明确仅以价格依据决策。\n"
             if joint_stage2 else ""
         ),

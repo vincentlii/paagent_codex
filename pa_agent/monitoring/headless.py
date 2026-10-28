@@ -70,7 +70,7 @@ class _AssetState:
     last_analysis_status: str | None = None
     prepared_task: AnalysisTask | None = None
     prepared_closed_bar_ts: int | None = None
-    prepared_frame_hash: str | None = None
+    observed_frame_hash: str | None = None
     history_backfill_done: bool = False
     history_cache: list[Any] | None = None
 
@@ -191,6 +191,9 @@ class HeadlessMonitor:
             state = matches[0]
             state.observed_task_id = task.task_id
             state.in_flight_task_id = task.task_id
+            state.prepared_task = task
+            state.prepared_closed_bar_ts = self._latest_closed_bar_ts(task)
+            state.observed_frame_hash = frame_snapshot_hash(task.payload.frame)
             state.attempts = 1
             self._task_to_state[task.task_id] = state
             result = recover(task)
@@ -566,7 +569,7 @@ class HeadlessMonitor:
             for state in self._states:
                 state.prepared_task = None
                 state.prepared_closed_bar_ts = None
-                state.prepared_frame_hash = None
+                state.observed_frame_hash = None
 
     def _submission_matches_applied_control(self) -> bool:
         control = self._control_store.read()
@@ -894,15 +897,23 @@ class HeadlessMonitor:
             if market_context:
                 frame = replace(frame, data_metadata={**frame.data_metadata, "market_context": market_context})
         current_frame_hash = frame_snapshot_hash(frame)
+        selected_task = None
         with self._lock:
             if (
                 state.prepared_task is not None
                 and state.prepared_closed_bar_ts == latest_closed_bar_ts
-                and state.prepared_frame_hash == current_frame_hash
+                and state.observed_frame_hash == current_frame_hash
             ):
                 state.fetch_failures = 0
                 state.next_fetch_at = 0.0
                 return state.prepared_task
+            if (state.prepared_task is not None
+                and state.prepared_closed_bar_ts == latest_closed_bar_ts
+                and state.prepared_task.task_id == state.observed_task_id
+                and state.attempts > 0
+                and state.prepared_task.payload.frame.data_metadata.get("source_identity")
+                == frame.data_metadata.get("source_identity")):
+                selected_task = state.prepared_task
         paper_enabled = self._paper_execution is not None and bool(
             getattr(self._paper_execution, "enabled", False)
         )
@@ -932,6 +943,14 @@ class HeadlessMonitor:
                 state.fetch_failures = 0
                 state.next_fetch_at = 0.0
             return None
+        if selected_task is not None:
+            # Polling revisions remain market observations. They do not replace
+            # the cycle's accepted analysis or reset its retry allowance.
+            with self._lock:
+                state.observed_frame_hash = current_frame_hash
+                state.fetch_failures = 0
+                state.next_fetch_at = 0.0
+            return selected_task
         if self._settings.general.higher_timeframe_enabled:
             htf_context = fetch_higher_timeframe_context(
                 source=source,
@@ -1007,7 +1026,7 @@ class HeadlessMonitor:
             state.next_fetch_at = 0.0
             state.prepared_task = task
             state.prepared_closed_bar_ts = latest_closed_bar_ts
-            state.prepared_frame_hash = current_frame_hash
+            state.observed_frame_hash = current_frame_hash
         return task
 
     def _ensure_source(self, state: _AssetState) -> Any:
@@ -1062,6 +1081,32 @@ class HeadlessMonitor:
             if state.in_flight_task_id is not None:
                 return "in_flight"
             is_new = state.observed_task_id != task.task_id
+            if is_new:
+                lookup = getattr(self._scheduler_audit, "load_cycle_selection", None)
+                try:
+                    selected = lookup(task) if callable(lookup) else None
+                except Exception:
+                    logger.exception("Persistent monitoring cycle selection is unavailable")
+                    return "audit_unavailable"
+                if selected is not None:
+                    task = selected["task"]
+                    if not state.startup_observed:
+                        state.startup_observed = True
+                        state.startup_closed_bar_ts = latest_closed_bar_ts
+                    state.prepared_task = task
+                    state.observed_task_id = task.task_id
+                    state.attempts = 1
+                    state.next_retry_at = float("inf")
+                    state.last_analysis_status = selected["analysis_status"]
+                    if selected["analysis_success"]:
+                        state.successful_task_id = task.task_id
+                        return "persisted_success"
+                    # An unfinished delivery belongs to recovery. A terminal
+                    # failure keeps its original stop instead of a fresh budget.
+                    if selected["completion_status"]:
+                        return "persisted_terminal"
+                    self._recovery_blocked_assets.add(task.asset_key)
+                    return "recovery_blocked"
             if is_new:
                 state.observed_task_id = task.task_id
                 state.successful_task_id = None

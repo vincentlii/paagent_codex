@@ -107,3 +107,69 @@ def test_delivered_stop_buffer_examples_keep_structure_and_verified_tick_scope()
         text = "".join(section["text"] for section in modules[name]["sections"])
         assert "已确定结构失效锚点且 Host 提供真实 tick" in text
         assert "另一个独立成立的 Setup" in text
+
+
+@pytest.mark.parametrize("joint_stage2", [False, True])
+def test_delivered_neutral_guidance_keeps_existing_single_side_exceptions(joint_stage2):
+    from pa_agent.ai.prompt_assembler import stage1_prompt_txt_files, stage2_prompt_txt_files
+
+    knowledge_ids = list(dict.fromkeys([
+        *stage1_prompt_txt_files(), *stage2_prompt_txt_files(load_full_strategy_library=True),
+    ]))
+    modules, _ = build_knowledge_bundle(
+        prompt_dir=PROMPT_DIR, knowledge_ids=knowledge_ids, role="stage2", joint_stage2=joint_stage2,
+    )
+    shortcuts = (
+        "neutral 则 wait", "direction=neutral → **wait**", "direction=neutral：**不下单**",
+        "`direction=neutral` → wait", "neutral → wait", "neutral → 不制定入场计划",
+        "direction=neutral 且 §2.4 非 Always In → **不下单**",
+        "**direction=neutral 且无 AIL/AIS → wait**",
+    )
+    conflicts = {
+        name: [rule for rule in shortcuts if rule in "".join(s["text"] for s in module["sections"])]
+        for name, module in modules.items()
+    }
+    assert not {name: rules for name, rules in conflicts.items() if rules}
+    tree = "".join(s["text"] for s in modules["二元决策.txt"]["sections"])
+    assert "AIL" in tree and "AIS" in tree
+    assert "仅 §9.0=是 且有合格信号棒时可下单" in tree
+    assert "禁止双边边界限价" in tree
+
+
+@pytest.mark.parametrize("joint_stage2", [False, True])
+@pytest.mark.parametrize("codex", [False, True])
+def test_stage2_delivery_distinguishes_setup_readiness_and_satisfied_wait(codex, joint_stage2):
+    assembler = PromptAssembler(PROMPT_DIR)
+    if codex:
+        protocol = assembler.build_stage2_agent_protocol(
+            frame=make_frame(), stage1_json={}, decision_stance="aggressive",
+            previous_record=None, enable_next_bar_prediction=False, joint_stage2=joint_stage2,
+        )
+        text = "\n".join(protocol["embedded_rules"])
+    else:
+        text = "\n".join(message["content"] for message in assembler.build_stage2_continuation(
+            frame=make_frame(), stage1_messages=[], stage1_reply_content="{}", stage1_json={},
+            strategy_files=[], experience_entries=[], joint_stage2=joint_stage2,
+            use_prefix_chain=False,
+        ))
+    assert "未来触价" in text
+    assert "旧条件已满足后" in text and "不自动追加确认" in text
+    assert "具体反证" in text
+    if joint_stage2:
+        assert "不是待确认缺口" in text
+        assert "next_confirmation" in text and "真实量价反证" in text
+    else:
+        assert "not_applicable" not in text
+        assert "next_confirmation" not in text
+
+
+@pytest.mark.parametrize("role", ["stage2", "joint_stage2"])
+def test_role_skill_uses_current_evidence_without_renewing_confirmation(role):
+    path = Path(__file__).resolve().parents[2] / f"pa_agent/agent_runtime/assets/skills/{role}/SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    assert "未来触价" in text
+    assert "旧条件已满足后" in text and "不自动追加确认" in text
+    assert "具体反证" in text
+    if role == "joint_stage2":
+        assert "不是待确认缺口" in text
+        assert "next_confirmation" in text and "真实量价反证" in text

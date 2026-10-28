@@ -5,7 +5,7 @@ verification_scope:
   - local
   - VPS-controlled-live
 issue_status: monitoring
-最后核验: 2026-10-27（原生附带限价保护、三品种能力表及发布恢复核验）
+最后核验: 2026-10-28（同周期准入及等待歧义仅本地；VPS核验仍为10-27）
 核验提交: 71c8abf46747e888a5dbd1f3b6747c771b2ad766（历史Paper修复身份见对应章节）
 权威来源:
   - docs/linux_headless_deployment.md
@@ -15,6 +15,16 @@ issue_status: monitoring
 ---
 
 # 运行与排障
+
+## 同周期修订与反复等待
+
+先读[43小时归因及本地修复](../quality/post_release_low_trade_audit_20261028.md)。自动轮询的
+同源/同闭盘/同cohort首次accepted任务固定，不把后续OHLCV或seasonality修订再触发为一轮分析；
+实际修订仍观察、Frozen hash不变。拒绝接收前可重新准备；失败只按原任务有界重试。
+重启成功/终止任务不重新分析，未完成只走既有恢复；损坏或缺失accepted envelope须阻断排查，不能清库。
+显式配置改变cohort、下一闭盘仍可分析；不要把不同配置当无效重复，也不要删除真实修订。
+等待质量须复核已有Setup与具体反证，neutral按§9.0P既有单侧例外；前置VPA的next_confirmation
+不是默认入场门槛。本轮仅本地实现，线上及模型改善需单独核验，额度/熔断/600s整链预算保持。
 
 ## OKX Demo运行与维护
 

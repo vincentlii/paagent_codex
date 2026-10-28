@@ -621,11 +621,14 @@ def test_same_closed_bar_reuses_frozen_task_without_refetching_htf(
     assert len(service.submitted) == 1
 
 
-def test_same_timestamp_market_revision_invalidates_prepared_task(
+def test_same_timestamp_revision_keeps_selected_task_and_observes_new_market(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monitor, source, _audit, service, _clock = _monitor(tmp_path)
+    paper = _PaperExecution()
+    monitor, source, _audit, service, _clock = _monitor(
+        tmp_path, source=_PaperSource(), paper_execution=paper,
+    )
     monitor._settings.general.higher_timeframe_enabled = True
     calls: list[int] = []
     monkeypatch.setattr(
@@ -644,9 +647,11 @@ def test_same_timestamp_market_revision_invalidates_prepared_task(
     source.revise_latest()
     monitor.poll_once()
 
-    assert calls == [1, 1]
-    assert len(service.submitted) == 2
-    assert service.submitted[-1].task_id != first.task_id
+    assert calls == [1]
+    assert len(service.submitted) == 1
+    assert len(paper.observed) == 2
+    assert paper.observed[-1][2][0].volume == first.payload.frame.bars[0].volume + 1
+    assert service.submitted[0] is first
 
 
 def test_restart_uses_persistent_success_dedupe(tmp_path) -> None:
@@ -667,6 +672,35 @@ def test_restart_uses_persistent_success_dedupe(tmp_path) -> None:
     assert second_service.submitted == []
 
 
+@pytest.mark.parametrize("success", [True, False])
+@pytest.mark.parametrize("run_on_startup", [True, False])
+def test_restart_does_not_reanalyze_revised_completed_cycle(tmp_path, success, run_on_startup):
+    from pa_agent.monitoring.audit import SchedulerAuditStore
+
+    audit = SchedulerAuditStore(tmp_path / "scheduler.sqlite", require_frozen_payload=True)
+    monitor, source, _, service, _ = _monitor(tmp_path, audit=audit)
+    monitor.poll_once()
+    original = service.submitted[0]
+    assert audit.record_submission(original, SubmissionResult("accepted", original.task_id, original.asset_key))
+    assert audit.record_completion(_completion(original,
+        status="completed" if success else "incomplete", success=success, retryable=False))
+    monitor.shutdown()
+    source.revise_latest()
+    restarted, _, _, restarted_service, _ = _monitor(
+        tmp_path, source=source, audit=audit, run_on_startup=run_on_startup,
+    )
+    try:
+        assert restarted.poll_once().accepted == 0
+        assert restarted_service.submitted == []
+        assert restarted._states[0].prepared_task.task_id == original.task_id
+        # Selecting an earlier delivery never rewrites its frozen market data.
+        assert audit.load_task(original.task_id).payload.frame.bars == original.payload.frame.bars
+        source.advance()
+        assert restarted.poll_once().accepted == 1
+    finally:
+        restarted.shutdown()
+
+
 def test_audit_read_failure_blocks_new_analysis(tmp_path) -> None:
     monitor, _source, _audit, service, _clock = _monitor(
         tmp_path,
@@ -678,6 +712,144 @@ def test_audit_read_failure_blocks_new_analysis(tmp_path) -> None:
     assert result.accepted == 0
     assert service.submitted == []
     monitor.shutdown()
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt", "identity"])
+def test_revised_cycle_fails_closed_when_accepted_envelope_is_damaged(tmp_path, damage):
+    import sqlite3
+
+    from pa_agent.monitoring.audit import SchedulerAuditStore
+
+    audit = SchedulerAuditStore(tmp_path / "scheduler.sqlite", require_frozen_payload=True)
+    monitor, source, _, service, _ = _monitor(tmp_path, audit=audit)
+    monitor.poll_once()
+    original = service.submitted[0]
+    assert audit.record_submission(original, SubmissionResult("accepted", original.task_id, original.asset_key))
+    monitor.shutdown()
+    with sqlite3.connect(audit.db_path) as connection:
+        if damage == "missing":
+            connection.execute("DELETE FROM monitoring_frozen_tasks")
+        elif damage == "corrupt":
+            connection.execute("UPDATE monitoring_frozen_tasks SET payload_digest = 'broken'")
+        else:
+            connection.execute("UPDATE monitoring_jobs SET task_id = 'other'")
+    source.revise_latest()
+    restarted, _, _, restarted_service, _ = _monitor(tmp_path, source=source, audit=audit)
+    try:
+        assert restarted.poll_once().accepted == 0
+        assert restarted_service.submitted == []
+    finally:
+        restarted.shutdown()
+
+
+def test_revised_cycle_preserves_retry_backoff_and_attempt_limit(tmp_path):
+    settings = _settings()
+    settings.monitoring.max_analysis_retries = 1
+    monitor, source, _, service, clock = _monitor(tmp_path, settings=settings)
+    try:
+        monitor.poll_once()
+        original = service.submitted[0]
+        source.revise_latest()
+        assert monitor.poll_once().accepted == 0  # Still in flight.
+        service.on_completion(_completion(original, status="unavailable_provider", success=False, retryable=True))
+        assert monitor.poll_once().accepted == 0
+        clock.monotonic_value += 31
+        assert monitor.poll_once().accepted == 1
+        assert service.submitted[-1] is original
+        service.on_completion(_completion(original, status="unavailable_provider", success=False, retryable=True))
+        source.revise_latest()
+        clock.monotonic_value += 1000
+        assert monitor.poll_once().accepted == 0
+        assert len(service.submitted) == 2
+        source.advance()
+        assert monitor.poll_once().accepted == 1
+    finally:
+        monitor.shutdown()
+
+
+def test_unaccepted_revision_can_replace_preparation(tmp_path):
+    monitor, source, _, service, _ = _monitor(tmp_path)
+    try:
+        service.submit = lambda task: SubmissionResult("queue_full", task.task_id, task.asset_key)
+        assert monitor.poll_once().accepted == 0
+        refused = monitor._states[0].prepared_task
+        source.revise_latest()
+        service.submit = lambda task: (service.submitted.append(task) or
+            SubmissionResult("accepted", task.task_id, task.asset_key))
+        assert monitor.poll_once().accepted == 1
+        assert service.submitted[0].task_id != refused.task_id
+        assert service.submitted[0].payload.frame.bars[0].volume == refused.payload.frame.bars[0].volume + 1
+    finally:
+        monitor.shutdown()
+
+
+def test_persisted_cycle_does_not_block_changed_analysis_treatment(tmp_path):
+    from pa_agent.monitoring.audit import SchedulerAuditStore
+
+    audit = SchedulerAuditStore(tmp_path / "scheduler.sqlite", require_frozen_payload=True)
+    monitor, _, _, service, _ = _monitor(tmp_path, audit=audit)
+    monitor.poll_once()
+    original = service.submitted[0]
+    assert audit.record_submission(original, SubmissionResult("accepted", original.task_id, original.asset_key))
+    assert audit.record_completion(_completion(original, status="completed", success=True, retryable=False))
+    monitor.shutdown()
+    settings = _settings()
+    settings.general.decision_stance = "conservative"
+    restarted, _, _, restarted_service, _ = _monitor(tmp_path, settings=settings, audit=audit)
+    try:
+        assert restarted.poll_once().accepted == 1
+        assert restarted_service.submitted[0].cohort_id != original.cohort_id
+    finally:
+        restarted.shutdown()
+
+
+def test_unresolved_cycle_remains_owned_by_recovery_on_later_bars(tmp_path):
+    from pa_agent.monitoring.audit import SchedulerAuditStore
+
+    audit = SchedulerAuditStore(tmp_path / "scheduler.sqlite", require_frozen_payload=True)
+    monitor, source, _, service, _ = _monitor(tmp_path, audit=audit)
+    monitor.poll_once()
+    original = service.submitted[0]
+    assert audit.record_submission(original, SubmissionResult("accepted", original.task_id, original.asset_key))
+    assert audit.mark_started(original.task_id)
+    monitor.shutdown()
+    source.revise_latest()
+    restarted, _, _, restarted_service, _ = _monitor(tmp_path, source=source, audit=audit)
+    try:
+        assert restarted.poll_once().accepted == 0
+        source.advance()
+        assert restarted.poll_once().accepted == 0
+        assert restarted_service.submitted == []
+        assert audit.list_unresolved_tasks()[0]["task_id"] == original.task_id
+    finally:
+        restarted.shutdown()
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_cycle_selection_never_reuses_a_different_resolved_instrument(tmp_path, restart):
+    from dataclasses import replace
+
+    from pa_agent.monitoring.audit import SchedulerAuditStore
+
+    audit = SchedulerAuditStore(tmp_path / "scheduler.sqlite", require_frozen_payload=True)
+    monitor, source, _, service, _ = _monitor(tmp_path, audit=audit)
+    monitor.poll_once()
+    original = service.submitted[0]
+    assert audit.record_submission(original, SubmissionResult("accepted", original.task_id, original.asset_key))
+    completion = _completion(original, status="completed", success=True, retryable=False)
+    assert audit.record_completion(completion)
+    service.on_completion(completion)
+    identity = source.current_identity()
+    source.current_identity = lambda requested_symbol=None: replace(identity, resolved_symbol="XAUUSD_NEW")
+    if restart:
+        monitor.shutdown()
+        monitor, _, _, service, _ = _monitor(tmp_path, source=source, audit=audit)
+    try:
+        assert monitor.poll_once().accepted == 1
+        assert service.submitted[-1].task_id != original.task_id
+        assert service.submitted[-1].payload.frame.data_metadata["source_identity"]["resolved_symbol"] == "XAUUSD_NEW"
+    finally:
+        monitor.shutdown()
 
 
 def test_shutdown_disconnects_sources_and_closes_service(tmp_path) -> None:

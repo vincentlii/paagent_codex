@@ -20,7 +20,7 @@ description: Use when the Host selects price-only PA Stage 2 after Brooks routin
 2. 新基线的 `mandatory_modules` 全部是 `loading_policy=mandatory`；按 `stage2_handoff_receipt.mandatory_knowledge_sources` 分清本轮 `resources` 的完整原文与同 Snapshot Stage 1 已验证继承的完整原文，不要求继承模块再次出现在本轮资源中。按 ID 与 `load_order` 阅读本轮模块，Role Skill 原文另位于 `locations.role_skill`。digest 是 Host 的冻结校验身份，不要求你重新计算。此简短清单替代重复的章节目录，不减少授权知识。这些材料包含主路径依据、竞争解释复核及成熟Stage 2规则；按manifest的purpose/hypothesis_ids理解用途。review 不独立授予 Setup，只复核风险与等待，primary_and_review 是共享用途；最终候选依冻结primary与既有PA执行契约。不跳过、截断或自行扩张权限。
 3. 按回执 `market_context_sources` 定位价格与 HTF：fresh 基线阅读本轮完整 price_frame 分块和全部冻结 HTF evidence；delta 仅在对应继承标记为 true 时使用本 PA 会话已读全量材料。`experience_entries` 标明冻结经验的数量与本轮路径，存在时完整阅读。无论何种交付都不能只看信号棒，必须保留背景、位置、结构和即时触发的全图关系。新增必读资源若由工具明确报错，不用部分内容继续判断或伪造 Draft；Host 根据审计 fail-closed，也不为形式完整而重复拉取已验证继承资源。
 4. 在冻结Stage 1/Router内识别真实候选，比较最多三项有意义方案与等待，不强凑数量；分别说明背景、位置、即时信号或未来触价、结构失效和TP1障碍。读取完整竞争假设；review 不独立授予 Setup，复核知识不授予反向下单权限，最终候选依冻结primary与既有PA执行契约，不改方向/Gate。只有runtime_guidance.stage_challenge明确存在时按该研究扩展处理实质争议，否则不启动挑战。
-5. 对候选逐项调查：Background/Location 是否合适、signal/trigger 是否明确、entry 是否可执行、结构失效点是否真实、目标是否有独立结构依据。
+5. 根据当前证据判断候选资格与结构失效，按本轮退出协议评估目标路径；已成立的合法挂单只等未来触价。旧条件已满足后不自动追加确认，若仍等待，说明当前具体反证；资格确实依赖未来新增闭盘证据时仍等待。
 6. 只按 ID/小区间复核必要的冻结价格；HTF 只能从 `evidence_index.htf_evidence_ids` 选择；Brooks 理论只读授权 section。历史案例只能对照，不能因表面相似覆盖当前图的独立判断。正式 PA Stage 2 不读取 VPA evidence。
 7. 综合已读证据和研究扩展允许的意见，保留反证。比较交易、等待与拒绝当前尝试。证据支持且满足协议才输出 Trade；市场条件不满足或专业解释有矛盾时输出有依据的合法 No Trade，说明等待或失效条件。必要资源缺失、预算耗尽是 Host 运行故障，不是市场 No Trade；不得重写 Stage 1/Router 或返回模型停止对象。
 8. Stop 回答 Setup 在何处失效；不得用固定 tick/ATR 或凑 RR 替代结构判断。TP2 没有独立依据时保持 null。

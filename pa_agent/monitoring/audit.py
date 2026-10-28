@@ -342,6 +342,44 @@ class SchedulerAuditStore:
             logger.warning("Scheduler success lookup failed: %s", exc)
             raise
 
+    def load_cycle_selection(self, candidate: AnalysisTask) -> dict[str, Any] | None:
+        """Select the first accepted envelope for this bar and analysis treatment.
+
+        Revisions remain distinct snapshots. This is polling admission, never a
+        replacement for frozen identity or recovery of already-started work.
+        """
+        if not self._require_frozen_payload:
+            return None
+        from pa_agent.monitoring.frozen_task_codec import decode_task
+
+        cutoff = max(int(bar.ts_open) for bar in candidate.payload.frame.bars)
+        with self._lock, self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                "SELECT j.task_id, j.asset_key, j.cohort_id, j.completion_status, "
+                "j.analysis_status, j.analysis_success, f.payload_json, f.payload_digest "
+                "FROM monitoring_jobs AS j LEFT JOIN monitoring_frozen_tasks AS f "
+                "ON f.task_id = j.task_id WHERE j.asset_key = ? AND j.cohort_id = ? "
+                "AND j.task_created_at_ms >= ? AND (f.task_id IS NOT NULL OR "
+                "j.first_submission_status = 'accepted' OR j.submission_status = 'accepted') "
+                "ORDER BY j.task_created_at_ms, j.rowid",
+                (candidate.asset_key, candidate.cohort_id, cutoff),
+            ).fetchall()
+        for row in rows:
+            if not row["payload_json"] or not row["payload_digest"]:
+                raise ValueError("accepted cycle has no frozen payload")
+            task = decode_task(row["payload_json"], row["payload_digest"])
+            if (task.task_id != row["task_id"] or task.asset_key != row["asset_key"]
+                    or task.cohort_id != row["cohort_id"]):
+                raise ValueError("accepted cycle differs from frozen identity")
+            if (max(int(bar.ts_open) for bar in task.payload.frame.bars) == cutoff
+                    and task.payload.frame.data_metadata.get("source_identity")
+                    == candidate.payload.frame.data_metadata.get("source_identity")):
+                return {"task": task, "completion_status": row["completion_status"],
+                        "analysis_status": row["analysis_status"],
+                        "analysis_success": bool(row["analysis_success"])}
+        return None
+
     def list_successful_jobs(self, *, limit: int = 10_000) -> list[dict[str, Any]]:
         """Return persisted task/run links for non-LLM execution reconciliation."""
         try:
